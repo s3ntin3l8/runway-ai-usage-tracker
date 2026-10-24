@@ -169,9 +169,16 @@ def _introspect(db_path: Path) -> dict[str, Any]:
     }
 
 
-def _ledger_counts(db_path: Path) -> dict[str, int]:
-    """Count the ledger's rows, turns and sessions (read-only)."""
-    counts = {"requests": 0, "turns": 0, "sessions": 0}
+def _ledger_counts(db_path: Path, since_ms: int | None = None) -> dict[str, int]:
+    """Count the ledger's rows, turns and sessions (read-only).
+
+    ``since_ms`` adds the number of rows a *first* run would not import. The
+    first run's floor is on the id axis — the lowest id whose timestamp falls
+    inside the window — so the rows it skips are the ones *before* that id.
+    A row with an older timestamp but a higher id is still imported, and
+    counting it here would overstate the gap.
+    """
+    counts = {"requests": 0, "turns": 0, "sessions": 0, "out_of_window": 0}
     try:
         conn = sqlite3.connect(f"{db_path.resolve().as_uri()}?mode=ro", uri=True)
     except Exception:
@@ -187,7 +194,22 @@ def _ledger_counts(db_path: Path) -> dict[str, int]:
                 "requests": int(row[0] or 0),
                 "turns": int(row[1] or 0),
                 "sessions": int(row[2] or 0),
+                "out_of_window": 0,
             }
+        if since_ms is not None:
+            floor = cur.execute(
+                "SELECT MIN(id) FROM local_runtime_token_usage WHERE ts > ?", (since_ms,)
+            ).fetchone()
+            if floor is None or floor[0] is None:
+                # Nothing inside the window: a first run skips the whole
+                # ledger.
+                counts["out_of_window"] = counts["requests"]
+            else:
+                outside = cur.execute(
+                    "SELECT COUNT(*) FROM local_runtime_token_usage WHERE id < ?",
+                    (int(floor[0]),),
+                ).fetchone()
+                counts["out_of_window"] = int(outside[0] or 0) if outside else 0
     except sqlite3.Error:
         # An unreadable ledger still leaves a usable report: the schema was
         # checked above, so the counts are the only thing missing.
@@ -314,9 +336,17 @@ def _emit(text: str) -> None:
     _notify_windows(f"The MiniMax Code probe wrote its report to:\n{path}")
 
 
-def _store_detail(db_path: Path) -> dict[str, Any]:
-    """Report one store: its schema, its ledger counts and what it yields."""
-    from scripts.sidecar_pkg.event_extractors.minimax_code import parse_minimax_code_events
+def _store_detail(db_path: Path, on_disk: dict[str, tuple[int, int]]) -> dict[str, Any]:
+    """Report one store: its schema, its ledger counts and what it yields.
+
+    ``on_disk`` is the cursor file's per-store skip counts, parsed once by
+    the caller and passed in — a store the probe's own run had no opinion
+    about falls back to them.
+    """
+    from scripts.sidecar_pkg.event_extractors.minimax_code import (
+        parked_skip_counts,
+        parse_minimax_code_events,
+    )
 
     detail: dict[str, Any] = {
         "path": str(db_path),
@@ -332,6 +362,9 @@ def _store_detail(db_path: Path) -> dict[str, Any]:
         "models": {},
         "plan_review_requests": 0,
         "pending_requests": 0,
+        "out_of_window_requests": 0,
+        "skipped_requests": 0,
+        "abandoned_requests": 0,
         "error": None,
     }
     try:
@@ -354,10 +387,15 @@ def _store_detail(db_path: Path) -> dict[str, Any]:
     if not detail["schema_ok"]:
         return detail
 
-    counts = _ledger_counts(db_path)
+    # The first-run import window, shared with the extractor so the two
+    # cannot disagree about how much history a first run covers.
+    window_start = datetime.now(UTC) - timedelta(days=bootstrap_window_days())
+
+    counts = _ledger_counts(db_path, int(window_start.timestamp() * 1000))
     detail["requests"] = counts["requests"]
     detail["turns"] = counts["turns"]
     detail["sessions"] = counts["sessions"]
+    detail["out_of_window_requests"] = counts["out_of_window"]
 
     # The real extractor, on the real cursor — but its parked advance is
     # never committed, so the cursor file on disk stays exactly as it was.
@@ -367,12 +405,27 @@ def _store_detail(db_path: Path) -> dict[str, Any]:
         events = parse_minimax_code_events(
             db_path,
             account_id="probe",
-            since=datetime.now(UTC) - timedelta(days=bootstrap_window_days()),
+            since=window_start,
             state_file=_cursor_path(),
         )
     except Exception as exc:  # noqa: BLE001 — one broken store must not abort the report
         detail["error"] = f"the extractor failed on this store: {exc}"
         detail["schema_ok"] = False
+        events = []
+
+    # The skips of this store. The probe's own run is authoritative when it
+    # parked something for the store: it re-read the rows and knows what is
+    # still blocked. A run that parked *nothing* — no rows past the cursor,
+    # or a store the extractor could not read — has no opinion, and the
+    # cursor file stays the only record. That is the steady state of an idle
+    # host, which is exactly when an operator runs the probe to ask where
+    # the usage went.
+    counts = parked_skip_counts(_cursor_path(), db_path)
+    if counts is None:
+        counts = on_disk.get(str(db_path.resolve()), (0, 0))
+    detail["skipped_requests"], detail["abandoned_requests"] = counts
+
+    if detail["error"]:
         return detail
     models: dict[str, int] = {}
     plan_review = 0
@@ -409,6 +462,10 @@ def probe_minimax_code() -> dict[str, Any]:
         "cursor": None,
         "cursor_last_id": None,
         "pending_requests": 0,
+        "out_of_window_requests": 0,
+        "skipped_requests": 0,
+        "abandoned_requests": 0,
+        "warnings": [],
         "error": None,
         "problem": None,
     }
@@ -421,7 +478,10 @@ def probe_minimax_code() -> dict[str, Any]:
         )
         return report
 
-    details = [_store_detail(db_path) for db_path in db_paths]
+    # The cursor file's per-store skip counts, parsed once: a store the
+    # probe's own run had no opinion about falls back to them.
+    on_disk = _cursor_skips(_cursor_path())
+    details = [_store_detail(db_path, on_disk) for db_path in db_paths]
     report["stores"] = details
 
     # The primary store is the first one the extractor understands. A store
@@ -444,12 +504,50 @@ def probe_minimax_code() -> dict[str, Any]:
         report["sessions"] += detail["sessions"]
         report["plan_review_requests"] += detail["plan_review_requests"]
         report["pending_requests"] += detail["pending_requests"]
+        report["out_of_window_requests"] += detail["out_of_window_requests"]
         for model, count in detail["models"].items():
             report["models"][model] = report["models"].get(model, 0) + count
 
     cursor = _cursor_path()
     report["cursor"] = str(cursor)
     report["cursor_last_id"] = _cursor_last_id(cursor)
+
+    # Every store reports its own skips: the counts its own extraction found
+    # when it had an opinion, the cursor file's counts when it did not. A
+    # store the probe did not scan at all has no run and no detail, so the
+    # cursor file is all there is for it.
+    scanned: set[str] = set()
+    for detail in details:
+        report["skipped_requests"] += detail["skipped_requests"]
+        report["abandoned_requests"] += detail["abandoned_requests"]
+        scanned.add(str(Path(detail["path"]).resolve()))
+    for db_key, (skipped, abandoned) in on_disk.items():
+        if db_key in scanned:
+            continue
+        report["skipped_requests"] += skipped
+        report["abandoned_requests"] += abandoned
+
+    # The rows a first run would not import. While the cursor advances they
+    # are still reported — the window only decides where a *first* run
+    # starts — but a rebuilt store or a deleted cursor file would import
+    # only what is inside the window. The operator has to know that the
+    # window is narrower than the ledger.
+    if report["out_of_window_requests"]:
+        report["warnings"].append(
+            f"{report['out_of_window_requests']} ledger request(s) would not be imported by "
+            f"a first run — they sit before the {bootstrap_window_days()}-day window's "
+            "boundary; raise SIDECAR_BOOTSTRAP_DAYS to cover them"
+        )
+    if report["abandoned_requests"]:
+        report["warnings"].append(
+            f"{report['abandoned_requests']} ledger request(s) could not be turned into "
+            "usage events and were abandoned — their usage was never reported"
+        )
+    if report["skipped_requests"]:
+        report["warnings"].append(
+            f"{report['skipped_requests']} ledger request(s) are skipped and waiting for "
+            "the next cycle; the cursor stops in front of them"
+        )
 
     if primary["error"]:
         report["error"] = primary["error"]
@@ -484,6 +582,34 @@ def _cursor_last_id(cursor: Path) -> int | None:
             if isinstance(value, int):
                 last = value if last is None else max(last, value)
     return last
+
+
+def _cursor_skips(cursor: Path) -> dict[str, tuple[int, int]]:
+    """Read the skipped and abandoned row counts per store from the cursor file.
+
+    A skipped row is one the extractor could not turn into a usage event; it
+    is retried on the next cycle and the cursor stops in front of it. An
+    abandoned row exhausted its attempts and its usage was never reported.
+    """
+    try:
+        data = json.loads(cursor.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    databases = data.get("databases")
+    if not isinstance(databases, dict):
+        return {}
+    counts: dict[str, tuple[int, int]] = {}
+    for db_key, entry in databases.items():
+        if not isinstance(entry, dict):
+            continue
+        raw_skipped = entry.get("skipped")
+        raw_abandoned = entry.get("abandoned")
+        skipped = len(raw_skipped) if isinstance(raw_skipped, dict) else 0
+        abandoned = len(raw_abandoned) if isinstance(raw_abandoned, list) else 0
+        counts[str(db_key)] = (skipped, abandoned)
+    return counts
 
 
 def _schema_state(schema_ok: bool, error: str | None = None) -> str:
@@ -527,12 +653,22 @@ def format_report(report: dict[str, Any]) -> str:
             f"  ledger              : {report['requests']} requests"
             f" · {report['turns']} turns · {report['sessions']} sessions"
         )
+        lines.append(
+            f"  not imported        : {report['out_of_window_requests']} request(s) would be "
+            f"skipped by a first run (it imports {bootstrap_window_days()} days)"
+        )
         lines.append(f"  plan-review rows    : {report['plan_review_requests']}")
         for model, count in sorted(report["models"].items()):
             lines.append(f"  model {model:<27}: {count}")
         lines.append(f"  cursor              : {report['cursor']}")
         last = report["cursor_last_id"]
         lines.append(f"  cursor last id      : {last if last is not None else '(none)'}")
+        lines.append(
+            f"  skipped requests    : {report['skipped_requests']} (retried on the next cycle)"
+        )
+        lines.append(
+            f"  abandoned requests  : {report['abandoned_requests']} (usage never reported)"
+        )
         lines.append(
             f"  this cycle would push: {report['pending_requests']} request(s)"
             f" (a cycle reads at most {_MAX_ROWS_PER_CYCLE} rows per store)"
@@ -548,6 +684,11 @@ def format_report(report: dict[str, Any]) -> str:
                 f" · {detail['requests']} requests · {detail['sessions']} sessions"
             )
     lines.append("")
+    warnings = report.get("warnings") or []
+    for warning in warnings:
+        lines.append(f"  WARNING: {warning}")
+    if warnings:
+        lines.append("")
     if report["ok"]:
         lines.append(
             "  RESULT: PASS — the sidecar on this host reports MiniMax Code usage "

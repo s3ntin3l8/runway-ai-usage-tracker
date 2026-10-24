@@ -1,13 +1,15 @@
 """Unit tests for the MiniMax Code read-only probe."""
 
 import json
+import sqlite3
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
 from scripts.sidecar_pkg import minimax_code_probe as probe
 from scripts.sidecar_pkg.event_extractors import minimax_code
-from tests.fixtures.minimax_code_fixture import make_minimax_code_store
+from tests.fixtures.minimax_code_fixture import DEFAULT_USAGE, make_minimax_code_store
 
 
 @pytest.fixture(autouse=True)
@@ -55,6 +57,166 @@ def test_probe_reports_the_store_and_passes(host):
     # exactly one request comes back without a model.
     assert report["models"]["(unresolved)"] == 1
     assert report["plan_review_requests"] > 0
+    # The fixture's rows are inside the first-run window.
+    assert report["out_of_window_requests"] == 0
+    assert report["skipped_requests"] == 0
+    assert report["abandoned_requests"] == 0
+    assert report["warnings"] == []
+
+
+def test_probe_reports_the_rows_outside_the_first_run_window(tmp_path, monkeypatch):
+    """The rows a first run would not import have to be visible.
+
+    While the cursor advances every row is reported, but a rebuilt store or
+    a deleted cursor file starts from the window — so the operator has to
+    know how much of the ledger sits outside it.
+    """
+    old_ts = 1_600_000_000_000  # 2020-09-13, far outside any window
+    usage = [{**DEFAULT_USAGE[0], "id": 1, "ts": old_ts}]
+    make_minimax_code_store(tmp_path, usage=usage)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    monkeypatch.setenv("RUNWAY_CONFIG_DIR", str(tmp_path / "config"))
+
+    report = probe.probe_minimax_code()
+
+    assert report["ok"] is True
+    assert report["out_of_window_requests"] == 1
+    assert any("SIDECAR_BOOTSTRAP_DAYS" in warning for warning in report["warnings"])
+    text = probe.format_report(report)
+    assert "not imported" in text
+    assert "WARNING" in text
+
+
+def test_probe_counts_only_the_rows_a_first_run_really_skips(tmp_path, monkeypatch):
+    """The window's floor is on the id axis, not on the timestamp.
+
+    A first run starts at the lowest id whose timestamp falls inside the
+    window, so a row with an older timestamp but a higher id is still
+    imported. Counting every old-timestamped row would overstate the gap.
+    """
+    now_ms = int(datetime.now(UTC).timestamp() * 1000)
+    usage = [
+        {**DEFAULT_USAGE[0], "id": 1, "ts": now_ms - 200 * 86_400_000},
+        {**DEFAULT_USAGE[1], "id": 2, "ts": now_ms},
+        {**DEFAULT_USAGE[2], "id": 3, "ts": now_ms - 200 * 86_400_000},
+    ]
+    make_minimax_code_store(tmp_path, usage=usage)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    monkeypatch.setenv("RUNWAY_CONFIG_DIR", str(tmp_path / "config"))
+
+    report = probe.probe_minimax_code()
+
+    # The first run starts at id 2, so only the row before it is skipped.
+    assert report["out_of_window_requests"] == 1
+    assert report["requests"] == 3
+
+
+def test_probe_reports_the_skips_its_own_extraction_finds(tmp_path, monkeypatch):
+    """A skip the probe's own run finds has to be reported.
+
+    The probe runs the real extractor and never commits, so the numbers
+    exist only in the extractor's parked bookkeeping — the cursor file on
+    disk cannot say them.
+    """
+    usage = [
+        {**DEFAULT_USAGE[0], "id": 1},
+        {**DEFAULT_USAGE[1], "id": 2, "ts": "not-a-timestamp"},
+    ]
+    make_minimax_code_store(tmp_path, usage=usage)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    monkeypatch.setenv("RUNWAY_CONFIG_DIR", str(tmp_path / "config"))
+
+    report = probe.probe_minimax_code()
+
+    assert report["skipped_requests"] == 1
+    assert any("skipped" in warning for warning in report["warnings"])
+    text = probe.format_report(report)
+    assert "skipped requests    : 1" in text
+    assert "WARNING" in text
+
+
+def test_probe_reports_the_persisted_skips_of_an_idle_store(tmp_path, monkeypatch):
+    """A store with no rows past the cursor still has its persisted skips.
+
+    The probe's own run has no opinion there — nothing to read — so the
+    cursor file is the only record of what is still blocked. This is the
+    steady state of an idle host, which is exactly when an operator runs
+    the probe to ask where the usage went.
+    """
+    make_minimax_code_store(tmp_path)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    monkeypatch.setenv("RUNWAY_CONFIG_DIR", str(tmp_path / "config"))
+
+    # The cursor sits on the last row, so the probe's own run has nothing to
+    # read — and the cursor remembers a row it skipped and one it abandoned.
+    db_path = tmp_path / ".minimax" / "v2" / "sqlite" / "runtime-state.sqlite"
+    with sqlite3.connect(f"{db_path.resolve().as_uri()}?mode=ro", uri=True) as conn:
+        max_id = conn.execute("SELECT MAX(id) FROM local_runtime_token_usage").fetchone()[0]
+    cursor = probe._cursor_path()
+    cursor.parent.mkdir(parents=True, exist_ok=True)
+    cursor.write_text(
+        json.dumps(
+            {
+                "databases": {
+                    str(db_path.resolve()): {
+                        "last_id": max_id,
+                        "skipped": {"7": 1},
+                        "abandoned": [2],
+                    }
+                }
+            }
+        )
+    )
+
+    report = probe.probe_minimax_code()
+
+    assert report["skipped_requests"] == 1
+    assert report["abandoned_requests"] == 1
+    assert any("abandoned" in warning for warning in report["warnings"])
+    text = probe.format_report(report)
+    assert "skipped requests    : 1" in text
+    assert "abandoned requests  : 1" in text
+
+
+def test_probe_does_not_repeat_the_store_key_in_the_json_report(tmp_path, monkeypatch):
+    """The store's key is plumbing; the report already carries its path."""
+    make_minimax_code_store(tmp_path)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    monkeypatch.setenv("RUNWAY_CONFIG_DIR", str(tmp_path / "config"))
+
+    report = probe.probe_minimax_code()
+
+    for store in report["stores"]:
+        assert "db_key" not in store
+        assert store["path"]
+
+
+def test_probe_reports_the_skipped_and_abandoned_rows(host):
+    """A row the extractor gave up on has to reach the operator."""
+    cursor = probe._cursor_path()
+    cursor.parent.mkdir(parents=True, exist_ok=True)
+    cursor.write_text(
+        json.dumps(
+            {
+                "databases": {
+                    "/db/runtime-state.sqlite": {
+                        "last_id": 42,
+                        "skipped": {"41": 1},
+                        "abandoned": [7],
+                    }
+                }
+            }
+        )
+    )
+
+    report = probe.probe_minimax_code()
+
+    assert report["skipped_requests"] == 1
+    assert report["abandoned_requests"] == 1
+    assert any("abandoned" in warning for warning in report["warnings"])
+    text = probe.format_report(report)
+    assert "skipped requests" in text
+    assert "abandoned requests" in text
 
 
 def test_probe_fails_when_the_runtime_never_ran(tmp_path, monkeypatch):

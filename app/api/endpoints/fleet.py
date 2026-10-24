@@ -5,7 +5,7 @@ from typing import Any, Literal, cast
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from pydantic import BaseModel, Field, ValidationError, field_validator
-from sqlalchemy import or_
+from sqlalchemy import or_, text
 from sqlmodel import Session, col, func, select
 
 from app.core.date_utils import parse_iso8601_utc
@@ -2332,82 +2332,226 @@ async def list_pending_usage_sessions(
     _: None = Depends(require_admin_key),
 ) -> dict[str, Any]:
     """Group pending usage by provider, sidecar, and session for review."""
-    rows = list(
-        session.exec(
-            select(PendingUsageEvent).order_by(cast(Any, PendingUsageEvent.ts).desc())
-        ).all()
+    return _pending_usage_session_groups(
+        session,
+        offset=offset,
+        limit=limit,
+        sidecar_id=sidecar_id,
+        provider_id=provider_id,
+        search=search,
     )
-    groups: dict[tuple[str, str, str], dict[str, Any]] = {}
-    for row in rows:
-        try:
-            payload = json.loads(row.payload_json)
-        except (json.JSONDecodeError, TypeError):
-            payload = {}
-        if not isinstance(payload, dict):
-            payload = {}
-        session_id = payload.get("session_id")
-        if not isinstance(session_id, str) or not session_id:
-            # Missing session IDs cannot safely identify related events.
-            key = (row.provider_id, row.sidecar_id, f"event:{row.id}")
-            visible_session_id = None
-        else:
-            key = (row.provider_id, row.sidecar_id, f"session:{session_id}")
-            visible_session_id = session_id
 
-        group = groups.get(key)
-        if group is None:
-            group = {
+
+# The pending table can hold tens of thousands of rows and the Fleet card
+# polls this endpoint every minute, so the grouping happens in SQL. Loading
+# every pending row into Python to group it there made the page slower the
+# bigger the backlog got — and a bigger backlog is exactly what a backlog
+# that cannot be drained in one request produces.
+#
+# The rows are grouped by provider, sidecar and session. A row without a
+# usable session id stands alone: missing session ids cannot safely
+# identify related events.
+#
+# SQLite: this query needs **SQLite 3.38 or newer**. It uses the JSON
+# functions (native from 3.38, JSON1 before that) and `AS MATERIALIZED`
+# (3.35+), which is what keeps the extracted rows in a transient table
+# instead of being re-evaluated per reference — without it the plan
+# collapses and a 50,000-row backlog takes minutes rather than seconds.
+# The app runs against the *system* SQLite, not the one bundled with
+# Python, so the minimum is pinned here and checked at startup
+# (`app/core/db.py`): Debian 12 ships 3.40, macOS 14 ships 3.43, both
+# fine. The query deliberately avoids `group_concat(... ORDER BY ...)`
+# (3.44+) — the group's event ids are a set, not a sequence.
+_PENDING_SESSION_GROUPS_SQL = text(
+    r"""
+    WITH extracted AS MATERIALIZED (
+        SELECT
+            id,
+            provider_id,
+            sidecar_id,
+            ts,
+            CASE
+                WHEN NOT json_valid(payload_json) THEN 'event:' || id
+                WHEN json_type(payload_json, '$.session_id') = 'text'
+                     AND json_extract(payload_json, '$.session_id') <> ''
+                    THEN 'session:' || json_extract(payload_json, '$.session_id')
+                ELSE 'event:' || id
+            END AS session_key,
+            CASE
+                WHEN NOT json_valid(payload_json) THEN NULL
+                WHEN json_type(payload_json, '$.session_id') = 'text'
+                     AND json_extract(payload_json, '$.session_id') <> ''
+                    THEN json_extract(payload_json, '$.session_id')
+                ELSE NULL
+            END AS session_id,
+            CASE
+                WHEN NOT json_valid(payload_json) THEN NULL
+                WHEN json_type(payload_json, '$.model_id') = 'text'
+                     AND json_extract(payload_json, '$.model_id') <> ''
+                    THEN json_extract(payload_json, '$.model_id')
+                ELSE NULL
+            END AS model_id
+        FROM pending_usage_events
+    ),
+    matched AS (
+        -- The groups the filters select. The search matches a row when the
+        -- needle is in its session id or in its model id, so a group is
+        -- selected when one of its rows matches.
+        SELECT provider_id, sidecar_id, session_key
+        FROM extracted
+        WHERE (:sidecar_id IS NULL OR sidecar_id = :sidecar_id)
+          AND (:provider_id IS NULL OR provider_id = :provider_id)
+          AND (
+              :search IS NULL
+              OR lower(COALESCE(session_id, '')) LIKE :search ESCAPE '\'
+              OR lower(COALESCE(model_id, '')) LIKE :search ESCAPE '\'
+          )
+        GROUP BY provider_id, sidecar_id, session_key
+    ),
+    groups AS (
+        SELECT
+            e.provider_id,
+            e.sidecar_id,
+            e.session_key,
+            MIN(e.session_id) AS session_id,
+            COUNT(*) AS event_count,
+            MIN(e.ts) AS first_ts,
+            MAX(e.ts) AS last_ts,
+            -- The ids of a group are a set, not a sequence: the server
+            -- promotes them together and the client sends them back as
+            -- they came. Sorting them would need SQLite 3.44's
+            -- `group_concat(... ORDER BY ...)`, which the system SQLite on
+            -- Debian 12 and macOS 14 does not have.
+            group_concat(e.id) AS event_ids,
+            group_concat(DISTINCT e.model_id) AS model_ids
+        FROM extracted e
+        JOIN matched m
+          ON m.provider_id = e.provider_id
+         AND m.sidecar_id = e.sidecar_id
+         AND m.session_key = e.session_key
+        GROUP BY e.provider_id, e.sidecar_id, e.session_key
+    ),
+    page AS (
+        -- The session key breaks ties, so a group cannot move between two
+        -- pages while the operator pages through the backlog.
+        SELECT * FROM groups ORDER BY last_ts DESC, session_key ASC
+        LIMIT :limit OFFSET :offset
+    ),
+    counts AS (
+        SELECT
+            (SELECT COUNT(*) FROM groups) AS total_groups,
+            (SELECT COALESCE(SUM(event_count), 0) FROM groups) AS matching_events,
+            (SELECT COUNT(*) FROM pending_usage_events) AS total_events,
+            (
+                SELECT json_group_array(value)
+                FROM (SELECT DISTINCT sidecar_id AS value FROM pending_usage_events ORDER BY sidecar_id)
+            ) AS sidecars,
+            (
+                SELECT json_group_array(value)
+                FROM (SELECT DISTINCT provider_id AS value FROM pending_usage_events ORDER BY provider_id)
+            ) AS providers
+    )
+    SELECT
+        p.provider_id,
+        p.sidecar_id,
+        p.session_id,
+        p.event_count,
+        p.first_ts,
+        p.last_ts,
+        p.event_ids,
+        p.model_ids,
+        c.total_groups,
+        c.matching_events,
+        c.total_events,
+        c.sidecars,
+        c.providers
+    FROM counts c
+    LEFT JOIN page p ON 1 = 1
+    """
+)
+
+
+def _escape_like(value: str) -> str:
+    """Escape the characters a LIKE pattern would read as wildcards.
+
+    The search is a plain substring search, so a needle that contains a
+    ``%`` or a ``_`` has to be taken literally.
+    """
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _pending_stored_ts(value: str) -> datetime:
+    """Read a stored timestamp the way the ORM reads it."""
+    return datetime.fromisoformat(value)
+
+
+def _pending_usage_session_groups(
+    session: Session,
+    *,
+    offset: int,
+    limit: int,
+    sidecar_id: str | None,
+    provider_id: str | None,
+    search: str | None,
+) -> dict[str, Any]:
+    """Group the pending usage events for the review table.
+
+    The grouping runs in SQL (see :data:`_PENDING_SESSION_GROUPS_SQL`) so
+    the page cost does not grow with the backlog.
+    """
+    needle = search.strip().casefold() if search else ""
+    pattern = f"%{_escape_like(needle)}%" if needle else None
+    rows = session.execute(
+        _PENDING_SESSION_GROUPS_SQL,
+        {
+            "sidecar_id": sidecar_id,
+            "provider_id": provider_id,
+            "search": pattern,
+            "limit": limit,
+            "offset": offset,
+        },
+    ).all()
+
+    items: list[dict[str, Any]] = []
+    totals: dict[str, Any] = {
+        "total_events": 0,
+        "matching_events": 0,
+        "total_groups": 0,
+        "sidecars": [],
+        "providers": [],
+    }
+    for row in rows:
+        totals = {
+            "total_events": int(row.total_events or 0),
+            "matching_events": int(row.matching_events or 0),
+            "total_groups": int(row.total_groups or 0),
+            # Sorted here rather than in SQL: an aggregate's row order is
+            # not guaranteed, and the list is the same either way.
+            "sidecars": sorted(json.loads(row.sidecars)) if row.sidecars else [],
+            "providers": sorted(json.loads(row.providers)) if row.providers else [],
+        }
+        if row.provider_id is None:
+            # The counts row of an empty page.
+            continue
+        items.append(
+            {
                 "provider_id": row.provider_id,
                 "sidecar_id": row.sidecar_id,
-                "session_id": visible_session_id,
-                "event_ids": [],
-                "event_count": 0,
-                "first_ts": row.ts,
-                "last_ts": row.ts,
-                "model_ids": set(),
+                "session_id": row.session_id,
+                "event_ids": [int(value) for value in (row.event_ids or "").split(",") if value],
+                "event_count": int(row.event_count or 0),
+                "first_ts": iso_utc(_pending_stored_ts(row.first_ts)),
+                "last_ts": iso_utc(_pending_stored_ts(row.last_ts)),
+                "model_ids": sorted({value for value in (row.model_ids or "").split(",") if value}),
             }
-            groups[key] = group
-        group["event_ids"].append(row.id)
-        group["event_count"] += 1
-        group["first_ts"] = min(group["first_ts"], row.ts)
-        group["last_ts"] = max(group["last_ts"], row.ts)
-        model_id = payload.get("model_id")
-        if isinstance(model_id, str) and model_id:
-            group["model_ids"].add(model_id)
-
-    all_groups = list(groups.values())
-    sidecars = sorted({group["sidecar_id"] for group in all_groups})
-    providers = sorted({group["provider_id"] for group in all_groups})
-    needle = search.strip().casefold() if search else ""
-    filtered = [
-        group
-        for group in all_groups
-        if (sidecar_id is None or group["sidecar_id"] == sidecar_id)
-        and (provider_id is None or group["provider_id"] == provider_id)
-        and (
-            not needle
-            or needle in (group["session_id"] or "").casefold()
-            or any(needle in model_id.casefold() for model_id in group["model_ids"])
         )
-    ]
-    ordered = sorted(filtered, key=lambda group: group["last_ts"], reverse=True)
-    page = ordered[offset : offset + limit]
-    items = [
-        {
-            **group,
-            "first_ts": group["first_ts"].isoformat(),
-            "last_ts": group["last_ts"].isoformat(),
-            "model_ids": sorted(group["model_ids"]),
-        }
-        for group in page
-    ]
     return {
         "items": items,
-        "total_events": sum(group["event_count"] for group in all_groups),
-        "matching_events": sum(group["event_count"] for group in ordered),
-        "total_groups": len(ordered),
-        "sidecars": sidecars,
-        "providers": providers,
+        "total_events": totals["total_events"],
+        "matching_events": totals["matching_events"],
+        "total_groups": totals["total_groups"],
+        "sidecars": totals["sidecars"],
+        "providers": totals["providers"],
         "offset": offset,
         "limit": limit,
     }

@@ -1,6 +1,8 @@
 import logging
 import os
+import sqlite3
 from collections.abc import Iterator
+from functools import lru_cache
 from typing import Any
 
 from sqlalchemy import event
@@ -10,6 +12,41 @@ from sqlmodel import Session, SQLModel, create_engine, select
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+
+@lru_cache(maxsize=1)
+def _warn_once_about_sqlite_capabilities() -> None:
+    """Warn once per process when this SQLite build cannot serve the JSON query.
+
+    The pending-events view groups in SQL and needs SQLite 3.38: the JSON
+    functions (native from 3.38, JSON1 before that) and ``AS MATERIALIZED``
+    (3.35+), which is what keeps the plan sane. The app runs against the
+    *system* SQLite — Debian 12 ships 3.40, macOS 14 ships 3.43 — so a
+    source install can land on a build that is too old. Say so at startup
+    rather than letting the query fail with an opaque error later.
+
+    The answer cannot change while the process runs, and a pool opens and
+    drops connections all day, so it is computed once. The JSON functions
+    belong to the SQLite *library*, so probing an in-memory connection
+    tests exactly the library the file database is opened with.
+    """
+    problem: str | None = None
+    if sqlite3.sqlite_version_info < (3, 38):
+        problem = f"SQLite {sqlite3.sqlite_version} is older than 3.38"
+    else:
+        probe = sqlite3.connect(":memory:")
+        try:
+            probe.execute("SELECT json_valid('{}')")
+        except sqlite3.Error as exc:  # pragma: no cover - depends on the build
+            problem = f"this SQLite build has no JSON functions ({exc})"
+        finally:
+            probe.close()
+    if problem:
+        logger.warning(
+            "%s; the Fleet 'unassigned usage' view needs SQLite 3.38 or newer.",
+            problem,
+        )
+
 
 # Ensure data directory exists
 db_dir = os.path.dirname(settings.DATABASE_PATH)
@@ -58,6 +95,9 @@ def configure_sqlite_engine(engine_: Engine) -> None:
     def _on_connect(dbapi_conn: Any, _conn_record: Any) -> None:
         dbapi_conn.isolation_level = None
         cursor = dbapi_conn.cursor()
+        # Warns once per process if this SQLite build is too old for the
+        # pending-events query.
+        _warn_once_about_sqlite_capabilities()
         try:
             # `journal_mode=WAL` returns the journal mode actually in effect
             # ("memory" for :memory: DBs, "wal" for files). Either way it's

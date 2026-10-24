@@ -220,6 +220,20 @@ _REQUIRED_COLUMNS: dict[str, tuple[str, ...]] = {
 # one enormous push.
 _MAX_ROWS_PER_CYCLE = 5000
 
+# How many cycles a row may be skipped before the extractor gives up on it.
+#
+# A skipped row (an unusable timestamp, a colliding event id, a payload the
+# schema rejects) blocks the cursor: the cursor must not step over it, or the
+# row's usage is lost for good. The row is retried on every cycle until this
+# bound is reached; after that it is reported and abandoned, because a row
+# that cannot be turned into a valid push will never become one.
+_MAX_SKIP_ATTEMPTS = 3
+
+# How many abandoned row ids the cursor file keeps per store. The list is a
+# report for the operator — the rows are already gone from the ledger's
+# perspective — so it is capped rather than allowed to grow forever.
+_MAX_ABANDONED_RECORDS = 100
+
 # The provider prefix the runtime writes into ``effectiveModel``. The
 # pricing seed keys on the bare model id, so the prefix is stripped.
 _PROVIDER_MODEL_PREFIX = "minimax/"
@@ -454,10 +468,88 @@ def _save_state(path: Path, state: dict[str, Any]) -> bool:
         return False
 
 
+def _skipped_map(entry: Any) -> dict[int, int]:
+    """Read the persisted skip bookkeeping for one store.
+
+    The map is ``row id -> attempts``. A row that cannot be turned into a
+    valid push stays in it until it is emitted or abandoned, and the cursor
+    stops in front of it.
+    """
+    if not isinstance(entry, dict):
+        return {}
+    raw = entry.get("skipped")
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[int, int] = {}
+    for key, attempts in raw.items():
+        try:
+            out[int(key)] = int(attempts)
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _abandoned_list(entry: Any) -> list[int]:
+    """Read the persisted list of abandoned row ids for one store.
+
+    An abandoned row is one that could not be turned into a usage event
+    within the attempt bound. It is kept so the probe can tell the operator
+    that this usage was never reported.
+    """
+    if not isinstance(entry, dict):
+        return []
+    raw = entry.get("abandoned")
+    if not isinstance(raw, list):
+        return []
+    out: list[int] = []
+    for value in raw:
+        try:
+            out.append(int(value))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
 # state-file path -> {database path: last emitted id}. The cursor only moves
 # once the server confirms the ingest, so the advance is parked here until
 # :func:`commit_pending_state` runs.
 _PENDING_ADVANCES: dict[str, dict[str, int]] = {}
+
+# state-file path -> {database path: {"skipped": {row id: attempts},
+# "abandoned": [row id]}}. The rows the cursor may not step over, and the rows
+# it gave up on. Parked alongside the advance, so a failed push neither
+# advances the cursor nor counts an attempt.
+_PENDING_SKIPS: dict[str, dict[str, dict[str, Any]]] = {}
+
+
+def parked_skip_counts(state_file: Path, db_path: Path) -> tuple[int, int] | None:
+    """Return the (skipped, abandoned) counts the last extraction parked.
+
+    The extractor parks its skip bookkeeping next to the cursor advance, and
+    the advance is only written when the server confirms the ingest. A reader
+    that runs the extractor without committing — the probe does exactly that
+    — therefore cannot read the numbers from the cursor file: they only
+    exist in memory. This is where such a run's own numbers come from.
+
+    Returns None when the last extraction parked nothing for this store —
+    no rows past the cursor, or the store could not be read at all. That is
+    not "nothing is skipped": it means the run has no opinion, and the
+    cursor file stays the only record.
+    """
+    try:
+        state_key = str(Path(state_file).resolve())
+        db_key = str(Path(db_path).resolve())
+    except OSError:
+        return None
+    parked = _PENDING_SKIPS.get(state_key, {}).get(db_key)
+    if not isinstance(parked, dict):
+        return None
+    skipped = parked.get("skipped")
+    abandoned = parked.get("abandoned")
+    return (
+        len(skipped) if isinstance(skipped, dict) else 0,
+        len(abandoned) if isinstance(abandoned, list) else 0,
+    )
 
 
 def commit_pending_state() -> bool:
@@ -477,15 +569,31 @@ def commit_pending_state() -> bool:
         databases = state.get("databases")
         if not isinstance(databases, dict):
             databases = {}
+        skips = _PENDING_SKIPS.get(state_key, {})
         for db_key, last_id in advances.items():
+            entry: dict[str, Any] = {"last_id": last_id}
+            parked = skips.get(db_key)
+            if parked:
+                entry["skipped"] = parked.get("skipped") or {}
+                entry["abandoned"] = parked.get("abandoned") or []
+            else:
+                # A store that was scanned without a single skip keeps the
+                # bookkeeping it already had: the extractor's effective map
+                # is pruned, not emptied, so a blocked row that was not
+                # re-read this cycle is not forgotten.
+                previous = databases.get(db_key)
+                if isinstance(previous, dict):
+                    entry["skipped"] = previous.get("skipped") or {}
+                    entry["abandoned"] = previous.get("abandoned") or []
             # Overwrite, never raise: a rebuilt store restarts the id axis,
             # so the new cursor can be *lower* than the old one. Keeping
             # the maximum would leave the cursor past the end of the new
             # table and re-emit the whole store on every cycle.
-            databases[db_key] = {"last_id": last_id}
+            databases[db_key] = entry
         state["databases"] = databases
         if _save_state(Path(state_key), state):
             _PENDING_ADVANCES.pop(state_key, None)
+            _PENDING_SKIPS.pop(state_key, None)
         else:
             committed = False
     return committed
@@ -495,9 +603,11 @@ def discard_pending_state() -> None:
     """Drop the parked cursor advances (the ingest failed).
 
     The rows stay un-advanced, so the next cycle re-extracts and re-pushes
-    them.
+    them. The skip bookkeeping goes with them: a failed push is not an
+    attempt at the row that failed to become an event.
     """
     _PENDING_ADVANCES.clear()
+    _PENDING_SKIPS.clear()
 
 
 def _chunks[T](items: list[T], size: int) -> list[list[T]]:
@@ -994,6 +1104,10 @@ def parse_minimax_code_events(
     entry = databases.get(db_key)
     has_cursor = isinstance(entry, dict)
     persisted_last_id = int((entry or {}).get("last_id", 0) or 0)
+    # The rows the cursor may not step over, and the rows it gave up on.
+    # Both live in the cursor file next to the id they belong to.
+    skipped = _skipped_map(entry)
+    abandoned = _abandoned_list(entry)
 
     # The scan floor is the *persisted* cursor and nothing else. A pending
     # advance must never act as a floor: it is parked before the push, so
@@ -1038,6 +1152,11 @@ def parse_minimax_code_events(
                 max_id,
             )
             last_id = 0
+            # The skip bookkeeping belongs to the old store's rows. On the
+            # new store the same ids mean different requests, so it is
+            # dropped with the cursor.
+            skipped = {}
+            abandoned = []
         elif not has_cursor:
             # No cursor at all: the bootstrap window decides where to start.
             # The window is the *only* floor that is safe here — the shared
@@ -1119,6 +1238,40 @@ def parse_minimax_code_events(
         model_cache: dict[str, str | None] = {}
         seen_event_ids: set[str] = set()
         covered_id = last_id
+        # The lowest row id the cursor may not step over. A skipped row is
+        # retried on the next cycle, so the cursor stops in front of it.
+        blocked_id: int | None = None
+
+        def _skip(row_id: int, reason: str) -> None:
+            """Record a row the extractor could not turn into an event.
+
+            The cursor must not step over the row: stepping over it would
+            lose its usage for good. It is retried on every cycle until
+            ``_MAX_SKIP_ATTEMPTS`` attempts are spent, and only then is it
+            abandoned — and then it is reported, never dropped quietly.
+            """
+            nonlocal blocked_id
+            attempts = skipped.get(row_id, 0) + 1
+            if attempts >= _MAX_SKIP_ATTEMPTS:
+                skipped.pop(row_id, None)
+                abandoned.append(row_id)
+                logger.error(
+                    "MiniMax Code request %s could not be turned into a usage event "
+                    "after %d attempts (%s); abandoning it — this usage is not reported",
+                    row_id,
+                    attempts,
+                    reason,
+                )
+                return
+            skipped[row_id] = attempts
+            if blocked_id is None or row_id < blocked_id:
+                blocked_id = row_id
+            logger.warning(
+                "MiniMax Code request %s skipped (%s); the cursor stops before it and "
+                "the row is retried on the next cycle",
+                row_id,
+                reason,
+            )
 
         for row in rows:
             row_id = int(row["id"])
@@ -1129,11 +1282,7 @@ def parse_minimax_code_events(
                 ts_ms = int(row["ts"])
                 ts = datetime.fromtimestamp(ts_ms / 1000, tz=UTC)
             except (TypeError, ValueError, OverflowError, OSError):
-                logger.warning(
-                    "MiniMax Code request %s has an unusable timestamp %r; skipping",
-                    row_id,
-                    row["ts"],
-                )
+                _skip(row_id, f"unusable timestamp {row['ts']!r}")
                 continue
 
             key = (
@@ -1204,11 +1353,7 @@ def parse_minimax_code_events(
                 # usage, which the server would deduplicate anyway.
                 event_id = f"{event_id}:{row_id}"
                 if event_id in seen_event_ids:
-                    logger.warning(
-                        "MiniMax Code request %s collides with an earlier event id %s; skipping",
-                        row_id,
-                        event_id,
-                    )
+                    _skip(row_id, f"collides with the earlier event id {event_id}")
                     continue
             seen_event_ids.add(event_id)
 
@@ -1243,10 +1388,42 @@ def parse_minimax_code_events(
                     )
                 )
             except ValidationError as exc:
-                logger.warning("Skipping MiniMax Code request %s: %s", row_id, exc)
+                _skip(row_id, f"the usage event is not valid: {exc}")
                 continue
 
+        if blocked_id is not None:
+            # The cursor stops in front of the skipped row: the next cycle
+            # reads it again. The rows after it are re-read too, and the
+            # server deduplicates them — a re-push is a no-op, not a double
+            # count.
+            covered_id = min(covered_id, blocked_id - 1)
+        if skipped:
+            logger.warning(
+                "MiniMax Code runtime store %s: %d request(s) skipped and will be retried; "
+                "the cursor stops before id %s",
+                db_path,
+                len(skipped),
+                blocked_id,
+            )
+        if abandoned:
+            logger.error(
+                "MiniMax Code runtime store %s: %d request(s) abandoned — their usage is "
+                "not reported",
+                db_path,
+                len(abandoned),
+            )
+
+        # The skip bookkeeping only keeps the rows the cursor has not passed
+        # yet: a row behind the cursor was either emitted or given up on.
+        parked_skips = {
+            row_id: attempts for row_id, attempts in skipped.items() if row_id > covered_id
+        }
+        parked_abandoned = abandoned[-_MAX_ABANDONED_RECORDS:]
         _PENDING_ADVANCES.setdefault(state_key, {})[db_key] = covered_id
+        _PENDING_SKIPS.setdefault(state_key, {})[db_key] = {
+            "skipped": parked_skips,
+            "abandoned": parked_abandoned,
+        }
         return events
     except (sqlite3.Error, CursorReadError) as exc:
         # A locked, corrupt or drifted store is a skipped source, not a

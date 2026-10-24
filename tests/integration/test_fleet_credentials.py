@@ -2030,6 +2030,342 @@ def test_pending_usage_sessions_filter_groups_before_pagination(
     assert data["items"][0]["event_ids"]
 
 
+def test_pending_usage_sessions_groups_a_mixed_backlog_the_same_way_in_sql(
+    client: TestClient, session: Session
+):
+    """The grouping runs in SQL now; the result must not change.
+
+    A row only shares a group with another row when both carry the same
+    usable session id. A missing, empty or non-string session id — and a
+    payload that is not JSON at all — keeps the row on its own.
+    """
+    from datetime import datetime
+
+    from app.models.db import PendingUsageEvent
+    from app.models.schemas import UsageEventPush
+
+    rows = [
+        # Two rows share a session, so they share a group.
+        ("xai", "shared-1", "host-a", "session-a", "grok-4", "2026-09-01T10:00:00Z"),
+        ("xai", "shared-2", "host-a", "session-a", "grok-4", "2026-09-01T10:01:00Z"),
+        # A second model in the same session joins the same group.
+        ("xai", "shared-3", "host-a", "session-a", "grok-3", "2026-09-01T10:02:00Z"),
+        # The same session id on another host is another group.
+        ("xai", "other-host", "host-b", "session-a", "grok-4", "2026-09-01T10:03:00Z"),
+        # Another provider with the same session id is another group.
+        ("minimax", "other-provider", "host-a", "session-a", "abab-7", "2026-09-01T10:04:00Z"),
+        # No session id at all: the row stands alone.
+        ("xai", "no-session", "host-a", None, "grok-4", "2026-09-01T10:05:00Z"),
+    ]
+    for provider_id, event_id, sidecar_id, session_id, model_id, ts in rows:
+        push = UsageEventPush(
+            provider_id=provider_id,
+            account_id="default",
+            account_source="default",
+            event_id=event_id,
+            ts=ts,
+            model_id=model_id,
+            session_id=session_id,
+        )
+        session.add(
+            PendingUsageEvent(
+                provider_id=provider_id,
+                event_id=push.event_id,
+                sidecar_id=sidecar_id,
+                ts=datetime.fromisoformat(push.ts.replace("Z", "+00:00")),
+                payload_json=push.model_dump_json(),
+            )
+        )
+    # A payload that is not JSON, and one whose session id is not a string.
+    session.add(
+        PendingUsageEvent(
+            provider_id="xai",
+            event_id="broken-payload",
+            sidecar_id="host-a",
+            ts=datetime.fromisoformat("2026-09-01T10:06:00+00:00"),
+            payload_json="not json at all",
+        )
+    )
+    session.add(
+        PendingUsageEvent(
+            provider_id="xai",
+            event_id="numeric-session",
+            sidecar_id="host-a",
+            ts=datetime.fromisoformat("2026-09-01T10:07:00+00:00"),
+            payload_json='{"session_id": 4711, "model_id": "grok-4"}',
+        )
+    )
+    session.commit()
+
+    response = client.get("/api/v1/fleet/events/pending/sessions")
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["total_events"] == 8
+    assert data["matching_events"] == 8
+    assert data["total_groups"] == 6
+    assert data["sidecars"] == ["host-a", "host-b"]
+    assert data["providers"] == ["minimax", "xai"]
+
+    by_session = {item["session_id"]: item for item in data["items"]}
+    shared = by_session["session-a"]
+    assert shared["provider_id"] == "xai"
+    assert shared["sidecar_id"] == "host-a"
+    assert shared["event_count"] == 3
+    assert len(shared["event_ids"]) == 3
+    assert shared["model_ids"] == ["grok-3", "grok-4"]
+    assert shared["first_ts"] == "2026-09-01T10:00:00+00:00"
+    assert shared["last_ts"] == "2026-09-01T10:02:00+00:00"
+
+    # The rows without a usable session id stand alone.
+    standalone = [item for item in data["items"] if item["session_id"] is None]
+    assert len(standalone) == 3
+    assert all(item["event_count"] == 1 for item in standalone)
+
+    # The groups come back newest first.
+    assert [item["last_ts"] for item in data["items"]] == sorted(
+        (item["last_ts"] for item in data["items"]), reverse=True
+    )
+
+
+def test_pending_usage_sessions_search_matches_sessions_and_models(
+    client: TestClient, session: Session
+):
+    from datetime import datetime
+
+    from app.models.db import PendingUsageEvent
+    from app.models.schemas import UsageEventPush
+
+    for event_id, session_id, model_id in (
+        ("search-a", "alpha-session", "grok-4"),
+        ("search-b", "beta-session", "claude-3-5"),
+        ("search-c", "gamma-session", "grok-4"),
+    ):
+        push = UsageEventPush(
+            provider_id="xai",
+            account_id="default",
+            account_source="default",
+            event_id=event_id,
+            ts="2026-09-01T10:00:00Z",
+            model_id=model_id,
+            session_id=session_id,
+        )
+        session.add(
+            PendingUsageEvent(
+                provider_id="xai",
+                event_id=push.event_id,
+                sidecar_id="host-a",
+                ts=datetime.fromisoformat(push.ts.replace("Z", "+00:00")),
+                payload_json=push.model_dump_json(),
+            )
+        )
+    session.commit()
+
+    def groups(**params):
+        response = client.get("/api/v1/fleet/events/pending/sessions", params=params)
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    # A model id matches, and the whole group comes back with it.
+    by_model = groups(search="grok")
+    assert by_model["total_groups"] == 2
+    assert by_model["matching_events"] == 2
+
+    # A session id matches.
+    by_session = groups(search="beta")
+    assert by_session["total_groups"] == 1
+    assert by_session["items"][0]["session_id"] == "beta-session"
+
+    # The search is a plain substring search: a wildcard is taken literally.
+    literal = groups(search="%")
+    assert literal["total_groups"] == 0
+    underscore = groups(search="_")
+    assert underscore["total_groups"] == 0
+
+    # The filters narrow the groups but not the totals.
+    narrowed = groups(provider_id="xai", search="grok")
+    assert narrowed["total_groups"] == 2
+    other = groups(provider_id="minimax", search="grok")
+    assert other["total_groups"] == 0
+    assert other["total_events"] == 3
+
+
+def test_pending_usage_sessions_paginates_the_groups(client: TestClient, session: Session):
+    from datetime import datetime
+
+    from app.models.db import PendingUsageEvent
+    from app.models.schemas import UsageEventPush
+
+    for index in range(5):
+        push = UsageEventPush(
+            provider_id="xai",
+            account_id="default",
+            account_source="default",
+            event_id=f"page-{index}",
+            ts=f"2026-09-01T10:0{index}:00Z",
+            model_id="grok-4",
+            session_id=f"page-session-{index}",
+        )
+        session.add(
+            PendingUsageEvent(
+                provider_id="xai",
+                event_id=push.event_id,
+                sidecar_id="host-a",
+                ts=datetime.fromisoformat(push.ts.replace("Z", "+00:00")),
+                payload_json=push.model_dump_json(),
+            )
+        )
+    session.commit()
+
+    response = client.get("/api/v1/fleet/events/pending/sessions", params={"offset": 1, "limit": 2})
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["total_groups"] == 5
+    assert data["matching_events"] == 5
+    assert [item["session_id"] for item in data["items"]] == [
+        "page-session-3",
+        "page-session-2",
+    ]
+    assert data["offset"] == 1
+    assert data["limit"] == 2
+
+    # A page past the end still reports the totals.
+    empty = client.get("/api/v1/fleet/events/pending/sessions", params={"offset": 99, "limit": 2})
+    assert empty.status_code == 200, empty.text
+    assert empty.json()["items"] == []
+    assert empty.json()["total_groups"] == 5
+    assert empty.json()["total_events"] == 5
+
+
+def test_pending_usage_assignment_guards_the_request_size_and_keeps_the_events(
+    client: TestClient, session: Session
+):
+    """An oversized request is refused without touching the backlog.
+
+    The guard is what stops one request from carrying an unbounded number
+    of events. It must refuse *before* anything is promoted: the events stay
+    pending and can be assigned in smaller batches.
+    """
+    from datetime import datetime
+
+    from app.models.db import PendingUsageEvent, UsageEvent
+    from app.models.schemas import UsageEventPush
+
+    _add_provider_config(session, provider_id="xai", account_id="alice@example.com")
+    push = UsageEventPush(
+        provider_id="xai",
+        account_id="default",
+        account_source="default",
+        event_id="guard-event",
+        ts="2026-09-01T10:00:00Z",
+        model_id="grok-4",
+        session_id="guard-session",
+    )
+    session.add(
+        PendingUsageEvent(
+            provider_id="xai",
+            event_id=push.event_id,
+            sidecar_id="host-a",
+            ts=datetime.fromisoformat(push.ts.replace("Z", "+00:00")),
+            payload_json=push.model_dump_json(),
+        )
+    )
+    session.commit()
+    pending = session.exec(select(PendingUsageEvent)).first()
+    assert pending is not None
+
+    oversized_batch = client.post(
+        "/api/v1/fleet/events/pending/assign-batch",
+        json={
+            "assignments": [
+                {
+                    "event_ids": list(range(10_001)),
+                    "account_id": "alice@example.com",
+                }
+            ]
+        },
+    )
+    assert oversized_batch.status_code == 422
+    assert oversized_batch.json()["detail"] == "Select between 1 and 10000 events."
+
+    oversized_single = client.post(
+        "/api/v1/fleet/events/pending/assign",
+        json={"event_ids": list(range(1001)), "account_id": "alice@example.com"},
+    )
+    assert oversized_single.status_code == 422
+    assert oversized_single.json()["detail"] == "Select between 1 and 1000 events."
+
+    # Nothing was promoted: the event is still pending and no usage event
+    # was written.
+    still_pending = session.exec(select(PendingUsageEvent)).all()
+    assert [row.event_id for row in still_pending] == ["guard-event"]
+    assert session.exec(select(UsageEvent)).all() == []
+
+
+def test_pending_usage_batch_assigns_a_split_session_group_in_two_calls(
+    client: TestClient, session: Session
+):
+    """A session group larger than the batch limit is assigned in two calls.
+
+    The Fleet UI splits a selection into requests of at most 10,000 event
+    ids. The second call carries the remainder of the same session group, so
+    it has to succeed like any other assignment — and every event of the
+    group has to end up attributed, with nothing left pending.
+
+    The group is small on purpose: promoting ten thousand rows takes minutes,
+    and the 10,000 boundary itself is pinned by the guard test above and by
+    the frontend's chunking test.
+    """
+    from datetime import datetime
+
+    from app.models.db import PendingUsageEvent, UsageEvent
+    from app.models.schemas import UsageEventPush
+
+    _add_provider_config(session, provider_id="xai", account_id="alice@example.com")
+    rows: list[PendingUsageEvent] = []
+    for index in range(250):
+        push = UsageEventPush(
+            provider_id="xai",
+            account_id="default",
+            account_source="default",
+            event_id=f"split-{index}",
+            ts="2026-09-01T10:00:00Z",
+            model_id="grok-4",
+            session_id="split-session",
+        )
+        rows.append(
+            PendingUsageEvent(
+                provider_id="xai",
+                event_id=push.event_id,
+                sidecar_id="host-a",
+                ts=datetime.fromisoformat(push.ts.replace("Z", "+00:00")),
+                payload_json=push.model_dump_json(),
+            )
+        )
+    session.add_all(rows)
+    session.flush()
+    ids = [row.id for row in rows if row.id is not None]
+    session.commit()
+    assert len(ids) == 250
+
+    first = client.post(
+        "/api/v1/fleet/events/pending/assign-batch",
+        json={"assignments": [{"event_ids": ids[:150], "account_id": "alice@example.com"}]},
+    )
+    assert first.status_code == 200, first.text
+    assert first.json()["assigned"] == 150
+
+    second = client.post(
+        "/api/v1/fleet/events/pending/assign-batch",
+        json={"assignments": [{"event_ids": ids[150:], "account_id": "alice@example.com"}]},
+    )
+    assert second.status_code == 200, second.text
+    assert second.json()["assigned"] == 100
+
+    # Everything is attributed: nothing is left pending.
+    assert session.exec(select(PendingUsageEvent)).all() == []
+    assert len(session.exec(select(UsageEvent)).all()) == 250
+
+
 def test_pending_usage_batch_assigns_provider_specific_accounts_and_host_tags(
     client: TestClient, session: Session
 ):
