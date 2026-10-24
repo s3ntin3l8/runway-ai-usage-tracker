@@ -36,6 +36,13 @@ only after it has been skipped is not recovered (its `time_created` is already
 behind the watermark). Compactions with no cost and no non-zero token count produce no
 event. `OPENCODE_DB` (opencode's own override) is honoured when set.
 
+`scripts/reclassify_opencode_providers.py` reads **both** layouts too, and picks the
+same reader by schema. It used to query only the v1 `message` table, so on a migrated
+database it saw the history from before the migration and none of the usage since —
+the migration silently reclassified nothing and the events kept their old provider
+ids. It now reuses the extractor's own detection, query and reshaping, so the two
+readers cannot drift apart.
+
 `auth.json` is likewise no longer read by OpenCode v2 (credentials moved to the
 `credential` table); see the credential-discovery notes above.
 
