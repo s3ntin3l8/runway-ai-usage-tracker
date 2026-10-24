@@ -1,0 +1,650 @@
+"""Source-pinned cloud diagnostics never refresh, discover, publish or mix credentials."""
+
+import asyncio
+import contextvars
+import json
+from types import SimpleNamespace
+
+import httpx
+import pytest
+from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel.pool import StaticPool
+
+from app.models.db import CredentialSource, ProviderConfig
+from app.services import claude_cloud_probe as probe
+from app.services.token_cache import TokenCache
+
+ACCOUNT = "holder@example.com"
+SOURCE = "fixture-source"
+ORG = "11111111-1111-4111-8111-111111111111"
+SUBJECT = "22222222-2222-4222-8222-222222222222"
+
+
+def request(**changes):
+    values = {
+        "account_id": ACCOUNT,
+        "source_id": SOURCE,
+        "organization_id": None,
+        "session_id": None,
+        "max_history_pages": 2,
+    }
+    values.update(changes)
+    return SimpleNamespace(**values)
+
+
+def profile():
+    return {"account": {"uuid": SUBJECT, "email": ACCOUNT}, "organization": {"uuid": ORG}}
+
+
+def usage():
+    return {
+        "type": "assistant",
+        "message": {
+            "id": "private-message",
+            "usage": {
+                "input_tokens": 10,
+                "output_tokens": 1,
+                "cache_read_input_tokens": 2,
+                "cache_creation_input_tokens": 3,
+            },
+            "content": "private-transcript",
+        },
+    }
+
+
+@pytest.fixture
+async def environment(monkeypatch, tmp_path):
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'probe.db'}",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    SQLModel.metadata.create_all(engine)
+    monkeypatch.setattr(probe, "Session", Session)
+    monkeypatch.setattr(probe, "engine", engine)
+    monkeypatch.setattr(probe, "_gate", asyncio.Lock())
+    # This fixture exercises a legacy file contribution, not durable cache reload.
+    monkeypatch.setattr("app.services.source_controls._ENABLED", False)
+    from cryptography.fernet import Fernet
+
+    from app.core.config import settings
+    from app.core.encryption import EncryptionService
+
+    monkeypatch.setattr(settings, "DB_ENCRYPTION_KEY", Fernet.generate_key().decode())
+    monkeypatch.setattr(probe, "encryption_service", EncryptionService())
+    cache = TokenCache()
+    monkeypatch.setattr(probe, "token_cache", cache)
+    with Session(engine) as session:
+        session.add(
+            CredentialSource(
+                provider_id="anthropic",
+                account_id=ACCOUNT,
+                source_id=SOURCE,
+                source_type="sidecar",
+                source_label="Fixture",
+                credential_origin="file:/fixture/.claude/.credentials.json",
+            )
+        )
+        session.commit()
+    await cache.store(
+        "anthropic",
+        {"oauth_token": "fixture-access", "refresh_token": "unused"},
+        account_id=ACCOUNT,
+        source_id=SOURCE,
+        source_metadata={"credential_origin": "file:/fixture/.claude/.credentials.json"},
+    )
+    yield engine, cache
+    engine.dispose()
+
+
+async def run(body, upstream):
+    async with httpx.AsyncClient(transport=httpx.MockTransport(upstream)) as client:
+        return await probe.probe_cloud_history(body, client)
+
+
+@pytest.mark.asyncio
+async def test_verified_exact_source_gets_bounded_history_without_leaking_evidence(environment):
+    calls = []
+
+    def upstream(r):
+        calls.append(r)
+        assert r.method == "GET"
+        assert r.headers["authorization"] == "Bearer fixture-access"
+        if r.url.path.endswith("/profile"):
+            return httpx.Response(200, json=profile())
+        assert r.headers["x-organization-uuid"] == ORG
+        if r.url.path == "/v1/code/sessions":
+            return httpx.Response(
+                200, json={"data": [{"id": "session-fixture"}], "next_cursor": None}
+            )
+        return httpx.Response(
+            200, json={"data": [{"sequence_num": "1", "data": usage()}], "next_cursor": None}
+        )
+
+    before = json.dumps(environment[1]._source_cache, default=str, sort_keys=True)
+    report = await run(request(), upstream)
+    assert len(calls) == 3
+    assert report["outcome"] == "sample_complete"
+    assert report["account_verified"] and report["organization_verified"]
+    assert report["history_events"] == 1 and report["history_complete"] is True
+    assert report["observations"][0]["location"] == "data"
+    assert (
+        report["observations"][0]["report"]["assistant"]["input_cache_observations"]["input_tokens"]
+        == 10
+    )
+    assert report["ready_for_ingestion"] is False
+    encoded = json.dumps(report)
+    for value in (
+        ACCOUNT,
+        SOURCE,
+        ORG,
+        SUBJECT,
+        "fixture-access",
+        "unused",
+        "session-fixture",
+        "private-message",
+        "private-transcript",
+    ):
+        assert value not in encoded
+    assert json.dumps(environment[1]._source_cache, default=str, sort_keys=True) == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "status,outcome",
+    [
+        (401, "rejected"),
+        (403, "rejected"),
+        (429, "rate_limited"),
+        (500, "unavailable"),
+        (302, "unavailable"),
+    ],
+)
+async def test_failure_stops_after_one_request_without_refresh_or_fallback(
+    environment, status, outcome
+):
+    calls = []
+
+    def upstream(r):
+        calls.append(r)
+        return httpx.Response(
+            status,
+            json={"secret": "private-error"},  # pragma: allowlist secret - synthetic response
+            headers={"Location": "https://other.invalid/"},
+        )
+
+    report = await run(request(), upstream)
+    assert report["outcome"] == outcome and len(calls) == 1
+    assert "private-error" not in json.dumps(report)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "mutation,outcome",
+    [
+        ("disabled", "source_ineligible"),
+        ("archived", "source_ineligible"),
+        ("desktop", "unsupported_source"),
+        ("legacy_keychain", "source_ineligible"),
+        ("pending", "source_ineligible"),
+        ("expired", "expired"),
+    ],
+)
+async def test_ineligible_source_never_contacts_provider(environment, mutation, outcome):
+    engine, cache = environment
+    if mutation in ("disabled", "archived"):
+        with Session(engine) as s:
+            if mutation == "disabled":
+                row = s.get(CredentialSource, 1)
+                row.enabled = False
+                s.add(row)
+            else:
+                s.add(ProviderConfig(provider_id="anthropic", account_id=ACCOUNT, archived=True))
+            s.commit()
+    else:
+        tokens = {"oauth_token": "fixture-access"}
+        metadata = {"credential_origin": "file:/fixture/.claude/.credentials.json"}
+        if mutation == "desktop":
+            tokens["oauth_read_only"] = "1"
+        if mutation == "legacy_keychain":
+            metadata["credential_origin"] = "keychain:Claude Code-credentials"
+        if mutation == "pending":
+            metadata["identity_pending"] = True
+        if mutation == "expired":
+            tokens["expiry_date"] = "1"
+            await cache.remove_source("anthropic", ACCOUNT, SOURCE)
+        await cache.store(
+            "anthropic", tokens, account_id=ACCOUNT, source_id=SOURCE, source_metadata=metadata
+        )
+
+    def upstream(r):
+        pytest.fail("Ineligible source made a provider request")
+
+    assert (await run(request(), upstream))["outcome"] == outcome
+
+
+@pytest.mark.asyncio
+async def test_missing_exact_source_does_not_use_another_or_merged_credential(environment):
+    def upstream(r):
+        pytest.fail("Missing source fell back")
+
+    assert (await run(request(source_id="missing"), upstream))["outcome"] == "source_unavailable"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["account", "organization", "malformed"])
+async def test_identity_proof_failure_prevents_history_access(environment, failure):
+    calls = []
+
+    def upstream(r):
+        calls.append(r)
+        data = profile()
+        if failure == "account":
+            data["account"]["email"] = "other@example.com"
+        if failure == "organization":
+            data["organization"]["uuid"] = "invalid"
+        if failure == "malformed":
+            data = []
+        return httpx.Response(200, json=data)
+
+    report = await run(request(), upstream)
+    assert report["outcome"] in ("identity_mismatch", "identity_unavailable")
+    assert len(calls) == 1 and report["observations"] == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["rotate", "disable", "remove"])
+async def test_change_while_request_is_in_flight_discards_late_result(environment, change):
+    engine, cache = environment
+    calls = []
+
+    async def upstream(r):
+        calls.append(r)
+        if change == "rotate":
+            await asyncio.create_task(
+                cache.store(
+                    "anthropic",
+                    {"oauth_token": "replacement"},
+                    account_id=ACCOUNT,
+                    source_id=SOURCE,
+                    source_metadata={
+                        "credential_origin": "file:/fixture/.claude/.credentials.json"
+                    },
+                ),
+                context=contextvars.Context(),
+            )
+        elif change == "remove":
+            await cache.remove_source("anthropic", ACCOUNT, SOURCE)
+        else:
+            with Session(engine) as s:
+                row = s.get(CredentialSource, 1)
+                row.enabled = False
+                s.add(row)
+                s.commit()
+        return httpx.Response(200, json=profile())
+
+    report = await run(request(), upstream)
+    assert report["outcome"] == "source_changed" and len(calls) == 1
+    assert not report["account_verified"] and report["observations"] == []
+
+
+@pytest.mark.asyncio
+async def test_cursor_loop_stops_and_reports_sample_as_incomplete(environment):
+    calls = []
+
+    def upstream(r):
+        calls.append(r)
+        if r.url.path.endswith("/profile"):
+            return httpx.Response(200, json=profile())
+        if r.url.path == "/v1/code/sessions":
+            return httpx.Response(200, json={"data": [{"id": "fixture"}], "next_cursor": None})
+        return httpx.Response(
+            200, json={"data": [{"sequence_num": "2"}], "next_cursor": "private-cursor"}
+        )
+
+    report = await run(request(max_history_pages=3), upstream)
+    assert len(calls) == 4 and report["outcome"] == "unsupported_contract"
+    assert report["history_complete"] is False
+    assert "private-cursor" not in json.dumps(report)
+
+
+@pytest.mark.asyncio
+async def test_history_budget_and_numeric_sequence_evidence_are_explicit(environment):
+    def upstream(r):
+        if r.url.path.endswith("/profile"):
+            return httpx.Response(200, json=profile())
+        if r.url.path == "/v1/code/sessions":
+            return httpx.Response(200, json={"data": [{"id": "fixture"}], "next_cursor": "more"})
+        return httpx.Response(
+            200,
+            json={"data": [{"sequence_num": n} for n in ("1", 3, 3, "bad")], "next_cursor": "more"},
+        )
+
+    report = await run(request(max_history_pages=1), upstream)
+    assert report["outcome"] == "sample_limited" and report["session_list_complete"] is False
+    assert report["history_complete"] is False and report["history_pages"] == 1
+    assert report["sequence"] == {
+        "numeric": 3,
+        "invalid": 1,
+        "duplicates": 1,
+        "gaps": 1,
+        "out_of_order": 0,
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload", [b"x" * (1024 * 1024 + 1), b'{"private":NaN}', b'{"data":[],"data":[]}']
+)
+async def test_oversized_or_ambiguous_responses_never_escape(environment, payload):
+    report = await run(request(), lambda r: httpx.Response(200, content=payload))
+    assert report["outcome"] in ("response_limit", "unsupported_contract")
+    assert report["observations"] == []
+
+
+@pytest.mark.asyncio
+async def test_network_error_and_total_deadline_are_sanitized(environment, monkeypatch):
+    def unavailable(r):
+        raise httpx.ReadError("private-token-and-session")
+
+    report = await run(request(), unavailable)
+    assert report["outcome"] == "unavailable" and "private-token" not in json.dumps(report)
+    monkeypatch.setattr(probe, "TOTAL_TIMEOUT", 0.01)
+
+    async def slow(r):
+        await asyncio.sleep(1)
+        return httpx.Response(200, json=profile())
+
+    assert (await run(request(), slow))["outcome"] == "timeout"
+
+
+@pytest.mark.asyncio
+async def test_concurrent_operator_probe_is_rejected_and_gate_recovers(environment):
+    async with probe._gate:
+        report = await run(request(), lambda r: pytest.fail("Busy probe issued request"))
+    assert report["outcome"] == "busy"
+    assert not probe._gate.locked()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "blocked",
+    [None, "off", "paused", "revoked_device", "withdrawn", "old_revision", "bad_generation"],
+)
+async def test_cached_keychain_source_requires_current_device_consent(
+    environment, monkeypatch, blocked
+):
+    await seed_keychain(environment, monkeypatch, blocked)
+    calls = []
+
+    def upstream(r):
+        calls.append(r)
+        if blocked is not None:
+            pytest.fail("Revoked/ineligible consent made a provider request")
+        if r.url.path.endswith("/profile"):
+            return httpx.Response(200, json=profile())
+        return httpx.Response(200, json={"data": [], "next_cursor": None})
+
+    result = await run(request(), upstream)
+    assert result["outcome"] == ("no_sessions" if blocked is None else "source_ineligible")
+    assert len(calls) == (2 if blocked is None else 0)
+
+
+@pytest.mark.asyncio
+async def test_requested_organization_mismatch_stops_before_listing(environment):
+    calls = []
+
+    def upstream(r):
+        calls.append(r)
+        return httpx.Response(200, json=profile())
+
+    result = await run(request(organization_id=SUBJECT), upstream)
+    assert result["outcome"] == "identity_mismatch" and len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_non_sample_session_is_never_requested(environment):
+    calls = []
+
+    def upstream(r):
+        calls.append(r)
+        if r.url.path.endswith("/profile"):
+            return httpx.Response(200, json=profile())
+        return httpx.Response(200, json={"data": [{"id": "listed"}], "next_cursor": "more"})
+
+    result = await run(request(session_id="not-listed"), upstream)
+    assert result["outcome"] == "sample_not_found" and len(calls) == 2
+    assert not result["history_complete"]
+
+
+@pytest.mark.asyncio
+async def test_missing_cursor_does_not_claim_exhaustion(environment):
+    def upstream(r):
+        if r.url.path.endswith("/profile"):
+            return httpx.Response(200, json=profile())
+        return httpx.Response(200, json={"data": []})
+
+    result = await run(request(), upstream)
+    assert result["outcome"] == "unsupported_contract"
+    assert result["session_list_complete"] is None
+
+
+@pytest.mark.asyncio
+async def test_cancelled_probe_closes_stream_and_releases_admission(environment):
+    started = asyncio.Event()
+
+    class HangingStream(httpx.AsyncByteStream):
+        closed = False
+
+        async def __aiter__(self):
+            started.set()
+            await asyncio.sleep(10)
+            yield b"{}"
+
+        async def aclose(self):
+            self.closed = True
+
+    stream = HangingStream()
+    task = asyncio.create_task(run(request(), lambda r: httpx.Response(200, stream=stream)))
+    await asyncio.wait_for(started.wait(), 1)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert stream.closed and not probe._gate.locked()
+
+
+@pytest.mark.asyncio
+async def test_configured_organization_binding_is_required(environment):
+    engine, _ = environment
+    with Session(engine) as session:
+        session.add(
+            ProviderConfig(
+                provider_id="anthropic", account_id=ACCOUNT, claude_organization_id=SUBJECT
+            )
+        )
+        session.commit()
+    calls = []
+
+    def upstream(r):
+        calls.append(r)
+        return httpx.Response(200, json=profile())
+
+    report = await run(request(), upstream)
+    assert report["outcome"] == "identity_mismatch" and len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_database_read_failure_is_sanitized_and_cannot_publish(environment):
+    engine, _ = environment
+    CredentialSource.__table__.drop(engine)
+    report = await run(
+        request(), lambda r: pytest.fail("Unavailable authority database issued request")
+    )
+    assert report["outcome"] == "source_unavailable" and report["requests"] == 0
+    assert report["observations"] == []
+
+
+async def seed_keychain(environment, monkeypatch, blocked=None):
+    from app.models.db import SidecarDevice, SidecarSourceContribution, SidecarSourceState
+    from app.services import source_controls
+    from scripts.sidecar_pkg.source_catalog import control_catalog
+
+    engine, cache = environment
+    monkeypatch.setattr(source_controls, "Session", Session)
+    scraper = "anthropic.claude-code"
+    origin = "keychain:Claude Code-credentials"
+    with Session(engine) as session:
+        row = session.get(CredentialSource, 1)
+        row.credential_origin = origin
+        session.add(row)
+        session.add(
+            SidecarDevice(
+                device_id="fixture-device",
+                secret_encrypted="opaque",  # pragma: allowlist secret - inert fixture
+                revoked=blocked == "revoked_device",
+            )
+        )
+        session.add(
+            SidecarSourceState(
+                device_id="fixture-device",
+                source_id=scraper,
+                provider_id="anthropic",
+                label="Fixture",
+                revision="old"
+                if blocked == "old_revision"
+                else control_catalog()[scraper].revision,
+                generation=1,
+                local_read=blocked != "off",
+                remote_paused=blocked == "paused",
+                revoked_through=1 if blocked == "withdrawn" else -1,
+            )
+        )
+        session.add(
+            SidecarSourceContribution(
+                device_id="fixture-device",
+                scraper_id=scraper,
+                provider_id="anthropic",
+                credential_source_id=SOURCE,
+                origin=origin,
+                account_id=ACCOUNT,
+                generation=1,
+                payload_encrypted=probe.encryption_service.encrypt_json(
+                    {"tokens": {"oauth_token": "fixture-access"}}
+                ),
+            )
+        )
+        session.commit()
+    await cache.remove_source("anthropic", ACCOUNT, SOURCE)
+    await cache.store(
+        "anthropic",
+        {"oauth_token": "fixture-access"},
+        account_id=ACCOUNT,
+        source_id=SOURCE,
+        source_metadata={
+            "credential_origin": origin,
+            "device_id": "fixture-device",
+            "scraper_id": scraper,
+            "durable_source": True,
+            "consent_generation": True if blocked == "bad_generation" else 1,
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_reenable_with_identical_token_invalidates_old_generation(environment, monkeypatch):
+    from app.models.db import SidecarSourceContribution, SidecarSourceState
+
+    await seed_keychain(environment, monkeypatch)
+    engine, cache = environment
+    calls = []
+
+    def upstream(r):
+        calls.append(r)
+        with Session(engine) as session:
+            state = session.get(SidecarSourceState, 1)
+            state.generation = 2
+            state.revoked_through = 1
+            contribution = session.get(SidecarSourceContribution, 1)
+            contribution.generation = 2
+            session.add(state)
+            session.add(contribution)
+            session.commit()
+        tokens, metadata, ts = cache._source_cache["anthropic"][ACCOUNT][SOURCE]
+        cache._source_cache["anthropic"][ACCOUNT][SOURCE] = (
+            tokens,
+            {**metadata, "consent_generation": 2},
+            ts,
+        )
+        return httpx.Response(200, json=profile())
+
+    report = await run(request(), upstream)
+    assert report["outcome"] == "source_changed" and len(calls) == 1
+    assert not report["account_verified"] and report["observations"] == []
+
+
+@pytest.mark.asyncio
+async def test_blocked_authority_thread_cannot_defeat_deadline_or_publish_late(
+    environment, monkeypatch
+):
+    import threading
+
+    started = threading.Event()
+    release = threading.Event()
+    finished = threading.Event()
+    original = probe._authority_read
+
+    def slow(*args):
+        started.set()
+        release.wait(2)
+        try:
+            return original(*args)
+        finally:
+            finished.set()
+
+    monkeypatch.setattr(probe, "_authority_read", slow)
+    monkeypatch.setattr(probe, "TOTAL_TIMEOUT", 0.03)
+    try:
+        result = await asyncio.wait_for(
+            run(request(), lambda r: pytest.fail("Late authority work made a request")), 0.3
+        )
+        assert started.is_set() and result["outcome"] == "timeout"
+        assert result["observations"] == [] and not probe._gate.locked()
+    finally:
+        release.set()
+        assert await asyncio.to_thread(finished.wait, 1)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("withdraw", ["device", "payload"])
+async def test_enrolled_file_contribution_is_not_a_device_revocation_bypass(
+    environment, monkeypatch, withdraw
+):
+    from app.models.db import SidecarDevice, SidecarSourceContribution
+
+    await seed_keychain(environment, monkeypatch)
+    engine, cache = environment
+    origin = "file:/fixture/.claude/.credentials.json"
+    with Session(engine) as session:
+        source = session.get(CredentialSource, 1)
+        source.credential_origin = origin
+        contribution = session.get(SidecarSourceContribution, 1)
+        contribution.origin = origin
+        contribution.scraper_id = None
+        contribution.generation = 0
+        if withdraw == "payload":
+            contribution.payload_encrypted = None
+        else:
+            device = session.get(SidecarDevice, "fixture-device")
+            device.revoked = True
+            session.add(device)
+        session.add(source)
+        session.add(contribution)
+        session.commit()
+    tokens, metadata, ts = cache._source_cache["anthropic"][ACCOUNT][SOURCE]
+    cache._source_cache["anthropic"][ACCOUNT][SOURCE] = (
+        tokens,
+        {**metadata, "credential_origin": origin, "scraper_id": None, "consent_generation": 0},
+        ts,
+    )
+    result = await run(request(), lambda r: pytest.fail("Revoked file contribution was used"))
+    assert result["outcome"] == "source_ineligible" and result["requests"] == 0

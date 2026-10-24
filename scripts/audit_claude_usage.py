@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import sys
 from collections.abc import Iterable, Iterator
-from typing import Any, BinaryIO
+from typing import Any, BinaryIO, cast
 
 TOKEN_FIELDS = (
     "input_tokens",
@@ -35,7 +35,7 @@ def _counters(value: object, fields: dict[str, str] | None = None) -> dict[str, 
     numbers = {destination: value.get(source) for destination, source in mapping.items()}
     if any(type(number) is not int or not 0 <= number < 2**63 for number in numbers.values()):
         return None
-    return numbers
+    return cast(dict[str, int], numbers)
 
 
 def _model_counters(value: object) -> dict[str, int] | None:
@@ -99,7 +99,7 @@ def audit_messages(records: Iterable[object]) -> dict[str, Any]:
                 diagnostics.add("missing_assistant_identity")
                 input_complete = False
                 continue
-            counters = _counters(message.get("usage"))
+            counters = _counters(cast(dict[str, Any], message).get("usage"))
             if counters is None:
                 diagnostics.add("invalid_assistant_usage")
                 input_complete = False

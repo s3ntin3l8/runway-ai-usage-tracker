@@ -91,8 +91,9 @@ docs/
 
 # --- SCRIPTS & TESTS ---
 tests/
-# The server imports only the shared, inert Keychain capability catalog.
+# The server imports the pure usage audit and inert Keychain capability catalog.
 scripts/*
+!scripts/audit_claude_usage.py
 !scripts/sidecar_pkg/
 scripts/sidecar_pkg/*
 !scripts/sidecar_pkg/source_catalog.py

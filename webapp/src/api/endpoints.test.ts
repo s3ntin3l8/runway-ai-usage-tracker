@@ -20,6 +20,7 @@ import {
   initGitHubOAuth,
   logoutGitHub,
   postWake,
+  probeClaudeCloud,
   updateWebhook,
 } from './endpoints';
 
@@ -46,6 +47,19 @@ describe('endpoints', () => {
     vi.stubGlobal('fetch', vi.fn());
   });
   afterEach(() => vi.unstubAllGlobals());
+
+  it('cloud probe is an explicit POST with source selection only in its body', async () => {
+    const body = { account_id: 'holder@example.com', source_id: 'file:/fixture', max_history_pages: 2 };
+    const report = { outcome: 'source_unavailable', ready_for_ingestion: false };
+    mockFetch().mockResolvedValue(jsonResponse(report));
+    expect(await probeClaudeCloud(body)).toEqual(report);
+    const [path, init] = lastCall();
+    expect(path).toBe('/api/v1/system/debug/claude-cloud');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body as string)).toEqual(body);
+    expect(path).not.toContain('holder');
+    expect(path).not.toContain('fixture');
+  });
 
   // --- GET wrappers (default method, no body) ---
 

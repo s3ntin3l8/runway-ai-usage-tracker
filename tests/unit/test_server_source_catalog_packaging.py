@@ -41,3 +41,30 @@ def test_server_image_includes_the_static_catalog_only(tmp_path):
         check=False,
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_server_image_includes_pure_usage_audit_without_credential_runtime(tmp_path):
+    source = "scripts/audit_claude_usage.py"
+    assert f"COPY {source} ./scripts/" in (ROOT / "Dockerfile").read_text()
+    assert f"!{source}" in (ROOT / ".dockerignore").read_text().splitlines()
+    package = tmp_path / "scripts"
+    package.mkdir()
+    shutil.copyfile(ROOT / source, package / "audit_claude_usage.py")
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-c",
+            "import sys; sys.path.insert(0,sys.argv[1]); "
+            "from scripts.audit_claude_usage import audit_messages; "
+            "assert audit_messages([])['ready_for_ingestion'] is False; "
+            "assert not any(n == 'app' or n.startswith(('app.', 'scripts.sidecar_pkg.')) for n in sys.modules)",
+            str(tmp_path),
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
