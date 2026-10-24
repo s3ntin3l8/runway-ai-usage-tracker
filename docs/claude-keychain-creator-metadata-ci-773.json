@@ -1,0 +1,132 @@
+{
+  "date": "2026-10-24",
+  "source_commit_url": "https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/25025ab95870620c5eb50eb3001788095ecdcb5f",
+  "workflow_run": "https://github.com/s3ntin3l8/runway-ai-usage-tracker/actions/runs/40075912653",
+  "artifact": "https://github.com/s3ntin3l8/runway-ai-usage-tracker/actions/runs/40075912653/artifacts/12553506140",
+  "workflow_conclusion": "success",
+  "renewal_acceptance": false,
+  "result": {
+    "scope": "private-synthetic-keychains-public-api-only",
+    "real_claude_credential_operations": 0,
+    "claude_oauth_exchanges": 0,
+    "cases": [
+      {
+        "case": "authorization-metadata",
+        "candidate_preserves_shared_access": false,
+        "control_only": true,
+        "update_attempted": false,
+        "fixture_creator": "python",
+        "isolation_checkpoints": [
+          {
+            "stage": "fixture_created",
+            "checks": {
+              "default_same": true,
+              "default_lock_same": true,
+              "search_list_same": true,
+              "search_locks_same": true
+            }
+          },
+          {
+            "stage": "fixture_seeded",
+            "checks": {
+              "default_same": true,
+              "default_lock_same": true,
+              "search_list_same": true,
+              "search_locks_same": true
+            }
+          },
+          {
+            "stage": "fixture_read",
+            "checks": {
+              "default_same": true,
+              "default_lock_same": true,
+              "search_list_same": true,
+              "search_locks_same": true
+            }
+          },
+          {
+            "stage": "before_writer",
+            "checks": {
+              "default_same": true,
+              "default_lock_same": true,
+              "search_list_same": true,
+              "search_locks_same": true
+            }
+          },
+          {
+            "stage": "after_writer",
+            "checks": {
+              "default_same": true,
+              "default_lock_same": true,
+              "search_list_same": true,
+              "search_locks_same": true
+            }
+          },
+          {
+            "stage": "after_readback",
+            "checks": {
+              "default_same": true,
+              "default_lock_same": true,
+              "search_list_same": true,
+              "search_locks_same": true
+            }
+          },
+          {
+            "stage": "after_cleanup",
+            "checks": {
+              "default_same": true,
+              "default_lock_same": true,
+              "search_list_same": true,
+              "search_locks_same": true
+            }
+          }
+        ],
+        "stages": [
+          "start",
+          "interaction_disabled",
+          "private_keychain_opened",
+          "before_item_metadata",
+          "owner_verified",
+          "before_authorization_metadata",
+          "after_authorization_metadata"
+        ],
+        "writer_exit_code": 0,
+        "control_completed": true,
+        "authorization": {
+          "metadata_status": 0,
+          "python_reader_identity_available": true,
+          "helper_identity_available": true,
+          "identity_partitions_equal": false,
+          "trust_comparison_available": true,
+          "python_reader_trust_blob_equal": true,
+          "helper_trust_blob_equal": false,
+          "broad_decrypt_access": false,
+          "partition_acl_present": true,
+          "partition_metadata_available": true,
+          "partition_contains_python_reader_identity": true,
+          "partition_contains_helper_identity": false
+        },
+        "access_policy_preserved": true,
+        "integrity_changed": false,
+        "changed_policy_authorizations": [],
+        "original_reader": "original",
+        "temporary_keychains_deleted": true,
+        "user_keychain_metadata_unchanged": true,
+        "metadata_checks": {
+          "default_same": true,
+          "default_lock_same": true,
+          "search_list_same": true,
+          "search_locks_same": true
+        }
+      }
+    ],
+    "matrix_complete": true,
+    "candidate_found": false,
+    "selected_cases": [
+      "authorization-metadata"
+    ],
+    "phase": "case",
+    "active_case": "authorization-metadata",
+    "child_exit_code": 0
+  }
+}

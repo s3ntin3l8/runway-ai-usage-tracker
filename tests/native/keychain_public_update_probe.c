@@ -8,6 +8,8 @@
 #include <limits.h>
 #include <stdlib.h>
 
+#include "keychain_authorization_probe.h"
+
 static int private_fixture(const char *path) {
     char resolved[PATH_MAX], parent[PATH_MAX];
     struct stat file, directory;
@@ -41,8 +43,11 @@ int main(int argc, char **argv) {
     int metadata = !strcmp(argv[2], "metadata-control");
     int control = !strcmp(argv[2], "read-only-control");
     int reference_control = !strcmp(argv[2], "reference-control");
-    int data_control = !strcmp(argv[2], "writer-read-control");
-    if (!data_control && !reference_control && !control && !combined && !legacy && !metadata && strcmp(argv[2], "data-only")) return 64;
+    int authorization_control = !strcmp(argv[2], "authorization-metadata");
+    int owned_control = !strcmp(argv[2], "helper-owned-control");
+    int seed = !strcmp(argv[2], "helper-seed");
+    int data_control = !strcmp(argv[2], "writer-read-control") || owned_control;
+    if (!authorization_control && !seed && !data_control && !reference_control && !control && !combined && !legacy && !metadata && strcmp(argv[2], "data-only")) return 64;
     if (SecKeychainSetUserInteractionAllowed(false)) return 65;
     fputs("stage:interaction_disabled\n", stderr);
     SecKeychainRef keychain = NULL, owner = NULL, resolved_owner = NULL;
@@ -55,6 +60,14 @@ int main(int argc, char **argv) {
     OSStatus status = SecKeychainOpen(argv[1], &keychain), read_status = -1;
     if (status || !keychain) goto cleanup;
     fputs("stage:private_keychain_opened\n", stderr);
+    if (seed) {
+        fputs("stage:before_helper_seed\n", stderr);
+        status = seed_helper_item(keychain);
+        fputs("stage:after_helper_seed\n", stderr);
+        printf("{\"seed_completed\":%s,\"seed_status\":%d}\n", !status ? "true" : "false", (int)status);
+        result = 0;
+        goto cleanup;
+    }
     scope = CFArrayCreate(NULL, (const void **)&keychain, 1, &kCFTypeArrayCallBacks);
     query = CFDictionaryCreateMutable(NULL, 0, &kCFTypeDictionaryKeyCallBacks,
                                      &kCFTypeDictionaryValueCallBacks);
@@ -74,6 +87,15 @@ int main(int argc, char **argv) {
     status = SecKeychainItemCopyKeychain(item, &owner);
     if (status || !owner || !CFEqual(owner, keychain)) goto cleanup;
     fputs("stage:owner_verified\n", stderr);
+    if (authorization_control) {
+        printf("{");
+        fputs("stage:before_authorization_metadata\n", stderr);
+        status = authorization_metadata(item);
+        fputs("stage:after_authorization_metadata\n", stderr);
+        printf(",\"control_completed\":%s,\"control_status\":%d}\n", !status ? "true" : "false", (int)status);
+        result = 0;
+        goto cleanup;
+    }
     if (control) {
         fputs("stage:control_complete\n", stderr);
         puts("{\"control_completed\":true}");
@@ -95,6 +117,18 @@ int main(int argc, char **argv) {
         if (status || !resolved_owner || !CFEqual(resolved_owner, keychain)) goto cleanup;
         fputs("stage:reference_verified\n", stderr);
         if (data_control) {
+            if (owned_control) {
+                printf("{");
+                fputs("stage:before_authorization_metadata\n", stderr);
+                status = authorization_metadata(item);
+                fputs("stage:after_authorization_metadata\n", stderr);
+                printf(",");
+                if (status) {
+                    printf("\"control_completed\":false,\"control_status\":%d}\n", (int)status);
+                    result = 0;
+                    goto cleanup;
+                }
+            }
             const unsigned char original[] = "synthetic-public-update-original";
             CFDictionarySetValue(query, kSecReturnData, kCFBooleanTrue);
             fputs("stage:before_writer_data_read\n", stderr);
@@ -104,7 +138,10 @@ int main(int argc, char **argv) {
                 CFDataGetLength(control_data) == (CFIndex)(sizeof(original) - 1) &&
                 !memcmp(CFDataGetBytePtr(control_data), original, sizeof(original) - 1);
             if (matches) fputs("stage:writer_data_verified\n", stderr);
-            printf("{\"control_completed\":%s,\"control_status\":%d}\n", matches ? "true" : "false", (int)status);
+            if (owned_control)
+                printf("\"control_completed\":%s,\"control_status\":%d}\n", matches ? "true" : "false", (int)status);
+            else
+                printf("{\"control_completed\":%s,\"control_status\":%d}\n", matches ? "true" : "false", (int)status);
         } else {
             puts("{\"control_completed\":true}");
         }
