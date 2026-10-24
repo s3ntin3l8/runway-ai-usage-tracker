@@ -1200,6 +1200,22 @@ def _source_field(entry: dict[str, str], key: str) -> str | None:
     return None
 
 
+# Event sources that are never an account: Hermes calls other providers'
+# accounts, so a credential origin reported for it has nothing to tag. Old
+# sidecars still report ``provider:hermes``; the server drops it. Hermes names
+# an upstream it cannot map ``hermes-<name>``, which has no provider row either.
+# Mirrored by the sidecar's ``_is_pass_through_provider`` (a parity test pins them).
+PASS_THROUGH_PROVIDERS: frozenset[str] = frozenset({"hermes"})
+PASS_THROUGH_PROVIDER_PREFIX = "hermes-"
+
+
+def is_pass_through_provider(provider_id: str) -> bool:
+    """True for an event source that is never an account an operator can tag."""
+    return provider_id in PASS_THROUGH_PROVIDERS or provider_id.startswith(
+        PASS_THROUGH_PROVIDER_PREFIX
+    )
+
+
 def _record_pending_entry(
     session: Session,
     payload: CredentialManifestRequest,
@@ -1214,7 +1230,18 @@ def _record_pending_entry(
     An origin an operator already assigned (or a source-verified identity already
     resolved) is not re-opened as pending on every heartbeat; a rotated credential
     carries its binding over instead of reopening a silent quota outage.
+
+    A pass-through provider (Hermes) never has an account to tag: its entry is
+    ignored, and a row an earlier report left behind is removed.
     """
+    if is_pass_through_provider(provider_id):
+        PendingCredentialTagRepo.delete(
+            session,
+            sidecar_id=payload.sidecar_id,
+            provider_id=provider_id,
+            credential_origin=origin,
+        )
+        return
     existing_tag = CredentialTagRepo.get(
         session,
         provider_id=provider_id,
@@ -2014,7 +2041,7 @@ def visible_pending_rows(session: Session) -> list[PendingCredentialTag]:
     """
     by_sidecar: dict[str, list[PendingCredentialTag]] = {}
     for r in PendingCredentialTagRepo.list_all(session):
-        if is_source_blocked(r):
+        if is_source_blocked(r) or is_pass_through_provider(r.provider_id):
             continue
         by_sidecar.setdefault(r.sidecar_id, []).append(r)
 

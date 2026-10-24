@@ -254,6 +254,7 @@ export function UntaggedCredentialsDialog({
               }}
               saving={save.isPending}
               onOrganizationComplete={() => { invalidateCredentialViews(); if (singleEntry) onClose(); }}
+              onNavigate={onClose}
             />
           ))}
         </div>
@@ -378,6 +379,9 @@ interface UntaggedRowProps {
   onSave: () => void;
   saving: boolean;
   onOrganizationComplete: () => void;
+  /** Called when a link leaves the dialog (it is opened from Provider Settings itself,
+   *  so a same-route link would otherwise leave it open and look dead). */
+  onNavigate: () => void;
 }
 
 function UntaggedRow({
@@ -390,6 +394,7 @@ function UntaggedRow({
   onSave,
   saving,
   onOrganizationComplete,
+  onNavigate,
 }: UntaggedRowProps) {
   // Each row tracks its own Select state via currentSelection.account_id
   // when the entry matches. We keep that gating intentionally simple —
@@ -510,7 +515,11 @@ function UntaggedRow({
             {notice.lead}{' '}
             <span className="font-mono">{entry.provider_id}</span>{' '}
             {notice.tail}{' '}
-            <Link to="/settings/providers" className="text-accent underline underline-offset-2">
+            <Link
+              to="/settings/providers"
+              onClick={onNavigate}
+              className="text-accent underline underline-offset-2"
+            >
               {notice.linkLabel}
             </Link>
             .
@@ -574,7 +583,11 @@ function UntaggedRow({
           {parkedNotice.lead}{' '}
           <span className="font-mono">{entry.provider_id}</span>{' '}
           {parkedNotice.tail}{' '}
-          <Link to="/settings/providers" className="text-accent underline underline-offset-2">
+          <Link
+            to="/settings/providers"
+            onClick={onNavigate}
+            className="text-accent underline underline-offset-2"
+          >
             {parkedNotice.linkLabel}
           </Link>
           .

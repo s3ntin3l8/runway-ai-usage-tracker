@@ -2777,6 +2777,96 @@ def test_run_collection_events_reported_untagged_when_no_hint(
     ]
 
 
+def _run_hermes_collection(monkeypatch, emitted: list[dict[str, Any]], tag_hints=None):
+    """Run a Hermes-only ``run_collection`` whose extractor emits ``emitted``."""
+    from scripts.sidecar_pkg.credentials import CredentialCache
+
+    cache = CredentialCache()
+    cache.replace(accounts={}, tokens={}, tag_hints=tag_hints or {})
+    monkeypatch.setattr(sidecar, "_CREDENTIAL_CACHE", cache)
+    monkeypatch.setattr(sidecar, "_get_credential_cache", lambda: cache)
+    monkeypatch.setattr(sidecar, "_LEGACY_EVENT_ACCOUNT_DISCOVERY", {"hermes": lambda: "default"})
+    monkeypatch.setattr(sidecar, "_EVENT_PROVIDERS", frozenset({"hermes"}))
+
+    def _emit(provider_id, account_ids, *, out_events, **kw) -> int:
+        out_events.extend(dict(e) for e in emitted)
+        return 0
+
+    monkeypatch.setattr(sidecar, "_extract_events_for_provider", _emit)
+    monkeypatch.setattr(sidecar.GenericCollector, "collect_provider", lambda *a, **kw: ([], []))
+    posted: dict[str, Any] = {}
+
+    def _capture_manifest(*, api_url, api_key, sidecar_id, entries, on_resolved, **kw):
+        posted["entries"] = entries
+        posted["completed_providers"] = kw.get("completed_providers")
+
+    monkeypatch.setattr(sidecar, "_post_credential_manifest", _capture_manifest)
+    result = sidecar.run_collection(
+        config={"api_url": "http://x", "api_key": "k"}, providers=["hermes"]
+    )
+    return result, posted
+
+
+def test_run_collection_hermes_resolved_events_report_no_origin(monkeypatch, caplog) -> None:
+    """Hermes is not a provider: events already on a tagged account report nothing,
+    and never a ``provider:hermes`` origin."""
+    emitted = [
+        {"event_id": "h1", "provider_id": "minimax", "account_source": "tag"},
+        {"event_id": "h2", "provider_id": "kimi_coding", "account_source": "local"},
+    ]
+    with caplog.at_level("WARNING"):
+        result, posted = _run_hermes_collection(
+            monkeypatch,
+            emitted,
+            tag_hints={"minimax": {"provider:minimax": "me@example.com"}},
+        )
+    assert result.error_count == 0
+    assert posted["entries"] == []
+    assert posted["completed_providers"] == ["hermes"]
+    assert "untagged" not in caplog.text
+
+
+def test_run_collection_hermes_unresolved_events_report_their_own_provider(monkeypatch) -> None:
+    """An unresolved Hermes minimax event blocks ``provider:minimax`` (taggable),
+    once per provider, and a resolved event beside it adds nothing."""
+    emitted = [
+        {"event_id": "h1", "provider_id": "minimax", "account_source": "default"},
+        {"event_id": "h2", "provider_id": "minimax", "account_source": "default"},
+        {"event_id": "h3", "provider_id": "kimi_coding", "account_source": "default"},
+        {"event_id": "h4", "provider_id": "opencode", "account_source": "tag"},
+    ]
+    _, posted = _run_hermes_collection(monkeypatch, emitted)
+    assert posted["entries"] == [
+        {
+            "provider_id": "minimax",
+            "credential_origin": "provider:minimax",
+            "reason": "events_untagged",
+        },
+        {
+            "provider_id": "kimi_coding",
+            "credential_origin": "provider:kimi_coding",
+            "reason": "events_untagged",
+        },
+    ]
+    assert all(e["provider_id"] != "hermes" for e in posted["entries"])
+
+
+def test_run_collection_hermes_unmapped_upstream_reports_no_origin(monkeypatch, caplog) -> None:
+    """A ``hermes-<upstream>`` event (no Runway provider) has nothing to tag, so
+    it ships under ``default`` without an untaggable ``provider:hermes-nous`` row."""
+    emitted = [
+        {"event_id": "h1", "provider_id": "hermes-nous", "account_source": "default"},
+        {"event_id": "h2", "provider_id": "hermes-openai", "account_source": "default"},
+        {"event_id": "h3", "provider_id": "minimax", "account_source": "default"},
+    ]
+    with caplog.at_level("INFO"):
+        _, posted = _run_hermes_collection(monkeypatch, emitted)
+    assert [e["provider_id"] for e in posted["entries"]] == ["minimax"]
+    # The skip is observable, once per provider.
+    assert caplog.text.count("hermes-nous have no Runway provider") == 1
+    assert caplog.text.count("hermes-openai have no Runway provider") == 1
+
+
 def test_run_collection_events_untagged_only_when_events_extracted(
     monkeypatch,
 ) -> None:
