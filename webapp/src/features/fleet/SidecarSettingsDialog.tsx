@@ -279,7 +279,7 @@ function KeepAliveSection({
                         })
                       }
                     >
-                      <SelectTrigger aria-label={`${label} keep-alive`} className="h-8 w-44">
+                      <SelectTrigger label={`${label} keep-alive`} className="h-8 w-44">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -365,7 +365,7 @@ function UpdatesSection({
                 save.mutate({ auto_update: v === 'default' ? null : v === 'on' })
               }
             >
-              <SelectTrigger aria-label="Auto-update" className="h-8 w-44">
+              <SelectTrigger label="Auto-update" className="h-8 w-44">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -387,7 +387,7 @@ function UpdatesSection({
               save.mutate({ update_channel: v === 'default' ? null : (v as SidecarChannel) })
             }
           >
-            <SelectTrigger aria-label="Update channel" className="h-8 w-44">
+            <SelectTrigger label="Update channel" className="h-8 w-44">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -502,7 +502,7 @@ function LoggingSection({
               disabled={save.isPending}
               onValueChange={(v) => save.mutate(v === 'default' ? null : (v as SidecarLogLevel))}
             >
-              <SelectTrigger aria-label="Log level" className="h-8 w-44">
+              <SelectTrigger label="Log level" className="h-8 w-44">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>

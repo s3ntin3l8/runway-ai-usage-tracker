@@ -97,7 +97,7 @@ export function HistoryPage() {
       <div className="flex flex-col gap-4 p-4 lg:p-8">
         <div className="flex flex-wrap items-center gap-2">
           <Select value={selected?.key ?? ''} onValueChange={setAccountKey}>
-            <SelectTrigger className="w-full max-w-72 sm:w-auto">
+            <SelectTrigger className="w-full max-w-72 sm:w-auto" label="Account">
               <SelectValue placeholder="Select account" />
             </SelectTrigger>
             <SelectContent>

@@ -164,7 +164,7 @@ export function FixDialog({ open, onOpenChange, checkId, group }: FixDialogProps
                       preview.reset();
                     }}
                   >
-                    <SelectTrigger id={`dh-param-${param.name}`}>
+                    <SelectTrigger id={`dh-param-${param.name}`} label={param.label}>
                       <SelectValue placeholder="Select…" />
                     </SelectTrigger>
                     <SelectContent>

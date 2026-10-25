@@ -170,7 +170,7 @@ export function SystemSection() {
                   if (v) setChannel(v as 'stable' | 'beta' | 'edge');
                 }}
               >
-                <SelectTrigger id="sys-channel" className="w-full sm:max-w-xs">
+                <SelectTrigger id="sys-channel" className="w-full sm:max-w-xs" label="Update channel">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>

@@ -27,7 +27,7 @@ export function DisplaySection() {
           </p>
         </div>
         <Select value={pref} onValueChange={(v) => setPref(v as ThemePref)}>
-          <SelectTrigger className="w-32">
+          <SelectTrigger className="w-32" label="Theme">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>

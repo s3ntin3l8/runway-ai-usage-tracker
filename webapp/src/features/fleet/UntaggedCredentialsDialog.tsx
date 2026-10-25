@@ -536,6 +536,7 @@ function UntaggedRow({
               <SelectTrigger
                 id={`tag-${entry.sidecar_id}-${entry.credential_origin}`}
                 className="w-full"
+                label="Account to map to"
               >
                 <SelectValue placeholder="Pick an account…" />
               </SelectTrigger>

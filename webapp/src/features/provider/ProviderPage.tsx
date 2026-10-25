@@ -216,7 +216,7 @@ export function ProviderPage() {
                   return p;
                 }, { replace: true })}
               >
-                <SelectTrigger className="max-w-44" aria-label="Provider account">
+                <SelectTrigger className="max-w-44" label="Provider account">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
