@@ -5,8 +5,8 @@ and Settings, at desktop (1440px) and phone (390px) viewports, in both themes. T
 sidecar tray app and the installer are out of scope.
 
 **Status.** The P0 and P1 findings are fixed in the same branch that added this document
-(`fix/webapp): resolve P0/P1 findings from the UI/UX audit`). Everything below P1 is
-tracked as a GitHub issue (see [Deferred backlog](#deferred-backlog)).
+(`fix/ui-ux-audit-p0`, PR #947). Everything below P1 is tracked as a GitHub issue
+(see [Deferred backlog](#deferred-backlog)).
 
 ---
 
@@ -74,7 +74,7 @@ These were checked and left alone — a fix here would have been a regression:
 | P1-6 | Clickable table rows were unreachable by keyboard — no `tabIndex`, no role, no key handler, and `aria-expanded` on a non-focusable `<tr>`. The whole drill-down layer (session detail, cost split, window detail) was keyboard-inaccessible. | `features/provider/SessionsTable.tsx`, `CostTab.tsx`, `features/history/HistoryPage.tsx` | The chevron cell holds a real `<button aria-expanded>`; the row stays clickable for the mouse |
 | P1-7 | Charts had no accessible text alternative — no `aria`, `role` or `tabIndex` anywhere in `components/charts/**`, and the ECharts aria component was not registered. The primary information on History, Activity and the heatmap existed only as pixels. | `components/charts/**` | `ariaLabel` on the chart wrapper (`role="img"`), a visually-hidden data list for every chart whose information is only pixels, and legends for the stacked bars |
 | P1-8 | Keyboard reordering of the provider grid was dead: the card's own `onKeyDown` came after `{...listeners}` in the prop order, so it *replaced* dnd-kit's keyboard activator and the `KeyboardSensor` never received a keydown. The card also ignored Space, unlike its siblings. | `features/home/ProviderGrid.tsx` | The sensor's handler is composed rather than replaced; Space starts the keyboard drag, Enter opens the provider |
-| P1-9 | Tooltips over role-less markup were hover-only: Radix opens on focus, but a `<span>` badge or a `<p>` has no tab stop, so the hints ("Not used" reason, offline reason, collection path) were unreachable. | `components/ui/Tooltip.tsx` | The trigger is wrapped in a focusable host |
+| P1-9 | Tooltips over role-less markup were hover-only: Radix opens on focus, but a `<span>` badge or a `<p>` has no tab stop, so the hints ("Not used" reason, offline reason, collection path) were unreachable. | `components/ui/Tooltip.tsx` | The trigger is wrapped in a focusable host — but only when the child is not already focusable, so a link or a button inside a tooltip stays a single tab stop (`lib/focusable.ts`) |
 | P1-10 | Token segment colour was index-based, so a token type changed colour when "Exclude cache" was on (Reasoning moved from `--chart-5` to `--chart-3`). | `components/charts/TokenBar.tsx`, `TokenDonut.tsx` | Colour by segment key, not by position; bar and donut agree |
 | P1-11 | Stacked bar charts had no legend, so on touch "is the green third block Output or Cache read?" was unanswerable. | `components/charts/RankBar.tsx`, `TopModelsBar.tsx`, `TrajectoryChart.tsx` | Legends on every stacked chart |
 

@@ -60,6 +60,33 @@ The shape is the same everywhere, so two audits can be read side by side:
    linked issues rather than as prose. A deferred finding with no issue is a
    finding nobody will pick up.
 
+The skeleton, so a new report starts from the same shape:
+
+```markdown
+# <Topic> audit — <scope>
+
+**Scope.** What was audited, and what was explicitly out of scope.
+
+**Status.** What was fixed, and where it lives.
+
+---
+
+## How the audit was run
+
+## Severity model
+
+## Fixed in this branch
+
+| # | Finding | Where | Fix |
+|---|---|---|---|
+
+## Guardrails added
+
+## Evidence
+
+## Deferred backlog
+```
+
 ## Running an audit
 
 Captures are taken from an isolated demo instance, never from a live one:
