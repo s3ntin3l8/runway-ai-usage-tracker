@@ -87,12 +87,25 @@ To prevent unmapped events from corrupting labeled quota gauges or leaking acros
    When an event maps to a canonical provider (e.g. `minimax`) and no tag hint exists yet on the sidecar:
    - The extractor stamps `account_id="default"` and `account_source="default"`.
    - Host-level Hermes identities (such as `HERMES_ACCOUNT_LABEL="bot-team"`) are withheld from canonical events so they do not create phantom accounts under upstream providers.
-   - Runway's `EventIngestor` detects `account_source == "default"` and **holds back** the event in the `pending_usage_events` table, excluding it from account totals and quota gauges.
+   - Runway's `EventIngestor` detects `account_source == "default"` and **holds back** the event in the `pending_usage_events` table, excluding it from account totals and quota gauges — unless the host's own native identity resolves it (see *Resolving from the host's native identity* below).
 
-2. **Operator Assignment via UI:**
+2. **Resolving from the host's native identity:**
+   A Hermes event is billed to the account of the upstream it called, and the sidecar only ever learns the provider. The **host's native collector** for that provider does know: it reported the credential, and Runway filed it under the account the credential resolved to. That `credential_sources` row is the machine's own answer, and `EventIngestor` uses it to stamp the event (`account_source="local"`, stored as `attribution_source="local"`) instead of holding it back.
+
+   Three rules keep this from becoming a cross-host attribution leak:
+
+   - **Per host.** Only the accounts *this* sidecar reported for the provider are considered. A deployment-wide identity never reaches a host that did not report it (the same rule as #319).
+   - **Unambiguous.** Exactly one account resolves the event. Zero (the credential carries no identity) or several (the host holds more than one account for the provider) leave the event held for the operator, exactly as before.
+   - **Never over a tag.** An operator tag always wins over the machine's answer, and an archived account takes no new usage — a retired account holds the event back rather than receiving it.
+
+   **Coverage.** The rule can only fire for a provider whose native credential carries an identity. On the shipped sidecar that is **Anthropic** (the Claude Code OAuth account email) and **xAI** (the Grok CLI identity); providers whose credential carries no email — MiniMax, Kimi, Ollama, OpenRouter, DeepSeek — have nothing to resolve from, so their events are still held for assignment until the operator tags them once. The rule is not a universal fix: it removes the manual tag for the providers that can answer, and leaves the rest exactly where they were.
+
+   **Already-held events.** An event that was held back resolves on a later push once the provider can be answered, and its pending copy is dropped with it — the "Unassigned usage" card stops listing an event that is already counted.
+
+3. **Operator Assignment via UI:**
    The operator sees the unassigned events in Runway's **Fleet View** -> **`PendingUsageEventsCard`** ("Unassigned usage · X events"), selects the desired account (e.g. `s3ntin3l8@gmail.com`), and clicks **Assign**.
 
-3. **Persistent Tagging & Auto-Matching (`account_source="tag"`):**
+4. **Persistent Tagging & Auto-Matching (`account_source="tag"`):**
    Assigning creates a `credential_tags` record (`provider:minimax -> s3ntin3l8@gmail.com`) scoped to this sidecar host. On future cycles:
    - `/fleet/config` delivers `server_account_tag_hints`.
    - `_build_canonical_hints_for_provider("hermes")` forwards the hint to `parse_hermes_events`.
@@ -104,7 +117,7 @@ To prevent unmapped events from corrupting labeled quota gauges or leaking acros
 
    Both mappings are per host. A sidecar with a stale hint cache can keep stamping events with the previous account for up to ~10 minutes. Hermes sends raw Gemini model ids (e.g. `gemini-3-pro-preview`) that don't match the Antigravity price rows, so redirected events fall back to Hermes' reported cost or show as unpriced.
 
-4. **Native Hermes Events:**
+5. **Native Hermes Events:**
    Unmapped non-canonical events retain the host's Hermes identity (from `HERMES_ACCOUNT_LABEL` or `"default"`) and leave `account_source=None` to defer to the sidecar's host attribution loop.
 
 ## Configuration
@@ -126,3 +139,8 @@ To prevent unmapped events from corrupting labeled quota gauges or leaking acros
 ### Events appear as "Unassigned usage" in Fleet UI
 - This is normal for newly routed canonical providers (e.g. MiniMax, Kimi).
 - Navigate to the Fleet dashboard, open the **Unassigned usage** card, and assign the events to your configured account. Future events will map automatically.
+- A provider whose native credential carries an account identity on this host (Anthropic, xAI) resolves without the card — see *Resolving from the host's native identity*. If the events are still unassigned, that host has no such credential, or more than one account for that provider.
+
+### Where the resolution lives
+- `app/services/credential_sources.py` — `sidecar_native_accounts()` reads the accounts this host reported for a provider.
+- `app/services/event_ingestor.py` — `EventIngestor._native_identity_account()` applies the per-host, unambiguous, never-over-a-tag rules.

@@ -664,6 +664,48 @@ def configured_account_ids(session: Session, provider_id: str) -> set[str]:
     )
 
 
+def sidecar_native_accounts(
+    session: Session,
+    provider_id: str,
+    sidecar_id: str | None,
+) -> set[str]:
+    """The accounts this host's own native collector reported for a provider.
+
+    A credential the sidecar found is filed under the account it resolved
+    to, so the row is the machine's own answer to "which account is this
+    provider on *this* host". It is the only host-scoped evidence available
+    for a provider whose events arrive without an identity — a Hermes event
+    is billed to the account of the upstream it called, and the sidecar only
+    knows the provider.
+
+    Two kinds of row are not an answer:
+
+    - the ``"default"`` sentinel — the credential's identity was never
+      resolved, so nothing is known about the account behind it;
+    - the pending slot — a credential whose identity is still being verified
+      is filed under a stable placeholder (the source id for Anthropic),
+      which is a slot, not an account.
+
+    Only rows this sidecar reported are considered: a deployment-wide
+    identity must never reach a host that did not report it (the #319 rule).
+    """
+    rows = session.exec(
+        select(CredentialSource).where(
+            CredentialSource.provider_id == provider_id,
+            CredentialSource.sidecar_id == (sidecar_id or "local"),
+        )
+    ).all()
+    out: set[str] = set()
+    for row in rows:
+        account_id = (row.account_id or "").strip()
+        if not account_id or account_id == "default":
+            continue
+        if account_id == pending_cache_slot(provider_id, row.source_id):
+            continue  # identity still pending — a slot, not an account
+        out.add(canonical_account_id(account_id))
+    return out
+
+
 def real_account_ids(session: Session, provider_id: str) -> set[str]:
     """Accounts this provider really has: a configuration, a quota card, usage,
     or the tag/label an operator gave it.

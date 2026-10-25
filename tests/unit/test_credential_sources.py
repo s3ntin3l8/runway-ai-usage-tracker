@@ -34,6 +34,7 @@ from app.services.credential_sources import (
     register_server_source,
     reset_source_retry,
     resolve_source_account,
+    sidecar_native_accounts,
     sidecar_source_id,
     touch_source,
 )
@@ -940,3 +941,72 @@ def test_native_cookie_source_labels_identify_client_without_private_profile(cli
     assert describe_origin(origin) == ("cookie", f"{client} cookie")
     assert "private-profile" not in repr(display)
     assert "private-fingerprint" not in repr(display)
+
+
+class TestSidecarNativeAccounts:
+    """The accounts this host's own native collector reported for a provider.
+
+    A credential the sidecar found is filed under the account it resolved to,
+    so the row is the machine's own answer to "which account is this provider
+    on *this* host" — the only host-scoped identity available for an event
+    that names a provider but not an account (#931).
+    """
+
+    def _row(self, **overrides) -> CredentialSource:
+        return CredentialSource(
+            **{
+                "provider_id": "anthropic",
+                "account_id": "me@example.com",
+                "source_id": "sidecar:host-a:file:~/.claude/.credentials.json",
+                "source_type": "sidecar",
+                "source_label": "credentials.json",
+                "sidecar_id": "host-a",
+                **overrides,
+            }
+        )
+
+    def test_the_reported_account_is_returned(self):
+        s = _mem_session()
+        s.add(self._row())
+        s.commit()
+        assert sidecar_native_accounts(s, "anthropic", "host-a") == {"me@example.com"}
+
+    def test_another_hosts_account_is_not_returned(self):
+        """The identity is scoped to the host that reported it (#319)."""
+        s = _mem_session()
+        s.add(self._row())
+        s.commit()
+        assert sidecar_native_accounts(s, "anthropic", "host-b") == set()
+
+    def test_the_default_sentinel_is_not_an_account(self):
+        s = _mem_session()
+        s.add(self._row(account_id="default"))
+        s.commit()
+        assert sidecar_native_accounts(s, "anthropic", "host-a") == set()
+
+    def test_the_pending_slot_is_not_an_account(self):
+        """A credential still being verified is filed under a stable slot.
+
+        For Anthropic that slot is the source id — a placeholder, not an
+        account.
+        """
+        s = _mem_session()
+        row = self._row(account_id="sidecar:host-a:file:~/.claude/.credentials.json")
+        s.add(row)
+        s.commit()
+        assert sidecar_native_accounts(s, "anthropic", "host-a") == set()
+
+    def test_the_same_account_from_two_sources_is_one_account(self):
+        """Two credentials of one account are not an ambiguity."""
+        s = _mem_session()
+        s.add(self._row(source_id="sidecar:host-a:a"))
+        s.add(self._row(source_id="sidecar:host-a:b"))
+        s.commit()
+        assert sidecar_native_accounts(s, "anthropic", "host-a") == {"me@example.com"}
+
+    def test_a_local_ingest_has_no_sidecar_id(self):
+        """An ingest without a sidecar id is the "local" host."""
+        s = _mem_session()
+        s.add(self._row(sidecar_id="local"))
+        s.commit()
+        assert sidecar_native_accounts(s, "anthropic", None) == {"me@example.com"}

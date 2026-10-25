@@ -70,6 +70,91 @@ class EventIngestor:
     def __init__(self, session: Session) -> None:
         self.session = session
 
+    def _resolve_identityless_account(
+        self,
+        push: UsageEventPush,
+        sidecar_id: str | None,
+        parked: ParkedMapping,
+        cache: dict[str, str | None],
+    ) -> tuple[str, str] | None:
+        """The account an identity-less event belongs to, and where it came from.
+
+        An operator tag wins: it is the explicit choice, and it is what the
+        "Unassigned usage" card writes when the operator assigns the held-back
+        events. Only when no tag applies does the host's own native identity
+        for the provider answer (#931).
+
+        ``None`` means the event is held back for the operator.
+        """
+        mapped_tag = CredentialTagRepo.get(
+            self.session,
+            provider_id=push.provider_id,
+            credential_origin=push.credential_origin
+            or CredentialTagRepo.provider_origin(push.provider_id),
+            sidecar_id=sidecar_id,
+        )
+        if mapped_tag is not None and not parked.is_parked(mapped_tag):
+            return mapped_tag.account_id, "tag"
+        native = self._native_identity_account(push.provider_id, sidecar_id, parked, cache)
+        if native:
+            return native, "local"
+        return None
+
+    def _native_identity_account(
+        self,
+        provider_id: str,
+        sidecar_id: str | None,
+        parked: ParkedMapping,
+        cache: dict[str, str | None],
+    ) -> str | None:
+        """The account this host's own native collector reported for a provider.
+
+        A credential the sidecar found is filed under the account it resolved
+        to, so that row is the machine's own answer to "which account is
+        this provider on *this* host". It is the only host-scoped identity
+        available for an event that names a provider but not an account — a
+        Hermes event is billed to the account of the upstream it called, and
+        the sidecar only ever learns the provider.
+
+        Exactly one such account means the provider's traffic on this host
+        belongs to it. Zero (the credential carries no identity) or several
+        (the host holds more than one account for the provider) leave the
+        event where it was — held for the operator to assign.
+
+        An archived account is retired: nothing may be stamped on it, so the
+        event is held like any other unresolved one.
+
+        ``cache`` keeps one lookup per provider for the whole batch.
+        """
+        if provider_id not in cache:
+            from app.services.credential_sources import sidecar_native_accounts
+
+            accounts = sidecar_native_accounts(self.session, provider_id, sidecar_id)
+            account: str | None = None
+            if len(accounts) == 1:
+                candidate = accounts.pop()
+                if not parked.is_parked_account(provider_id, candidate):
+                    account = candidate
+            cache[provider_id] = account
+        return cache[provider_id]
+
+    def _drop_pending_copies(self, push: UsageEventPush) -> None:
+        """Remove the pending copies of an event that is now stored.
+
+        An event held back for assignment can resolve later — the operator
+        tags the provider, or the host's native identity answers. Its pending
+        copy is then stale: the "Unassigned usage" card would keep listing an
+        event that is already counted, and a later assignment would move a
+        row that is already stored.
+        """
+        for row in self.session.exec(
+            select(PendingUsageEvent).where(
+                PendingUsageEvent.provider_id == push.provider_id,
+                PendingUsageEvent.event_id == push.event_id,
+            )
+        ).all():
+            self.session.delete(row)
+
     def ingest(
         self,
         pushes: list[UsageEventPush],
@@ -84,6 +169,8 @@ class EventIngestor:
         # tag names an account of its *target* provider, so its parked-ness
         # is looked up there.
         parked = ParkedMapping(self.session, [push.provider_id for push in pushes])
+        # One native-identity lookup per provider for the whole batch.
+        native_accounts: dict[str, str | None] = {}
         try:
             for push in pushes:
                 if is_redirect_source_provider(push.provider_id):
@@ -158,23 +245,18 @@ class EventIngestor:
                     # not name an account to bill: the event is held for
                     # assignment instead of being stamped on the account the
                     # operator retired.
-                    mapped_tag = CredentialTagRepo.get(
-                        self.session,
-                        provider_id=push.provider_id,
-                        credential_origin=push.credential_origin
-                        or CredentialTagRepo.provider_origin(push.provider_id),
-                        sidecar_id=sidecar_id,
+                    identity = self._resolve_identityless_account(
+                        push, sidecar_id, parked, native_accounts
                     )
-                    mapped_account = (
-                        mapped_tag.account_id
-                        if mapped_tag is not None and not parked.is_parked(mapped_tag)
-                        else None
-                    )
-                    if mapped_account:
-                        account_id = canonical_account_id(mapped_account)
+                    if identity:
+                        account_id = canonical_account_id(identity[0])
                         push = push.model_copy(
-                            update={"account_id": account_id, "account_source": "tag"}
+                            update={"account_id": account_id, "account_source": identity[1]}
                         )
+                        # The event is no longer waiting for an assignment: drop
+                        # any pending copy, so the "Unassigned usage" card stops
+                        # listing an event that is already counted.
+                        self._drop_pending_copies(push)
                     else:
                         existing = self.session.exec(
                             select(UsageEvent.id).where(
