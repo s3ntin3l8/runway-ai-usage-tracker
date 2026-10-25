@@ -2,6 +2,7 @@
 
     make screenshots                    # README (dark + light) and PWA manifest set
     make screenshots-landing OUT=<dir>  # landing-page stills + a short loop
+    make screenshots-audit              # phone + tablet stills for docs/ui-ux-audit
 
 Boots scripts/demo/instance.py, runs the Playwright driver in
 webapp/scripts/screenshots.mjs against it, and tears the instance down.
@@ -20,7 +21,7 @@ from scripts.demo.instance import ROOT, start_demo
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--profile", choices=("readme", "landing"), default="readme")
+    parser.add_argument("--profile", choices=("readme", "landing", "audit"), default="readme")
     parser.add_argument("--out", help="output directory (landing profile)")
     parser.add_argument("--keep", action="store_true", help="keep the scratch dir")
     args = parser.parse_args()

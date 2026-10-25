@@ -200,6 +200,10 @@ Runway is always **server + sidecar(s)**. Two orthogonal axes vary: the server c
 
 All routes are mounted under `/api/v1/`. See **[docs/api-reference.md](docs/api-reference.md)** for the full route inventory (usage, fleet/ingestion, system, auth) and the `LimitCard` response payload schema.
 
+## UI/UX Audit
+
+The dashboard was audited for accessibility, mobile ergonomics and data honesty. See **[docs/ui-ux-audit.md](docs/ui-ux-audit.md)** for the findings, what was fixed, and the deferred backlog. The audit has two permanent guardrails in the test suite: an axe-core check over the main surfaces and a WCAG contrast check over the theme tokens.
+
 ## Optional Security
 
 **`RUNWAY_CONFIG_DIR`** — Override the default platform-specific configuration directory. This controls where Runway stores its database (`runway.db`), external metrics, and OAuth tokens. This is especially useful for Docker deployments or when you need to store configuration in a non-default location.
