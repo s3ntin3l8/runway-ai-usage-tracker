@@ -205,5 +205,8 @@ def test_a_platform_without_a_lock_cannot_own_a_dir(tmp_path: Path) -> None:
     # sweep reads that as "nobody owns it", which is right -- the demo cannot
     # run on such a platform, so there is no live demo to protect.
     demo = _demo_dir(tmp_path, "runway-demo-nolock")
-    assert instance._claim_demo_dir(demo) is None
+    # The lock file is there, so the answer cannot come from "there is no
+    # lock file to read": it comes from the platform having no lock at all.
+    (demo / LOCK_FILE).write_text("")
+    assert _claim(demo) is None
     assert instance._dir_is_claimed(demo) is False
