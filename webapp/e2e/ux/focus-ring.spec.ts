@@ -95,10 +95,26 @@ test('the deep-linked tab is brought into view instead of sitting off-screen', a
 
   const active = page.locator('[role="tab"][data-state="active"]');
   await expect(active).toBeVisible();
-  const box = await active.boundingBox();
-  expect(box).not.toBeNull();
-  expect(box!.x, 'the active tab is off the left of the screen').toBeGreaterThanOrEqual(0);
-  expect(box!.x + box!.width, 'the active tab is off the right of the screen').toBeLessThanOrEqual(
-    PHONE.width,
-  );
+  // The strip scrolls smoothly (`scroll-smooth`), so the deep-linked tab is
+  // on its way into view rather than already there. The position is polled
+  // until the scroll has arrived: a tab that never comes into view fails
+  // this when the poll times out.
+  await expect
+    .poll(
+      async () => {
+        const box = await active.boundingBox();
+        return box ? Math.round(box.x + box.width) : Number.POSITIVE_INFINITY;
+      },
+      { timeout: 10_000 },
+    )
+    .toBeLessThanOrEqual(PHONE.width);
+  await expect
+    .poll(
+      async () => {
+        const box = await active.boundingBox();
+        return box ? Math.round(box.x) : -1;
+      },
+      { timeout: 10_000 },
+    )
+    .toBeGreaterThanOrEqual(0);
 });

@@ -59,10 +59,55 @@ export async function waitForApp(page: Page, marker: string): Promise<void> {
   await page.locator('main').first().waitFor({ state: 'attached' });
   await waitForSeededServer(page);
   await waitForSeededContent(page, marker);
+  await waitForSettledPage(page);
 }
 
 /** How long to wait for the seed and for the page to paint it. */
 const READY_TIMEOUT = 30_000;
+
+/**
+ * Wait until the page has finished arriving.
+ *
+ * The marker above proves that one value reached the screen. It says nothing
+ * about the cards around it: each fetches its own data, and a page measured
+ * while they are still arriving is a page measured against a half-drawn
+ * layout. That is not hypothetical — in CI the bottom-nav check scrolled to a
+ * height the page had not reached yet, and measured content that had not
+ * been drawn yet.
+ *
+ * Two gates. The page's own requests have to be done, or a card is still on
+ * its way. And the layout has to stop changing, because a card that lands
+ * after the scroll has already happened moves everything below it.
+ */
+async function waitForSettledPage(page: Page): Promise<void> {
+  // The app polls every couple of minutes, so there is always a quiet
+  // window between polls. A timeout here is not fatal: the stability gate
+  // below is the one that decides.
+  await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => undefined);
+  await page.waitForFunction(
+    () => {
+      const main = document.querySelector('main');
+      const doc = document.documentElement;
+      const key = [
+        doc.scrollHeight,
+        doc.scrollWidth,
+        main ? Math.round(main.getBoundingClientRect().height) : 0,
+      ].join(':');
+      const store = window as unknown as { uxLayoutKey?: string; uxLayoutHits?: number };
+      if (store.uxLayoutKey === key) {
+        store.uxLayoutHits = (store.uxLayoutHits ?? 0) + 1;
+      } else {
+        store.uxLayoutKey = key;
+        store.uxLayoutHits = 0;
+      }
+      // The same layout for several frames in a row, so a card that is on
+      // its way does not slip in between the check and the measurement.
+      return (store.uxLayoutHits ?? 0) >= 10;
+    },
+    undefined,
+    { timeout: READY_TIMEOUT },
+  );
+}
 
 /**
  * Wait until the server answers with the seeded usage rows.

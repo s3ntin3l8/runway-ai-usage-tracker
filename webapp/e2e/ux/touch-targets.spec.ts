@@ -34,6 +34,9 @@ const TOUCH_FLOOR = 44;
 const DESIGN_SYSTEM_BUTTON = 'ui-button';
 
 test('gives every icon-only control a 44px target on a phone', async ({ page }) => {
+  // The walk visits every route in one test, so it needs more than the
+  // default budget: on a loaded runner each route waits for its own data.
+  test.setTimeout(180_000);
   await page.setViewportSize(PHONE);
   const tooSmall: string[] = [];
   let measured = 0;
@@ -72,6 +75,8 @@ test('gives every icon-only control a 44px target on a phone', async ({ page }) 
 });
 
 test('gives the design system\'s actions a 44px height on a phone', async ({ page }) => {
+  // Six routes in one test, so the default budget is not enough of one.
+  test.setTimeout(180_000);
   await page.setViewportSize(PHONE);
   const tooShort: string[] = [];
   let measured = 0;

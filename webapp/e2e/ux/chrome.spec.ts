@@ -40,9 +40,19 @@ for (const { path, name, marker } of PAGES) {
     await waitForApp(page, marker);
 
     // Scroll to the very bottom: that is where the last of the content sits,
-    // and where the nav is most likely to cover it.
-    await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
-    await page.waitForTimeout(300);
+    // and where the nav is most likely to cover it. The scroll is repeated
+    // until the page stops growing, so a card that lands after the first
+    // scroll cannot leave the page short of its bottom.
+    await page.evaluate(async () => {
+      const bottom = () => window.scrollTo(0, document.documentElement.scrollHeight);
+      for (let attempt = 0; attempt < 10; attempt += 1) {
+        bottom();
+        const height = document.documentElement.scrollHeight;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        bottom();
+        if (document.documentElement.scrollHeight === height) break;
+      }
+    });
 
     const covered = await page.evaluate(() => {
       const nav = document.querySelector('nav.fixed');
