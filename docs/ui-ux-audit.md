@@ -142,23 +142,23 @@ layouts had no visual record at all.
 
 Tracked as GitHub issues rather than footnotes:
 
+- [#948 Data-honesty polish](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/948) — formatting
+  helpers, raw number formatting, timezone leakage, errors masked as empty states
+- [#949 Backend `total` for the rankings](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/949) —
+  so the titles can read "Top 12 **of N**"
+- [#950 Mobile and table density](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/950) — overflowing
+  columns, heatmap cells, the settings redirect
+- [#951 Chart colour and legend semantics](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/951) — the
+  six-colour ceiling, axis truncation, a duplicated rank bar
+- [#952 Terminology and small accessibility gaps](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/952) —
+  deep links, the duplicate provider status, empty column headers, focus rings
+- [#953 Playwright UX smoke suite and its CI job](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/953) —
+  what axe and the contrast guard cannot catch
+
+The findings themselves:
+
 - **Data-honesty polish** — `formatTokens` rounding 1.4K to "1K" while its sibling
   `formatNumber` keeps a decimal; `formatPct` defaulting to zero digits so 99.6% renders
   "100%"; `HistoryChart` bypassing `formatCost`; a backend `Total:` that can contradict a
   chart's own segments; raw `toLocaleString()` in eight or more places; browser-timezone
   leakage in three dialogs.
-- **Backend `total` for the rankings** — "Top 12 of N" needs a count in the top-N
-  responses; the query is a `GROUP BY` with a `LIMIT`, so it means a second aggregate
-  across five endpoints and their response schemas.
-- **Mobile and table density** — model ids blowing out the Sessions column; heatmap
-  cells ~11px wide at 390px; raw `msgs` next to formatted numbers in the same table; the
-  settings page hard-redirecting below 1024px and dropping the section.
-- **Chart colour and legend semantics** — `--chart-1` and `--chart-6` at 1.22:1
-  similarity once a chart exceeds six series; the 10-character axis-label truncation; the
-  duplicated rank-bar implementations.
-- **Terminology and copy** — the legacy `?period=` deep link honoured on the provider
-  page but not on History or Insights; the provider status rendered twice, differently,
-  between the grid and the rail; the empty chevron column header.
-- **Playwright UX smoke suite** — a mobile overflow and keyboard test with its own CI
-  job. The existing Playwright job belongs to the security workflow, so standing up a
-  second browser job is a CI-topology decision rather than part of this change.
