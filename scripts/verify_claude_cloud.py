@@ -499,12 +499,188 @@ def _history_decision(value: Any) -> dict[str, Any]:
     }
 
 
+BOUNDARY_KINDS = {"missing", "null", "boolean", "number", "string", "array", "object", "not_object"}
+BOUNDARY_OUTCOMES = {
+    "observed",
+    "busy",
+    "checkpoint_unavailable",
+    "checkpoint_ineligible",
+    "checkpoint_changed",
+    "source_changed",
+    "identity_mismatch",
+    "identity_unavailable",
+    "expired",
+    "rejected",
+    "rate_limited",
+    "timeout",
+    "unavailable",
+    "unsupported_contract",
+    "response_limit",
+}
+
+
+def _boundary_observation(value: Any) -> None:
+    _keys(
+        value,
+        {
+            "top_level_kind",
+            "data_kind",
+            "record_count",
+            "records_over_limit",
+            "checked_records",
+            "id_kinds",
+            "valid_ids",
+            "invalid_ids",
+            "duplicate_valid_ids",
+            "previously_seen_ids",
+            "cursor_state",
+            "cursor_supported",
+            "cursor_repeated",
+            "has_more_state",
+        },
+    )
+    for name in ("top_level_kind", "data_kind"):
+        _choice(value[name], BOUNDARY_KINDS)
+    records = value["record_count"]
+    if records is not None:
+        _integer(records)
+    for name in (
+        "checked_records",
+        "valid_ids",
+        "invalid_ids",
+        "duplicate_valid_ids",
+        "previously_seen_ids",
+    ):
+        _integer(value[name], 20)
+    _counters(value["id_kinds"], BOUNDARY_KINDS)
+    _require(sum(value["id_kinds"].values()) == value["checked_records"])
+    _require(value["checked_records"] == (min(records, 20) if records is not None else 0))
+    _require((value["data_kind"] == "array") == (records is not None))
+    _require(
+        type(value["records_over_limit"]) is bool
+        and value["records_over_limit"] == (records is not None and records > 20)
+    )
+    _require(value["valid_ids"] + value["invalid_ids"] == value["checked_records"])
+    _require(value["valid_ids"] <= value["id_kinds"]["string"])
+    _require(value["duplicate_valid_ids"] <= max(0, value["valid_ids"] - 1))
+    _require(value["previously_seen_ids"] <= value["valid_ids"])
+    _choice(
+        value["cursor_state"], {"missing", "null", "empty_string", "nonempty_string", "invalid"}
+    )
+    _require(
+        type(value["cursor_supported"]) is bool
+        and value["cursor_supported"] == (value["cursor_state"] in ("null", "nonempty_string"))
+    )
+    if value["cursor_state"] == "nonempty_string":
+        _require(type(value["cursor_repeated"]) is bool)
+    else:
+        _require(value["cursor_repeated"] is None)
+    _choice(value["has_more_state"], {"missing", "true", "false", "invalid"})
+    _require(value["top_level_kind"] == "object" or value["data_kind"] == "not_object")
+
+
+def _boundary_report(value: Any) -> None:
+    _keys(
+        value,
+        {
+            "format_version",
+            "outcome",
+            "stage",
+            "requests",
+            "http_status",
+            "account_verified",
+            "organization_verified",
+            "original_list_pages",
+            "original_listed_sessions",
+            "boundary",
+            "response_encoding",
+            "json_state",
+            "duplicate_json_keys",
+            "nonfinite_json_values",
+            "cloud_contract_verified",
+            "ready_for_ingestion",
+            "live_acceptance_passed",
+            "provenance_verified",
+        },
+    )
+    _require(type(value["format_version"]) is int and value["format_version"] == 1)
+    _false_flags(value)
+    _require(value["live_acceptance_passed"] is False and value["provenance_verified"] is False)
+    _choice(value["outcome"], BOUNDARY_OUTCOMES)
+    _choice(value["stage"], {"checkpoint", "source", "profile", "sessions", "complete"})
+    _integer(value["requests"], 2)
+    pages, sessions = value["original_list_pages"], value["original_listed_sessions"]
+    _require((pages is None) == (sessions is None))
+    if pages is not None:
+        _integer(pages, 512)
+        _integer(sessions, 20000)
+        _require(sessions <= pages * 20)
+    for name in ("account_verified", "organization_verified"):
+        _require(type(value[name]) is bool)
+    if value["http_status"] is not None:
+        _integer(value["http_status"], 599)
+        _require(value["http_status"] >= 100)
+    _choice(value["response_encoding"], {"unknown", "identity", "unsupported"})
+    _choice(
+        value["json_state"],
+        {
+            "not_attempted",
+            "decoded",
+            "duplicate_keys",
+            "nonfinite_values",
+            "invalid_json",
+            "encoding_error",
+            "nesting_limit",
+        },
+    )
+    for name in ("duplicate_json_keys", "nonfinite_json_values"):
+        _integer(value[name])
+    if value["json_state"] in ("not_attempted", "decoded"):
+        _require(value["duplicate_json_keys"] == value["nonfinite_json_values"] == 0)
+    if value["json_state"] != "not_attempted":
+        _require(value["response_encoding"] == "identity")
+    if value["json_state"] == "duplicate_keys":
+        _require(value["duplicate_json_keys"] > 0)
+    if value["json_state"] == "nonfinite_values":
+        _require(value["nonfinite_json_values"] > 0)
+    observed = value["outcome"] == "observed"
+    _require((value["boundary"] is not None) == observed)
+    if observed:
+        _require(pages is not None)
+        _require(
+            value["stage"] == "complete"
+            and value["requests"] == 2
+            and value["http_status"] == 200
+            and value["account_verified"]
+            and value["organization_verified"]
+        )
+        _require(value["json_state"] == "decoded" and value["response_encoding"] == "identity")
+        _boundary_observation(value["boundary"])
+
+
+def _boundary_decision(value: Any) -> dict[str, Any]:
+    _boundary_report(value["report"])
+    return {
+        **_decision(
+            "stop",
+            [
+                "list_contract_requires_review",
+                "accounting_requires_review",
+                "coverage_requires_review",
+                "provenance_requires_review",
+            ],
+        ),
+        **{key: value[key] for key in ("source_commit", "image", "observed_at", "deployment")},
+        "report": json.loads(json.dumps(value["report"])),
+    }
+
+
 def evaluate(value: Any) -> dict[str, Any]:
     """Validate sample/history envelopes; supplied provenance is never authenticated."""
     _keys(
         value, {"format_version", "source_commit", "image", "observed_at", "deployment", "report"}
     )
-    _require(type(value["format_version"]) is int and value["format_version"] in (1, 2))
+    _require(type(value["format_version"]) is int and value["format_version"] in (1, 2, 3))
     for key, pattern in (
         ("source_commit", r"[0-9a-f]{40}"),
         ("image", r"ghcr\.io/s3ntin3l8/runway@sha256:[0-9a-f]{64}"),
@@ -516,6 +692,8 @@ def evaluate(value: Any) -> dict[str, Any]:
     except ValueError:
         raise EvidenceError("invalid_evidence") from None
     _choice(value["deployment"], {"selected-production", "isolated-test"})
+    if value["format_version"] == 3:
+        return _boundary_decision(value)
     if value["format_version"] == 2:
         return _history_decision(value)
     report = value["report"]

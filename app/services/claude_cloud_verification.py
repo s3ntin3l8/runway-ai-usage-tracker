@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import hmac
-import json
 import re
 import secrets
 from typing import Any, cast, get_args
@@ -30,6 +28,7 @@ from app.services.claude_cloud_ledger import (
     usage_timestamp,
 )
 from scripts.audit_claude_usage import audit_messages
+from scripts.claude_cloud_list_boundary import job_digest as _digest
 
 _RECORD: TypeAdapter[CheckpointRecord] = TypeAdapter(CheckpointRecord)
 
@@ -41,11 +40,6 @@ UNSAFE_OUTCOMES = {
     "identity_mismatch",
     "identity_unavailable",
 }
-
-
-def _digest(key: bytes, domain: bytes, value: object) -> str:
-    payload = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
-    return hmac.digest(key, domain + b"\x00" + payload, "sha256").hex()
 
 
 def _source_digest(key: bytes, source: tuple[Any, ...]) -> str:

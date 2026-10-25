@@ -1713,3 +1713,49 @@ export interface ClaudeVerificationReport {
 }
 export type ClaudeVerificationResponse = ClaudeVerificationReport | { state: 'absent' | 'cancelled' }
   | { state: 'unavailable'; job_handle: string };
+
+/** Explicit failed-list inspection; never resumes or modifies the checkpoint. */
+export interface ClaudeListBoundaryRequest { job_handle: string }
+export type ClaudeBoundaryKind = 'missing' | 'null' | 'boolean' | 'number' | 'string'
+  | 'array' | 'object' | 'not_object';
+export interface ClaudeListBoundaryObservation {
+  top_level_kind: ClaudeBoundaryKind;
+  data_kind: ClaudeBoundaryKind;
+  record_count: number | null;
+  records_over_limit: boolean;
+  checked_records: number;
+  id_kinds: Record<ClaudeBoundaryKind, number>;
+  valid_ids: number;
+  invalid_ids: number;
+  duplicate_valid_ids: number;
+  previously_seen_ids: number;
+  cursor_state: 'missing' | 'null' | 'empty_string' | 'nonempty_string' | 'invalid';
+  /** Acceptance by the current parser; never a provider contract guarantee. */
+  cursor_supported: boolean;
+  cursor_repeated: boolean | null;
+  has_more_state: 'missing' | 'true' | 'false' | 'invalid';
+}
+export interface ClaudeListBoundaryReport {
+  response_encoding: 'unknown' | 'identity' | 'unsupported';
+  json_state: 'not_attempted' | 'decoded' | 'duplicate_keys' | 'nonfinite_values'
+    | 'invalid_json' | 'encoding_error' | 'nesting_limit';
+  duplicate_json_keys: number;
+  nonfinite_json_values: number;
+  format_version: 1;
+  outcome: 'observed' | 'busy' | 'checkpoint_unavailable' | 'checkpoint_ineligible'
+    | 'checkpoint_changed' | 'source_changed' | 'identity_mismatch' | 'identity_unavailable'
+    | 'expired' | 'rejected' | 'rate_limited' | 'timeout' | 'unavailable'
+    | 'unsupported_contract' | 'response_limit';
+  stage: 'checkpoint' | 'source' | 'profile' | 'sessions' | 'complete';
+  requests: number;
+  http_status: number | null;
+  account_verified: boolean;
+  organization_verified: boolean;
+  original_list_pages: number | null;
+  original_listed_sessions: number | null;
+  boundary: ClaudeListBoundaryObservation | null;
+  cloud_contract_verified: false;
+  ready_for_ingestion: false;
+  live_acceptance_passed: false;
+  provenance_verified: false;
+}

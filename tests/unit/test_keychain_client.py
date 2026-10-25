@@ -243,11 +243,14 @@ def test_worker_exits_when_parent_dies_during_native_call(tmp_path):
 
     marker = tmp_path / "started"
     worker = tmp_path / "stalled_worker.py"
+    # Expose file creation before readiness so existence alone cannot pass the handshake.
     worker.write_text("""import sys,time
 from pathlib import Path
 from scripts.sidecar_pkg import keychain_worker as w
 class API:
     def call(self,*args):
+        Path(sys.argv[1]).touch()
+        time.sleep(.1)
         Path(sys.argv[1]).write_text('started')
         time.sleep(20)
 w._NativeAPI=API
@@ -260,7 +263,7 @@ from scripts.sidecar_pkg.keychain_client import encode_frame
 p=subprocess.Popen([sys.executable,sys.argv[1],sys.argv[2]],stdin=subprocess.PIPE)
 p.stdin.write(encode_frame({'operation':'copy','query':{},'values':{}})); p.stdin.flush()
 deadline=time.monotonic()+2
-while not Path(sys.argv[2]).exists():
+while not Path(sys.argv[2]).exists() or Path(sys.argv[2]).read_text() != 'started':
     if time.monotonic()>deadline: raise RuntimeError('synthetic worker did not start')
     time.sleep(.005)
 print('started',flush=True)

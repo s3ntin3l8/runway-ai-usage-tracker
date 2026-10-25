@@ -291,3 +291,45 @@ def test_unreadable_real_checkpoint_can_be_discovered_and_explicitly_cancelled(
     assert cancelled.status_code == 200
     assert store.current_handle() is None
     advance.assert_not_awaited()
+
+
+def test_terminal_step_rechecks_local_authority_before_publishing_cached_evidence(
+    client, monkeypatch
+):
+    from types import SimpleNamespace
+
+    from app.models.claude_cloud_verification import VerificationState
+
+    http, endpoint, advance = client
+    terminal = VerificationState(
+        account_id="private-revoked-holder",
+        source_id="private-source",
+        job_key="a" * 64,
+        source_digest="b" * 64,
+        created_at=1000.0,
+        deadline=2800.0,
+        phase="complete",
+        outcome="complete",
+        requests=3,
+        list_pages=1,
+        listed_sessions=1,
+        seen_sessions=["c" * 64],
+        selected_session="fixture-session",
+        list_complete=True,
+        history_pages=1,
+        history_complete=True,
+        subject="22222222-2222-4222-8222-222222222222",
+        organization="11111111-1111-4111-8111-111111111111",
+    )
+    monkeypatch.setattr(
+        endpoint, "checkpoint_store", lambda: SimpleNamespace(snapshot=lambda handle: terminal)
+    )
+    advance.side_effect = None
+    advance.return_value = terminal
+    # The real local-only reader finds no live source for this revoked account.
+    response = http.post(PATH, json={"action": "step", "job_handle": HANDLE}, headers=AUTH)
+    assert response.status_code == 200
+    assert response.json()["outcome"] == "source_changed"
+    assert response.json()["account_verified"] is False
+    assert terminal.outcome == "complete"  # publication cannot mutate a concurrent checkpoint
+    advance.assert_awaited_once()

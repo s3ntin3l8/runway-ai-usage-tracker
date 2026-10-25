@@ -918,3 +918,56 @@ returns `stop` with remaining accounting/coverage/provenance checks; supplied
 build metadata is not authenticated by the offline validator.
 
 See [the #956 design and acceptance boundaries](claude-complete-history-verification-956.md).
+
+### Failed Claude list-boundary diagnostic (operator only)
+
+`POST /api/v1/system/debug/claude-cloud-list-boundary` accepts only
+`{"job_handle":"…"}` for an existing encrypted verification checkpoint stopped
+with `unsupported_contract` during listing, with holder/org already bound and
+no completed list or history pages. It inherits admin, Host and CSRF protections,
+rejects duplicate/unknown keys, caps the body at 8 KiB and rate at two requests
+per minute. GET and ordinary status polling never dispatch it.
+
+The separate explicit diagnostic re-reads the recorded failed cursor. The original
+verification remains stopped with its existing request count and budget. It
+performs at most two GETs (profile and the recorded failed
+list cursor) within 20 seconds, 1 MiB per response and 2 MiB total. It requires
+the exact cached source/token/consent authority digest and holder/org, with
+source and checkpoint checks before each provider operation and publication.
+There is no alternate source, refresh, native discovery, history sweep, model
+call, automatic retry, checkpoint mutation or reset of the original budget.
+An unavailable/changed source or checkpoint stops before further operations.
+
+The fixed `format_version: 1` report returns `outcome`, `stage`, `requests`,
+`http_status`, verification booleans, `original_list_pages`,
+`original_listed_sessions` and optional `boundary`. The original prefix counts
+are historical observations from an eligible, readable checkpoint, including on
+later source/provider failures; unreadable/ineligible counts remain `null` rather
+than a misleading zero. An initial known token expiry reports `expired`; later
+eligibility changes remain `source_changed`. Only outcome `observed` can
+have boundary evidence. Its fields are top-level/data/ID type categories, total
+and inspected record counts (at most 20 inspected), valid/invalid/duplicate and
+previously seen ID counts, cursor category (`missing`, `null`, `empty_string`,
+`nonempty_string`, `invalid`), `cursor_supported`, optional `cursor_repeated`,
+and `has_more_state` (`missing`, `true`, `false`, `invalid`). `response_encoding`
+reports `unknown`/`identity`/`unsupported`; `json_state` distinguishes unattempted,
+decoded, duplicate keys, nonfinite constants, malformed JSON, encoding errors and
+nesting limits, with bounded duplicate/nonfinite counts. The existing strict
+transport/JSON rejection policy remains in force. Unknown evidence
+remains distinct from false or empty. `cursor_supported` describes the current
+parser, not an established provider contract. Unknown keys and values are never
+returned; raw identifiers, cursors, HMACs, credentials and content remain private.
+
+All acceptance, provenance and ingestion flags remain false. The standalone
+validator accepts this report in **evidence envelope version 3**, with the same
+immutable source/image/observation/deployment metadata as the earlier formats.
+It returns STOP with `list_contract_requires_review`. Existing sample/history
+evidence envelopes 1 and 2 remain unchanged. A caller must separately establish
+concrete exact-build readiness and a bounded intent before any live diagnostic.
+
+Verification `step` responses also perform the same local-only authority recheck
+as status before publishing cached evidence, including terminal/limit/recovery
+returns. Repeating a terminal step never makes another provider request.
+
+A separate inspection observes the provider at the time of that request; it cannot
+retroactively establish the exact contents or cause of an unretained failed page.

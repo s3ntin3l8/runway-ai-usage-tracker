@@ -32,6 +32,7 @@ from app.services.probe_mode import probing
 from app.services.source_controls import allowed
 from app.services.token_cache import token_cache
 from scripts.audit_claude_usage import audit_messages
+from scripts.claude_cloud_list_boundary import SESSION_ID as _SESSION_ID
 from scripts.claude_cloud_structure import empty_structure, observe_structure
 from scripts.sidecar_pkg.source_catalog import source_for_origin
 
@@ -44,7 +45,6 @@ OBSERVATION_LOCATIONS = {
     2: ("event", "data", "content", "payload"),
 }
 _gate = asyncio.Lock()
-_SESSION_ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 
 
 class ProbeError(Exception):
@@ -299,7 +299,7 @@ class _Probe:
                 raise ProbeError("rate_limited")
             if response.status_code != 200:
                 raise ProbeError("unavailable")
-            if response.headers.get("content-encoding", "identity").lower() != "identity":
+            if self._response_encoding(response) != "identity":
                 raise ProbeError("unsupported_contract")
             body = bytearray()
             async for chunk in response.aiter_bytes(chunk_size=65536):
@@ -312,9 +312,15 @@ class _Probe:
                 body.extend(chunk)
         await self.check_source()
         try:
-            return json.loads(body, object_pairs_hook=_object, parse_constant=_constant)
+            return self._decode(body)
         except (ValueError, RecursionError):
             raise ProbeError("unsupported_contract") from None
+
+    def _response_encoding(self, response: httpx.Response) -> str:
+        return response.headers.get("content-encoding", "identity").lower()
+
+    def _decode(self, body: bytearray) -> Any:
+        return json.loads(body, object_pairs_hook=_object, parse_constant=_constant)
 
     async def identity(self) -> dict[str, str]:
         headers = {
