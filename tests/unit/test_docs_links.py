@@ -213,10 +213,13 @@ def test_every_doc_is_indexed() -> None:
             continue
         text = index.read_text(encoding="utf-8")
         indexed_root = index.parent
+        # The candidates are the paths as a link spells them: a markdown link
+        # is written with forward slashes, so a path built from the platform's
+        # separator would never match one.
         candidates = {
-            str(path.relative_to(indexed_root)),
+            path.relative_to(indexed_root).as_posix(),
             path.name,
-            str(relative),
+            relative.as_posix(),
         }
         # The document has to be *linked* from the index, not merely named in
         # its prose: a passing mention is not an entry. The link may carry an

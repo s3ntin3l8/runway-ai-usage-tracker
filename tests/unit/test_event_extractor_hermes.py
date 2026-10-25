@@ -1,6 +1,7 @@
 """Unit tests for the Hermes Agent event extractor."""
 
 import json
+import os
 import sqlite3
 import tempfile
 from datetime import UTC, datetime
@@ -20,6 +21,15 @@ from scripts.sidecar_pkg.event_extractors.hermes import (
     resolve_hermes_provider_and_canonical,
 )
 from tests.fixtures.hermes_fixture import make_hermes_db
+
+# A Windows path cannot hold a `|`: the character is reserved there, in a
+# directory name as much as in a file name. A database whose path holds one
+# is a thing that cannot exist there, so the behaviour under test has no
+# subject on that platform.
+requires_pipe_in_path = pytest.mark.skipif(
+    os.name == "nt",
+    reason="a Windows path cannot hold a `|`",
+)
 
 
 def _make_db(directory: Path) -> tuple[Path, sqlite3.Connection]:
@@ -1204,6 +1214,7 @@ def test_prune_keeps_the_slices_of_a_live_database(tmp_path):
         db_path.unlink(missing_ok=True)
 
 
+@requires_pipe_in_path
 def test_prune_keeps_the_slices_of_a_database_whose_path_holds_a_pipe(tmp_path):
     """A database whose path holds a ``|`` is no longer cut short.
 
@@ -1646,7 +1657,14 @@ def test_the_database_path_is_stored_once_per_database(tmp_path):
     try:
         _parse(db_path, state_file)
         content = state_file.read_text(encoding="utf-8")
-        assert content.count(str(db_path.resolve())) == 1
+        # The path is counted in the form the file holds it in: JSON escapes a
+        # backslash, so on Windows the file reads "C:\\Users\\..." where the
+        # path itself is "C:\Users\...". The writer escapes it the same way --
+        # json.dumps with the default ensure_ascii=True, in
+        # _compact_hermes_watermark (event_extractors/hermes.py:528) -- so
+        # this has to keep matching it.
+        stored = json.dumps(str(db_path.resolve()))[1:-1]
+        assert content.count(stored) == 1
         # Both slices are still there.
         assert len(_watermark_keys(state_file)) == 2
     finally:
@@ -1866,6 +1884,7 @@ def test_the_migration_drops_a_key_it_cannot_read(tmp_path):
     assert legacy.exists()
 
 
+@requires_pipe_in_path
 def test_the_migration_matches_the_longest_discovered_path_first(tmp_path):
     """A path that is a prefix of another one must not win the match.
 
@@ -1874,6 +1893,11 @@ def test_the_migration_matches_the_longest_discovered_path_first(tmp_path):
     the longer key as well -- the mark would be filed under a database that
     does not exist, be reclaimed as a dead slice, and the session's whole
     lifetime would be reported a second time.
+
+    The ``|`` inside the path is what puts the two in the same shape: the
+    legacy key is cut on the ``|``, so the key of "/data/a|b|c" also reads
+    as "/data/a". Rename the two directories to "a" and "ab" and this test
+    would stay green while the regression it guards comes back.
     """
     short_db = tmp_path / "a|b"
     long_db = tmp_path / "a|b|c"
