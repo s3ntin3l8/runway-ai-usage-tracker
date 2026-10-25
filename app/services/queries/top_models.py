@@ -15,10 +15,10 @@ from typing import Any
 from sqlalchemy import text
 from sqlmodel import Session
 
-from app.services.queries._shared import sqlite_utc_timestamp
+from app.services.queries._shared import RankedRows, sqlite_utc_timestamp
 
 
-def query_top_models(
+def rank_top_models(
     session: Session,
     *,
     since: datetime,
@@ -27,7 +27,7 @@ def query_top_models(
     exclude_cache: bool = False,
     sidecar_id: str | None = None,
     limit: int = 15,
-) -> list[dict[str, Any]]:
+) -> RankedRows:
     """Rank ``model_id`` across all providers/accounts in ``[since, until)``.
 
     Only ``kind == "message"`` rows with a non-NULL ``model_id`` count. Each
@@ -39,6 +39,9 @@ def query_top_models(
     drops cache tokens/cost from that sort key only — the raw component fields
     stay populated so the frontend can recompute either view. Capped at
     ``limit`` rows.
+
+    ``total`` is the number of ranked groups before the ``LIMIT`` truncated
+    the result — how many models the ranking had, not how many it shows.
     """
     until_clause = "AND ts < :until" if until is not None else ""
     sidecar_clause = "AND sidecar_id = :sidecar_id" if sidecar_id else ""
@@ -80,7 +83,12 @@ def query_top_models(
             SUM(cost_output)                                    AS cost_output,
             SUM(cost_cache_read)                                AS cost_cache_read,
             SUM(cost_cache_create)                              AS cost_cache_create,
-            GROUP_CONCAT(DISTINCT provider_id)                  AS providers_csv
+            GROUP_CONCAT(DISTINCT provider_id)                  AS providers_csv,
+            -- The untruncated size of the ranking. A window function is
+            -- evaluated after GROUP BY and before LIMIT, so this counts
+            -- every group of the same filter set in the one scan that
+            -- produces the rows — the count cannot disagree with them.
+            COUNT(*) OVER ()                                    AS total_groups
         FROM usage_events
         WHERE kind = 'message'
           AND model_id IS NOT NULL
@@ -123,4 +131,7 @@ def query_top_models(
                 "providers": providers,
             }
         )
-    return results
+    # The count rides on every row of the ranking; an empty ranking had no
+    # groups to begin with.
+    total = int(rows[0].total_groups) if rows else 0
+    return RankedRows(rows=results, total=total)

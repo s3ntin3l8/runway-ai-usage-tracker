@@ -324,6 +324,8 @@ export interface TopProjectEntry {
 export interface TopProjectsResponse {
   projects: TopProjectEntry[];
   metric: string; // "tokens" | "cost" | "sessions"
+  total: number; // the ranked groups before the limit truncated them
+  limit: number; // the cap that was applied
   generated_at: string;
 }
 
@@ -355,6 +357,8 @@ export interface TopSessionEntry {
 export interface TopSessionsResponse {
   sessions: TopSessionEntry[];
   metric: string; // "tokens" | "cost"
+  total: number; // the ranked groups before the limit truncated them
+  limit: number; // the cap that was applied
   generated_at: string;
 }
 
@@ -382,6 +386,8 @@ export interface TopHostEntry {
 export interface TopHostsResponse {
   hosts: TopHostEntry[];
   metric: string; // "tokens" | "cost"
+  total: number; // the ranked groups before the limit truncated them
+  limit: number; // the cap that was applied
   generated_at: string;
 }
 
@@ -393,6 +399,8 @@ export interface TopToolEntry {
 
 export interface TopToolsResponse {
   tools: TopToolEntry[];
+  total: number; // the ranked groups before the limit truncated them
+  limit: number; // the cap that was applied
   generated_at: string;
 }
 
@@ -1294,6 +1302,8 @@ export interface TopModelEntry {
 export interface TopModelsResponse {
   models: TopModelEntry[];
   metric: string; // "tokens" | "cost"
+  total: number; // the ranked groups before the limit truncated them
+  limit: number; // the cap that was applied
   generated_at: string;
 }
 

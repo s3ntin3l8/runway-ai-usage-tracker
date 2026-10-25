@@ -1,6 +1,7 @@
 import { screen, waitFor } from '@testing-library/react';
 import { renderWithProviders } from '@/test/utils';
 import { ActivityTab } from './ActivityTab';
+import { ACTIVITY_TOP_SESSIONS_N } from './queries';
 import * as api from '@/api/endpoints';
 import {
   currentPeriod,
@@ -110,8 +111,26 @@ describe('ActivityTab', () => {
     renderWithProviders(
       <ActivityTab providerId="anthropic" accountId="me@example.com" scope={currentPeriod()} />,
     );
-    expect(await screen.findByText(/^Top sessions ·/)).toBeInTheDocument();
+    // The card's title states how many sessions the list holds, not the cap
+    // it could have held — one session came back, so there is one.
+    expect(await screen.findByText(/^Top 1 session ·/)).toBeInTheDocument();
     expect(await screen.findByText('Session')).toBeInTheDocument();
+  });
+
+  it('states the cap when the session list is full', async () => {
+    vi.mocked(api.fetchCumulative).mockResolvedValue(cumulativeResponse());
+    vi.mocked(api.fetchHeatmap).mockResolvedValue(heatmapResponse(true));
+    // A full page means the list may have been truncated, so the title says
+    // the cap rather than claiming this is all of them.
+    vi.mocked(api.fetchSessions).mockResolvedValue({
+      sessions: Array.from({ length: ACTIVITY_TOP_SESSIONS_N }, () => session()),
+    } as never);
+    renderWithProviders(
+      <ActivityTab providerId="anthropic" accountId="me@example.com" scope={currentPeriod()} />,
+    );
+    expect(
+      await screen.findByText(new RegExp(`^Top ${ACTIVITY_TOP_SESSIONS_N} sessions ·`)),
+    ).toBeInTheDocument();
   });
 
   it('scopes heatmap and sessions to the selected past month', async () => {

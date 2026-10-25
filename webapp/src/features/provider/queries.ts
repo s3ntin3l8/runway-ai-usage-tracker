@@ -127,6 +127,15 @@ export const useProviderHeatmap = (
   });
 };
 
+/**
+ * How many sessions the Activity tab's "Top sessions" card asks for.
+ *
+ * The card's title states the cap, so the number has to live in one place:
+ * the query and the label read the same constant, and the label cannot drift
+ * from what was asked for.
+ */
+export const ACTIVITY_TOP_SESSIONS_N = 10;
+
 export const useProviderSessions = (
   providerId: string,
   accountId: string,
@@ -139,7 +148,7 @@ export const useProviderSessions = (
       fetchSessions({
         provider_id: providerId,
         account_id: accountId,
-        limit: 10,
+        limit: ACTIVITY_TOP_SESSIONS_N,
         sort_by: 'tokens',
         sidecar_id: sidecarId,
         ...(range ? { since: range.since, until: range.until } : {}),

@@ -11,6 +11,7 @@ import { TopModelsBar, type TopMetric } from '@/components/charts/TopModelsBar';
 import { useExcludeCache } from '@/hooks/useExcludeCache';
 import { formatRangeLabel, type DateRangeValue } from '@/lib/timeRange';
 import { INSIGHTS_TOP_N, useTopModels } from './queries';
+import { rankTitle } from './rankTitle';
 import { CircleAlert } from 'lucide-react';
 
 export function TopModelsCard({ range }: { range: DateRangeValue }) {
@@ -22,7 +23,10 @@ export function TopModelsCard({ range }: { range: DateRangeValue }) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Top {INSIGHTS_TOP_N} models · {formatRangeLabel(range)}</CardTitle>
+        <CardTitle>
+          {rankTitle(top.data?.total, top.data?.limit ?? INSIGHTS_TOP_N, 'models')} ·{' '}
+          {formatRangeLabel(range)}
+        </CardTitle>
         <SegmentedControl
           value={metric}
           onChange={(v) => setMetric(v as TopMetric)}

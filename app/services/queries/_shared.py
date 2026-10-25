@@ -2,9 +2,19 @@
 more than one query module."""
 
 import logging
+from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class RankedRows:
+    """A capped ranking and the untruncated size of the ranking it came from."""
+
+    rows: list[dict[str, Any]]
+    total: int
 
 
 def _parse_ts(value: str | datetime | None) -> datetime | None:

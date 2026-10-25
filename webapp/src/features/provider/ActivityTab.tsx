@@ -13,10 +13,12 @@ import { useExcludeCache } from '@/hooks/useExcludeCache';
 import { hasTokenData } from '@/lib/cumulative';
 import { getUserTz } from '@/lib/tz';
 import { TopProjectsCard } from '@/features/insights/TopProjectsCard';
+import { rankTitle } from '@/features/insights/rankTitle';
 import type { TabScope } from './period';
 import { ProviderTrendCard } from './ProviderTrendCard';
 import { SessionsTable } from './SessionsTable';
 import {
+  ACTIVITY_TOP_SESSIONS_N,
   useProviderCumulative,
   useProviderCumulativeMonth,
   useProviderCumulativeRange,
@@ -139,12 +141,26 @@ export function ActivityTab({
       <TopProjectsCard
         range={scope.value}
         providerId={providerId}
-        title={`Top projects · ${scopeLabel}`}
+        scopeLabel={scopeLabel}
       />
 
       <Card>
         <CardHeader>
-          <CardTitle>{`Top sessions · ${scopeLabel}`}</CardTitle>
+          <CardTitle>
+            {/* The provider's own session list is capped too, so its title
+                states the cap. It comes from `/usage/sessions`, which reports
+                no untruncated total, so the cap is all that can be said —
+                and when fewer sessions came back than the cap, the title
+                states how many there were. */}
+            {rankTitle(
+              sessions.data && sessions.data.sessions.length < ACTIVITY_TOP_SESSIONS_N
+                ? sessions.data.sessions.length
+                : undefined,
+              ACTIVITY_TOP_SESSIONS_N,
+              'sessions',
+            )}{' '}
+            · {scopeLabel}
+          </CardTitle>
         </CardHeader>
         {sessions.isPending ? (
           <CardContent>

@@ -353,6 +353,8 @@ class TopModelEntry(BaseModel):
 class TopModelsResponse(BaseModel):
     models: list[TopModelEntry]
     metric: str  # "tokens" | "cost" — the sort key used
+    total: int  # the untruncated number of ranked groups
+    limit: int  # the cap that was applied
     generated_at: str  # ISO-8601 UTC
 
 
@@ -446,6 +448,8 @@ class TopProjectEntry(BaseModel):
 class TopProjectsResponse(BaseModel):
     projects: list[TopProjectEntry]
     metric: str  # "tokens" | "cost" | "sessions"
+    total: int  # the untruncated number of ranked groups
+    limit: int  # the cap that was applied
     generated_at: str
 
 
@@ -479,6 +483,8 @@ class TopSessionEntry(BaseModel):
 class TopSessionsResponse(BaseModel):
     sessions: list[TopSessionEntry]
     metric: str  # "tokens" | "cost"
+    total: int  # the untruncated number of ranked groups
+    limit: int  # the cap that was applied
     generated_at: str
 
 
@@ -508,6 +514,8 @@ class TopHostEntry(BaseModel):
 class TopHostsResponse(BaseModel):
     hosts: list[TopHostEntry]
     metric: str  # "tokens" | "cost"
+    total: int  # the untruncated number of ranked groups
+    limit: int  # the cap that was applied
     generated_at: str
 
 
@@ -519,6 +527,8 @@ class TopToolEntry(BaseModel):
 
 class TopToolsResponse(BaseModel):
     tools: list[TopToolEntry]
+    total: int  # the untruncated number of ranked groups
+    limit: int  # the cap that was applied
     generated_at: str
 
 

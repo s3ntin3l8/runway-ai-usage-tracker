@@ -1,4 +1,4 @@
-"""Tests for query_top_sessions — cross-provider session ranking."""
+"""Tests for rank_top_sessions — cross-provider session ranking."""
 
 import os
 import tempfile
@@ -8,7 +8,7 @@ import pytest
 from sqlmodel import Session, SQLModel, create_engine
 
 from app.models.db import UsageEvent
-from app.services.queries.top_sessions import query_top_sessions
+from app.services.queries.top_sessions import rank_top_sessions
 
 
 @pytest.fixture
@@ -74,7 +74,7 @@ def test_ranks_by_tokens_and_collapses_providers(db_session):
     _add(db_session, event_id="b", provider_id="gemini", session_id="s1", tokens_input=400)
     _add(db_session, event_id="c", provider_id="chatgpt", session_id="s2", tokens_input=200)
 
-    rows = query_top_sessions(db_session, since=_SINCE, metric="tokens")
+    rows = rank_top_sessions(db_session, since=_SINCE, metric="tokens").rows
 
     assert [r["session_id"] for r in rows] == ["s1", "s2"]
     assert rows[0]["tokens_total"] == 500
@@ -85,7 +85,7 @@ def test_excludes_null_session_id(db_session):
     _add(db_session, event_id="a", session_id="s1", tokens_input=100)
     _add(db_session, event_id="b", session_id=None, tokens_input=999)
 
-    rows = query_top_sessions(db_session, since=_SINCE, metric="tokens")
+    rows = rank_top_sessions(db_session, since=_SINCE, metric="tokens").rows
     assert [r["session_id"] for r in rows] == ["s1"]
 
 
@@ -95,7 +95,7 @@ def test_excludes_an_empty_session_id(db_session):
     _add(db_session, event_id="a", session_id="s1", tokens_input=100)
     _add(db_session, event_id="b", session_id="", tokens_input=999)
 
-    rows = query_top_sessions(db_session, since=_SINCE, metric="tokens")
+    rows = rank_top_sessions(db_session, since=_SINCE, metric="tokens").rows
     assert [r["session_id"] for r in rows] == ["s1"]
 
 
@@ -122,7 +122,7 @@ def test_describes_the_session_by_its_latest_event(db_session):
         tokens_input=10,
     )
 
-    row = query_top_sessions(db_session, since=_SINCE, metric="tokens")[0]
+    row = rank_top_sessions(db_session, since=_SINCE, metric="tokens").rows[0]
     assert row["sidecar_id"] == "aaa-host"
     assert row["project"] == "alpha"
     assert row["cwd"] == "/repo/alpha"
@@ -152,7 +152,7 @@ def test_falls_back_when_the_latest_event_has_no_project(db_session):
         tokens_input=10,
     )
 
-    row = query_top_sessions(db_session, since=_SINCE, metric="tokens")[0]
+    row = rank_top_sessions(db_session, since=_SINCE, metric="tokens").rows[0]
     # The host still comes from the latest event...
     assert row["sidecar_id"] == "host-b"
     # ...but the project falls back to the best one the session had.
@@ -186,7 +186,7 @@ def test_counts_the_hosts_a_session_ran_on(db_session):
         tokens_input=10,
     )
 
-    rows = query_top_sessions(db_session, since=_SINCE, metric="tokens")
+    rows = rank_top_sessions(db_session, since=_SINCE, metric="tokens").rows
     assert rows[0]["session_id"] == "s1"
     assert rows[0]["hosts"] == 2
     assert rows[1]["hosts"] == 1
@@ -204,7 +204,7 @@ def test_carries_the_project_host_and_models(db_session):
         tokens_input=10,
     )
 
-    row = query_top_sessions(db_session, since=_SINCE, metric="tokens")[0]
+    row = rank_top_sessions(db_session, since=_SINCE, metric="tokens").rows[0]
     assert row["project"] == "alpha"
     assert row["cwd"] == "/repo/alpha"
     assert row["sidecar_id"] == "workstation"
@@ -227,7 +227,7 @@ def test_reports_the_first_and_last_event_of_the_session(db_session):
         tokens_input=1,
     )
 
-    row = query_top_sessions(db_session, since=_SINCE, metric="tokens")[0]
+    row = rank_top_sessions(db_session, since=_SINCE, metric="tokens").rows[0]
     assert row["ts_start"] == "2026-05-21T10:00:00+00:00"
     assert row["ts_end"] == "2026-05-21T12:00:00+00:00"
 
@@ -236,7 +236,9 @@ def test_provider_filter_scopes_ranking(db_session):
     _add(db_session, event_id="a", provider_id="anthropic", session_id="s1", tokens_input=100)
     _add(db_session, event_id="b", provider_id="gemini", session_id="s2", tokens_input=400)
 
-    rows = query_top_sessions(db_session, since=_SINCE, metric="tokens", provider_id="anthropic")
+    rows = rank_top_sessions(
+        db_session, since=_SINCE, metric="tokens", provider_id="anthropic"
+    ).rows
     assert [r["session_id"] for r in rows] == ["s1"]
 
 
@@ -244,7 +246,7 @@ def test_sidecar_filter_scopes_ranking(db_session):
     _add(db_session, event_id="a", session_id="s1", sidecar_id="host-a", tokens_input=100)
     _add(db_session, event_id="b", session_id="s2", sidecar_id="host-b", tokens_input=400)
 
-    rows = query_top_sessions(db_session, since=_SINCE, metric="tokens", sidecar_id="host-b")
+    rows = rank_top_sessions(db_session, since=_SINCE, metric="tokens", sidecar_id="host-b").rows
     assert [r["session_id"] for r in rows] == ["s2"]
 
 
@@ -258,9 +260,9 @@ def test_cost_metric_with_exclude_cache(db_session):
     )
     _add(db_session, event_id="real", session_id="s-real", cost_usd=5.0, cost_cache_read=0.0)
 
-    incl = query_top_sessions(db_session, since=_SINCE, metric="cost", exclude_cache=False)
+    incl = rank_top_sessions(db_session, since=_SINCE, metric="cost", exclude_cache=False).rows
     assert incl[0]["session_id"] == "s-cheap"
-    excl = query_top_sessions(db_session, since=_SINCE, metric="cost", exclude_cache=True)
+    excl = rank_top_sessions(db_session, since=_SINCE, metric="cost", exclude_cache=True).rows
     assert excl[0]["session_id"] == "s-real"
 
 
@@ -289,7 +291,7 @@ def test_same_day_bounds_filter_the_ranking(db_session):
         tokens_input=1000,
     )
 
-    rows = query_top_sessions(db_session, since=since, until=until, metric="tokens")
+    rows = rank_top_sessions(db_session, since=since, until=until, metric="tokens").rows
     assert [r["session_id"] for r in rows] == ["s-inside"]
 
 
@@ -297,7 +299,7 @@ def test_limit_caps_the_ranking(db_session):
     for index in range(5):
         _add(db_session, event_id=f"e{index}", session_id=f"s{index}", tokens_input=index + 1)
 
-    rows = query_top_sessions(db_session, since=_SINCE, metric="tokens", limit=2)
+    rows = rank_top_sessions(db_session, since=_SINCE, metric="tokens", limit=2).rows
     assert len(rows) == 2
     assert rows[0]["session_id"] == "s4"
 
@@ -312,7 +314,7 @@ def test_the_message_count_counts_turns(db_session):
             tokens_input=100,
             turn_id="turn_1",
         )
-    rows = query_top_sessions(db_session, since=_SINCE, metric="tokens")
+    rows = rank_top_sessions(db_session, since=_SINCE, metric="tokens").rows
     assert rows[0]["msgs"] == 1
 
 
@@ -321,5 +323,43 @@ def test_an_event_id_is_scoped_to_its_provider(db_session):
     _add(db_session, event_id="shared", provider_id="anthropic", session_id="s1")
     _add(db_session, event_id="shared", provider_id="gemini", session_id="s1")
 
-    rows = query_top_sessions(db_session, since=_SINCE, metric="tokens")
+    rows = rank_top_sessions(db_session, since=_SINCE, metric="tokens").rows
     assert rows[0]["msgs"] == 2
+
+
+def test_total_counts_the_groups_the_limit_cut(db_session):
+    for index in range(5):
+        _add(db_session, event_id=f"e{index}", session_id=f"s{index}", tokens_input=index + 1)
+
+    ranked = rank_top_sessions(db_session, since=_SINCE, metric="tokens", limit=2)
+
+    assert len(ranked.rows) == 2
+    assert ranked.total == 5
+
+
+def test_total_matches_the_rows_when_nothing_was_cut(db_session):
+    _add(db_session, event_id="a", session_id="s1", tokens_input=100)
+    _add(db_session, event_id="b", session_id="s2", tokens_input=200)
+
+    ranked = rank_top_sessions(db_session, since=_SINCE, metric="tokens")
+
+    assert ranked.total == len(ranked.rows) == 2
+
+
+def test_total_is_zero_for_an_empty_range(db_session):
+    _add(db_session, event_id="a", session_id="s1", tokens_input=100)
+
+    ranked = rank_top_sessions(db_session, since=_NOW + timedelta(days=1), metric="tokens")
+
+    assert ranked.rows == []
+    assert ranked.total == 0
+
+
+def test_total_follows_the_provider_filter(db_session):
+    _add(db_session, event_id="a", provider_id="anthropic", session_id="s1", tokens_input=100)
+    _add(db_session, event_id="b", provider_id="gemini", session_id="s2", tokens_input=200)
+
+    scoped = rank_top_sessions(db_session, since=_SINCE, metric="tokens", provider_id="gemini")
+
+    assert [r["session_id"] for r in scoped.rows] == ["s2"]
+    assert scoped.total == 1

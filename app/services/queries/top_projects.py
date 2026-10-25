@@ -14,10 +14,10 @@ from typing import Any
 from sqlalchemy import text
 from sqlmodel import Session
 
-from app.services.queries._shared import sqlite_utc_timestamp
+from app.services.queries._shared import RankedRows, sqlite_utc_timestamp
 
 
-def query_top_projects(
+def rank_top_projects(
     session: Session,
     *,
     since: datetime,
@@ -27,7 +27,7 @@ def query_top_projects(
     provider_id: str | None = None,
     sidecar_id: str | None = None,
     limit: int = 15,
-) -> list[dict[str, Any]]:
+) -> RankedRows:
     """Rank ``project`` in ``[since, until)`` by tokens, cost, or session count.
 
     Each row: ``project``, token component sums + ``tokens_total``, ``cost_usd``
@@ -35,6 +35,9 @@ def query_top_projects(
     ``providers`` (distinct providers that touched the project). ``metric``
     ("tokens" | "cost" | "sessions") chooses the sort key; ``exclude_cache``
     drops cache from the tokens/cost sort key only.
+
+    ``total`` is the number of ranked groups before the ``LIMIT`` truncated
+    the result — how many projects the ranking had, not how many it shows.
     """
     until_clause = "AND ts < :until" if until is not None else ""
     provider_clause = "AND provider_id = :provider_id" if provider_id else ""
@@ -99,7 +102,12 @@ def query_top_projects(
             SUM(cost_output)                                    AS cost_output,
             SUM(cost_cache_read)                                AS cost_cache_read,
             SUM(cost_cache_create)                              AS cost_cache_create,
-            GROUP_CONCAT(DISTINCT provider_id)                  AS providers_csv
+            GROUP_CONCAT(DISTINCT provider_id)                  AS providers_csv,
+            -- The untruncated size of the ranking. A window function is
+            -- evaluated after GROUP BY and before LIMIT, so this counts
+            -- every group of the same filter set in the one scan that
+            -- produces the rows — the count cannot disagree with them.
+            COUNT(*) OVER ()                                    AS total_groups
         FROM usage_events
         WHERE kind = 'message'
           AND project IS NOT NULL
@@ -146,7 +154,10 @@ def query_top_projects(
                 "providers": providers,
             }
         )
-    return results
+    # The count rides on every row of the ranking; an empty ranking had no
+    # groups to begin with.
+    total = int(rows[0].total_groups) if rows else 0
+    return RankedRows(rows=results, total=total)
 
 
 def query_projects(

@@ -15,6 +15,7 @@ import { useExcludeCache } from '@/hooks/useExcludeCache';
 import { formatAxisCost, formatAxisNumber, formatCost, formatCount, formatTokens } from '@/lib/format';
 import { formatRangeLabel, type DateRangeValue } from '@/lib/timeRange';
 import { INSIGHTS_TOP_N, type ProjectMetric, useTopProjects } from './queries';
+import { rankTitle } from './rankTitle';
 import { costSegments, costTotal, tokenSegments } from './rankSegments';
 import { CircleAlert } from 'lucide-react';
 
@@ -68,15 +69,16 @@ const AXIS_FORMAT: Record<ProjectMetric, (v: number) => string> = {
 };
 
 // The shared range value scopes the ranking; `providerId` narrows it to one
-// provider (Activity). `title` overrides the default `Top ${INSIGHTS_TOP_N} projects · label`.
+// provider (Activity). `scopeLabel` names the scope in the title — the range's
+// own label by default, the provider's scope on the Activity tab.
 export function TopProjectsCard({
   range,
   providerId,
-  title,
+  scopeLabel,
 }: {
   range: DateRangeValue;
   providerId?: string;
-  title?: string;
+  scopeLabel?: string;
 }) {
   const { excludeCache } = useExcludeCache();
   const t = useChartTokens();
@@ -84,11 +86,14 @@ export function TopProjectsCard({
   const top = useTopProjects(metric, excludeCache, range, providerId);
   const rows = (top.data?.projects ?? []).map((p) => projectRow(p, metric, excludeCache, t.series));
   const hasData = rows.some((r) => r.value > 0);
+  const label = scopeLabel ?? formatRangeLabel(range);
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle>{title ?? `Top ${INSIGHTS_TOP_N} projects · ${formatRangeLabel(range)}`}</CardTitle>
+        <CardTitle>
+          {rankTitle(top.data?.total, top.data?.limit ?? INSIGHTS_TOP_N, 'projects')} · {label}
+        </CardTitle>
         <SegmentedControl
           value={metric}
           onChange={(v) => setMetric(v as ProjectMetric)}
