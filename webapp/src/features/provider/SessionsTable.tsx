@@ -4,11 +4,12 @@
 // reasoning) chips, the per-model split, and the per-agent (subagent) split,
 // the latter two rendered as compact metric cards rather than dense tables.
 
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { ArrowDown, ArrowUp, ChevronRight } from 'lucide-react';
 import type { SessionEntry } from '@/api/types';
 import { TokenBar } from '@/components/charts/TokenBar';
 import { Badge } from '@/components/ui/Badge';
+import { buttonVariants } from '@/components/ui/Button';
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/Table';
 import { buildSidecarNameMap, useSidecars } from '@/features/fleet/queries';
 import { cn } from '@/lib/cn';
@@ -207,20 +208,48 @@ function SessionRow({
   colSpan: number;
 }) {
   const [open, setOpen] = useState(false);
+  // The expand control owns the open state, so the state lives on the button
+  // (aria-expanded) and points at the detail row it reveals.
+  const detailId = useId();
+  const shortId = s.session_id.slice(0, 8);
   return (
     <>
       <TR
         className="cursor-pointer hover:bg-surface-2/50"
         onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
       >
         <TD className="w-8 pr-0 text-fg-subtle">
-          <ChevronRight
-            className={cn('size-4 transition-transform duration-150', open && 'rotate-90')}
-          />
+          {/* A <tr> can't take focus, so a click-only row left keyboard and
+              screen-reader users unable to open the drill-down at all. The
+              chevron therefore holds the real control — a native <button>, so
+              Enter and Space work without hand-rolled key handling. The row
+              keeps its own onClick for mouse users; the button stops the click
+              from bubbling so one click still toggles exactly once. */}
+          <button
+            type="button"
+            aria-expanded={open}
+            aria-label={`${open ? 'Collapse' : 'Expand'} details for session ${shortId}`}
+            aria-controls={open ? detailId : undefined}
+            onClick={(e) => {
+              e.stopPropagation();
+              setOpen((v) => !v);
+            }}
+            className={cn(
+              buttonVariants({ variant: 'ghost', size: 'icon-sm' }),
+              // The 32px icon target overhangs the cell padding on both sides,
+              // so the chevron column keeps its original width and the icon
+              // stays exactly where it was.
+              '-ml-2 -mr-2 text-fg-subtle hover:bg-transparent',
+            )}
+          >
+            <ChevronRight
+              className={cn('size-4 transition-transform duration-150', open && 'rotate-90')}
+              aria-hidden
+            />
+          </button>
         </TD>
         <TD className="max-w-32 truncate font-mono text-xs" title={s.session_id}>
-          {s.session_id.slice(0, 8)}
+          {shortId}
         </TD>
         <TD>
           <span className="flex flex-wrap gap-1">
@@ -264,7 +293,7 @@ function SessionRow({
       </TR>
       {open ? (
         <TR className="hover:bg-transparent">
-          <TD colSpan={colSpan} className="p-0">
+          <TD id={detailId} colSpan={colSpan} className="p-0">
             <SessionDetail s={s} excludeCache={excludeCache} />
           </TD>
         </TR>

@@ -131,6 +131,19 @@ describe('HistoryPage', () => {
     expect(await screen.findByText(/Claude · weekly/)).toBeInTheDocument();
   });
 
+  it('opens the window detail sheet from the keyboard', async () => {
+    // A click-only row was unreachable: the window name is a real button, so
+    // Enter and Space open the sheet without hand-rolled key handling.
+    renderWithProviders(<HistoryPage />);
+    const open = await screen.findByRole('button', {
+      name: /open details for the claude window/i,
+    });
+    expect(open).toHaveAttribute('aria-haspopup', 'dialog');
+    open.focus();
+    await userEvent.keyboard('{Enter}');
+    expect(await screen.findByText(/Claude · weekly/)).toBeInTheDocument();
+  });
+
   it('shows the no-data state when the chart has no points', async () => {
     vi.mocked(api.fetchHistoryChart).mockResolvedValue({ series: [], bars: [] });
     renderWithProviders(<HistoryPage />);
@@ -218,5 +231,4 @@ describe('HistoryPage', () => {
     // After toggle: tiles subtract cache (7K tokens, $7.50)
     expect(screen.getByText('7K')).toBeInTheDocument();
     expect(screen.getByText('$7.50')).toBeInTheDocument();
-  });
-});
+  });});

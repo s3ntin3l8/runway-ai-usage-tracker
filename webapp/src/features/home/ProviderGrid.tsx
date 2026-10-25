@@ -49,7 +49,13 @@ export function ProviderGrid({ items, providerNames, onReorder }: ProviderGridPr
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
     useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 8 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+    // Space starts the keyboard drag, Enter opens the provider. The default
+    // (Space AND Enter) would swallow Enter — and Enter is the key the card
+    // needs for its own role="button" contract.
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+      keyboardCodes: { start: ['Space'], cancel: ['Escape'], end: ['Space', 'Tab'] },
+    }),
   );
 
   // Safety net: onDragEnd/onDragCancel normally clear the suspend flag, but a
@@ -151,7 +157,21 @@ function SortableProviderCard({
         if (!isDragging) navigate(providerPath(entry.provider_id, entry.account_id));
       }}
       onKeyDown={(e) => {
-        if (e.key === 'Enter') navigate(providerPath(entry.provider_id, entry.account_id));
+        // Enter opens the provider detail — the card declares role="button",
+        // so Enter has to activate it.
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          navigate(providerPath(entry.provider_id, entry.account_id));
+          return;
+        }
+        // Space is the keyboard drag key. The sensor's own handler has to see
+        // it: the card's onKeyDown used to REPLACE the spread's listener (it
+        // came last in the prop order), so the KeyboardSensor never received
+        // a keydown and the grid could only be reordered with a pointer.
+        // While a drag is running the sensor ends it from its own window
+        // listener — re-invoking the activator here would restart it first.
+        if (isDragging) return;
+        listeners?.onKeyDown?.(e);
       }}
       className={
         'cursor-pointer touch-manipulation p-3.5 transition-colors duration-150 hover:border-edge-strong ' +

@@ -48,9 +48,21 @@ interface EChartProps {
   // Re-render from scratch when option identity changes (default merges)
   notMerge?: boolean;
   onReady?: (chart: ECharts) => void;
+  /**
+   * Text alternative for the graphic. When set, the canvas container becomes
+   * role="img" with this label, so assistive tech announces what the chart is
+   * instead of nothing at all.
+   *
+   * ECharts' own aria component (AriaComponent, verified against echarts@6)
+   * is deliberately NOT registered: it writes its generated description onto
+   * this very element on every render — `zr.dom` IS this container — so it
+   * would overwrite the label React manages here, and it can only emit one
+   * flat, truncated string rather than a semantic list of the data points.
+   */
+  ariaLabel?: string;
 }
 
-export function EChart({ option, className, notMerge = true, onReady }: EChartProps) {
+export function EChart({ option, className, notMerge = true, onReady, ariaLabel }: EChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<ECharts | null>(null);
   const onReadyRef = useRef(onReady);
@@ -76,5 +88,12 @@ export function EChart({ option, className, notMerge = true, onReady }: EChartPr
     chartRef.current?.setOption(option, { notMerge });
   }, [option, notMerge]);
 
-  return <div ref={containerRef} className={cn('h-64 w-full', className)} />;
+  return (
+    <div
+      ref={containerRef}
+      className={cn('h-64 w-full', className)}
+      role={ariaLabel ? 'img' : undefined}
+      aria-label={ariaLabel}
+    />
+  );
 }

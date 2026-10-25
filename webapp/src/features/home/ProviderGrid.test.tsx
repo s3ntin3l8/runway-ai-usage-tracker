@@ -59,6 +59,21 @@ describe('ProviderGrid', () => {
     await userEvent.keyboard('{Enter}');
   });
 
+  it('lets the keyboard sensor see Space, so the card can be reordered with the keyboard', async () => {
+    // The card's own onKeyDown used to REPLACE dnd-kit's listener (it came
+    // last in the prop order), so the KeyboardSensor never received a
+    // keydown and the grid could only be reordered with a pointer.
+    const items = buildRiskItems([entry()], []);
+    renderWithProviders(<ProviderGrid items={items} providerNames={names} onReorder={vi.fn()} />);
+    const cardEl = screen.getByRole('button', { name: /claude.*used/i });
+    cardEl.focus();
+
+    await userEvent.keyboard('{ }');
+
+    // Space starts a keyboard drag: the active item gets a drag transform.
+    expect(cardEl.getAttribute('style') ?? '').toMatch(/transform/);
+  });
+
   it('falls back to the provider_id when no friendly name is known', () => {
     const items = buildRiskItems([entry({ provider_id: 'mystery' })], []);
     renderWithProviders(
@@ -268,7 +283,7 @@ describe('AtRiskRail', () => {
     );
     const rail = atRiskItems(items);
     renderWithProviders(<AtRiskRail items={rail} providerNames={names} />);
-    expect(screen.getByText('At risk')).toBeInTheDocument();
+    expect(screen.getByText('Needs attention')).toBeInTheDocument();
     // forecastLabel renders a "limit in ~Xh"/"projected"/etc string.
     expect(screen.getByText(/limit in|projected|exhausted/i)).toBeInTheDocument();
   });

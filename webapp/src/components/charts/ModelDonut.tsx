@@ -5,6 +5,7 @@ import { useMemo, useState } from 'react';
 import type { CumulativeModelBucket } from '@/api/types';
 import { formatTokens } from '@/lib/format';
 import { EChart } from './EChart';
+import { AccessibleSummary } from './accessibleSummary';
 import { baseTooltip, useChartTokens } from './theme';
 
 function modelTokens(b: CumulativeModelBucket, excludeCache: boolean): number {
@@ -28,12 +29,17 @@ export function ModelDonut({
   const t = useChartTokens();
   // Track legend deselection so the center total reflects only visible slices.
   const [selected, setSelected] = useState<Record<string, boolean>>({});
+  // Built once and shared by the chart and its text alternative.
+  const slices = useMemo(
+    () =>
+      Object.entries(byModel)
+        .map(([model, b]) => ({ name: model, value: modelTokens(b, excludeCache) }))
+        .filter((d) => d.value > 0)
+        .sort((a, b) => b.value - a.value),
+    [byModel, excludeCache],
+  );
   const option = useMemo(() => {
-    const data = Object.entries(byModel)
-      .map(([model, b]) => ({ name: model, value: modelTokens(b, excludeCache) }))
-      .filter((d) => d.value > 0)
-      .sort((a, b) => b.value - a.value);
-    const total = data
+    const total = slices
       .filter((d) => selected[d.name] !== false)
       .reduce((sum, d) => sum + d.value, 0);
     return {
@@ -68,21 +74,30 @@ export function ModelDonut({
             fontFamily: t.monoFamily,
           },
           emphasis: { label: { show: true } },
-          data,
+          data: slices,
         },
       ],
     };
-  }, [byModel, t, excludeCache, selected]);
+  }, [slices, t, selected]);
 
   return (
-    <EChart
-      option={option}
-      className={className ?? 'h-56'}
-      onReady={(chart) =>
-        chart.on('legendselectchanged', (e) =>
-          setSelected((e as { selected: Record<string, boolean> }).selected),
-        )
-      }
-    />
+    <>
+      <EChart
+        option={option}
+        className={className ?? 'h-56'}
+        ariaLabel="Tokens by model chart"
+        onReady={(chart) =>
+          chart.on('legendselectchanged', (e) =>
+            setSelected((e as { selected: Record<string, boolean> }).selected),
+          )
+        }
+      />
+      {/* The legend names the models, but each model's token count exists
+          only in the canvas and the hover tooltip. */}
+      <AccessibleSummary
+        caption="Tokens by model"
+        entries={slices.map((s) => ({ label: s.name, value: formatTokens(s.value) }))}
+      />
+    </>
   );
 }

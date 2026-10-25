@@ -199,13 +199,31 @@ export function HistoryPage() {
                     className="cursor-pointer hover:bg-surface-2"
                   >
                     <TD className="font-mono text-xs whitespace-nowrap tabular">
-                      {w.window_start ? (
-                        <>
-                          {formatLocalDate(w.window_start)} – {formatLocalDate(w.window_end)}
-                        </>
-                      ) : (
-                        '—'
-                      )}
+                      {/* A <tr> can't take focus, so a click-only row left
+                          keyboard and screen-reader users unable to open the
+                          window detail at all. The window name holds the real
+                          control — a native <button>, so Enter and Space work
+                          without hand-rolled key handling. The row keeps its
+                          own onClick for mouse users; the button stops the
+                          click from bubbling so one click opens one sheet. */}
+                      <button
+                        type="button"
+                        aria-haspopup="dialog"
+                        aria-label={`Open details for the ${w.service_name ?? w.provider_id} window`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setDetailRow(w);
+                        }}
+                        className="cursor-pointer rounded-sm text-left hover:underline focus-visible:underline"
+                      >
+                        {w.window_start ? (
+                          <>
+                            {formatLocalDate(w.window_start)} – {formatLocalDate(w.window_end)}
+                          </>
+                        ) : (
+                          '—'
+                        )}
+                      </button>
                       {w.is_open ? (
                         <Badge variant="accent" className="ml-2">
                           open

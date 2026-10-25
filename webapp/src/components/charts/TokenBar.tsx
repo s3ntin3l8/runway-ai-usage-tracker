@@ -1,8 +1,13 @@
 // Compact segmented bar of a session's token composition (input / output /
 // cache read / cache create / reasoning). A lightweight CSS alternative to the
 // TokenDonut for tight spaces — shares its SLICES/CACHE_KEYS and palette so the
-// two read identically. Colors follow the --chart-N tokens by visible position,
-// matching how ECharts assigns the donut's palette after filtering.
+// two read identically.
+//
+// Colors follow the SEGMENT KEY, not the visible position: the segment list
+// shrinks when cache is excluded (and when a segment has no value), so a
+// positional palette would move "Reasoning" to a different colour the moment
+// the user toggles a filter. The slot order is shared with the donut via
+// ./segmentColors.
 //
 // Imports slice constants from ./tokenSlices, NOT from ./TokenDonut — this
 // component renders on the eager Home route, and TokenDonut.tsx statically
@@ -11,6 +16,7 @@
 
 import type { TokenSliceKey } from './tokenSlices';
 import { CACHE_KEYS, SLICES } from './tokenSlices';
+import { segmentColorVar } from './segmentColors';
 import { formatTokens } from '@/lib/format';
 import { cn } from '@/lib/cn';
 
@@ -27,20 +33,31 @@ export function TokenBar({
   className?: string;
 }) {
   const segments = SLICES.filter(({ key }) => !excludeCache || !CACHE_KEYS.has(key))
-    .map(({ key, label }) => ({ label, value: tokens[key] ?? 0 }))
+    .map(({ key, label }) => ({ key, label, value: tokens[key] ?? 0 }))
     .filter((d) => d.value > 0)
-    // Color by visible position so the bar matches the donut after filtering.
-    .map((d, i) => ({ ...d, color: `var(--chart-${i + 1})` }));
+    // Colour by segment key so a segment keeps its colour whether or not
+    // cache is excluded — and matches the donut's colour for the same slice.
+    .map((d) => ({ ...d, color: segmentColorVar(d.key) }));
 
   const total = segments.reduce((sum, d) => sum + d.value, 0);
   if (total === 0) return null;
 
   return (
     <div className={cn('flex flex-col gap-1.5', className)}>
-      <div className="flex h-1.5 w-full overflow-hidden rounded-full bg-surface-2">
+      <div
+        className="flex h-1.5 w-full overflow-hidden rounded-full bg-surface-2"
+        // The proportions live only in the pixels and the (mouse-only)
+        // title tooltips, so name the graphic for assistive tech. The label
+        // sits on the bar itself, not on the wrapper, so the visible legend
+        // below stays readable as text.
+        role="img"
+        aria-label={`Token composition: ${segments
+          .map((d) => `${d.label} ${formatTokens(d.value)}`)
+          .join(', ')}`}
+      >
         {segments.map((d) => (
           <div
-            key={d.label}
+            key={d.key}
             style={{ width: `${(d.value / total) * 100}%`, background: d.color }}
             title={`${d.label}: ${formatTokens(d.value)}`}
           />
@@ -49,7 +66,7 @@ export function TokenBar({
       {showLegend ? (
         <div className="flex flex-wrap gap-x-3 gap-y-1">
           {segments.map((d) => (
-            <span key={d.label} className="flex items-center gap-1 text-[10px] text-fg-subtle">
+            <span key={d.key} className="flex items-center gap-1 text-[10px] text-fg-subtle">
               <span className="size-2 rounded-full" style={{ background: d.color }} />
               {d.label} {formatTokens(d.value)}
             </span>

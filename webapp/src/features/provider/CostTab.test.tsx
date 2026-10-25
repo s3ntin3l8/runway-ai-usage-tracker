@@ -1,4 +1,4 @@
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/test/utils';
 import { CostTab } from './CostTab';
@@ -112,9 +112,12 @@ describe('CostTab', () => {
     );
 
     const row = (await screen.findByText('claude-opus')).closest('tr')!;
-    expect(row).toHaveAttribute('aria-expanded', 'false');
+    const toggle = within(row).getByRole('button', {
+      name: /expand cost breakdown for claude-opus/i,
+    });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
     await userEvent.click(row);
-    expect(row).toHaveAttribute('aria-expanded', 'true');
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
     expect(screen.getByText('Cost breakdown')).toBeInTheDocument();
     expect(screen.getByText('Input $')).toBeInTheDocument();
     expect(screen.getByText('Cache read $')).toBeInTheDocument();
@@ -205,5 +208,84 @@ describe('CostTab', () => {
         expect.objectContaining({ period_type: 'month', period_key: '2026-01' }),
       ),
     );
+  });
+});
+
+describe('CostTab split-row expander', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+    vi.mocked(api.fetchHistoryChart).mockResolvedValue(historyChart(true));
+    vi.mocked(api.fetchCostForecast).mockResolvedValue(costForecast());
+    vi.mocked(api.fetchCumulative).mockResolvedValue(cumulativeResponse());
+  });
+
+  const renderCostTab = () =>
+    renderWithProviders(
+      <CostTab providerId="anthropic" accountId="me@example.com" scope={currentPeriod()} billingType="pay_as_you_go" />,
+    );
+
+  it('exposes the expander as a focusable button that owns the expanded state', async () => {
+    renderCostTab();
+    const row = (await screen.findByText('claude-opus')).closest('tr')!;
+    const toggle = within(row).getByRole('button', {
+      name: /expand cost breakdown for claude-opus/i,
+    });
+
+    expect(toggle.tagName).toBe('BUTTON');
+    expect(toggle).toHaveAttribute('type', 'button');
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    // The state belongs to the control, not to the (unfocusable) row.
+    expect(row).not.toHaveAttribute('aria-expanded');
+    // The global :focus-visible ring must stay visible on the control.
+    expect(toggle.className).not.toMatch(/outline-none/);
+  });
+
+  it('reaches the expander with Tab and toggles the breakdown with Enter and Space', async () => {
+    renderCostTab();
+    const toggle = await screen.findByRole('button', {
+      name: /expand cost breakdown for claude-opus/i,
+    });
+
+    await userEvent.tab();
+    expect(toggle).toHaveFocus();
+
+    await userEvent.keyboard('{Enter}');
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText('Cost breakdown')).toBeInTheDocument();
+
+    await userEvent.keyboard(' ');
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByText('Cost breakdown')).not.toBeInTheDocument();
+  });
+
+  it('toggles once when the expander itself is clicked', async () => {
+    renderCostTab();
+    const toggle = await screen.findByRole('button', {
+      name: /expand cost breakdown for claude-opus/i,
+    });
+
+    await userEvent.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText('Cost breakdown')).toBeInTheDocument();
+    // aria-controls points at the detail cell the click revealed.
+    const controlled = document.getElementById(toggle.getAttribute('aria-controls') ?? '');
+    expect(controlled).toHaveTextContent('Cost breakdown');
+
+    await userEvent.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByText('Cost breakdown')).not.toBeInTheDocument();
+  });
+
+  it('gives the sidecar split rows an expander of their own', async () => {
+    renderCostTab();
+    const row = (await screen.findByText('laptop')).closest('tr')!;
+    const toggle = within(row).getByRole('button', {
+      name: /expand cost breakdown for laptop/i,
+    });
+
+    await userEvent.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText('Cost breakdown')).toBeInTheDocument();
   });
 });

@@ -5,9 +5,23 @@ import type { ForecastEntry } from '@/api/types';
 
 const captured: { option?: Record<string, unknown> } = {};
 vi.mock('./EChart', () => ({
-  EChart: ({ option }: { option: Record<string, unknown> }) => {
+  // The mock forwards ariaLabel the way the real EChart does, so the tests
+  // can assert that each chart hands its label down.
+  EChart: ({
+    option,
+    ariaLabel,
+  }: {
+    option: Record<string, unknown>;
+    ariaLabel?: string;
+  }) => {
     captured.option = option;
-    return <div data-testid="echart" />;
+    return (
+      <div
+        data-testid="echart"
+        role={ariaLabel ? 'img' : undefined}
+        aria-label={ariaLabel}
+      />
+    );
   },
 }));
 
@@ -101,5 +115,50 @@ describe('TrajectoryChart', () => {
     // A backdrop (the surface token) so the projection can't strike through it.
     expect(backgroundColor).toBe('#111113');
     document.documentElement.style.removeProperty('--surface-1');
+  });
+
+  it('names the two series in a legend', () => {
+    document.documentElement.style.setProperty('--fg-muted', '#9a9aa2');
+    render(<TrajectoryChart forecast={{ ...base }} />, { wrapper });
+    const legend = captured.option!.legend as { bottom: number; textStyle: { color: string } };
+    expect(legend.bottom).toBe(0);
+    // The legend text follows the theme token, so it reads on both themes.
+    expect(legend.textStyle.color).toBe('#9a9aa2');
+    // The legend picks the series names up from the series themselves.
+    const series = captured.option!.series as { name: string }[];
+    expect(series.map((s) => s.name)).toEqual(['Used', 'Projected']);
+    document.documentElement.style.removeProperty('--fg-muted');
+  });
+
+  it('leaves room under the plot for the legend', () => {
+    render(<TrajectoryChart forecast={{ ...base }} />, { wrapper });
+    const grid = captured.option!.grid as { bottom: number };
+    expect(grid.bottom).toBeGreaterThan(28);
+  });
+
+  it('labels the chart and exposes the observed and projected percentages as text', () => {
+    const forecast: ForecastEntry = {
+      ...base,
+      series: [
+        { ts: '2026-06-13T00:00:00Z', pct: 10 },
+        { ts: '2026-06-13T01:00:00Z', pct: 20 },
+      ],
+      reset_at: '2026-06-14T00:00:00Z',
+      projected_pct: 80,
+    };
+    const { getByTestId, getAllByRole } = render(
+      <TrajectoryChart forecast={forecast} />,
+      { wrapper },
+    );
+    expect(getByTestId('echart')).toHaveAttribute(
+      'aria-label',
+      'Quota usage trajectory chart',
+    );
+    // The timestamps are formatted in the local timezone, so only the
+    // percentages are asserted.
+    const items = getAllByRole('listitem').map((el) => el.textContent ?? '');
+    expect(items.some((t) => t.endsWith(': 10%'))).toBe(true);
+    expect(items.some((t) => t.endsWith(': 20%'))).toBe(true);
+    expect(items.some((t) => t.endsWith(': 80% (projected)'))).toBe(true);
   });
 });
