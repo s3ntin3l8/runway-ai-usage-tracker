@@ -248,7 +248,7 @@ RUNWAY_DISABLE_WINDOWS_SOCKETPAIR=1 pytest tests/
 
 ## CI/CD Integration
 
-The project uses GitHub Actions for CI/CD, with workflow files in `.github/workflows/` (full detail in [`docs/architecture.md`](../docs/architecture.md#cicd)):
+The project uses GitHub Actions for CI/CD, with workflow files in `.github/workflows/` (full detail in [`docs/ci-cd.md`](../docs/ci-cd.md)):
 
 - **Linting**: ruff (style/format) plus mypy, detect-secrets, and pip-audit. mypy and pip-audit are hard gates on the Linux job (`strict-checks: true`).
 - **Testing**: `test-python` runs pytest with coverage (floor 85%) in four parallel workers; `test-frontend` runs vitest (floor 85%).
@@ -257,7 +257,7 @@ The project uses GitHub Actions for CI/CD, with workflow files in `.github/workf
   current tip of `main`, so a pull request does not need a rebase to merge — and a rebase is
   what re-triggered all five pull-request workflows. The merge queue, which would test the
   merge commit itself, needs the repository to be owned by an organization; see
-  [`docs/architecture.md`](../docs/architecture.md#cicd).
+  [`docs/ci-cd.md`](../docs/ci-cd.md).
 - **Build & Push**: `build-docker` pushes the `:edge` image to GHCR on push to `main`; releases publish `:latest` + the version tag.
 
 To run tests the way CI does:

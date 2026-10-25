@@ -38,6 +38,9 @@ The Kimi K2 collector tracks prepaid credits specifically for the coding agent u
     "pace": "Stable",
     "detail": "Credits (consumed: 54.20)",
     "data_source": "api",
+    "input_source": "config",
+    "is_unlimited": False,
+    "unit_type": "credits",
     "updated_at": "2026-04-19T06:51:51+00:00",
 }
 ```
@@ -61,8 +64,10 @@ The Kimi K2 collector tracks prepaid credits specifically for the coding agent u
 ## Related Files
 
 | File | Purpose |
-|------|---------|
-| `app/services/collectors/kimi_k2.py` | Main collector for Kimi K2 credits |
+|---|---|
+| `app/services/collectors/kimi_k2.py` | Collector entry point — the credit balance endpoint |
+| `app/services/collectors/base.py` | Collector base class |
+| `scripts/sidecar.py` | Sidecar credential rules and event dispatch |
 
 ## References
 

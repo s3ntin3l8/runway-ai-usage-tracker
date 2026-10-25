@@ -1,6 +1,17 @@
 # Hermes Collector
 
+**File:** `scripts/sidecar_pkg/event_extractors/hermes.py` (sidecar only — not a server provider)
+
 Runway extracts session token usage and estimated/actual costs sidecar-side from local Hermes Agent SQLite databases across default and named profiles.
+
+> **Hermes is not a server provider.** It has no entry in
+> `app/core/registry.json` — it exists only as a **sidecar overlay provider** in
+> `scripts/sidecar_registry_overlay.json` (`add_providers.hermes`), whose
+> reason reads *"the server must not list it as a provider"*. The server never
+> collects a Hermes quota card; it only receives the usage events the sidecar
+> extracts. This is the same arrangement `minimax_code` has — see
+> [`minimax.md`](minimax.md) — and it is why Hermes is absent from the
+> provider list in the dashboard.
 
 ## Architecture
 
@@ -39,6 +50,10 @@ Hermes records metrics in two primary tables:
 ### Incremental Delta Tracking
 
 Because `session_model_usage` counters accumulate over the lifetime of a session slice (or long-running Discord thread), the extractor maintains high-water marks in `~/.config/runway/sidecar/hermes_watermark.json` (or `$RUNWAY_CONFIG_DIR/sidecar/hermes_watermark.json`).
+
+On **Windows** the same file lives under `%APPDATA%\runway\sidecar\`
+(`hermes_watermark.json`), falling back to `~/AppData/Roaming/runway/sidecar/`
+when `APPDATA` is unset.
 
 On each sidecar poll:
 - The extractor compares current tokens and costs against the recorded high-water mark for each slice.
@@ -166,3 +181,13 @@ To prevent unmapped events from corrupting labeled quota gauges or leaking acros
 ### Where the resolution lives
 - `app/services/credential_sources.py` — `sidecar_native_accounts()` reads the accounts this host reported for a provider.
 - `app/services/event_ingestor.py` — `EventIngestor._native_identity_account()` applies the per-host, unambiguous, never-over-a-tag rules.
+
+## Related Files
+
+| File | Purpose |
+|---|---|
+| `scripts/sidecar_pkg/event_extractors/hermes.py` | The Hermes event extractor |
+| `scripts/sidecar_pkg/canonical_providers.py` | Maps Hermes provider names onto Runway's canonical ids |
+| `scripts/sidecar_pkg/event_watermark.py` | Per-store read watermark |
+| `scripts/sidecar_pkg/event_extractors/opencode.py` | The extractor it is modelled on |
+| `scripts/reclassify_hermes_pending.py` | One-shot reclassification of pending Hermes events |

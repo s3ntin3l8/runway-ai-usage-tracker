@@ -1,6 +1,6 @@
 # xAI (Grok) Collector
 
-**File:** `app/services/collectors/xai.py`
+**File:** `app/services/collectors/xai.py` (server) · `scripts/sidecar.py` (sidecar)
 
 Collects the consumer Grok subscription's credit balance and on-demand usage through xAI's CLI chat proxy. The OpenAI-compatible `XAI_API_KEY` developer API is a separate product and is not used by this collector.
 
@@ -85,3 +85,13 @@ The collector emits a credits card (`weekly` or `monthly` according to `currentP
 - [Grok CLI usage signals](https://github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-shell/src/session/signals.rs)
 - [Grok CLI session update schema](https://github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-shell/src/extensions/notification.rs)
 - [OpenCode CLI](https://opencode.ai)
+
+## Related Files
+
+| File | Purpose |
+|---|---|
+| `app/services/collectors/xai.py` | Collector entry point — the Grok CLI chat proxy |
+| `app/services/collectors/base.py` | Collector base class |
+| `scripts/sidecar.py` | Sidecar credential rules and event dispatch |
+| `scripts/sidecar_pkg/event_extractors/xai.py` | Local Grok CLI usage events |
+| `scripts/sidecar_pkg/xai_renewer.py` | Grok keep-alive renewer |

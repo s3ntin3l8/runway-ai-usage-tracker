@@ -1,0 +1,156 @@
+# The Runway frontend
+
+The dashboard is a React 19 single-page app in `webapp/`. It talks to the
+Runway server over the same `/api/v1` HTTP API the sidecar and the CLI use —
+see [`api-reference.md`](api-reference.md).
+
+## Stack
+
+| Concern | Choice |
+|---|---|
+| UI | React 19, React DOM 19 |
+| Routing | `react-router` 8 (`createBrowserRouter`, one `Routes` block in `app.tsx`) |
+| Server state | `@tanstack/react-query` 5 |
+| Components | Radix UI primitives (dialog, dropdown-menu, popover, select, switch, tabs, tooltip) |
+| Charts | `echarts` 6 |
+| Icons | `lucide-react` |
+| Styling | Tailwind 4 via `@tailwindcss/vite`; `clsx` + `tailwind-merge` through `lib/cn.ts` |
+| Toasts | `sonner` |
+| Drawer | `vaul` |
+| Drag & drop | `@dnd-kit` |
+| PWA | `vite-plugin-pwa` + `@vite-pwa/assets-generator` |
+| Build | Vite 7, TypeScript 5 |
+| Tests | Vitest + Testing Library; Playwright for the browser matrix |
+
+## Layout
+
+```
+webapp/src/
+  api/          typed HTTP layer — client, endpoints, types
+  app.tsx       router + providers
+  main.tsx      entry point
+  components/   shared UI primitives
+  features/     one folder per top-level page
+  hooks/        reusable React hooks
+  lib/          pure helpers and domain logic
+  styles/       Tailwind entry points
+  sw.ts         service worker
+  test/         test setup
+```
+
+### `api/` — the typed HTTP layer
+
+| File | Role |
+|---|---|
+| `client.ts` | The central `fetch` wrapper. It attaches the admin key when one is set, always sends `credentials: 'include'` so the HttpOnly `runway_session` cookie rides along, and uses `redirect: 'manual'`. It also owns `ApiError`, the admin-key store and the auth-redirect guard. |
+| `endpoints.ts` | One exported function per server endpoint — 95 of them. This is the only place that knows server URLs. |
+| `types.ts` | The TypeScript mirror of the server's response models. |
+
+Query-string building lives in `client.ts` (`qs()`); feature code never
+hand-builds a URL.
+
+### `features/` — pages
+
+One folder per route:
+
+| Feature | Route | What it is |
+|---|---|---|
+| `home` | `/` | The dashboard: provider cards, collection health, banners. |
+| `provider` | `/provider/:providerId` | One provider in detail — limits, usage, sessions, debug. |
+| `insights` | `/insights` | Cross-provider analysis and forecasting. |
+| `history` | `/history` | Historical usage browsing. |
+| `fleet` | `/fleet` | Enrolled sidecars: pairing, settings, per-machine controls. |
+| `settings` | `/settings/*` | Settings, with nested sections (credentials, system, alerts, …). |
+| `auth` | — | Session sign-in and the forward-auth/SSO return path. |
+| `dev` | `/dev/kit` | A component kit, **dev only** — the route is mounted only when `import.meta.env.DEV` is true. |
+
+### `lib/` — domain logic
+
+Pure helpers with no React dependency: time-range maths (`timeRange.ts`,
+`tz.ts`), quota arithmetic (`quota.ts`), cumulative-series aggregation
+(`cumulative.ts`), credential-origin formatting (`credentialOrigin.ts`),
+provider grouping (`providerFamilies.ts`), account display
+(`accountDisplay.ts`), keep-alive state (`keepAlive.ts`), and error
+presentation (`errorMessage.ts`).
+
+Keeping this logic out of the components is what makes it unit-testable
+without a DOM.
+
+## The `LimitCard` mirror contract
+
+**This is the one place where a frontend change and a backend change must
+happen together.**
+
+The server's `LimitCard` Pydantic model (`app/models/schemas.py`) is mirrored
+as a TypeScript interface in `webapp/src/api/types.ts`. When a card field
+changes:
+
+1. add or change it in `app/models/schemas.py` (`LimitCard`);
+2. mirror it in `webapp/src/api/types.ts` (`LimitCard`);
+3. update the interface example in `docs/api-reference.md`.
+
+The model allows extra fields (`extra="allow"`) because `/usage/fleet` injects
+`fetched_at`, `next_poll_at` and `cache_ttl_seconds` onto the critical card
+only — those three exist in TypeScript and in the api-reference example but
+not in the Pydantic model, by design.
+
+`tests/unit/test_api_reference_coverage.py` asserts that the three stay in
+sync: the Pydantic fields, the TypeScript interface and the documented
+example.
+
+## Data fetching
+
+React Query owns all server state. Feature components call the `endpoints.ts`
+functions inside `useQuery` / `useMutation`; nothing calls `fetch` directly.
+
+Notable patterns:
+
+- **Query keys** are tuples starting with a resource name, e.g.
+  `['system', 'app-config']`.
+- **Invalidation** is centralised in hooks — `useInvalidateCredentialViews`
+  handles the several queries that a credential change affects.
+- **Background refresh** — the Fleet page polls; `useForceCollect` triggers an
+  on-demand collection.
+- **Pull to refresh** on mobile is `react-simple-pull-to-refresh`, wrapped in
+  `lib/pullToRefresh.ts`.
+
+## PWA and service worker
+
+`sw.ts` is the service worker, registered through `vite-plugin-pwa`. The PWA
+assets (icons, splash screens) are generated by
+`@vite-pwa/assets-generator` and driven by `pwa-assets.config.ts`; see
+[`branding.md`](branding.md) for the asset pipeline and the `make logo` target.
+
+`webapp/sw.test.ts` tests the service worker in isolation.
+
+## Testing
+
+| Kind | Where | How |
+|---|---|---|
+| Unit | `webapp/src/**/*.test.ts(x)` | Vitest + Testing Library, jsdom environment |
+| Security matrix | `webapp/e2e/security/boundaries.spec.ts` | Playwright — hostile-origin writes, Host rejection, omitted sidecar fleet keys, authenticated network access, remote Vite authentication. 15 checks across Chromium, Firefox and WebKit. |
+| Visual QA | `webapp/e2e/screenshot.py` | Playwright Python helper at three viewports; generates the screenshot set used by `make screenshots`. |
+
+```bash
+npm --prefix webapp run test          # unit
+npm --prefix webapp run test:security # the browser matrix
+```
+
+The CI browser matrix is pinned to a digest-pinned Playwright image — see
+[`security-validation.md`](security-validation.md#browser-matrix).
+
+## Conventions
+
+- **No direct `fetch`.** All HTTP goes through `api/client.ts`.
+- **No hand-built URLs.** Use `api/endpoints.ts` and `qs()`.
+- **No logic in components** that can be tested on its own — put it in `lib/`.
+- **`cn()` for class names**, never string concatenation, so Tailwind
+  conflict resolution works.
+- **Server state is React Query's job.** Local component state is for UI state
+  only.
+
+## Related
+
+- [`api-reference.md`](api-reference.md) — the HTTP API this app consumes.
+- [`architecture.md`](architecture.md) — the server it talks to.
+- [`fleet-protocol.md`](fleet-protocol.md) — the protocol the Fleet page drives.

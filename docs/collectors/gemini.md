@@ -1,6 +1,6 @@
 # Gemini Collector
 
-**File:** `app/services/collectors/gemini.py` (server-side: `api` against Google Cloud Code)
+**File:** `app/services/collectors/gemini.py` (server) · `scripts/sidecar.py` (sidecar)
 **Sidecar:** `scripts/sidecar.py` + `sidecar_app/` (local enrichment: session logs)
 
 Google Gemini CLI quota collector. The server-side `api` strategy hits Google Cloud Code endpoints with an OAuth bundle the sidecar pushed (the server refreshes it into its token cache); the `local` enrichment strategy that reads `~/.gemini/tmp/*/chats/session-*.json` executes inside the sidecar and ships per-message events to the server.
@@ -17,7 +17,7 @@ The Gemini collector supports the following authentication methods:
 
 1.  **OAuth Credentials (Preferred)**:
     *   **Method**: Log in via the Gemini CLI, which stores credentials in `~/.gemini/oauth_creds.json`, and run the [sidecar](../sidecar.md) on that machine. The sidecar reads the file and pushes the bundle; the server never reads it from its own host (`make dev` alone does not see it, use `make dev-all`).
-    *   **Details**: See [Primary: Google Cloud Code API](#primary-google-cloud-code-api).
+    *   **Details**: See [Primary: api (Google Cloud Code)](#primary-api-google-cloud-code).
 
 2.  **Custom OAuth Client ID/Secret**: Required if token auto-refresh fails.
     *   **Method**: Set `GEMINI_OAUTH_CLIENT_ID` and `GEMINI_OAUTH_CLIENT_SECRET` environment variables.
@@ -42,7 +42,7 @@ The Gemini collector supports the following authentication methods:
 
 ```python
 {
-    "service": "Gemini 2.5 Flash",
+    "service_name": "Gemini 2.5 Flash",
     "icon": "🔵",
     "remaining": "0%",  # % used (0% = fresh quota)
     "unit": "used",
@@ -92,13 +92,17 @@ Sidecar extracts the OAuth bundle from `~/.gemini/oauth_creds.json` — the only
 ## Related Files
 
 | File | Purpose |
-|------|---------|
-| `app/services/collectors/gemini.py` | Main collector |
-| `scripts/sidecar.py` | Sidecar implementation |
+|---|---|
+| `app/services/collectors/gemini.py` | Collector entry point |
+| `app/services/collectors/gemini_api.py` | Google Cloud Code API strategy |
+| `app/services/collectors/gemini_oauth.py` | Gemini OAuth token handling |
+| `app/services/collectors/base.py` | Collector base class |
+| `app/services/collectors/oauth_base.py` | Shared OAuth token handling |
+| `scripts/sidecar.py` | Sidecar credential rules and event dispatch |
+| `scripts/sidecar_pkg/event_extractors/gemini.py` | Local Gemini CLI usage events |
+| `scripts/sidecar_pkg/cookie_scan.py` | Cross-platform browser cookie store discovery |
 
 ## References
 
 - **Gemini:** https://gemini.google.com
 - **Google Cloud:** https://console.cloud.google.com
-
-*Last updated: 2026-05-21*

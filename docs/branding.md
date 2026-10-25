@@ -49,6 +49,23 @@ into every sidecar build.
 `RunwayMark.tsx` is intentionally not auto-generated; adjust it by hand when the
 master's shape or palette changes.
 
+## Screenshots
+
+The README set and the PWA install-dialog copies are not hand-taken. They are
+generated from a throwaway demo instance:
+
+```sh
+make screenshots                 # README set (dark + light) and the PWA manifest copies
+make screenshots-landing OUT=…   # landing-page stills and a short loop
+make screenshots-audit AUDIT=…   # phone + tablet stills of every page, for an audit
+```
+
+`webapp/e2e/screenshot.py` is the standalone Playwright helper for visual QA of
+the v3 webapp during development; `make screenshots` instead drives
+`webapp/scripts/screenshots.mjs` against a demo instance. Both run against
+synthetic data only — see [`demo.md`](demo.md) for the isolation rules, and
+[`frontend.md`](frontend.md) for the app the screenshots show.
+
 ## Notes
 
 - The brand palette: dark base `#09090b`/`#18181b`, capsule gradient
