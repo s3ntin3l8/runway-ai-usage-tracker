@@ -140,7 +140,11 @@ export function ProviderPage() {
     const trigger = list?.querySelector<HTMLElement>('[data-state="active"]');
     // jsdom has no scrollIntoView, hence the optional call.
     trigger?.scrollIntoView?.({ block: 'nearest', inline: 'center' });
-  }, [tab]);
+    // The strip does not exist until the provider's entry has loaded, so the
+    // effect has to wait for it: on a cold load `tab` is already its final
+    // value and never changes again, and an effect that only watched `tab`
+    // would have run once, against a strip that was not there yet.
+  }, [tab, entry]);
   const showSourceFilter =
     entry &&
     (SOURCE_AWARE_TABS.has(tab) || (tab === 'forecast' && cardKind(entry.critical_gauge) === 'tokens'));

@@ -105,6 +105,7 @@ export function TopProjectsCard({
           <Skeleton className="h-72 w-full" />
         ) : top.isError ? (
           <EmptyState
+            headingLevel="h3"
             icon={CircleAlert}
             title="Could not load this data"
             description={top.error.message}
