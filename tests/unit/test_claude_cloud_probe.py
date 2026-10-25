@@ -836,3 +836,185 @@ async def test_v2_source_change_discards_prior_structural_observations(environme
     assert report["history_events"] == report["structure"]["events"] == 0
     assert report["observations"] == [] and report["account_verified"] is False
     assert all(not any(row["types"].values()) for row in report["structure"]["locations"].values())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("version", [1, 2])
+async def test_payload_usage_is_an_explicit_v2_location_with_independent_accounting(
+    environment, version
+):
+    first = usage()
+    duplicate = usage()
+    duplicate["message"]["usage"]["output_tokens"] = 7
+    snapshot = {
+        "type": "result",
+        "usage": {
+            "input_tokens": 20,
+            "output_tokens": 50,
+            "cache_read_input_tokens": 4,
+            "cache_creation_input_tokens": 6,
+        },
+        "modelUsage": {
+            "private-model": {
+                "inputTokens": 20,
+                "outputTokens": 50,
+                "cacheReadInputTokens": 4,
+                "cacheCreationInputTokens": 6,
+            }
+        },
+    }
+    smaller = {
+        "type": "result",
+        "usage": {
+            "input_tokens": 1,
+            "output_tokens": 2,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0,
+        },
+    }
+    payloads = [first, duplicate, snapshot, smaller]
+
+    def upstream(r):
+        if r.url.path.endswith("/profile"):
+            return httpx.Response(200, json=profile())
+        if r.url.path == "/v1/code/sessions":
+            return httpx.Response(
+                200, json={"data": [{"id": "session-fixture"}], "next_cursor": None}
+            )
+        return httpx.Response(
+            200,
+            json={
+                "data": [
+                    {"sequence_num": index, "payload": value}
+                    for index, value in enumerate(payloads)
+                ],
+                "next_cursor": None,
+            },
+        )
+
+    report = await run(request(report_version=version), upstream)
+    if version == 1:
+        assert report["observations"] == []
+        return
+    assert [row["location"] for row in report["observations"]] == ["payload"]
+    audit = report["observations"][0]["report"]
+    assert audit["assistant"]["records"] == 2
+    assert audit["assistant"]["unique_messages"] == 1
+    assert audit["assistant"]["duplicate_messages"] == 1
+    assert audit["assistant"]["input_cache_observations"] == {
+        "input_tokens": 10,
+        "cache_read_input_tokens": 2,
+        "cache_creation_input_tokens": 3,
+    }
+    assert "output_placeholder_divergence" in audit["diagnostics"]
+    assert audit["result"]["usage_observations"] == 2
+    assert audit["result"]["model_usage_observations"] == 1
+    assert audit["result"]["usage_decreases"] == 1
+    assert audit["result"]["last_usage_observation"]["output_tokens"] == 2
+    assert audit["result"]["last_model_usage_observation"] is None
+    assert audit["ready_for_ingestion"] is report["cloud_contract_verified"] is False
+    for secret in ("private-model", "private-message", "private-transcript"):
+        assert secret not in json.dumps(report)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad", [True, -1, 1.5, "4", None, 2**63])
+async def test_payload_malformed_usage_is_not_rescued_by_another_location(environment, bad):
+    invalid = usage()
+    invalid["message"]["usage"]["input_tokens"] = bad
+
+    def upstream(r):
+        if r.url.path.endswith("/profile"):
+            return httpx.Response(200, json=profile())
+        if r.url.path == "/v1/code/sessions":
+            return httpx.Response(
+                200, json={"data": [{"id": "session-fixture"}], "next_cursor": None}
+            )
+        return httpx.Response(
+            200,
+            json={
+                "data": [{"sequence_num": 1, "data": usage(), "payload": invalid}],
+                "next_cursor": None,
+            },
+        )
+
+    report = await run(request(report_version=2), upstream)
+    assert [row["location"] for row in report["observations"]] == ["data", "payload"]
+    good, bad_audit = [row["report"] for row in report["observations"]]
+    assert good["assistant"]["input_cache_observations"]["input_tokens"] == 10
+    assert bad_audit["assistant"]["input_cache_observations"] is None
+    assert "invalid_assistant_usage" in bad_audit["diagnostics"]
+
+
+@pytest.mark.asyncio
+async def test_payload_preserves_conflicts_subagents_and_error_results_without_decoding(
+    environment,
+):
+    conflict = usage()
+    conflict["message"]["usage"]["input_tokens"] = 99
+    subagent = {**usage(), "parent_tool_use_id": "private-parent"}
+    payloads = [
+        usage(),
+        conflict,
+        subagent,
+        {"type": "result", "subtype": "error_during_execution", "usage": None},
+        json.dumps(usage()),
+        [usage()],
+        {"private-dynamic-key": "private-content"},
+    ]
+
+    def upstream(r):
+        if r.url.path.endswith("/profile"):
+            return httpx.Response(200, json=profile())
+        if r.url.path == "/v1/code/sessions":
+            return httpx.Response(
+                200, json={"data": [{"id": "session-fixture"}], "next_cursor": None}
+            )
+        return httpx.Response(
+            200,
+            json={
+                "data": [
+                    {"sequence_num": index, "payload": value}
+                    for index, value in enumerate(payloads)
+                ],
+                "next_cursor": None,
+            },
+        )
+
+    report = await run(request(report_version=2), upstream)
+    assert len(report["observations"]) == 1
+    audit = report["observations"][0]["report"]
+    assert audit["assistant"]["records"] == 3
+    assert audit["assistant"]["conflicting_messages"] == 1
+    assert audit["assistant"]["subagent_records"] == 1
+    assert audit["assistant"]["input_cache_observations"] is None
+    assert audit["result"]["records"] == audit["result"]["error_results"] == 1
+    assert audit["result"]["last_usage_observation"] is None
+    assert {
+        "conflicting_assistant_usage",
+        "subagent_scope_excluded",
+        "error_result_observed",
+    } <= set(audit["diagnostics"])
+    from app.models.claude_cloud_probe import ClaudeCloudProbeReportV2
+    from scripts.verify_claude_cloud import evaluate
+
+    validated = ClaudeCloudProbeReportV2.model_validate(report).model_dump()
+    evidence = {
+        "format_version": 1,
+        "source_commit": "a" * 40,
+        "image": "ghcr.io/s3ntin3l8/runway@sha256:" + "b" * 64,
+        "observed_at": "2026-10-25T00:00:00Z",
+        "deployment": "selected-production",
+        "report": validated,
+    }
+    result = evaluate(evidence)
+    assert result["status"] == "stop" and "usage_requires_review" in result["reasons"]
+    encoded = json.dumps(result)
+    for secret in (
+        "private-parent",
+        "private-message",
+        "private-transcript",
+        "private-dynamic-key",
+        "private-content",
+    ):
+        assert secret not in encoded

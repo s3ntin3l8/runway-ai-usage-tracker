@@ -39,6 +39,10 @@ BASE_URL = "https://api.anthropic.com"
 TOTAL_TIMEOUT = 30.0
 MAX_RESPONSE_BYTES = 1024 * 1024
 MAX_TOTAL_BYTES = 4 * 1024 * 1024
+OBSERVATION_LOCATIONS = {
+    1: ("event", "data", "content"),
+    2: ("event", "data", "content", "payload"),
+}
 _gate = asyncio.Lock()
 _SESSION_ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 
@@ -373,7 +377,7 @@ class _Probe:
         self.report["stage"] = "history"
         self.report["history_complete"] = False
         records_by_location: dict[str, list[dict[str, Any]]] = {
-            key: [] for key in ("event", "data", "content")
+            key: [] for key in OBSERVATION_LOCATIONS[self.request.report_version]
         }
         seen_cursors: set[str] = set()
         sequences: set[int] = set()

@@ -109,7 +109,7 @@ Request fields:
 | `organization_id` | Optional UUID assertion, checked against the authenticated profile and any configured organization binding. |
 | `session_id` | Optional safe session ID that must appear in the sampled list page. |
 | `max_history_pages` | Literal integer 1–3; defaults to 2. |
-| `report_version` | Strict integer 1 or 2; defaults to the unchanged v1 report. V2 adds allowlisted structural counters only. |
+| `report_version` | Strict integer 1 or 2; defaults to the unchanged v1 report. V2 adds allowlisted structural counters and a separate object-valued `payload` usage audit. |
 
 The service reads the selected source from the running application's cache. It
 never combines bundles or falls back to another source or a merged credential.
@@ -160,7 +160,12 @@ product coverage, numeric continuity or accounting parity.
 
 Numeric sequence strings and integers are normalized for duplicate/gap/order
 counts, without returning sequence values. SDK-shaped objects at the event root,
-`data`, and `content` locations are audited separately. Strings are not parsed as
+`data`, and `content` locations are audited separately. Explicit v2 additionally
+audits object-valued `payload` using the same strict usage-only SDK auditor. The
+location is reported independently; v1 behavior is unchanged. Duplicate/conflict,
+subagent exclusion, result reset/decrease and output-placeholder rules still apply.
+Field presence in structural evidence alone does not validate counters or prove
+accounting semantics. Strings are not parsed as
 embedded records. These locations are observations of an **unverified envelope**;
 never combine their reports or promote them into consumption. Both
 `cloud_contract_verified` and `ready_for_ingestion` remain false.
