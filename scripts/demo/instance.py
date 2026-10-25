@@ -25,6 +25,11 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
+try:  # POSIX only; the demo itself is POSIX-only (it signals its own group).
+    import fcntl
+except ImportError:  # pragma: no cover - Windows
+    fcntl = None  # type: ignore[assignment]
+
 from scripts.demo.env import assert_demo_env, assert_ports_free, demo_env
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -34,10 +39,19 @@ DEMO_PORT = int(os.environ.get("DEMO_PORT", "3965"))
 # The marker a demo leaves in its scratch dir when it was told to keep it.
 KEEP_MARKER = "keep"
 
-# How old a scratch dir has to be before the sweep takes it even when its
-# pid answers. A pid is reused, so a dir whose demo died days ago can point
-# at an unrelated process today; without a bound such a dir would live for
-# ever.
+# The lock a running demo holds on its scratch dir.
+#
+# The lock, not the pid, is what says a demo is still there. A pid cannot:
+# pids are reused, so the pid of a demo that died last week can belong to an
+# unrelated process today, and a pid that is alive can also belong to a demo
+# that has been running for days -- neither is evidence of anything. A lock
+# is held by the process that took it and released when that process dies.
+LOCK_FILE = "lock"
+
+# How old a scratch dir has to be before the sweep takes one that was never
+# claimed. A demo that dies between making the dir and claiming it leaves a
+# dir nothing can be read from, and a demo that is starting right now has
+# just made its dir.
 STALE_AFTER_SECONDS = 24 * 60 * 60
 
 
@@ -121,6 +135,9 @@ class Demo:
     url: str
     server: subprocess.Popen[bytes]
     keep: bool
+    # The open lock on the scratch dir. It is held for as long as the demo
+    # runs, so a later demo can tell that this one is still there.
+    lock_fd: int | None = None
 
     def stop(self) -> None:
         if self.server.poll() is None:
@@ -139,26 +156,73 @@ class Demo:
                 # Already exited on its own; wait() below just reaps it.
                 pass
             self.server.wait()
+        self._release_lock()
         if self.keep:
             # The dir is the operator's now. The marker tells a later demo
             # that this one was kept on purpose, so the sweep does not take
-            # it for a leftover: a kept demo's pid is dead the moment its
-            # process exits, and the sweep would delete the dir on that
-            # basis alone.
-            (self.demo_dir / KEEP_MARKER).write_text("kept")
+            # it for a leftover: a kept demo's process is gone the moment it
+            # exits, and the lock alone would not tell the two apart.
+            try:
+                (self.demo_dir / KEEP_MARKER).write_text("kept")
+            except OSError as e:
+                # The dir is kept whatever we can write into it, and this
+                # runs from a teardown: an error here would replace the
+                # exception already in flight and turn a clean stop into a
+                # traceback.
+                print(f"[demo] could not mark {self.demo_dir} as kept: {e}")
             print(f"[demo] kept {self.demo_dir}")
             return
         shutil.rmtree(self.demo_dir, ignore_errors=True)
 
+    def _release_lock(self) -> None:
+        if self.lock_fd is None:
+            return
+        try:
+            os.close(self.lock_fd)
+        except OSError:
+            pass
+        self.lock_fd = None
 
-def _pid_is_alive(pid: int) -> bool:
+
+def _claim_demo_dir(demo_dir: Path) -> int | None:
+    """Lock the scratch dir for as long as this process lives.
+
+    The lock is what a later demo reads: it can take the lock only when
+    this demo is gone.
+    """
+    if fcntl is None:  # pragma: no cover - Windows
+        return None
+    fd = os.open(demo_dir / LOCK_FILE, os.O_CREAT | os.O_RDWR, 0o600)
     try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        os.close(fd)
+        raise
+    return fd
+
+
+def _dir_is_claimed(demo_dir: Path) -> bool:
+    """True when a demo still holds the scratch dir.
+
+    A demo that died released its lock, and so did one that was killed with
+    SIGKILL: the lock belongs to the process, not to the file.
+    """
+    if fcntl is None:  # pragma: no cover - Windows
         return False
-    except PermissionError:
-        return True  # it exists; it just is not ours to signal
-    return True
+    lock_path = demo_dir / LOCK_FILE
+    if not lock_path.exists():
+        return False  # never claimed: the demo died before it could
+    try:
+        fd = os.open(lock_path, os.O_RDWR)
+    except OSError:
+        return False
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        return True  # held: a live demo owns this dir
+    finally:
+        os.close(fd)
+    return False
 
 
 def _age_of(path: Path) -> float:
@@ -174,37 +238,25 @@ def clean_stale_scratch_dirs() -> None:
 
     A demo that is stopped with SIGKILL cannot clean up after itself, and
     that is how a supervisor stops it: Playwright's web server runner kills
-    the whole process group with SIGKILL. The demo's own pid tells a live
-    demo from a dead one, so a scratch dir left behind by a killed demo does
-    not pile up in the temp directory.
+    the whole process group with SIGKILL. The demo's lock tells a live demo
+    from a dead one, so a scratch dir left behind by a killed demo does not
+    pile up in the temp directory.
 
-    The pid alone does not settle three things:
+    Two things the sweep leaves alone:
 
     - A dir that was kept on purpose (`--keep`) is the operator's, not ours
       to delete. It says so itself.
-    - A demo that died before it wrote its pid leaves a dir with no pid at
-      all, and nothing to read. Its age decides instead.
-    - A pid is reused. The pid of a demo that died last week can belong to
-      an unrelated process today, and that would keep the dir alive for
-      ever, so an old dir goes even when its pid answers.
+    - A dir that was never claimed is a demo that died between making the
+      dir and locking it, or a demo that is starting right now. Only an old
+      one is swept.
     """
     for candidate in Path(tempfile.gettempdir()).glob("runway-demo-*"):
         if (candidate / KEEP_MARKER).exists():
             continue  # a kept demo is deliberate
-        pid_file = candidate / "pid"
-        try:
-            pid = int(pid_file.read_text().strip())
-            age = _age_of(pid_file)
-        except (OSError, ValueError):
-            # No pid to read: either this is not one of ours, or the demo
-            # died before it could write one. Only an old dir is cleaned, so
-            # a demo that is starting right now is never swept away.
-            if _age_of(candidate) < STALE_AFTER_SECONDS:
-                continue
-            shutil.rmtree(candidate, ignore_errors=True)
-            continue
-        if _pid_is_alive(pid) and age < STALE_AFTER_SECONDS:
+        if _dir_is_claimed(candidate):
             continue  # a live demo owns it
+        if not (candidate / LOCK_FILE).exists() and _age_of(candidate) < STALE_AFTER_SECONDS:
+            continue  # never claimed, and too young to be a leftover
         shutil.rmtree(candidate, ignore_errors=True)
 
 
@@ -214,12 +266,13 @@ def start_demo(*, keep: bool = False, quiet: bool = False) -> Demo:
 
     clean_stale_scratch_dirs()
     demo_dir = Path(tempfile.mkdtemp(prefix="runway-demo-"))
-    # The pid tells a later demo that this one is gone, so a demo that was
-    # killed with SIGKILL does not leave its scratch dir behind forever. It
-    # is written first, before the dir holds anything else: a demo that dies
-    # between making the dir and writing the pid leaves a dir nobody can
-    # read a pid from, and the sweep falls back to the dir's age for those.
-    (demo_dir / "pid").write_text(str(os.getpid()))
+    # The lock is taken before the dir holds anything else. It is what tells
+    # a later demo that this one is still running, so a demo that was killed
+    # with SIGKILL does not leave its scratch dir behind for ever. A demo
+    # that dies between making the dir and locking it leaves a dir nothing
+    # can be read from, and the sweep takes one of those only once it is
+    # old.
+    lock_fd = _claim_demo_dir(demo_dir)
     run_dir = demo_dir / "run"  # server cwd: no .env here
     for sub in ("home", "tmp", "run", "config"):
         (demo_dir / sub).mkdir(parents=True, exist_ok=True)
@@ -270,12 +323,15 @@ def start_demo(*, keep: bool = False, quiet: bool = False) -> Demo:
         )
         url = f"http://127.0.0.1:{DEMO_PORT}"
         _wait_for_http(f"{url}/")
-        return Demo(demo_dir=demo_dir, url=url, server=server, keep=keep)
+        return Demo(demo_dir=demo_dir, url=url, server=server, keep=keep, lock_fd=lock_fd)
     except BaseException:
         if server is not None:
-            Demo(demo_dir=demo_dir, url="", server=server, keep=keep).stop()
-        elif not keep:
-            shutil.rmtree(demo_dir, ignore_errors=True)
+            Demo(demo_dir=demo_dir, url="", server=server, keep=keep, lock_fd=lock_fd).stop()
+        else:
+            if lock_fd is not None:
+                os.close(lock_fd)
+            if not keep:
+                shutil.rmtree(demo_dir, ignore_errors=True)
         raise
 
 
