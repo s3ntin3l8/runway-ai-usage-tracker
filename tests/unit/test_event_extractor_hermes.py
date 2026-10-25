@@ -1659,7 +1659,10 @@ def test_the_database_path_is_stored_once_per_database(tmp_path):
         content = state_file.read_text(encoding="utf-8")
         # The path is counted in the form the file holds it in: JSON escapes a
         # backslash, so on Windows the file reads "C:\\Users\\..." where the
-        # path itself is "C:\Users\...".
+        # path itself is "C:\Users\...". The writer escapes it the same way --
+        # json.dumps with the default ensure_ascii=True, in
+        # _compact_hermes_watermark (event_extractors/hermes.py:528) -- so
+        # this has to keep matching it.
         stored = json.dumps(str(db_path.resolve()))[1:-1]
         assert content.count(stored) == 1
         # Both slices are still there.
@@ -1890,6 +1893,11 @@ def test_the_migration_matches_the_longest_discovered_path_first(tmp_path):
     the longer key as well -- the mark would be filed under a database that
     does not exist, be reclaimed as a dead slice, and the session's whole
     lifetime would be reported a second time.
+
+    The ``|`` inside the path is what puts the two in the same shape: the
+    legacy key is cut on the ``|``, so the key of "/data/a|b|c" also reads
+    as "/data/a". Rename the two directories to "a" and "ab" and this test
+    would stay green while the regression it guards comes back.
     """
     short_db = tmp_path / "a|b"
     long_db = tmp_path / "a|b|c"
