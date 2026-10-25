@@ -29,14 +29,16 @@ class ClaudeCloudProbeRequest(BaseModel):
     report_version: StrictInt = Field(default=1, ge=1, le=2)
 
 
-class CloudUsageObservation(BaseModel):
+class _CloudUsageObservationFields(BaseModel):
+    report: dict[str, Any]
+
+
+class CloudUsageObservation(_CloudUsageObservationFields):
     location: Literal["event", "data", "content"]
-    report: dict[str, Any]
 
 
-class CloudUsageObservationV2(BaseModel):
+class CloudUsageObservationV2(_CloudUsageObservationFields):
     location: Literal["event", "data", "content", "payload"]
-    report: dict[str, Any]
 
 
 class _ClaudeCloudProbeFields(BaseModel):

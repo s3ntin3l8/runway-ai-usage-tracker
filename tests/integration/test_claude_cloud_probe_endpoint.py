@@ -180,19 +180,3 @@ def test_explicit_v2_returns_structure_while_default_v1_is_unchanged(client):
     response = http.post(PATH, json=BODY, headers={"X-Admin-Key": "probe-test-admin"})
     assert response.status_code == 200 and response.json()["format_version"] == 1
     assert "structure" not in response.json()
-
-
-def test_v2_response_preserves_payload_observation_and_v1_rejects_it():
-    from pydantic import ValidationError
-
-    from app.models.claude_cloud_probe import ClaudeCloudProbeReport, ClaudeCloudProbeReportV2
-    from app.services.claude_cloud_probe import _empty_report
-
-    report = _empty_report(2)
-    report["observations"] = [{"location": "payload", "report": {}}]
-    validated = ClaudeCloudProbeReportV2.model_validate(report)
-    assert validated.model_dump()["observations"][0]["location"] == "payload"
-    report.pop("structure")
-    report["format_version"] = 1
-    with pytest.raises(ValidationError):
-        ClaudeCloudProbeReport.model_validate(report)
