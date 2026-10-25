@@ -963,6 +963,21 @@ and `deployment`. Existing envelope version 1 remains unchanged. Version 2 alway
 returns `stop` with remaining accounting/coverage/provenance checks; supplied
 build metadata is not authenticated by the offline validator.
 
+Complete-history verification follows nonempty continuation cursors even on short
+pages. A valid page with an omitted `next_cursor` ends the observable traversal,
+just like an explicit null. When `has_more` is present it must be boolean and
+agree with continuation; contradictions stop as `unsupported_contract`.
+Completion is never inferred from record count. Empty strings, malformed cursors,
+invalid records, duplicates and repeated cursors remain rejected. This accepts
+the authenticated terminal shape observed under #976; it does not establish a
+published global API contract, a stable snapshot or coverage of every Claude
+surface. The legacy v1/v2 sample parser remains unchanged.
+
+Diagnostic format1 retains its frozen `cursor_supported` sample-parser rule,
+including false for omission. This preserves historical encrypted reports and
+standalone evidence. That bit does not describe the verification adapter's
+additional terminal handling or whether the whole response is valid.
+
 The verification projection additionally reports optional `rejected_list` metadata
 for a session-list response rejected by the current parser. It is null for older
 checkpoints, successful pages, and unavailable or changed local authority. The

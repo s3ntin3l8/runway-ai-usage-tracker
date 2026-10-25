@@ -38,7 +38,8 @@ def observe_list_boundary(
 ) -> dict[str, Any]:
     """Inspect at most twenty entries. HMAC comparisons occur only in memory.
 
-    cursor_supported describes the current parser, not a provider guarantee.
+    cursor_supported is the frozen diagnostic-v1 shared sample-parser policy,
+    not a provider guarantee or the verification-only optional-terminal adapter.
     A null/missing data value remains unknown rather than becoming an empty list.
     """
     if type(key) is not bytes or len(key) != 32:

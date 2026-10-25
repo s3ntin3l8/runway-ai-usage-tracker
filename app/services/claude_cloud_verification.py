@@ -50,6 +50,29 @@ UNSAFE_OUTCOMES = {
 }
 
 
+def _verification_page(payload: object, limit: int) -> tuple[list[dict[str, Any]], str | None]:
+    """Follow supplied continuation, including optional terminal omission.
+
+    Page length never signals completion. A declared has_more must agree with
+    continuation; the legacy sample parser and diagnostic-v1 policy stay frozen.
+    """
+    if isinstance(payload, dict):
+        if "has_more" in payload and type(payload["has_more"]) is not bool:
+            raise probe.ProbeError("unsupported_contract")
+        if "next_cursor" not in payload:
+            if payload.get("has_more") is True:
+                raise probe.ProbeError("unsupported_contract")
+            payload = {**payload, "next_cursor": None}
+    rows, cursor = probe._page(payload, limit)
+    if (
+        isinstance(payload, dict)
+        and "has_more" in payload
+        and payload["has_more"] != (cursor is not None)
+    ):
+        raise probe.ProbeError("unsupported_contract")
+    return rows, cursor
+
+
 def _source_digest(key: bytes, source: tuple[Any, ...]) -> str:
     return _digest(key, b"source", source)
 
@@ -212,7 +235,9 @@ class _VerificationProbe(probe._Probe):
             params: dict[str, Any] = {"limit": 20}
             if self.state.next_cursor is not None:
                 params["cursor"] = self.state.next_cursor
-            rows, cursor = probe._page(await self.get("/v1/code/sessions", headers, params), 20)
+            rows, cursor = _verification_page(
+                await self.get("/v1/code/sessions", headers, params), 20
+            )
             ids = [row.get("id") for row in rows]
             if any(not isinstance(sid, str) or not probe._SESSION_ID.fullmatch(sid) for sid in ids):
                 raise probe.ProbeError("unsupported_contract")
@@ -283,7 +308,7 @@ class _VerificationProbe(probe._Probe):
         params: dict[str, Any] = {"limit": 50, "sort_order": "asc"}
         if self.state.next_cursor is not None:
             params["cursor"] = self.state.next_cursor
-        rows, cursor = probe._page(
+        rows, cursor = _verification_page(
             await self.get(f"/v1/code/sessions/{quote(sid, safe='')}/events", headers, params), 50
         )
         if self.state.history_events + len(rows) > 100000:
