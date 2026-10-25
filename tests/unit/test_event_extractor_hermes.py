@@ -5,7 +5,7 @@ import sqlite3
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
 import pytest
 
@@ -1864,3 +1864,95 @@ def test_the_migration_drops_a_key_it_cannot_read(tmp_path):
     state = _read_watermark(state_file)
     assert list(state) == [db]
     assert legacy.exists()
+
+
+def test_the_migration_matches_the_longest_discovered_path_first(tmp_path):
+    """A path that is a prefix of another one must not win the match.
+
+    The discovered databases are matched against the key as whole strings.
+    "/data/a|b" is a prefix of "/data/a|b|c", and the shorter one matches
+    the longer key as well -- the mark would be filed under a database that
+    does not exist, be reclaimed as a dead slice, and the session's whole
+    lifetime would be reported a second time.
+    """
+    short_db = tmp_path / "a|b"
+    long_db = tmp_path / "a|b|c"
+    short_db.mkdir()
+    long_db.mkdir()
+    legacy = tmp_path / "hermes_watermark.json"
+    legacy.write_text(
+        json.dumps(
+            {
+                f"default|{long_db.resolve()}|default|sess|model|prov||mode|task": {
+                    "input_tokens": 100,
+                    "emission_seq": 3,
+                    "last_seen": datetime.now(UTC).timestamp(),
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    state_file = tmp_path / "hermes_watermark.jsonl"
+
+    _parse([short_db, long_db], state_file)
+
+    state = _read_watermark(state_file)
+    assert list(state) == [str(long_db.resolve())]
+    assert (
+        state[str(long_db.resolve())]["default"]["default|sess|model|prov||mode|task"][
+            "input_tokens"
+        ]
+        == 100
+    )
+
+
+def test_a_deleted_watermark_log_is_not_refilled_with_the_legacy_baseline(tmp_path):
+    """Deleting the log re-scans; it does not restore the legacy baseline.
+
+    The legacy file stays on disk (a reverted sidecar still finds it), so
+    without a marker that records the one-time read, the migration would
+    run again whenever the log was deleted and the documented re-scan would
+    silently do nothing on every upgraded install.
+    """
+    legacy = tmp_path / "hermes_watermark.json"
+    db = str(tmp_path)
+    legacy.write_text(
+        json.dumps(
+            {
+                f"default|{db}|default|sess|model|prov||mode|task": {
+                    "input_tokens": 100,
+                    "emission_seq": 3,
+                    "last_seen": datetime.now(UTC).timestamp(),
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    state_file = tmp_path / "hermes_watermark.jsonl"
+
+    _parse([], state_file)
+
+    # The first run migrated the legacy file and recorded that it did.
+    assert _read_watermark(state_file)[db]["default"]
+    marker = tmp_path / "hermes_watermark.json.migrated"
+    assert marker.exists()
+    # The legacy file is still there, for a sidecar that is reverted.
+    assert legacy.exists()
+
+    # A deleted log leaves an empty state: the re-scan starts from zero.
+    state_file.unlink()
+    _parse([], state_file)
+
+    assert _read_watermark(state_file) == {}
+
+
+def test_the_watermark_changes_alias_types_the_slice_level():
+    """The alias names the slice level, so a mark can be ``None``.
+
+    ``dict[Any | None]`` is a one-argument alias: it evaluates, but it
+    types nothing, and mypy does not check ``scripts/``.
+    """
+    assert get_args(hermes_extractor.WatermarkChanges) == (
+        str,
+        dict[str, dict[str, Any | None]],
+    )

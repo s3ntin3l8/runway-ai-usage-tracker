@@ -265,6 +265,18 @@ def _legacy_watermark_state_path(state_path: Path) -> Path:
     return state_path.with_name("hermes_watermark.json")
 
 
+def _legacy_migration_marker_path(state_path: Path) -> Path:
+    """Return the path of the marker that records the one-time legacy read.
+
+    The legacy file stays on disk, so the marker is what keeps it from being
+    read a second time: without it, a deleted watermark log would be
+    refilled with the legacy baseline and the documented re-scan would
+    silently do nothing on every upgraded install.
+    """
+    legacy_path = _legacy_watermark_state_path(state_path)
+    return legacy_path.with_name(legacy_path.name + ".migrated")
+
+
 # The watermark state, nested: database path -> account -> slice -> mark.
 #
 # The database path is stored once per database instead of once per slice,
@@ -276,7 +288,7 @@ WatermarkState = dict[str, dict[str, dict[str, Any]]]
 
 # The slices that changed in a cycle: database path -> account -> slice ->
 # the new mark of the slice, or None when the slice is forgotten.
-WatermarkChanges = dict[str, dict[str, dict[Any | None]]]
+WatermarkChanges = dict[str, dict[str, dict[str, Any | None]]]
 
 # The log is compacted once it holds more lines than the state it carries.
 # Below that the log is the cheaper file to write; above it, the log costs
@@ -388,7 +400,13 @@ def _split_legacy_watermark_key(
     Returns None when the key holds no path at all: such a key is not the
     mark of any slice, so there is nothing to keep.
     """
-    for path in live_paths:
+    # The longest path first. A path is a prefix of another one when it
+    # ends in a "|", and the shorter one then matches the longer key: the
+    # mark of "/data/a|b|c" would be filed under "/data/a", a database that
+    # does not exist, and would be reclaimed as a dead slice -- the real
+    # baseline lost, and the session's whole lifetime reported a second
+    # time.
+    for path in sorted(live_paths, key=len, reverse=True):
         marker = f"|{path}|"
         index = flat_key.rfind(marker)
         if index != -1:
@@ -409,6 +427,28 @@ def _split_legacy_watermark_key(
         if separator and suffix and _looks_like_absolute_path(db_path):
             return db_path, flat_key[:index], suffix
         index += 1
+
+
+def _write_legacy_migration_marker(marker_path: Path, legacy_path: Path, marks: int) -> None:
+    """Record that the legacy file was read, so it is never read again.
+
+    The marker is what makes the re-scan work: deleting the watermark log
+    has to leave an empty state, not the legacy baseline. It is written
+    only after the log itself is on disk, so a failed write leaves the
+    migration to be retried rather than dropping the baseline for good.
+    """
+    payload = {
+        "migrated_at": datetime.now(UTC).isoformat(),
+        "legacy_file": legacy_path.name,
+        "marks": marks,
+    }
+    try:
+        marker_path.parent.mkdir(parents=True, exist_ok=True)
+        marker_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    except Exception as exc:
+        logger.warning(
+            "Failed to write the Hermes watermark migration marker at %s: %s", marker_path, exc
+        )
 
 
 def _migrate_legacy_watermark(
@@ -457,6 +497,16 @@ def _migrate_legacy_watermark(
         )
 
     _compact_hermes_watermark(state_path, state)
+    if state_path.exists():
+        # The log is on disk, so the legacy file has been read for good.
+        # The marker keeps a deleted log from being refilled with the
+        # legacy baseline, which would make the documented re-scan a
+        # no-op on every upgraded install.
+        _write_legacy_migration_marker(
+            _legacy_migration_marker_path(state_path),
+            legacy_path,
+            sum(len(slices) for accounts in state.values() for slices in accounts.values()),
+        )
     return state
 
 
@@ -697,7 +747,7 @@ def parse_hermes_events(
         account_id: Fallback account ID (e.g. 'default' or operator email).
         since: Only consider model usage records strictly after this timestamp.
         canonical_hints: Optional {canonical_provider_id: {origin: account_id}} map.
-        state_file: Optional path to JSON file tracking slice token watermarks.
+        state_file: Optional path to the watermark log tracking slice token watermarks.
     """
     # Note on watermark scoping & bounding: hermes_watermark.jsonl stores token
     # and call high-water marks scoped per account_id and (resolved_db_path,
@@ -711,9 +761,11 @@ def parse_hermes_events(
     # is still there (see _prune_stale_watermark_slices).
     state_path = state_file or _default_watermark_state_path()
     watermark_state, log_lines = _load_hermes_watermark(state_path)
-    if not state_path.exists():
+    if not state_path.exists() and not _legacy_migration_marker_path(state_path).exists():
         # The legacy flat file: read it once and write it in the new format.
-        # It is left on disk afterwards, so a reverted sidecar still finds it.
+        # It is left on disk afterwards, so a reverted sidecar still finds
+        # it, and the marker records the read so that a deleted log is not
+        # refilled with the legacy baseline.
         legacy_path = _legacy_watermark_state_path(state_path)
         if legacy_path.exists():
             watermark_state = _migrate_legacy_watermark(

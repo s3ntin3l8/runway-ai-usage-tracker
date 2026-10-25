@@ -52,7 +52,7 @@ Hermes records metrics in two primary tables:
 Because `session_model_usage` counters accumulate over the lifetime of a session slice (or long-running Discord thread), the extractor maintains high-water marks in `~/.config/runway/sidecar/hermes_watermark.jsonl` (or `$RUNWAY_CONFIG_DIR/sidecar/hermes_watermark.jsonl`).
 
 On **Windows** the same file lives under `%APPDATA%\runway\sidecar\`
-(`hermes_watermark.json`), falling back to `~/AppData/Roaming/runway/sidecar/`
+(`hermes_watermark.jsonl`), falling back to `~/AppData/Roaming/runway/sidecar/`
 when `APPDATA` is unset.
 
 On each sidecar poll:
@@ -84,6 +84,10 @@ A cycle appends the slices that moved instead of rewriting the whole file. That 
 The database path is stored **once per database** — it used to be repeated in the key of every slice, which is where most of the bytes of a large watermark went. The account is a level of the state, so an account id that holds a `|` cannot shift the fields behind it.
 
 An existing install's flat `hermes_watermark.json` is read **once**, when the log does not exist yet, and written out in the new format. Every mark that can be read is carried over — a mark is the difference between what the sidecar already reported and what it would report next, so a lost mark is a session whose whole lifetime is reported a second time. The legacy file is **left on disk**: a sidecar that is reverted reads it and re-reports only the usage since the migration, where a missing file would make it re-report the whole Hermes history.
+
+The one-time read is recorded in the marker `hermes_watermark.json.migrated`, next to the legacy file. Without it, deleting the log would refill it with the legacy baseline and the re-scan below would silently do nothing on every upgraded install. The marker is written only after the log itself is on disk, so a failed write leaves the migration to be retried rather than dropping the baseline for good.
+
+A legacy key is matched against the discovered databases **longest path first**: a path that ends in a `|` is a prefix of another path, and the shorter one would match the longer key and file the mark under a database that does not exist.
 
 ### Watermark Compaction
 
@@ -194,7 +198,7 @@ To prevent unmapped events from corrupting labeled quota gauges or leaking acros
 ### No events collected
 - Ensure `~/.hermes/state.db` or `~/.hermes/profiles/*/state.db` exists and has executed sessions.
 - Check sidecar logs for `[hermes] collecting...` and ensure `hermes` is not excluded in `RUNWAY_PROVIDERS`.
-- Check if `hermes_watermark.jsonl` already recorded the sessions. To re-scan, delete `~/.config/runway/sidecar/hermes_watermark.jsonl`.
+- Check if `hermes_watermark.jsonl` already recorded the sessions. To re-scan, delete `~/.config/runway/sidecar/hermes_watermark.jsonl`. On an install that was upgraded from the flat format, the migrated legacy baseline is **not** restored: the `hermes_watermark.json.migrated` marker keeps the legacy file from being read a second time.
 
 ### Events appear as "Unassigned usage" in Fleet UI
 - This is normal for newly routed canonical providers (e.g. MiniMax, Kimi).
