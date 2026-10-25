@@ -3783,7 +3783,9 @@ class TestMiniMaxCodeSchedulingId:
     """
 
     @staticmethod
-    def _collection(monkeypatch, tmp_path, *, providers, tag_hints=None, parser=None):
+    def _collection(
+        monkeypatch, tmp_path, *, providers, tag_hints=None, parser=None, accounts=None
+    ):
         """Run a ``run_collection`` with the MiniMax Code extractor stubbed.
 
         Everything else — the account resolution, the untagged origin and
@@ -3794,7 +3796,7 @@ class TestMiniMaxCodeSchedulingId:
         from scripts.sidecar_pkg.event_extractors import minimax_code as mm
 
         cache = CredentialCache()
-        cache.replace(accounts={}, tokens={}, tag_hints=tag_hints or {})
+        cache.replace(accounts=accounts or {}, tokens={}, tag_hints=tag_hints or {})
         monkeypatch.setattr(sidecar, "_CREDENTIAL_CACHE", cache)
         monkeypatch.setattr(sidecar, "_get_credential_cache", lambda: cache)
         monkeypatch.setattr(
@@ -3858,6 +3860,23 @@ class TestMiniMaxCodeSchedulingId:
             tag_hints={"minimax": {"provider:minimax": "me@example.com"}},
         )
         assert [e["account_id"] for e in result.events] == ["me@example.com"]
+
+    def test_the_servers_account_list_is_read_under_the_provider(self, monkeypatch, tmp_path):
+        """The server's accounts are the provider's, not the scheduling id's.
+
+        When the server knows a ``minimax`` account, the MiniMax Code
+        iteration must resolve against that list — and land on the same
+        branch the ``minimax`` iteration lands on, manifest entry and all.
+        """
+        result, posted, _ = self._collection(
+            monkeypatch,
+            tmp_path,
+            providers=["minimax_code"],
+            accounts={"minimax": ["default"]},
+        )
+        assert [e["account_source"] for e in result.events] == ["local"]
+        # Resolved locally: no untagged origin to report.
+        assert posted["entries"] == []
 
     def test_an_untagged_origin_is_the_provider_s_one(self, monkeypatch, tmp_path):
         """Without a hint the events ship under "default" and the operator is
