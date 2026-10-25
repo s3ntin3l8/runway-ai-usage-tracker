@@ -29,8 +29,8 @@ These were checked and left alone — a fix here would have been a regression:
 
 - A real semantic token system with a dark/light pair; components hold no raw hex.
 - `prefers-reduced-motion` honoured globally (`webapp/src/styles/index.css`).
-- Correct Radix roles for tabs, select, switch and dialog; `role="meter"` with
-  `aria-valuetext` on the quota gauge.
+- Correct Radix roles for tabs, select, switch and dialog; `aria-valuetext` on the
+  quota gauge.
 - One `NAV_ITEMS` source shared by the desktop sidebar and the mobile bottom nav.
 - URL-synced `range` / `tab` / `account` / `sidecar` state, so a link reproduces the view.
 - Optimistic layout reorder with rollback.
@@ -63,7 +63,7 @@ These were checked and left alone — a fix here would have been a regression:
 |---|---|---|---|
 | P1-1 | The provider detail page was an orphan route: no nav item was active on the second-most-visited screen, in either nav. | `components/layout/nav.ts`, `Sidebar.tsx`, `BottomNav.tsx` | One `isNavItemActive` matcher drives the class and `aria-current`; Home stays active under `/provider/*` |
 | P1-2 | "Back" used `navigate(-1)`. On a bookmark, a deep link or a refresh there is no in-app history entry, so it left the dashboard entirely. | `features/provider/ProviderPage.tsx` | Back goes Home |
-| P1-3 | Home's zero state was a dead end *and* misfired: it said "configure a provider" even after the user had just configured one, because the list it reads comes from the fleet only. | `features/home/HomePage.tsx` | Two distinct states — nothing set up (with "Add a provider" and "Connect a sidecar") vs set up but nothing reported (with "Collect now") |
+| P1-3 | Home's zero state was a dead end *and* misfired: it said "configure a provider" even after the user had just configured one, because the list it reads comes from the fleet only. | `features/home/HomePage.tsx` | Three distinct states — nothing set up ("Add a provider" / "Connect a sidecar"), a machine already paired but no provider yet ("Add a provider" / "Manage sidecars"), and set up but nothing reported ("Collect now") |
 | P1-4 | The Debug tab sat in the primary tab strip for every user, and its raw capture is admin-gated server-side, so a normal user got "Capture failed". | `features/provider/ProviderPage.tsx` | Debug moves into the "More provider actions" menu and only joins the tab strip once it is open |
 
 ### P1 — accessibility and keyboard operability
@@ -95,6 +95,21 @@ These were checked and left alone — a fix here would have been a regression:
 | P1-17 | The mobile sheet had no close button — the desktop dialog had one, the sheet only had a decorative handle — so touch users had to guess a swipe-down. | `components/ui/ResponsiveDialog.tsx` | A close control in the sheet, with a `dismissible` prop for dialogs that must stay open |
 | P1-18 | The primary mobile actions were 32–36px tall. | `components/ui/Button.tsx`, `TimeRangePicker.tsx`, `Tabs.tsx` | A 44px floor below the `lg` breakpoint; desktop keeps its compact rhythm |
 
+### P1 — found by the strengthened accessibility guard
+
+The guard described under [Guardrails added](#guardrails-added) was rewritten during
+review: it now asserts on rule ids instead of an impact tier, renders every surface
+with populated data, and waits for the queries to settle before scanning. Scanning the
+trees users actually meet surfaced four defects the first version of the guard could
+not see.
+
+| # | Finding | Where | Fix |
+|---|---|---|---|
+| P1-25 | Six metric switchers were Radix tab lists with **no tab panel**: every trigger's `aria-controls` pointed at an element that did not exist, and a screen reader announced a "tab" with nothing to jump to. They switch what one panel shows; they are not tabs. | `features/history/HistoryPage.tsx`, `features/insights/{Overall,TopHosts,TopModels,TopProjects,TopSessions}Card.tsx` | A `SegmentedControl` built on native radio inputs: a named group, the chosen option announced as selected, arrow-key movement and a single tab stop — without the tab role |
+| P1-26 | Every select trigger was an unnamed combo box. A combobox takes its name from the author, not from its content, so the selected value inside was never announced as the control's name. | `components/ui/Select.tsx` and its 19 call sites | `SelectTrigger` now requires a `label`, so the name is enforced by the compiler rather than by convention |
+| P1-27 | The quota gauges had no accessible name: a screen reader announced "42%" with no indication of what was at 42%. | `components/ui/Gauge.tsx` and its call sites | The meter names what it measures ("Claude quota used", "Month budget used") |
+| P1-28 | The chevron column of the session and cost tables had an unnamed `<th>`, announced as an empty column. | `features/provider/SessionsTable.tsx`, `CostTab.tsx` | The spacer header is named "Details" |
+
 ### P1 — flow, states and honesty
 
 | # | Finding | Where | Fix |
@@ -103,7 +118,7 @@ These were checked and left alone — a fix here would have been a regression:
 | P1-20 | Rankings were truncated without saying so: Insights capped at 12, History at 50, Activity's top sessions at 10, while the titles read "Top hosts", implying a complete ranking. | `features/insights/queries.ts` and the cards | The titles state the cap ("Top 12 hosts"). A real "12 of N" needs a backend total — see the backlog |
 | P1-21 | "At risk" contradicted the grid's own colours: the rail ranked by gauge **and** forecast while the grid coloured by gauge only (90% / 70% thresholds), so a 61% provider sat under "At risk" with a green bar — and the same providers then appeared again in the grid below. | `features/home/risk.ts`, `AtRiskRail.tsx` | The section is "Needs attention", with a subtitle that says why the cards are there; the bar keeps meaning "used now" and the badge keeps meaning "time to limit" |
 | P1-22 | Archiving or resetting a provider fired straight from a dropdown item, with no confirmation, and the page then navigated away. | `features/provider/ProviderPage.tsx` | A confirm that names the provider, an Undo in the toast, and no navigation away |
-| P1-23 | The same money was labelled seven different ways, none of them "cost": "Usage value", "Projected usage value", "Daily usage value", "Estimated usage value", "Daily burn", "Projected EOM", "Cost". | `features/home/AggregateStrip.tsx`, `features/provider/ProviderKpis.tsx`, `CostTab.tsx`, `lib/billingType.ts` | One vocabulary: "Cost" for what the provider reported, "Estimated cost" for what we compute, and projections say so |
+| P1-23 | The same money was labelled seven different ways, none of them "cost": "Usage value", "Projected usage value", "Daily usage value", "Estimated usage value", "Daily burn", "Projected EOM", "Cost". | `features/home/AggregateStrip.tsx`, `features/provider/ProviderKpis.tsx`, `CostTab.tsx`, `lib/billingType.ts` | One vocabulary: "Cost" for what the provider reported, "Estimated cost" for what we compute, and projections say so. The rule lives in `lib/billingType.ts` and both the KPI strip and the Cost tab read it, so the same number cannot appear under two names on one page |
 | P1-24 | "Global insights · All time" sat under the page's range picker, which does not apply to it — a silent scope mismatch behind a 13px heading. | `features/insights/InsightsPage.tsx` | The lifetime block is visually separated and says "All time — not affected by the range filter"; the section below states its range |
 
 ---
@@ -112,9 +127,24 @@ These were checked and left alone — a fix here would have been a regression:
 
 Both run inside the required frontend CI job, so the fixes cannot silently regress:
 
-- **`webapp/src/test/a11y.test.tsx`** — axe-core over the app shell, Home, the provider
-  detail, Fleet and Settings. Fails on any serious or critical violation. Colour
-  contrast is excluded on purpose: jsdom has no CSS engine, so axe cannot judge it.
+- **`webapp/src/test/a11y.test.tsx`** — axe-core over ten surfaces: the app shell, Home,
+  the provider detail (overview, sessions and cost tabs), Fleet, Settings, History,
+  Insights, and the destructive-action confirm dialog.
+
+  Two things make it a guard rather than a smoke test:
+
+  - **It asserts on rule ids, not on an impact tier.** In axe-core 4.14 `heading-order`,
+    `region`, `landmark-one-main` and `landmark-unique` are all `moderate`, so a
+    "serious or critical" filter never failed on the landmark and heading half of the
+    guarantee. Every violation now fails the build unless its rule id is in an explicit
+    exception list, and each exception carries its reason.
+  - **It scans the tree a user meets.** The surfaces render with populated API mocks,
+    and the scan waits for the queries to settle. With empty mocks the provider page
+    only ever rendered its "No data for this provider" empty state, so the tabs, the
+    sessions table, the cost split and the dialogs were never scanned at all.
+
+  Colour contrast is excluded on purpose: jsdom has no CSS engine, so axe cannot judge
+  it — see the token-level check below.
 - **`webapp/src/styles/contrast.test.ts`** — computes the WCAG ratios from the token
   values themselves, in both themes, for every pair the UI actually renders (body,
   secondary and 11px label text, badge text on its tint, the primary and danger button
