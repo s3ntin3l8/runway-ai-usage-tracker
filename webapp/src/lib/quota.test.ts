@@ -4,6 +4,7 @@ import {
   cardHeroLabel,
   cardKind,
   cardName,
+  quotaUsedLabel,
   cardPct,
   cardStale,
   cardStatus,
@@ -492,8 +493,24 @@ describe('cardName', () => {
     ).toBe('claude-opus');
   });
 
-  it('never returns an empty name', () => {
-    // An accessible name built from an empty name reads " quota used".
-    expect(cardName({ ...card({ service_name: '' }) } as LimitCard)).toBe('Quota');
+  it('is empty for a card that carries neither', () => {
+    expect(cardName({ ...card({ service_name: '' }) } as LimitCard)).toBe('');
+  });
+});
+
+describe('quotaUsedLabel', () => {
+  it('names the service and the meter', () => {
+    expect(quotaUsedLabel(card({ service_name: 'Claude' }))).toBe('Claude quota used');
+  });
+
+  it('falls back to the model id', () => {
+    expect(
+      quotaUsedLabel({ ...card({ service_name: '' }), model_id: 'claude-opus' } as LimitCard),
+    ).toBe('claude-opus quota used');
+  });
+
+  it('does not repeat the word for a nameless card', () => {
+    // "Quota quota used" is what a name built from a "Quota" fallback reads.
+    expect(quotaUsedLabel({ ...card({ service_name: '' }) } as LimitCard)).toBe('Quota used');
   });
 });

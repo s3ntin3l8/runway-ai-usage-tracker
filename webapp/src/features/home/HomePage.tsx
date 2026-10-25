@@ -73,12 +73,18 @@ export function HomePage() {
   // here may mix billing types, so the aggregate takes the *least* certain
   // label of the set: reported money only while every account reports it,
   // estimated money as soon as one of them does not.
+  //
+  // An empty set of credential-bearing accounts does not mean "nothing was
+  // reported": usage can be auto-discovered from a sidecar, and then the
+  // numbers were never a bill the provider sent. "Unknown" is the wrong word
+  // for that — it means "we cannot tell", and the honest label for money we
+  // cannot vouch for is the estimated one.
   const aggregateBillingType = useMemo(() => {
     const accounts = (providerConfigs.data?.providers ?? []).flatMap((p) => p.accounts ?? []);
     const live = accounts.filter(
       (a) => !a.archived && !a.merged_into && (a.api_key_set || a.session_cookie_set),
     );
-    if (live.length === 0) return 'unknown';
+    if (live.length === 0) return 'subscription';
     return live.every((a) => a.billing_type === 'pay_as_you_go')
       ? 'pay_as_you_go'
       : 'subscription';

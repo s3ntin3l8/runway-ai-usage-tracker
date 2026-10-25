@@ -227,15 +227,26 @@ export function cardHeroLabel(card: LimitCard, heroText: string): string | undef
 }
 
 /**
- * The readable name of a quota card, for use in an accessible name.
+ * The readable name of a quota card, or '' when the card carries none.
  *
  * `service_name` is the label the app shows, but the backend can leave it
- * out, and the rest of the quota code falls back to the model id. An
- * accessible name that interpolates a missing field reads "undefined quota
- * used" — so the same fallback applies here.
+ * out, and the rest of the quota code falls back to the model id.
  */
 export function cardName(card: LimitCard): string {
-  return card.service_name || card.model_id || 'Quota';
+  return card.service_name || card.model_id || '';
+}
+
+/**
+ * The accessible name for a quota gauge.
+ *
+ * "Claude quota used" — and "Quota used" for a card that carries neither a
+ * service name nor a model id. The fallback does not repeat the word: a
+ * name built from a name that already says "Quota" would read "Quota quota
+ * used".
+ */
+export function quotaUsedLabel(card: LimitCard): string {
+  const name = cardName(card);
+  return name ? `${name} quota used` : 'Quota used';
 }
 
 // Humanize a model id for display: de-separate and capitalize each word

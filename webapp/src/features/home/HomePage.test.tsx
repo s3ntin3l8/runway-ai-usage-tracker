@@ -229,10 +229,12 @@ describe('HomePage', () => {
   it('shows the aggregate spend strip', async () => {
     vi.mocked(api.fetchFleetUsage).mockResolvedValue(fleetResponse([fleetEntry()]));
     renderWithProviders(<HomePage />);
-    expect(await screen.findByText('Cost (MTD)')).toBeInTheDocument();
+    // No credential-bearing account, so the money is not a bill anyone
+    // reported — the aggregate says so.
+    expect(await screen.findByText('Estimated cost (MTD)')).toBeInTheDocument();
     expect(screen.getByText('Projected cost (EOM)')).toBeInTheDocument();
     // The same wording as the provider page's cost tiles.
-    expect(screen.getByText('Cost per day (7d)')).toBeInTheDocument();
+    expect(screen.getByText('Estimated cost per day (7d)')).toBeInTheDocument();
   });
 
   it('labels the aggregate as estimated when an account has no reported bill', async () => {
@@ -258,6 +260,14 @@ describe('HomePage', () => {
     // aggregate takes the least certain label of the accounts it sums.
     expect(await screen.findByText('Estimated cost (MTD)')).toBeInTheDocument();
     expect(screen.getByText('Estimated cost per day (7d)')).toBeInTheDocument();
+  });
+
+  it('labels the aggregate as estimated when no account carries a credential', async () => {
+    // Usage can be auto-discovered from a sidecar, so an empty account list
+    // does not mean the provider sent a bill.
+    vi.mocked(api.fetchFleetUsage).mockResolvedValue(fleetResponse([fleetEntry()]));
+    renderWithProviders(<HomePage />);
+    expect(await screen.findByText('Estimated cost (MTD)')).toBeInTheDocument();
   });
 
   it('labels the aggregate as reported cost when every account reports it', async () => {
@@ -299,7 +309,7 @@ describe('HomePage', () => {
     ).toBeInTheDocument();
 
     // Usage value resolved: no skeleton left in that card.
-    const spendCard = screen.getByText('Cost (MTD)').parentElement;
+    const spendCard = screen.getByText('Estimated cost (MTD)').parentElement;
     expect(spendCard?.querySelector('.animate-shimmer')).not.toBeInTheDocument();
 
     // Tokens this month stays in skeleton state since cumulative never resolves.
