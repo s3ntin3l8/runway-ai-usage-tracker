@@ -1,6 +1,7 @@
 import { cva, type VariantProps } from 'class-variance-authority';
 import { Loader2 } from 'lucide-react';
 import { cn } from '@/lib/cn';
+import { markFocusable } from '@/lib/focusable';
 
 // Exported so links that should look like buttons (e.g. downloads) can reuse
 // the styles without nesting a <button> inside an <a>.
@@ -38,7 +39,18 @@ export interface ButtonProps
   loading?: boolean;
 }
 
-export function Button({ className, variant, size, loading, children, disabled, ...props }: ButtonProps) {
+// Marked focusable: a wrapper that adds a tab stop (the tooltip's focusable
+// host) must recognise that a Button already is one, or the button becomes
+// two tab stops for one control.
+export const Button = markFocusable(function Button({
+  className,
+  variant,
+  size,
+  loading,
+  children,
+  disabled,
+  ...props
+}: ButtonProps) {
   return (
     <button
       type="button"
@@ -50,4 +62,4 @@ export function Button({ className, variant, size, loading, children, disabled, 
       {children}
     </button>
   );
-}
+});
