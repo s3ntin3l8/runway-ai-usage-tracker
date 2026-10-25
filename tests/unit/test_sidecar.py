@@ -3330,12 +3330,18 @@ def test_hermes_account_extractor_wiring(monkeypatch, tmp_path):
             assert account_id == "default"
             return
 
-    # When no DBs exist, returns empty without calling parser
+    # When no DBs exist the parser still runs, with no paths: the watermark has
+    # to be compacted even on a host whose last Hermes database is gone (#926),
+    # and with nothing to read it emits nothing.
+    mock_parser.return_value = []
     monkeypatch.setattr(sidecar, "_discover_hermes_db_paths", lambda: [])
     assert extractor("default", MockWatermark(), 30) == []
-    assert not mock_parser.called
+    assert mock_parser.called
+    assert mock_parser.call_args[0][0] == []
 
     # When DBs exist, calls parser with paths and since
+    mock_parser.return_value = ["mock_event"]
+    mock_parser.reset_mock()
     mock_db = tmp_path / "state.db"
     mock_db.touch()
     monkeypatch.setattr(sidecar, "_discover_hermes_db_paths", lambda: [mock_db])
@@ -3941,3 +3947,39 @@ class TestMiniMaxCodeSchedulingId:
         result, _, parsed = self._collection(monkeypatch, tmp_path, providers=["minimax"])
         assert len(parsed) == 1
         assert [e["provider_id"] for e in result.events] == ["minimax"]
+
+
+def test_the_hermes_extractor_compacts_the_watermark_without_any_database(monkeypatch, tmp_path):
+    """A host whose last Hermes database is gone still has to compact.
+
+    Finding no database is not "nothing to do": the watermark is full of the
+    keys of databases that no longer exist, and the parser is what prunes
+    them (#926). An early return would keep every key forever.
+    """
+    from scripts.sidecar_pkg.event_extractors.hermes import parse_hermes_events
+    from scripts.sidecar_pkg.event_watermark import EventWatermark
+
+    state_file = tmp_path / "hermes_watermark.json"
+    gone_db = tmp_path / "profiles" / "gone" / "state.db"
+    state_file.write_text(
+        json.dumps(
+            {
+                f"default|{gone_db.resolve()}|default|sess|model|hermes|||": {
+                    "input_tokens": 1,
+                    "output_tokens": 0,
+                    "cost_usd": 0.0,
+                    "api_call_count": 1,
+                    "emission_seq": 1,
+                    "last_seen": 1.0,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(sidecar, "_discover_hermes_db_paths", lambda: [])
+
+    extractor = sidecar._make_account_extractor_hermes(parse_hermes_events, state_file=state_file)
+    events = extractor("default", EventWatermark(tmp_path / "event-watermark.json"), 30)
+
+    assert events == []
+    assert json.loads(state_file.read_text(encoding="utf-8")) == {}

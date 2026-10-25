@@ -1364,7 +1364,11 @@ def test_prune_applies_the_documented_idle_window(tmp_path):
     implementation uses is pinned rather than the constant alone.
     """
     now = datetime.now(UTC).timestamp()
-    window = WATERMARK_PRUNE_IDLE_DAYS * 86400
+    # The literal, not the constant: a test that derives its window from
+    # WATERMARK_PRUNE_IDLE_DAYS moves with it, so dropping the constant to a
+    # day would keep this green while the docs still say 30.
+    assert WATERMARK_PRUNE_IDLE_DAYS == 30
+    window = 30 * 86400
 
     def _keys_after_prune(idle_seconds: float) -> list[str]:
         """Write a slice idle for ``idle_seconds``, drop its file, prune."""
@@ -1394,3 +1398,40 @@ def test_prune_applies_the_documented_idle_window(tmp_path):
     assert len(_keys_after_prune(window - 3600)) == 2
     # Quiet for longer than the window: it is reclaimed.
     assert _keys_after_prune(window + 3600) == []
+
+
+def test_prune_keeps_a_key_whose_timestamp_cannot_be_read(tmp_path):
+    """An unreadable timestamp is kept, and it never fails the collection.
+
+    Every other unreadable thing here is kept rather than guessed; a value
+    that raises while it is read has to be treated the same way, instead of
+    taking the whole Hermes collection down with it.
+    """
+    state_file = tmp_path / "hermes_watermark.json"
+    state_file.write_text(
+        json.dumps(
+            {
+                "default|/tmp/gone-one/state.db|default|sess|model|hermes|||": {
+                    "last_seen": "2026-01-01T00:00:00Z"
+                },
+                "default|/tmp/gone-two/state.db|default|sess|model|hermes|||": {"last_seen": 1.0},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    state = json.loads(state_file.read_text(encoding="utf-8"))
+    pruned = _prune_stale_watermark_slices(state, [], account_id="default", idle_cutoff=_cutoff())
+    # Only the readable, idle one is reclaimed.
+    assert pruned == 1
+    assert len(state) == 1
+
+    # And the same file does not take the collection down.
+    events = parse_hermes_events(
+        db_paths=[],
+        account_id="default",
+        since=datetime(2020, 1, 1, tzinfo=UTC),
+        state_file=state_file,
+    )
+    assert events == []
+    assert len(_watermark_keys(state_file)) == 1

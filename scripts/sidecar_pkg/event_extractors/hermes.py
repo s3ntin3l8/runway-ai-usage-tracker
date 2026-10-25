@@ -406,7 +406,13 @@ def _prune_stale_watermark_slices(
         if not isinstance(value, dict):
             # A corrupt entry: keep it rather than guess what it was.
             continue
-        last_seen = float(value.get("last_seen") or 0.0)
+        try:
+            last_seen = float(value.get("last_seen") or 0.0)
+        except (TypeError, ValueError):
+            # A hand-edited or foreign timestamp: keep the key rather than
+            # guess what it meant -- and never fail the whole collection over
+            # one unreadable entry.
+            continue
         if last_seen <= 0:
             # No timestamp: cannot show the slice is quiet, so keep it.
             continue

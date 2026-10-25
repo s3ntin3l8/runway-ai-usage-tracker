@@ -67,6 +67,8 @@ Both conditions are load-bearing, because the server cannot catch a forgotten ma
 
 So the mark of everything that could still move is kept: an active session (recent `last_seen`), a database that exists but was not discovered, a database that cannot be read (a permission error is not "it is gone"), and any key whose path cannot be read out unambiguously. The one residual case is a session that sat idle for more than 30 days, whose database file was deleted, and which comes back and resumes activity — it is counted once extra.
 
+The compaction runs even when the host has **no Hermes database left at all** — that is exactly the host whose watermark is full of dead keys, so finding nothing to collect is not a reason to skip it.
+
 A live database's stale sessions are **not** pruned: a live session's row can advance, so it cannot be pruned on age alone.
 
 ## Canonical Provider Mapping
