@@ -16,12 +16,16 @@ export const buttonVariants = cva(
         'danger-ghost': 'text-critical hover:bg-critical-muted',
       },
       size: {
-        sm: 'h-8 px-2.5 text-xs',
-        md: 'h-9 px-3 text-[13px]',
+        // Touch floor: on phones every control needs a ~44px target, but the
+        // desktop dashboard is deliberately dense. The min-height applies
+        // below the lg breakpoint (where the bottom nav lives) and is dropped
+        // again from lg up, so desktop keeps its compact rhythm.
+        sm: 'h-8 min-h-11 px-2.5 text-xs lg:min-h-0',
+        md: 'h-9 min-h-11 px-3 text-[13px] lg:min-h-0',
         // Mobile-friendly: meets the 44px touch-target floor
         lg: 'h-11 px-4 text-sm',
-        icon: 'size-9',
-        'icon-sm': 'size-8',
+        icon: 'size-9 min-h-11 min-w-11 lg:min-h-0 lg:min-w-0',
+        'icon-sm': 'size-8 min-h-11 min-w-11 lg:min-h-0 lg:min-w-0',
       },
     },
     defaultVariants: { variant: 'secondary', size: 'md' },

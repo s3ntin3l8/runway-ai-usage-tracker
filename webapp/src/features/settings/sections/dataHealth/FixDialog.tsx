@@ -136,6 +136,10 @@ export function FixDialog({ open, onOpenChange, checkId, group }: FixDialogProps
         if (!next && jobId !== null && !jobDone) return; // unknown status must remain visible
         onOpenChange(next);
       }}
+      // While a fix job is in flight the dialog must stay open — so it offers
+      // no close control at all (a button that cannot close anything is
+      // worse than no button).
+      dismissible={jobId === null || jobDone}
       title={`Fix: ${group.label}`}
       description={
         group.not_fixable_reason ? undefined : 'Preview the change, then confirm to apply it.'
@@ -298,8 +302,11 @@ export function FixDialog({ open, onOpenChange, checkId, group }: FixDialogProps
               </dl>
             )}
             {jobDone && (
+              // "Done", not "Close": the dialog now also carries the standard
+              // close control, and two buttons with the same name in one
+              // dialog is a trap for anyone tabbing through it.
               <Button size="sm" variant="secondary" onClick={() => onOpenChange(false)}>
-                Close
+                Done
               </Button>
             )}
           </div>

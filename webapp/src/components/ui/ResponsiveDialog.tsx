@@ -16,6 +16,11 @@ interface ResponsiveDialogProps {
   children: React.ReactNode;
   // Desktop max width class, e.g. "max-w-lg"
   width?: string;
+  // Whether the dialog offers a close control. A dialog that must stay open
+  // while a long-running job is in flight (the data-health fix dialog) would
+  // otherwise show a button that does nothing, so the control is hidden in
+  // both the desktop dialog and the mobile sheet.
+  dismissible?: boolean;
 }
 
 export function ResponsiveDialog({
@@ -25,6 +30,7 @@ export function ResponsiveDialog({
   description,
   children,
   width = 'max-w-lg',
+  dismissible = true,
 }: ResponsiveDialogProps) {
   const isDesktop = useIsDesktop();
 
@@ -50,12 +56,14 @@ export function ResponsiveDialog({
                   </DialogPrimitive.Description>
                 ) : null}
               </div>
-              <DialogPrimitive.Close
-                aria-label="Close"
-                className="-m-1 cursor-pointer rounded-sm p-1 text-fg-subtle transition-colors duration-150 hover:bg-surface-2 hover:text-fg"
-              >
-                <X className="size-4" />
-              </DialogPrimitive.Close>
+              {dismissible ? (
+                <DialogPrimitive.Close
+                  aria-label="Close"
+                  className="-m-1 cursor-pointer rounded-sm p-1 text-fg-subtle transition-colors duration-150 hover:bg-surface-2 hover:text-fg"
+                >
+                  <X className="size-4" aria-hidden />
+                </DialogPrimitive.Close>
+              ) : null}
             </div>
             <div className="mt-4">{children}</div>
           </DialogPrimitive.Content>
@@ -70,14 +78,27 @@ export function ResponsiveDialog({
         <Drawer.Overlay className="fixed inset-0 z-40 bg-scrim" />
         <Drawer.Content className="fixed inset-x-0 bottom-0 z-50 flex max-h-[92dvh] flex-col rounded-t-lg border-t border-edge bg-overlay pb-[env(safe-area-inset-bottom)] outline-none">
           <div className="mx-auto mt-2.5 h-1 w-9 shrink-0 rounded-full bg-edge-strong" aria-hidden />
-          <div className="px-4 pt-3">
-            <Drawer.Title className="text-[15px] font-semibold tracking-tight">
-              {title}
-            </Drawer.Title>
-            {description ? (
-              <Drawer.Description className="mt-0.5 text-xs text-fg-muted">
-                {description}
-              </Drawer.Description>
+          {/* The desktop branch has a Close button; the sheet needs one too —
+              on touch there is no hover to discover the drag-to-dismiss
+              gesture, and several consumers have no in-content cancel. */}
+          <div className="flex items-start justify-between gap-4 px-4 pt-3">
+            <div className="min-w-0">
+              <Drawer.Title className="text-[15px] font-semibold tracking-tight">
+                {title}
+              </Drawer.Title>
+              {description ? (
+                <Drawer.Description className="mt-0.5 text-xs text-fg-muted">
+                  {description}
+                </Drawer.Description>
+              ) : null}
+            </div>
+            {dismissible ? (
+              <Drawer.Close
+                aria-label="Close"
+                className="-m-1 grid size-11 shrink-0 cursor-pointer place-items-center rounded-sm text-fg-subtle transition-colors duration-150 hover:bg-surface-2 hover:text-fg"
+              >
+                <X className="size-4" aria-hidden />
+              </Drawer.Close>
             ) : null}
           </div>
           <div className="overflow-y-auto p-4">{children}</div>
