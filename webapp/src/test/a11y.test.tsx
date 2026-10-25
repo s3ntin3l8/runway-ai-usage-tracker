@@ -133,6 +133,18 @@ async function settle(client: QueryClient) {
   await waitFor(() => expect(client.isFetching()).toBe(0));
 }
 
+/**
+ * Asserts that the surface really is on screen before the scan.
+ *
+ * A render error unmounts the tree — React tears the whole root down — and
+ * an empty document has no violations at all. Without this the guard would
+ * pass for the wrong reason: on a page that never rendered.
+ */
+async function expectSurfaceRendered() {
+  const main = await screen.findByRole('main');
+  expect((main.textContent ?? '').trim().length).toBeGreaterThan(20);
+}
+
 function renderSurface(pathPattern: string, element: React.ReactElement, route: string) {
   return renderWithProviders(
     <ThemeProvider>
@@ -292,9 +304,14 @@ describe('accessibility guard (axe)', () => {
   });
 
   it('has no violations on the app shell', async () => {
-    const { client } = renderSurface('/', <div>content</div>, '/');
+    const { client } = renderSurface(
+      '/',
+      <div>Shell content for the accessibility guard</div>,
+      '/',
+    );
     await waitFor(() => expect(screen.getByRole('main')).toBeInTheDocument());
     await settle(client);
+    await expectSurfaceRendered();
     await expectNoViolations();
   });
 
@@ -302,6 +319,7 @@ describe('accessibility guard (axe)', () => {
     const { client } = renderSurface('/', <HomePage />, '/');
     await waitFor(() => expect(screen.getByRole('main')).toBeInTheDocument());
     await settle(client);
+    await expectSurfaceRendered();
     await expectNoViolations();
   });
 
@@ -313,6 +331,7 @@ describe('accessibility guard (axe)', () => {
     );
     await waitFor(() => expect(screen.getByRole('main')).toBeInTheDocument());
     await settle(client);
+    await expectSurfaceRendered();
     await expectNoViolations();
   });
 
@@ -324,6 +343,7 @@ describe('accessibility guard (axe)', () => {
     );
     await waitFor(() => expect(screen.getByRole('main')).toBeInTheDocument());
     await settle(client);
+    await expectSurfaceRendered();
     await expectNoViolations();
   });
 
@@ -335,6 +355,7 @@ describe('accessibility guard (axe)', () => {
     );
     await waitFor(() => expect(screen.getByRole('main')).toBeInTheDocument());
     await settle(client);
+    await expectSurfaceRendered();
     await expectNoViolations();
   });
 
@@ -342,6 +363,7 @@ describe('accessibility guard (axe)', () => {
     const { client } = renderSurface('/fleet', <FleetPage />, '/fleet');
     await waitFor(() => expect(screen.getByRole('main')).toBeInTheDocument());
     await settle(client);
+    await expectSurfaceRendered();
     await expectNoViolations();
   });
 
@@ -349,6 +371,7 @@ describe('accessibility guard (axe)', () => {
     const { client } = renderSurface('/settings/*', <SettingsPage />, '/settings/providers');
     await waitFor(() => expect(screen.getByRole('main')).toBeInTheDocument());
     await settle(client);
+    await expectSurfaceRendered();
     await expectNoViolations();
   });
 
@@ -356,6 +379,7 @@ describe('accessibility guard (axe)', () => {
     const { client } = renderSurface('/history', <HistoryPage />, '/history');
     await waitFor(() => expect(screen.getByRole('main')).toBeInTheDocument());
     await settle(client);
+    await expectSurfaceRendered();
     await expectNoViolations();
   });
 
@@ -363,6 +387,7 @@ describe('accessibility guard (axe)', () => {
     const { client } = renderSurface('/insights', <InsightsPage />, '/insights');
     await waitFor(() => expect(screen.getByRole('main')).toBeInTheDocument());
     await settle(client);
+    await expectSurfaceRendered();
     await expectNoViolations();
   });
 
@@ -375,6 +400,7 @@ describe('accessibility guard (axe)', () => {
     );
     await waitFor(() => expect(screen.getByRole('main')).toBeInTheDocument());
     await settle(client);
+    await expectSurfaceRendered();
     await user.click(screen.getByRole('button', { name: 'More provider actions' }));
     await user.click(await screen.findByRole('menuitem', { name: 'Archive provider' }));
     await waitFor(() => expect(screen.getByRole('dialog')).toBeInTheDocument());
