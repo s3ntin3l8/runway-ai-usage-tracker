@@ -10,7 +10,7 @@ import { Gauge } from '@/components/ui/Gauge';
 import { ProviderGlyph } from '@/components/ui/ProviderGlyph';
 import { formatCurrency, formatPct } from '@/lib/format';
 import { maskAccountId } from '@/lib/accountDisplay';
-import { cardHeroLabel, cardHeroText, cardKind, cardPct, cardTooltip, windowLabel } from '@/lib/quota';
+import { cardHeroLabel, cardHeroText, cardKind, cardName, cardPct, cardTooltip, windowLabel } from '@/lib/quota';
 import { forecastLabel, type RiskItem } from './risk';
 
 interface AtRiskRailProps {
@@ -121,7 +121,7 @@ function AtRiskCard({ item, providerNames }: { item: RiskItem; providerNames: Ma
           status={status}
           size="lg"
           className="mt-2"
-          label={`${gauge.service_name} quota used`}
+          label={`${cardName(gauge)} quota used`}
         />
       )}
       <div className="mt-2 flex items-center justify-between">

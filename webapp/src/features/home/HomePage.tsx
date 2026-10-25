@@ -69,6 +69,21 @@ export function HomePage() {
     ).length;
   }, [providerConfigs.data]);
 
+  // The billing type of the money the aggregate strip sums up. The accounts
+  // here may mix billing types, so the aggregate takes the *least* certain
+  // label of the set: reported money only while every account reports it,
+  // estimated money as soon as one of them does not.
+  const aggregateBillingType = useMemo(() => {
+    const accounts = (providerConfigs.data?.providers ?? []).flatMap((p) => p.accounts ?? []);
+    const live = accounts.filter(
+      (a) => !a.archived && !a.merged_into && (a.api_key_set || a.session_cookie_set),
+    );
+    if (live.length === 0) return 'unknown';
+    return live.every((a) => a.billing_type === 'pay_as_you_go')
+      ? 'pay_as_you_go'
+      : 'subscription';
+  }, [providerConfigs.data]);
+
   // Machines that are already paired. A paired sidecar with no provider
   // account yet is a different situation from a fresh install, and the zero
   // state has to say so: telling someone to "connect a sidecar" they have
@@ -174,6 +189,7 @@ export function HomePage() {
             <AggregateStrip
               cost={cost.data}
               cumulative={cumulative.data}
+              billingType={aggregateBillingType}
               costLoading={cost.isPending}
               tokensLoading={cumulative.isPending}
             />

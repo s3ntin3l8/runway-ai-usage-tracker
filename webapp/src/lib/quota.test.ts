@@ -3,6 +3,7 @@ import type { LimitCard } from '@/api/types';
 import {
   cardHeroLabel,
   cardKind,
+  cardName,
   cardPct,
   cardStale,
   cardStatus,
@@ -475,5 +476,24 @@ describe('reasonMentionsKeepAlive', () => {
     expect(reasonMentionsKeepAlive(null)).toBe(false);
     expect(reasonMentionsKeepAlive(undefined)).toBe(false);
     expect(reasonMentionsKeepAlive('')).toBe(false);
+  });
+});
+
+describe('cardName', () => {
+  it('prefers the service name', () => {
+    expect(cardName(card({ service_name: 'Claude', model_id: 'claude-opus' }))).toBe('Claude');
+  });
+
+  it('falls back to the model id when the service name is missing', () => {
+    // The backend can leave service_name out, and the rest of the quota code
+    // falls back the same way.
+    expect(
+      cardName({ ...card({ service_name: '' }), model_id: 'claude-opus' } as LimitCard),
+    ).toBe('claude-opus');
+  });
+
+  it('never returns an empty name', () => {
+    // An accessible name built from an empty name reads " quota used".
+    expect(cardName({ ...card({ service_name: '' }) } as LimitCard)).toBe('Quota');
   });
 });

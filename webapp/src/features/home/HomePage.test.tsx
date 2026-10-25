@@ -231,8 +231,55 @@ describe('HomePage', () => {
     renderWithProviders(<HomePage />);
     expect(await screen.findByText('Cost (MTD)')).toBeInTheDocument();
     expect(screen.getByText('Projected cost (EOM)')).toBeInTheDocument();
-    // The same wording as the provider page's cost tiles: the accounts here
-    // may mix billing types, so the aggregate label stays neutral.
+    // The same wording as the provider page's cost tiles.
+    expect(screen.getByText('Cost per day (7d)')).toBeInTheDocument();
+  });
+
+  it('labels the aggregate as estimated when an account has no reported bill', async () => {
+    vi.mocked(api.fetchFleetUsage).mockResolvedValue(fleetResponse([fleetEntry()]));
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({
+      providers: [
+        {
+          provider_id: 'claude',
+          name: 'Claude',
+          accounts: [
+            {
+              account_id: 'default',
+              api_key_set: true,
+              session_cookie_set: false,
+              billing_type: 'subscription',
+            },
+          ],
+        },
+      ],
+    } as never);
+    renderWithProviders(<HomePage />);
+    // A subscription reports no bill, so the money is our estimate — and the
+    // aggregate takes the least certain label of the accounts it sums.
+    expect(await screen.findByText('Estimated cost (MTD)')).toBeInTheDocument();
+    expect(screen.getByText('Estimated cost per day (7d)')).toBeInTheDocument();
+  });
+
+  it('labels the aggregate as reported cost when every account reports it', async () => {
+    vi.mocked(api.fetchFleetUsage).mockResolvedValue(fleetResponse([fleetEntry()]));
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({
+      providers: [
+        {
+          provider_id: 'claude',
+          name: 'Claude',
+          accounts: [
+            {
+              account_id: 'default',
+              api_key_set: true,
+              session_cookie_set: false,
+              billing_type: 'pay_as_you_go',
+            },
+          ],
+        },
+      ],
+    } as never);
+    renderWithProviders(<HomePage />);
+    expect(await screen.findByText('Cost (MTD)')).toBeInTheDocument();
     expect(screen.getByText('Cost per day (7d)')).toBeInTheDocument();
   });
 

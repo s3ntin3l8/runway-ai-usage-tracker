@@ -226,6 +226,18 @@ export function cardHeroLabel(card: LimitCard, heroText: string): string | undef
   return `${heroText} — ${detail}`;
 }
 
+/**
+ * The readable name of a quota card, for use in an accessible name.
+ *
+ * `service_name` is the label the app shows, but the backend can leave it
+ * out, and the rest of the quota code falls back to the model id. An
+ * accessible name that interpolates a missing field reads "undefined quota
+ * used" — so the same fallback applies here.
+ */
+export function cardName(card: LimitCard): string {
+  return card.service_name || card.model_id || 'Quota';
+}
+
 // Humanize a model id for display: de-separate and capitalize each word
 // ("sonnet" → "Sonnet", "gemini-flash" → "Gemini Flash").
 export function modelLabel(modelId: string): string {
