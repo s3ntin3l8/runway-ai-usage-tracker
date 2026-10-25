@@ -2,7 +2,7 @@
 // /provider/:providerId?account=<account_id>; account defaults to the
 // provider's first fleet entry.
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Archive, ArchiveRestore, Bug, CircleAlert, Ellipsis, RefreshCw, RotateCcw, SlidersHorizontal } from 'lucide-react';
@@ -133,18 +133,12 @@ export function ProviderPage() {
   const eventRange = useProviderEventRange(providerId, accountId);
 
   // A deep link to a tab that is off-screen — the strip scrolls on a phone,
-  // and the last tabs are past the fold — must bring that tab into view,
-  // or the link lands on a page that looks like the wrong tab is selected.
-  useEffect(() => {
-    const list = document.getElementById('provider-tabs');
-    const trigger = list?.querySelector<HTMLElement>('[data-state="active"]');
-    // jsdom has no scrollIntoView, hence the optional call.
-    trigger?.scrollIntoView?.({ block: 'nearest', inline: 'center' });
-    // The strip does not exist until the provider's entry has loaded, so the
-    // effect has to wait for it: on a cold load `tab` is already its final
-    // value and never changes again, and an effect that only watched `tab`
-    // would have run once, against a strip that was not there yet.
-  }, [tab, entry]);
+  // and the last tabs are past the fold — must bring that tab into view, or
+  // the link lands on a page that looks like the wrong tab is selected.
+  //
+  // The strip does that itself (`TabsList` reveals the selected tab): it is
+  // the only thing that knows how wide its own content is, and it re-checks
+  // after every resize, so the tab is still in view once the layout settles.
   const showSourceFilter =
     entry &&
     (SOURCE_AWARE_TABS.has(tab) || (tab === 'forecast' && cardKind(entry.critical_gauge) === 'tokens'));

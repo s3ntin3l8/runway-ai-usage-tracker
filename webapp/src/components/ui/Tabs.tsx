@@ -12,6 +12,37 @@ export const Tabs = TabsPrimitive.Root;
 const SCROLL_FADE =
   '[mask-image:linear-gradient(to_right,black_calc(100%_-_24px),transparent_100%)]';
 
+// Keep the selected tab in view.
+//
+// The strip scrolls sideways on a phone and the selected tab can sit past the
+// fold: the provider strip holds six tabs and two or three of them fit. A
+// selection the reader cannot see is a selection they cannot trust — the
+// panel shows one tab's content while the strip points at another.
+//
+// The scroll is computed here rather than delegated to `scrollIntoView`,
+// which animates (the strip is `scroll-smooth`). An animation can be cut
+// short by the layout settling underneath it, and a deep link then lands with
+// the named tab still half off-screen. Assigning `scrollLeft` is immediate
+// and lands where it is told to.
+//
+// The strip is the only thing that knows how wide its own content is, so it
+// is the only place that can answer "is the selected tab on screen?".
+function revealSelectedTab(strip: HTMLElement): void {
+  const trigger = strip.querySelector<HTMLElement>('[data-state="active"]');
+  if (!trigger) return;
+  const stripBox = strip.getBoundingClientRect();
+  const triggerBox = trigger.getBoundingClientRect();
+  // jsdom has no layout, so both boxes are empty. Nothing to reveal.
+  if (stripBox.width === 0 || triggerBox.width === 0) return;
+  const offset = triggerBox.left - stripBox.left;
+  // Fully inside the strip already? The reader can see it — leave the strip
+  // where it is, so a scroll the reader made is not undone.
+  if (offset >= 0 && offset + triggerBox.width <= stripBox.width) return;
+  // Centre the selected tab. The browser clamps the scroll at the strip's
+  // ends, so a tab at either end ends flush against it.
+  strip.scrollLeft += offset - (stripBox.width - triggerBox.width) / 2;
+}
+
 export function TabsList({
   className,
   ref,
@@ -28,6 +59,9 @@ export function TabsList({
       setCanScrollRight(remaining > 1);
     };
     update();
+    // The selected tab may start past the fold — a deep link names a tab, and
+    // a tab that is not on screen is a tab the reader cannot see.
+    revealSelectedTab(el);
     el.addEventListener('scroll', update, { passive: true });
     // The strip is width-constrained, so a trigger appearing or disappearing
     // (the provider strip adds "Debug" on demand) changes the scroll width
@@ -38,7 +72,15 @@ export function TabsList({
     // without the DOM moving at all — a web-font swap, or a re-rendered
     // label. A fade that outlives its trigger is worse than no fade: it
     // says there is more to the right when there is not.
-    const sizes = new ResizeObserver(update);
+    //
+    // A resize also moves the selected tab: the strip can get narrower (a
+    // scrollbar appears) or its content can get wider, and either way the
+    // tab that was in view can end up clipped. So the selection is revealed
+    // again after every resize.
+    const sizes = new ResizeObserver(() => {
+      update();
+      revealSelectedTab(el);
+    });
     const observeStrip = () => {
       sizes.observe(el);
       for (const trigger of el.children) sizes.observe(trigger);
@@ -47,11 +89,22 @@ export function TabsList({
     // `subtree` and `characterData` catch a trigger whose own label
     // changes: the strip's scroll width moves, and an observer that only
     // watches the strip's children would not fire.
+    //
+    // `attributes` on `data-state` catches the selection moving: clicking a
+    // tab, or landing on a deep link, has to bring the new selection into
+    // view.
     const mutations = new MutationObserver(() => {
       observeStrip();
       update();
+      revealSelectedTab(el);
     });
-    mutations.observe(el, { childList: true, subtree: true, characterData: true });
+    mutations.observe(el, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+      attributes: true,
+      attributeFilter: ['data-state'],
+    });
     return () => {
       el.removeEventListener('scroll', update);
       mutations.disconnect();
