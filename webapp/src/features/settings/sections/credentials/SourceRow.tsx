@@ -255,7 +255,7 @@ export function SourceRow({
             {canTurnOnKeepAlive ? (
               <button
                 type="button"
-                className="font-medium text-accent hover:underline disabled:opacity-50"
+                className="font-medium text-accent-text hover:underline disabled:opacity-50"
                 disabled={turnOnKeepAlive.isPending}
                 onClick={() => turnOnKeepAlive.mutate()}
                 aria-label={`Turn on keep-alive for ${source.machine_name ?? source.machine_id}`}
@@ -266,7 +266,7 @@ export function SourceRow({
             {source.machine_id ? (
               <Link
                 to={`/fleet?settings=${encodeURIComponent(source.machine_id)}`}
-                className="font-medium text-accent hover:underline"
+                className="font-medium text-accent-text hover:underline"
                 aria-label={`Open ${source.machine_name ?? source.machine_id} in Fleet`}
               >
                 Fleet

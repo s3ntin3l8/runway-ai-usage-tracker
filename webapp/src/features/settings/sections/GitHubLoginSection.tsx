@@ -150,7 +150,7 @@ export function GitHubLoginSection() {
             href={flow.verificationUri}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-0.5 text-accent underline underline-offset-2"
+            className="inline-flex items-center gap-0.5 text-accent-text underline underline-offset-2"
           >
             github.com/login/device
             <ExternalLink className="size-2.5" />

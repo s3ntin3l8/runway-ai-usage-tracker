@@ -22,16 +22,25 @@
   /* Text */
   --fg: #f7f8f8;
   --fg-muted: #a1a1aa;
-  --fg-subtle: #70707b;
+  /* Carries 11-12px text (table headers, KPI labels). #70707b only reached
+     3.9:1 on a card; #858591 reaches 5.2:1 — WCAG AA for normal text. */
+  --fg-subtle: #858591;
 
   /* Accent (single, restrained indigo) */
   --accent: #5e6ad2;
   --accent-fg: #ffffff;
   --accent-muted: rgb(94 106 210 / 0.16);
   --accent-hover: #6e79db;
+  /* The accent as *text*. #5e6ad2 is right as a fill (white on it: 4.7:1)
+     but only reaches 4.0:1 as small text on a dark card, so text uses of the
+     accent colour go through this lighter variant instead. */
+  --accent-text: #8b95e8;
 
   /* Quota status semantics (from utils/quota health buckets) */
   --critical: #f0524f;
+  /* Fills that carry white text (the danger button). #f0524f only reached
+     3.5:1 against white; #d43b38 reaches 4.7:1. */
+  --critical-strong: #d43b38;
   --critical-muted: rgb(240 82 79 / 0.14);
   --warning: #e8a33d;
   --warning-muted: rgb(232 163 61 / 0.14);
@@ -78,26 +87,44 @@
 
   --fg: #18181b;
   --fg-muted: #52525b;
-  --fg-subtle: #8e8e96;
+  /* #8e8e96 only reached 3.1:1 on the light canvas; #6e6e77 reaches 4.8:1. */
+  --fg-subtle: #6e6e77;
 
-  --accent: #5e6ad2;
+  /* The light theme's accent is darker than the dark theme's: it has to work
+     both as a fill under white text and as small text on white. */
+  --accent: #4a54bd;
   --accent-fg: #ffffff;
-  --accent-muted: rgb(94 106 210 / 0.12);
-  --accent-hover: #4f5bc4;
+  --accent-muted: rgb(74 84 189 / 0.12);
+  --accent-hover: #3f47a8;
+  --accent-text: #4a54bd;
 
-  --critical: #d8302d;
-  --critical-muted: rgb(216 48 45 / 0.1);
-  --warning: #b97a10;
-  --warning-muted: rgb(185 122 16 / 0.12);
-  --ok: #21845a;
-  --ok-muted: rgb(33 132 90 / 0.1);
-  --unlimited: #1771c7;
-  --unlimited-muted: rgb(23 113 199 / 0.1);
-  --unknown: #6e6e76;
-  --unknown-muted: rgb(110 110 118 / 0.1);
+  /* Light-theme status colours are text colours first: badges render 11px
+     text on the matching -muted tint, which was 3.1-4.4:1 with the old
+     values. The darker set clears 4.5:1 on white and still carries white
+     text on the -strong fills. */
+  --critical: #b02522;
+  --critical-strong: #b02522;
+  --critical-muted: rgb(176 37 34 / 0.1);
+  --warning: #8a5c06;
+  --warning-muted: rgb(138 92 6 / 0.12);
+  --ok: #12603e;
+  --ok-muted: rgb(18 96 62 / 0.1);
+  --unlimited: #0f5699;
+  --unlimited-muted: rgb(15 86 153 / 0.1);
+  --unknown: #5c5c63;
+  --unknown-muted: rgb(92 92 99 / 0.1);
 
   --chart-grid: rgb(0 0 0 / 0.06);
   --chart-axis: #8e8e96;
+  /* The dark theme's categorical palette only reached 2.1-2.6:1 on a white
+     card — below the 3:1 floor for graphical objects. These are the light
+     equivalents, all at or above 3.5:1 on white. */
+  --chart-1: #4c56c0;
+  --chart-2: #1771c7;
+  --chart-3: #21845a;
+  --chart-4: #b97a10;
+  --chart-5: #c2377f;
+  --chart-6: #7c3aed;
   /* Sequential heatmap ramp (low → high). Light: light → dark. */
   --chart-heat-0: #eef2ff;
   --chart-heat-1: #c7d2fe;

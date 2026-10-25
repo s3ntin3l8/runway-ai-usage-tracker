@@ -92,7 +92,7 @@ export function AddSidecarCard({ className }: { className?: string }) {
             Couldn't load the download list
             {downloads.data?.error ? ` (${downloads.data.error})` : ''}.{' '}
             <a
-              className="text-accent hover:underline"
+              className="text-accent-text hover:underline"
               href={downloads.data?.release_url ?? 'https://github.com/s3ntin3l8/runway-ai-usage-tracker/releases'}
               target="_blank"
               rel="noreferrer"

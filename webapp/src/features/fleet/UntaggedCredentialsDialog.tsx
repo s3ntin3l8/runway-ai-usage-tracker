@@ -454,7 +454,7 @@ function UntaggedRow({
             <span className="font-mono">{displayOrigin(entry.credential_origin)}</span>
             {' · from '}
             <span className="font-mono">{machineName ?? entry.sidecar_id}</span>
-            {allMachines && <span className="text-accent"> · applies to all machines</span>}
+            {allMachines && <span className="text-accent-text"> · applies to all machines</span>}
           </p>
           {sourceDescription(entry).kind === 'cookie' ? (
             <p className="text-[11px] text-fg-subtle">
@@ -518,7 +518,7 @@ function UntaggedRow({
             <Link
               to="/settings/providers"
               onClick={onNavigate}
-              className="text-accent underline underline-offset-2"
+              className="text-accent-text underline underline-offset-2"
             >
               {notice.linkLabel}
             </Link>
@@ -586,7 +586,7 @@ function UntaggedRow({
           <Link
             to="/settings/providers"
             onClick={onNavigate}
-            className="text-accent underline underline-offset-2"
+            className="text-accent-text underline underline-offset-2"
           >
             {parkedNotice.linkLabel}
           </Link>
@@ -614,7 +614,7 @@ function UntaggedRow({
                 role="radio"
                 aria-checked={!allMachines}
                 className={`rounded px-2 py-1 text-[11px] font-medium transition-colors ${
-                  !allMachines ? 'bg-accent text-fg-inverse' : 'text-fg-muted hover:text-fg'
+                  !allMachines ? 'bg-accent text-accent-fg' : 'text-fg-muted hover:text-fg'
                 }`}
                 onClick={() => onScope(false)}
               >
@@ -627,7 +627,7 @@ function UntaggedRow({
                 disabled={machineBound}
                 title={machineBound ? 'Not available for browser or keychain credentials' : undefined}
                 className={`rounded px-2 py-1 text-[11px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-                  allMachines ? 'bg-accent text-fg-inverse' : 'text-fg-muted hover:text-fg'
+                  allMachines ? 'bg-accent text-accent-fg' : 'text-fg-muted hover:text-fg'
                 }`}
                 onClick={() => onScope(true)}
               >

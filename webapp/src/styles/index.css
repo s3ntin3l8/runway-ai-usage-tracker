@@ -18,7 +18,9 @@
   --color-accent-fg: var(--accent-fg);
   --color-accent-muted: var(--accent-muted);
   --color-accent-hover: var(--accent-hover);
+  --color-accent-text: var(--accent-text);
   --color-critical: var(--critical);
+  --color-critical-strong: var(--critical-strong);
   --color-critical-muted: var(--critical-muted);
   --color-warning: var(--warning);
   --color-warning-muted: var(--warning-muted);
