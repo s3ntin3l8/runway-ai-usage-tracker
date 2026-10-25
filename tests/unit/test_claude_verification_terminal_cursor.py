@@ -13,11 +13,16 @@ from tests.unit.test_claude_cloud_probe import profile, usage
 source_environment = fixtures.source_environment
 
 
-@pytest.mark.parametrize(("limit", "count"), [(20, 0), (20, 14), (20, 20), (50, 50)])
-def test_omitted_terminal_cursor_is_accepted_without_mutating_evidence(limit, count):
+@pytest.mark.parametrize(
+    ("limit", "count", "explicit_end"),
+    [(20, 0, False), (20, 14, False), (20, 20, False), (50, 50, False), (20, 14, True)],
+)
+def test_omitted_terminal_cursor_is_accepted_without_mutating_evidence(limit, count, explicit_end):
     from app.services.claude_cloud_verification import _verification_page
 
     payload = {"data": [{"id": "fixture-" + str(i)} for i in range(count)]}
+    if explicit_end:
+        payload["has_more"] = False
     original = copy.deepcopy(payload)
     rows, cursor = _verification_page(payload, limit)
     assert rows == payload["data"] and cursor is None
@@ -83,6 +88,9 @@ async def test_list_and_history_omission_finish_durably_without_replaying(source
         body = {"data": [{"sequence_num": 1 if cursor is None else 2, "payload": usage()}]}
         if cursor is None:
             body["next_cursor"] = "history-next"
+            body["has_more"] = True
+        else:
+            body["has_more"] = False
         return httpx.Response(200, json=body)
 
     state = await fixtures.advance(handle, store, upstream)
@@ -154,3 +162,34 @@ async def test_an_advertised_continuation_without_cursor_stays_terminal_failure(
     assert state.rejected_list.boundary.has_more_state == "true"
     await fixtures.advance(handle, store, upstream)
     assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_history_contradiction_cannot_claim_completion_or_replay(source_environment):
+    store = fixtures.store_for(source_environment)
+    handle = await fixtures.start(store)
+    calls = []
+    contradictory = {
+        "data": [{"sequence_num": 1, "payload": usage()}],
+        "next_cursor": "history-next",
+        "has_more": False,
+    }
+
+    def upstream(request):
+        calls.append(request)
+        if request.url.path.endswith("/profile"):
+            return httpx.Response(200, json=profile())
+        if request.url.path == "/v1/code/sessions":
+            return httpx.Response(
+                200, json={"data": [{"id": "fixture-history"}], "next_cursor": None}
+            )
+        return httpx.Response(200, json=contradictory)
+
+    state = await fixtures.advance(handle, store, upstream)
+    assert state.outcome == "unsupported_contract" and state.list_complete
+    assert not state.history_complete and state.history_pages == state.history_events == 0
+    assert state.requests == len(calls) == 3 and state.rejected_list is None
+    await fixtures.advance(handle, store, upstream)
+    assert len(calls) == 3
+    # The stricter agreement rule belongs only to complete-history verification.
+    assert probe._page(contradictory, 50)[1] == "history-next"

@@ -964,7 +964,7 @@ returns `stop` with remaining accounting/coverage/provenance checks; supplied
 build metadata is not authenticated by the offline validator.
 
 Complete-history verification follows nonempty continuation cursors even on short
-pages. A valid page with an omitted `next_cursor` ends the observable traversal,
+pages, for both the session list and event history. A valid page with an omitted `next_cursor` ends the observable traversal,
 just like an explicit null. When `has_more` is present it must be boolean and
 agree with continuation; contradictions stop as `unsupported_contract`.
 Completion is never inferred from record count. Empty strings, malformed cursors,

@@ -60,8 +60,6 @@ def _verification_page(payload: object, limit: int) -> tuple[list[dict[str, Any]
         if "has_more" in payload and type(payload["has_more"]) is not bool:
             raise probe.ProbeError("unsupported_contract")
         if "next_cursor" not in payload:
-            if payload.get("has_more") is True:
-                raise probe.ProbeError("unsupported_contract")
             payload = {**payload, "next_cursor": None}
     rows, cursor = probe._page(payload, limit)
     if (
