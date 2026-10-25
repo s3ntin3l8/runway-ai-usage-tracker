@@ -5797,7 +5797,15 @@ def run_collection(config: dict[str, Any], providers: list[str] | None = None) -
                 local_account_id = canonical_account_id(
                     _LEGACY_EVENT_ACCOUNT_DISCOVERY[provider_id]()
                 )
-                provider_accounts = server_accounts_by_provider.get(provider_id) or []
+                # The provider whose *identity* these events carry, which is
+                # not always the provider being iterated: the MiniMax Code
+                # ledger runs under its own scheduling id but its events
+                # carry ``provider_id="minimax"`` and belong to the operator's
+                # MiniMax account (#928). The server's account list is the
+                # identity provider's, for the same reason the hint and the
+                # taggable origin are.
+                identity_provider_id = _EVENT_IDENTITY_PROVIDER.get(provider_id, provider_id)
+                provider_accounts = server_accounts_by_provider.get(identity_provider_id) or []
 
                 # Silent-listener for events (PR #290 follow-up — the
                 # token-card path has had this since #288, but events
@@ -5833,7 +5841,6 @@ def run_collection(config: dict[str, Any], providers: list[str] | None = None) -
                 # id's own bucket would miss the ``provider:minimax``
                 # auto-hint and drop every event back to "default" — the
                 # very "Unassigned usage" state this id exists to fix.
-                identity_provider_id = _EVENT_IDENTITY_PROVIDER.get(provider_id, provider_id)
                 event_origin = credential_origin_for_provider(identity_provider_id)
                 event_hint = server_account_tag_hints.get(identity_provider_id, {}).get(
                     event_origin
