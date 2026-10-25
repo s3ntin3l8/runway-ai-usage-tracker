@@ -9,6 +9,7 @@ import type { CumulativeBucket, CumulativeModelBucket, FleetEntry } from '@/api/
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { useExcludeCache } from '@/hooks/useExcludeCache';
+import { useIsDesktop } from '@/hooks/useMediaQuery';
 import { useUsageSource } from '@/hooks/useUsageSource';
 import { ModelDonut } from '@/components/charts/ModelDonut';
 import { TokenBar } from '@/components/charts/TokenBar';
@@ -68,6 +69,7 @@ export function OverviewTab({ entry, scope }: { entry: FleetEntry; scope: TabSco
   const scopeLabel = scope.label;
   const cards = [entry.critical_gauge, ...entry.secondary_limits];
   const kind = cardKind(entry.critical_gauge);
+  const isDesktop = useIsDesktop();
 
   // Trajectory for the window we treat as critical. Match on the full card
   // identity (window_type + variant + model_id) via findForecast, not window_type
@@ -158,6 +160,45 @@ export function OverviewTab({ entry, scope }: { entry: FleetEntry; scope: TabSco
       </CardContent>
     </Card>
   ) : null;
+
+  // The detail panels: a phone collapses them into one disclosure, a desktop
+  // shows them outright. One definition, two layouts.
+  const secondaryPanels = (
+    <>
+      <ProviderTrendCard
+        providerId={entry.provider_id}
+        accountId={entry.account_id}
+        metric="tokens"
+        title={`Tokens per day · ${scopeLabel}`}
+        range={scope.range}
+        compact
+        excludeCache={excludeCache}
+      />
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle>Token mix · {scopeLabel}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {cumulative.isPending ? (
+              <Skeleton className="h-44 w-full" />
+            ) : hasTokenData(scopeBucket, excludeCache) ? (
+              <TokenDonut bucket={scopeBucket} className="h-44" excludeCache={excludeCache} />
+            ) : (
+              <p className="py-12 text-center text-xs text-fg-subtle">
+                No usage in {scopeLabel}.
+              </p>
+            )}
+          </CardContent>
+        </Card>
+
+        {kind !== 'quota' ? sourceSplitCard : null}
+      </div>
+
+      {sourceAppsCard}
+    </>
+  );
 
   return (
     <div className="flex flex-col gap-4">
@@ -268,38 +309,22 @@ export function OverviewTab({ entry, scope }: { entry: FleetEntry; scope: TabSco
         />
       )}
 
-      <ProviderTrendCard
-        providerId={entry.provider_id}
-        accountId={entry.account_id}
-        metric="tokens"
-        title={`Tokens per day · ${scopeLabel}`}
-        range={scope.range}
-        compact
-        excludeCache={excludeCache}
-      />
-
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle>Token mix · {scopeLabel}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {cumulative.isPending ? (
-              <Skeleton className="h-44 w-full" />
-            ) : hasTokenData(scopeBucket, excludeCache) ? (
-              <TokenDonut bucket={scopeBucket} className="h-44" excludeCache={excludeCache} />
-            ) : (
-              <p className="py-12 text-center text-xs text-fg-subtle">
-                No usage in {scopeLabel}.
-              </p>
-            )}
-          </CardContent>
-        </Card>
-
-        {kind !== 'quota' ? sourceSplitCard : null}
-      </div>
-
-      {sourceAppsCard}
+      {isDesktop ? (
+        secondaryPanels
+      ) : (
+        // On a phone the page is nine-to-fourteen stacked panels with no
+        // priority signal. The detail panels collapse into one disclosure so
+        // the KPIs, the quota windows and the usage total are what a phone
+        // user sees first.
+        <details className="rounded-md border border-edge">
+          <summary className="flex min-h-11 cursor-pointer items-center gap-2 px-4 py-2 text-[13px] font-medium text-fg-muted">
+            More usage detail
+          </summary>
+          <div className="flex flex-col gap-4 pt-4">
+            {secondaryPanels}
+          </div>
+        </details>
+      )}
 
       <RecentSessions
         providerId={entry.provider_id}

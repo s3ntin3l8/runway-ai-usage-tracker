@@ -251,6 +251,110 @@ describe('SessionsTable sidecar column', () => {
   });
 });
 
+describe('SessionsTable narrow layout', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const twoHosts = () =>
+    vi.mocked(api.fetchSidecars).mockResolvedValue({
+      sidecars: [
+        { sidecar_id: 'laptop', custom_name: 'My Laptop' },
+        { sidecar_id: 'desktop', hostname: 'work-desktop' },
+      ],
+    } as never);
+
+  it('bounds the Models column and keeps the full model id reachable', () => {
+    renderWithProviders(
+      <SessionsTable
+        sessions={[session({ session_id: 'aaaa1111', models: ['claude-sonnet-4-5-20250929'] })]}
+      />,
+    );
+    // The header and the cell carry the same width cap: a long model id must
+    // not widen the column (and with it the table) on a phone. The badge
+    // truncates to one line, so a wider cap buys nothing a reader can see
+    // and costs the phone the width.
+    const header = screen.getByRole('columnheader', { name: 'Models' });
+    expect(header).toHaveClass('max-w-[7rem]');
+    expect(header).toHaveClass('sm:max-w-none');
+
+    const badge = screen.getByText('claude-sonnet-4-5-20250929');
+    const cell = badge.closest('td')!;
+    expect(cell).toHaveClass('max-w-[7rem]');
+    expect(cell).toHaveClass('sm:max-w-none');
+    // The badge can shrink, and the full id stays readable on hover.
+    expect(badge).toHaveClass('min-w-0');
+    expect(badge).toHaveAttribute('title', 'claude-sonnet-4-5-20250929');
+  });
+
+  it('drops the Project, Sidecar and Cost columns below their breakpoints', async () => {
+    twoHosts();
+    renderWithProviders(
+      <SessionsTable
+        sessions={[
+          session({
+            session_id: 'aaaa1111',
+            project: 'runway',
+            cwd: '/home/u/runway',
+            sidecar_id: 'laptop',
+          }),
+        ]}
+      />,
+    );
+    await screen.findByRole('columnheader', { name: 'Sidecar' });
+
+    const row = screen.getByText('aaaa1111').closest('tr')!;
+    const headers = screen.getAllByRole('columnheader');
+    const cells = within(row).getAllByRole('cell');
+
+    // The <TH> and its matching <TD> must carry the same responsive classes,
+    // or the header and its data end up in different columns.
+    const columnClasses: Record<string, string[]> = {
+      Project: ['hidden', 'sm:table-cell'],
+      Sidecar: ['hidden', 'md:table-cell'],
+      Cost: ['hidden', 'md:table-cell'],
+    };
+    for (const [label, classes] of Object.entries(columnClasses)) {
+      const index = headers.findIndex((h) => h.textContent?.trim() === label);
+      expect(index, `no header for ${label}`).toBeGreaterThanOrEqual(0);
+      for (const cls of classes) {
+        expect(headers[index], `${label} header`).toHaveClass(cls);
+        expect(cells[index], `${label} cell`).toHaveClass(cls);
+      }
+    }
+
+    // The columns that always show carry no hiding classes.
+    for (const label of ['Session', 'Models', 'Duration', 'Messages', 'Tokens']) {
+      const index = headers.findIndex((h) => h.textContent?.trim() === label);
+      expect(index, `no header for ${label}`).toBeGreaterThanOrEqual(0);
+      expect(headers[index], `${label} header`).not.toHaveClass('hidden');
+      expect(cells[index], `${label} cell`).not.toHaveClass('hidden');
+    }
+  });
+
+  it('spans the detail row across the widest layout so the panel fills the row', async () => {
+    twoHosts();
+    renderWithProviders(
+      <SessionsTable
+        sessions={[
+          session({
+            session_id: 'aaaa1111',
+            project: 'runway',
+            cwd: '/home/u/runway',
+            sidecar_id: 'laptop',
+          }),
+        ]}
+      />,
+    );
+    await screen.findByRole('columnheader', { name: 'Sidecar' });
+    await userEvent.click(screen.getByText('aaaa1111').closest('tr')!);
+
+    // Six always-visible columns + Cost + the optional Project/Sidecar ones.
+    // The colspan is the widest layout's count: an over-wide colspan is
+    // clamped by the table model once the extra columns are hidden.
+    const detail = screen.getByText('Token breakdown').closest('td')!;
+    expect(detail).toHaveAttribute('colspan', '9');
+  });
+});
+
 describe('SessionsTable sortable headers', () => {
   it('renders plain, non-interactive headers when no onSort is provided', () => {
     renderWithProviders(<SessionsTable sessions={[session({ session_id: 'aaaa1111' })]} />);

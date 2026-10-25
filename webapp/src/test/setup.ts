@@ -89,13 +89,25 @@ if (!window.matchMedia) {
   }));
 }
 
+// The observer mocks take the callback the real API takes. A default
+// constructor would not: CodeQL reads `new ResizeObserver(update)` against
+// this class and reports the callback as a superfluous argument, because a
+// class with no constructor of its own takes none. The callback is not kept
+// -- the mock never fires -- but it is accepted, so the mock's shape
+// matches the API the code under test calls.
 class _ResizeObserver {
+  constructor(callback: ResizeObserverCallback) {
+    void callback;
+  }
   observe() {}
   unobserve() {}
   disconnect() {}
 }
 globalThis.ResizeObserver ??= _ResizeObserver as unknown as typeof ResizeObserver;
 globalThis.IntersectionObserver ??= class {
+  constructor(callback: IntersectionObserverCallback) {
+    void callback;
+  }
   observe() {}
   unobserve() {}
   disconnect() {}

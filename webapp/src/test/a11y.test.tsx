@@ -103,6 +103,30 @@ function blockingViolations(results: AxeResults) {
   return results.violations.filter((violation) => !(violation.id in EXCEPTED_RULES));
 }
 
+// The global test setup reports every media query as not matching, so the
+// desktop layouts need their own matchMedia. The provider overview is one:
+// the phone layout collapses its detail panels into a disclosure, so the
+// mobile scan no longer reaches them — the desktop layout is the superset.
+const originalMatchMedia = window.matchMedia;
+function installDesktopMatchMedia() {
+  // Only the width query matches. The global setup reports every media
+  // query as not matching, so answering "yes" to all of them would also
+  // flip prefers-reduced-motion and prefers-color-scheme for this scan
+  // alone, and the comparison with the mobile scans would no longer be
+  // one-dimensional.
+  const mql = (media: string) => ({
+    matches: media === '(min-width: 1024px)',
+    media,
+    onchange: null,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+  });
+  window.matchMedia = vi.fn().mockImplementation(mql) as unknown as typeof window.matchMedia;
+}
+
 async function expectNoViolations() {
   const results = await axe.run(document.body, AXE_OPTIONS);
   const blocking = blockingViolations(results);
@@ -303,6 +327,10 @@ describe('accessibility guard (axe)', () => {
     mockPopulatedApis();
   });
 
+  afterEach(() => {
+    window.matchMedia = originalMatchMedia;
+  });
+
   it('has no violations on the app shell', async () => {
     const { client } = renderSurface(
       '/',
@@ -324,6 +352,21 @@ describe('accessibility guard (axe)', () => {
   });
 
   it('has no violations on the provider overview tab', async () => {
+    const { client } = renderSurface(
+      'provider/:providerId',
+      <ProviderPage />,
+      '/provider/anthropic',
+    );
+    await waitFor(() => expect(screen.getByRole('main')).toBeInTheDocument());
+    await settle(client);
+    await expectSurfaceRendered();
+    await expectNoViolations();
+  });
+
+  it('has no violations on the provider overview tab with its detail panels expanded', async () => {
+    // The phone layout collapses the detail panels behind one disclosure, so
+    // this scan covers what the mobile one cannot reach.
+    installDesktopMatchMedia();
     const { client } = renderSurface(
       'provider/:providerId',
       <ProviderPage />,

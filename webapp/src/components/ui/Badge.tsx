@@ -2,7 +2,10 @@ import { cva, type VariantProps } from 'class-variance-authority';
 import { cn } from '@/lib/cn';
 
 const badgeVariants = cva(
-  'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium leading-4',
+  // max-w-full + min-w-0 keep a badge from widening the box it sits in (a
+  // table cell, a flex row); truncate then clips the overflow instead of
+  // pushing the layout wider.
+  'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium leading-4 max-w-full min-w-0 truncate',
   {
     variants: {
       variant: {

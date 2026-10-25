@@ -107,6 +107,31 @@ export function SettingsPage() {
     : undefined;
   const showBack = !isDesktop && !atIndex;
 
+  // The section links, shared by the desktop pane and the mobile index list.
+  const sectionLinks = SECTIONS.map((s) => (
+    <NavLink
+      key={s.slug}
+      to={`/settings/${s.slug}`}
+      className={({ isActive }) =>
+        cn(
+          'flex min-h-11 items-center gap-3 rounded-sm px-2.5 py-2 transition-colors duration-150',
+          isActive && isDesktop
+            ? 'bg-surface-3 text-fg'
+            : 'text-fg-muted hover:bg-surface-2 hover:text-fg',
+        )
+      }
+    >
+      <s.icon className="size-4 shrink-0" aria-hidden />
+      <span className="min-w-0 flex-1">
+        <span className="block text-[13px] font-medium text-fg">{s.label}</span>
+        <span className="block truncate text-[11px] text-fg-subtle lg:hidden">
+          {s.description}
+        </span>
+      </span>
+      <ChevronRight className="size-4 text-fg-subtle lg:hidden" aria-hidden />
+    </NavLink>
+  ));
+
   return (
     <>
       <PageHeader
@@ -126,43 +151,35 @@ export function SettingsPage() {
         }
       />
       <div className="lg:flex">
-        {/* Section nav: persistent pane on desktop; index list on mobile */}
-        {(isDesktop || atIndex) && (
+        {/* Desktop: a persistent section pane beside the content. */}
+        {isDesktop ? (
           <nav
             aria-label="Settings sections"
             className="flex flex-col gap-0.5 p-3 lg:w-60 lg:shrink-0 lg:border-r lg:border-edge lg:p-4"
           >
-            {SECTIONS.map((s) => (
-              <NavLink
-                key={s.slug}
-                to={`/settings/${s.slug}`}
-                className={({ isActive }) =>
-                  cn(
-                    'flex min-h-11 items-center gap-3 rounded-sm px-2.5 py-2 transition-colors duration-150',
-                    isActive && isDesktop
-                      ? 'bg-surface-3 text-fg'
-                      : 'text-fg-muted hover:bg-surface-2 hover:text-fg',
-                  )
-                }
-              >
-                <s.icon className="size-4 shrink-0" aria-hidden />
-                <span className="min-w-0 flex-1">
-                  <span className="block text-[13px] font-medium text-fg">{s.label}</span>
-                  <span className="block truncate text-[11px] text-fg-subtle lg:hidden">
-                    {s.description}
-                  </span>
-                </span>
-                <ChevronRight className="size-4 text-fg-subtle lg:hidden" aria-hidden />
-              </NavLink>
-            ))}
+            {sectionLinks}
           </nav>
-        )}
+        ) : null}
 
         <div className="min-w-0 flex-1">
           <Routes>
+            {/* Mobile: the index route IS the list, so the section list lives in
+                the content pane rather than beside an empty one. The desktop
+                pane and this list are never both on screen, so the
+                "Settings sections" navigation landmark stays unique. */}
             <Route
               index
-              element={isDesktop ? <Navigate to="/settings/providers" replace /> : <span />}
+              element={
+                isDesktop ? (
+                  <Navigate to="/settings/providers" replace />
+                ) : (
+                  <div className="p-4 lg:p-8">
+                    <nav aria-label="Settings sections" className="flex flex-col gap-0.5">
+                      {sectionLinks}
+                    </nav>
+                  </div>
+                )
+              }
             />
             {/* Token health became the Credentials section; keep old deep links alive. */}
             <Route path="tokens" element={<Navigate to="/settings/credentials" replace />} />

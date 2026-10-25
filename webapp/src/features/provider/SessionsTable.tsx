@@ -17,10 +17,12 @@ import { formatCost, formatCount, formatDuration, formatTokens } from '@/lib/for
 import { DetailSection, Stat } from './detailPrimitives';
 import { bucketCost, sessionCachePct, sessionCost, sessionTokens } from './sessionMetrics';
 
-// Base column count (chevron + session + models + duration + messages + tokens +
-// cost); the optional Sidecar and Project columns each add one. Used for the
-// detail row's colSpan.
-const BASE_COL_COUNT = 7;
+// Column visibility follows the app's responsive-table idiom (see
+// HistoryPage's quota-windows table): a column that is dropped on a narrow
+// screen gets `hidden … table-cell` on both its <TH> and its <TD>.
+// Always visible: the chevron/spacer, Session, Models, Duration, Messages and
+// Tokens. Project joins at `sm`, Sidecar and Cost at `md`.
+const ALWAYS_VISIBLE_COL_COUNT = 6;
 
 // The clickable column headers map to server-side `sort_by` values; `recent`
 // (default) has no header of its own, so it isn't part of this union.
@@ -33,16 +35,19 @@ function SortableTH({
   sortKey,
   sort,
   onSort,
+  className,
 }: {
   label: string;
   sortKey: SessionSortKey;
   sort?: { by: SessionSortKey | 'recent'; dir: SortDir };
   onSort: (key: SessionSortKey) => void;
+  // Extra classes for the responsive column (e.g. `hidden md:table-cell`).
+  className?: string;
 }) {
   const active = sort?.by === sortKey;
   return (
     <TH
-      className="text-right"
+      className={cn('text-right', className)}
       aria-sort={active ? (sort!.dir === 'asc' ? 'ascending' : 'descending') : 'none'}
     >
       <button
@@ -251,17 +256,22 @@ function SessionRow({
         <TD className="max-w-32 truncate font-mono text-xs" title={s.session_id}>
           {shortId}
         </TD>
-        <TD>
-          <span className="flex flex-wrap gap-1">
+        <TD className="max-w-[7rem] sm:max-w-none">
+          {/* min-w-0 lets a long model id shrink instead of widening the
+              column; the badge keeps the full id in its title, so a hover
+              (or a long-press) still reveals it. The cap is 7rem rather
+              than 10rem: the badge truncates to one line, so a wider cap
+              buys nothing a reader can see and costs the phone the width. */}
+          <span className="flex min-w-0 flex-wrap gap-1">
             {(s.models ?? []).map((m) => (
-              <Badge key={m} variant="neutral">
+              <Badge key={m} variant="neutral" className="min-w-0" title={m}>
                 {m}
               </Badge>
             ))}
           </span>
         </TD>
         {showProject ? (
-          <TD>
+          <TD className="hidden sm:table-cell">
             {s.project ? (
               <Badge variant="neutral" title={s.cwd ?? undefined}>
                 {s.project}
@@ -272,7 +282,7 @@ function SessionRow({
           </TD>
         ) : null}
         {sidecarName !== null ? (
-          <TD>
+          <TD className="hidden md:table-cell">
             {sidecarName ? (
               <Badge variant="neutral">{sidecarName}</Badge>
             ) : (
@@ -287,7 +297,7 @@ function SessionRow({
         <TD className="text-right font-mono tabular">
           {formatTokens(sessionTokens(s, excludeCache))}
         </TD>
-        <TD className="text-right font-mono tabular">
+        <TD className="hidden text-right font-mono tabular md:table-cell">
           {formatCost(sessionCost(s, excludeCache))}
         </TD>
       </TR>
@@ -323,7 +333,15 @@ export function SessionsTable({
   // Show the Project column only when at least one session is attributed (so
   // non-logging providers / pre-backfill data don't get an empty column).
   const showProject = sessions.some((s) => s.project);
-  const colSpan = BASE_COL_COUNT + (showSidecar ? 1 : 0) + (showProject ? 1 : 0);
+  // The detail row's cell spans the whole table. Its colspan is the column
+  // count of the *widest* layout (every column visible), not the narrowest
+  // one: once the Project/Sidecar/Cost columns are hidden, the table model
+  // hands the row the extra grid columns, which carry no cells and collapse
+  // to zero width — so the detail panel still fills the row on a phone. A
+  // colspan fixed to the narrowest layout (6) instead leaves the panel short
+  // of the right edge once the extra columns come back.
+  const colSpan =
+    ALWAYS_VISIBLE_COL_COUNT + 1 /* Cost */ + (showSidecar ? 1 : 0) + (showProject ? 1 : 0);
   const labelFor = (s: SessionEntry): string | null =>
     nameMap ? (s.sidecar_id ? (nameMap.get(s.sidecar_id) ?? s.sidecar_id) : '') : null;
 
@@ -338,22 +356,28 @@ export function SessionsTable({
             <span className="sr-only">Details</span>
           </TH>
           <TH>Session</TH>
-          <TH>Models</TH>
-          {showProject ? <TH>Project</TH> : null}
-          {showSidecar ? <TH>Sidecar</TH> : null}
+          <TH className="max-w-[7rem] sm:max-w-none">Models</TH>
+          {showProject ? <TH className="hidden sm:table-cell">Project</TH> : null}
+          {showSidecar ? <TH className="hidden md:table-cell">Sidecar</TH> : null}
           {onSort ? (
             <>
               <SortableTH label="Duration" sortKey="duration" sort={sort} onSort={onSort} />
               <SortableTH label="Messages" sortKey="messages" sort={sort} onSort={onSort} />
               <SortableTH label="Tokens" sortKey="tokens" sort={sort} onSort={onSort} />
-              <SortableTH label="Cost" sortKey="cost" sort={sort} onSort={onSort} />
+              <SortableTH
+                label="Cost"
+                sortKey="cost"
+                sort={sort}
+                onSort={onSort}
+                className="hidden md:table-cell"
+              />
             </>
           ) : (
             <>
               <TH className="text-right">Duration</TH>
               <TH className="text-right">Messages</TH>
               <TH className="text-right">Tokens</TH>
-              <TH className="text-right">Cost</TH>
+              <TH className="hidden text-right md:table-cell">Cost</TH>
             </>
           )}
         </TR>
