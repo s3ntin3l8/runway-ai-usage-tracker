@@ -78,7 +78,14 @@ export function QuotaWindowRow({
           {used != null ? formatPct(used) : (card.remaining ?? '—')}
         </span>
       </div>
-      <Gauge pct={used} status={cardStatus(card)} glide={glide} size="xl" className="mt-1.5" />
+      <Gauge
+        pct={used}
+        status={cardStatus(card)}
+        glide={glide}
+        size="xl"
+        className="mt-1.5"
+        label={`${card.service_name} quota used`}
+      />
       {cardStale(card) ? (
         <div className="mt-1">
           <Badge variant="outline" className="text-[10px]" title={staleTitle(card)}>

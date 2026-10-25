@@ -206,7 +206,12 @@ function SortableProviderCard({
               {windowLabel(gauge) ? ` · ${windowLabel(gauge)}` : ''}
             </span>
           </div>
-          <Gauge pct={cardPct(gauge)} status={displayStatus} className="mt-1.5" />
+          <Gauge
+            pct={cardPct(gauge)}
+            status={displayStatus}
+            className="mt-1.5"
+            label={`${gauge.service_name} quota used`}
+          />
         </>
       )}
 

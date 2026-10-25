@@ -217,7 +217,12 @@ function SplitTable({
             <Table>
               <THead>
                 <TR>
-                  <TH className="w-8" />
+                  <TH className="w-8">
+                    {/* The chevron column carries no data, but an unnamed
+                        column header is still a header — name it for what it
+                        does. */}
+                    <span className="sr-only">Details</span>
+                  </TH>
                   <TH>{nameHeader}</TH>
                   <TH className="text-right">Messages</TH>
                   <TH className="text-right">Input</TH>

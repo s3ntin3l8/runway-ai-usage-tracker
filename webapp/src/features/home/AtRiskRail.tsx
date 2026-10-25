@@ -116,7 +116,13 @@ function AtRiskCard({ item, providerNames }: { item: RiskItem; providerNames: Ma
         </span>
       </div>
       {kind === 'spend' ? null : (
-        <Gauge pct={cardPct(gauge)} status={status} size="lg" className="mt-2" />
+        <Gauge
+          pct={cardPct(gauge)}
+          status={status}
+          size="lg"
+          className="mt-2"
+          label={`${gauge.service_name} quota used`}
+        />
       )}
       <div className="mt-2 flex items-center justify-between">
         <Countdown until={gauge.reset_at} />

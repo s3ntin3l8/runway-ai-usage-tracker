@@ -331,7 +331,12 @@ export function SessionsTable({
     <Table>
       <THead>
         <TR>
-          <TH className="w-8" />
+          <TH className="w-8">
+            {/* The chevron column carries no data — but an unnamed column
+                header is still a header, and a screen reader announces it as
+                an empty column. Name it for what it does. */}
+            <span className="sr-only">Details</span>
+          </TH>
           <TH>Session</TH>
           <TH>Models</TH>
           {showProject ? <TH>Project</TH> : null}
