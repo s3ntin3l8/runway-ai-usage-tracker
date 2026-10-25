@@ -407,8 +407,15 @@ def _history_report(value: Any) -> None:
             "ready_for_ingestion",
             "live_acceptance_passed",
             "provenance_verified",
-        },
+        }
+        | ({"rejected_list"} if type(value) is dict and "rejected_list" in value else set()),
     )
+    rejected = value.get("rejected_list")
+    if rejected is not None:
+        _rejected_list(rejected)
+        _require(value["outcome"] == "unsupported_contract" and value["phase"] == "stopped")
+        _require(value["account_verified"] and value["organization_verified"])
+        _require(not value["list_complete"] and value["history_pages"] == 0)
     _require(type(value["format_version"]) is int and value["format_version"] == 1)
     _false_flags(value)
     _require(value["live_acceptance_passed"] is False and value["provenance_verified"] is False)
@@ -577,6 +584,46 @@ def _boundary_observation(value: Any) -> None:
         _require(value["cursor_repeated"] is None)
     _choice(value["has_more_state"], {"missing", "true", "false", "invalid"})
     _require(value["top_level_kind"] == "object" or value["data_kind"] == "not_object")
+
+
+def _rejected_list(value: Any) -> None:
+    _keys(
+        value,
+        {
+            "boundary",
+            "response_encoding",
+            "json_state",
+            "duplicate_json_keys",
+            "nonfinite_json_values",
+        },
+    )
+    _choice(value["response_encoding"], {"identity", "unsupported"})
+    _choice(
+        value["json_state"],
+        {
+            "not_attempted",
+            "decoded",
+            "duplicate_keys",
+            "nonfinite_values",
+            "invalid_json",
+            "encoding_error",
+            "nesting_limit",
+        },
+    )
+    _integer(value["duplicate_json_keys"])
+    _integer(value["nonfinite_json_values"])
+    state = value["json_state"]
+    _require((value["boundary"] is not None) == (state == "decoded"))
+    _require((state == "not_attempted") == (value["response_encoding"] == "unsupported"))
+    _require(state == "not_attempted" or value["response_encoding"] == "identity")
+    if state in {"not_attempted", "decoded"}:
+        _require(value["duplicate_json_keys"] == value["nonfinite_json_values"] == 0)
+    if state == "duplicate_keys":
+        _require(value["duplicate_json_keys"] > 0)
+    if state == "nonfinite_values":
+        _require(value["nonfinite_json_values"] > 0)
+    if value["boundary"] is not None:
+        _boundary_observation(value["boundary"])
 
 
 def _boundary_report(value: Any) -> None:

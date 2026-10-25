@@ -1699,6 +1699,8 @@ export interface ClaudeVerificationReport {
   requests: number; accepted_response_bytes: number; http_status: number | null;
   account_verified: boolean; organization_verified: boolean;
   listed_sessions: number; list_pages: number; list_complete: boolean;
+  /** Optional on older peers; null means no verified failure-time evidence. */
+  rejected_list?: ClaudeRejectedListEvidence | null;
   history_pages: number; history_events: number; history_complete: boolean;
   sequence: { numeric: number; invalid: number; duplicates: number; gaps: number; out_of_order: number };
   audit: ClaudeVerificationAudit;
@@ -1734,6 +1736,14 @@ export interface ClaudeListBoundaryObservation {
   cursor_supported: boolean;
   cursor_repeated: boolean | null;
   has_more_state: 'missing' | 'true' | 'false' | 'invalid';
+}
+export interface ClaudeRejectedListEvidence {
+  boundary: ClaudeListBoundaryObservation | null;
+  response_encoding: 'identity' | 'unsupported';
+  json_state: 'not_attempted' | 'decoded' | 'duplicate_keys' | 'nonfinite_values'
+    | 'invalid_json' | 'encoding_error' | 'nesting_limit';
+  duplicate_json_keys: number;
+  nonfinite_json_values: number;
 }
 export interface ClaudeListBoundaryReport {
   response_encoding: 'unknown' | 'identity' | 'unsupported';

@@ -903,7 +903,7 @@ The strict report contains `format_version: 1`, opaque transport `job_handle`,
 `listed_sessions`, `list_pages`, `list_complete`, history page/event/completion
 counts, numeric `sequence` diagnostics, SDK-envelope `audit`, `comparison`,
 `subagent_comparison`, fixed `scope_observations`, `declared_category` and
-`execution_kind`. Comparisons report input/cache overlap only; children remain
+`execution_kind`, optional `rejected_list`. Comparisons report input/cache overlap only; children remain
 separate from main-agent totals. Execution metadata is an observation, not proven
 provenance. No provider/account/message IDs, model names, source IDs, cursors,
 HMACs, salt, transcript content or raw errors leave the report.
@@ -916,6 +916,18 @@ The standalone `scripts/verify_claude_cloud.py` accepts the resulting report in 
 and `deployment`. Existing envelope version 1 remains unchanged. Version 2 always
 returns `stop` with remaining accounting/coverage/provenance checks; supplied
 build metadata is not authenticated by the offline validator.
+
+The verification projection additionally reports optional `rejected_list` metadata
+for a session-list response rejected by the current parser. It is null for older
+checkpoints, successful pages, and unavailable or changed local authority. The
+worker captures it from the response already in memory, without another GET or
+changing parser acceptance, request budgets, or retry rules. It contains only
+`boundary` (the fixed list categories below, or null when JSON cannot be decoded),
+`response_encoding`, `json_state`, `duplicate_json_keys`, and
+`nonfinite_json_values`. A verified rejected response remains
+`unsupported_contract`; these observations never enable ingestion or establish
+a supported provider contract. Historical checkpoint evidence stays encrypted
+locally when a changed source suppresses the public projection.
 
 See [the #956 design and acceptance boundaries](claude-complete-history-verification-956.md).
 
