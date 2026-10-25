@@ -13,14 +13,17 @@ import type { TopSessionEntry } from '@/api/types';
 import { RankBar, type RankRow } from '@/components/charts/RankBar';
 import { useChartTokens } from '@/components/charts/theme';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
+import { Button } from '@/components/ui/Button';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/Tabs';
 import { buildSidecarNameMap, useSidecars } from '@/features/fleet/queries';
 import { useExcludeCache } from '@/hooks/useExcludeCache';
 import { formatAxisCost, formatAxisNumber, formatCost, formatTokens } from '@/lib/format';
 import { formatRangeLabel, type DateRangeValue } from '@/lib/timeRange';
-import { useTopSessions, type TopMetric } from './queries';
+import { type TopMetric, useTopSessions } from './queries';
 import { costSegments, costTotal, tokenSegments, tokenTotal } from './rankSegments';
+import { CircleAlert } from 'lucide-react';
 
 /** The tail of a session id — enough to recognize one, short enough to label a bar. */
 function shortSessionId(sessionId: string): string {
@@ -102,6 +105,13 @@ export function TopSessionsCard({ range }: { range: DateRangeValue }) {
       <CardContent className="pt-2">
         {top.isPending ? (
           <Skeleton className="h-72 w-full" />
+        ) : top.isError ? (
+          <EmptyState
+            icon={CircleAlert}
+            title="Could not load this data"
+            description={top.error.message}
+            action={<Button size="sm" onClick={() => top.refetch()}>Retry</Button>}
+          />
         ) : !hasData ? (
           <p className="py-16 text-center text-xs text-fg-subtle">
             No session-attributed usage in this range.

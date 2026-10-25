@@ -15,7 +15,7 @@ describe('BottomNav', () => {
 
   it('applies the active accent class to the current route', () => {
     renderWithProviders(<BottomNav />, { route: '/history' });
-    expect(screen.getByRole('link', { name: 'History' })).toHaveClass('text-accent');
+    expect(screen.getByRole('link', { name: 'History' })).toHaveClass('text-accent-text');
   });
 
   it('shows a sr-only update notice on the Fleet tab when sidecars have updates', () => {

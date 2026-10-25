@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useNavigate } from 'react-router';
 import { Archive, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { putDashboardLayout } from '@/api/endpoints';
@@ -32,6 +33,7 @@ import { applyLayoutOrder, atRiskItems, buildRiskItems } from './risk';
 
 export function HomePage() {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const fleet = useFleet();
   const forecast = useForecast();
   const cost = useCostForecast();
@@ -50,6 +52,19 @@ export function HomePage() {
     const map = new Map<string, string>();
     for (const p of providerConfigs.data?.providers ?? []) map.set(p.provider_id, p.name);
     return map;
+  }, [providerConfigs.data]);
+
+  // How many providers are actually set up. The settings list also contains
+  // every provider the app knows about — most of them never configured — so
+  // "the list is not empty" says nothing. An account counts as set up when it
+  // carries a credential and is neither archived nor merged away.
+  const configuredProviders = useMemo(() => {
+    const providers = providerConfigs.data?.providers ?? [];
+    return providers.filter((p) =>
+      (p.accounts ?? []).some(
+        (a) => !a.archived && !a.merged_into && (a.api_key_set || a.session_cookie_set),
+      ),
+    ).length;
   }, [providerConfigs.data]);
 
   const items = useMemo(
@@ -139,8 +154,43 @@ export function HomePage() {
         ) : items.length === 0 ? (
           <EmptyState
             icon={Inbox}
-            title="No providers reporting yet"
-            description="Configure a provider in Settings or connect a sidecar to start tracking usage."
+            title={configuredProviders > 0 ? 'Nothing reported yet' : 'No providers set up yet'}
+            description={
+              configuredProviders > 0
+                ? `${configuredProviders} provider${configuredProviders === 1 ? ' is' : 's are'} set up, but nothing has reported usage yet. Collect now, or check the sidecar.`
+                : 'Add a provider or connect a sidecar to start tracking usage.'
+            }
+            action={
+              configuredProviders > 0 ? (
+                <>
+                  <Button size="sm" onClick={() => collect.mutate()} loading={collect.isPending}>
+                    Collect now
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => navigate('/settings/providers')}
+                    className="ml-2"
+                  >
+                    Provider settings
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <Button size="sm" onClick={() => navigate('/settings/providers')}>
+                    Add a provider
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => navigate('/fleet')}
+                    className="ml-2"
+                  >
+                    Connect a sidecar
+                  </Button>
+                </>
+              )
+            }
           />
         ) : (
           <>

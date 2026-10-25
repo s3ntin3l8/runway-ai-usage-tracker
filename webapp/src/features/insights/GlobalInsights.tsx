@@ -3,10 +3,13 @@
 // Token/cost tiles respect the shared exclude-cache toggle; session averages
 // stay full (no per-session cache split is available client-side).
 
+import { Button } from '@/components/ui/Button';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { StatTile } from '@/components/ui/StatTile';
 import { useExcludeCache } from '@/hooks/useExcludeCache';
 import { formatCost, formatPct, formatTokens } from '@/lib/format';
 import type { GlobalStatsResponse } from '@/api/types';
+import { CircleAlert } from 'lucide-react';
 
 function hourLabel(hour: number): string {
   return `${String(hour).padStart(2, '0')}:00`;
@@ -15,9 +18,14 @@ function hourLabel(hour: number): string {
 export function GlobalInsights({
   stats,
   loading,
+  error,
+  onRetry,
 }: {
   stats: GlobalStatsResponse | undefined;
   loading: boolean;
+  // A failed request must not read as "these lifetime numbers are zero".
+  error?: Error | null;
+  onRetry?: () => void;
 }) {
   const { excludeCache } = useExcludeCache();
   const life = stats?.lifetime;
@@ -78,6 +86,22 @@ export function GlobalInsights({
           loading={loading}
         />
       ))}
+      {error ? (
+        <div className="col-span-2 md:col-span-4">
+          <EmptyState
+            icon={CircleAlert}
+            title="Could not load the global stats"
+            description={error.message}
+            action={
+              onRetry ? (
+                <Button size="sm" onClick={onRetry}>
+                  Retry
+                </Button>
+              ) : null
+            }
+          />
+        </div>
+      ) : null}
     </section>
   );
 }

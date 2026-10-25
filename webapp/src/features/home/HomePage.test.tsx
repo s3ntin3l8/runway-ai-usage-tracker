@@ -122,7 +122,10 @@ describe('HomePage', () => {
   it('shows the empty state when no providers report', async () => {
     vi.mocked(api.fetchFleetUsage).mockResolvedValue(fleetResponse([]));
     renderWithProviders(<HomePage />);
-    expect(await screen.findByText(/no providers reporting yet/i)).toBeInTheDocument();
+    // Nothing is set up yet: the state offers the two ways out.
+    expect(await screen.findByText(/no providers set up yet/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /add a provider/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /connect a sidecar/i })).toBeInTheDocument();
   });
 
   it('shows an error state when the fleet query fails', async () => {
@@ -140,12 +143,14 @@ describe('HomePage', () => {
     expect(screen.getByText('Providers')).toBeInTheDocument();
   });
 
-  it('shows the at-risk rail when a provider is critical', async () => {
+  it('shows the needs-attention rail when a provider is critical', async () => {
     vi.mocked(api.fetchFleetUsage).mockResolvedValue(
       fleetResponse([fleetEntry({ critical_gauge: card({ pct_used: 96 }) })]),
     );
     renderWithProviders(<HomePage />);
-    expect(await screen.findByText('At risk')).toBeInTheDocument();
+    expect(await screen.findByText('Needs attention')).toBeInTheDocument();
+    // The rail says why the provider is there.
+    expect(screen.getByText(/at or heading towards their limit/i)).toBeInTheDocument();
   });
 
   it('renders the all-clear rail when nothing is hot', async () => {

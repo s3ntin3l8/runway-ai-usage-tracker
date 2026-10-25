@@ -3,12 +3,15 @@
 
 import { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
+import { Button } from '@/components/ui/Button';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/Tabs';
 import { TopModelsBar, type TopMetric } from '@/components/charts/TopModelsBar';
 import { useExcludeCache } from '@/hooks/useExcludeCache';
 import { formatRangeLabel, type DateRangeValue } from '@/lib/timeRange';
 import { useTopModels } from './queries';
+import { CircleAlert } from 'lucide-react';
 
 export function TopModelsCard({ range }: { range: DateRangeValue }) {
   const { excludeCache } = useExcludeCache();
@@ -34,6 +37,13 @@ export function TopModelsCard({ range }: { range: DateRangeValue }) {
       <CardContent className="pt-2">
         {top.isPending ? (
           <Skeleton className="h-72 w-full" />
+        ) : top.isError ? (
+          <EmptyState
+            icon={CircleAlert}
+            title="Could not load this data"
+            description={top.error.message}
+            action={<Button size="sm" onClick={() => top.refetch()}>Retry</Button>}
+          />
         ) : !hasData ? (
           <p className="py-16 text-center text-xs text-fg-subtle">No model usage in this range.</p>
         ) : (
