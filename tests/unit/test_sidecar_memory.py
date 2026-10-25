@@ -269,8 +269,8 @@ def test_partial_database_reads_discard_events_without_writing_state(
         conn = make_hermes_db(str(db))
     conn.commit()
     conn.close()
-    save_state = MagicMock(wraps=hermes._save_hermes_watermark)
-    monkeypatch.setattr(hermes, "_save_hermes_watermark", save_state)
+    save_state = MagicMock(wraps=hermes._append_hermes_watermark)
+    monkeypatch.setattr(hermes, "_append_hermes_watermark", save_state)
     cursor_iterator = provider.iter_cursor
 
     def fail_after_first(cursor):
@@ -288,7 +288,7 @@ def test_partial_database_reads_discard_events_without_writing_state(
         events = provider.parse_hermes_events([db], "local", since, state_file=state)
     assert events == []
     assert not state.exists()
-    assert not state.with_suffix(".json.tmp").exists()
+    assert not state.with_suffix(".jsonl.tmp").exists()
     save_state.assert_not_called()
 
 
