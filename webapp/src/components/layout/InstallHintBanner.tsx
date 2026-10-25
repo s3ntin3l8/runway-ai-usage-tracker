@@ -36,7 +36,7 @@ export function InstallHintBanner() {
         aria-label="Dismiss install hint"
         // Touch floor: a 14px icon with 4px of padding is a 22px target, and
         // the design system asks for 44px below the lg breakpoint.
-        className="shrink-0 rounded-sm p-1 hover:bg-accent/10 min-h-11 min-w-11 lg:min-h-0 lg:min-w-0"
+        className="inline-flex shrink-0 items-center justify-center rounded-sm p-1 hover:bg-accent/10 min-h-11 min-w-11 lg:min-h-0 lg:min-w-0"
       >
         <X className="size-3.5" aria-hidden />
       </button>

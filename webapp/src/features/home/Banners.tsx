@@ -358,9 +358,13 @@ function Banner({
         type="button"
         aria-label="Dismiss"
         onClick={dismiss}
-        className="-m-1 cursor-pointer rounded-sm p-1 opacity-70 transition-opacity duration-150 hover:opacity-100"
+        // Touch floor: a 14px icon with 4px of padding is a 22px target, and
+        // the design system asks for 44px below the lg breakpoint. The icon
+        // is centred in the larger target, and the negative margin only
+        // applies on a desktop, where the button is small again.
+        className="inline-flex cursor-pointer items-center justify-center rounded-sm p-1 opacity-70 transition-opacity duration-150 hover:opacity-100 min-h-11 min-w-11 lg:min-h-0 lg:min-w-0 lg:-m-1"
       >
-        <X className="size-3.5" />
+        <X className="size-3.5" aria-hidden />
       </button>
     </div>
   );
