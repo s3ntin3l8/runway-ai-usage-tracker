@@ -299,7 +299,7 @@ class _Probe:
                 raise ProbeError("rate_limited")
             if response.status_code != 200:
                 raise ProbeError("unavailable")
-            if response.headers.get("content-encoding", "identity").lower() != "identity":
+            if self._response_encoding(response) != "identity":
                 raise ProbeError("unsupported_contract")
             body = bytearray()
             async for chunk in response.aiter_bytes(chunk_size=65536):
@@ -312,9 +312,15 @@ class _Probe:
                 body.extend(chunk)
         await self.check_source()
         try:
-            return json.loads(body, object_pairs_hook=_object, parse_constant=_constant)
+            return self._decode(body)
         except (ValueError, RecursionError):
             raise ProbeError("unsupported_contract") from None
+
+    def _response_encoding(self, response: httpx.Response) -> str:
+        return response.headers.get("content-encoding", "identity").lower()
+
+    def _decode(self, body: bytearray) -> Any:
+        return json.loads(body, object_pairs_hook=_object, parse_constant=_constant)
 
     async def identity(self) -> dict[str, str]:
         headers = {

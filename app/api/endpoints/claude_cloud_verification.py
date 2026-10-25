@@ -79,17 +79,16 @@ async def verification_action(
             async with httpx.AsyncClient(
                 timeout=5, follow_redirects=False, trust_env=False
             ) as client:
-                state = await advance_verification(handle, store, client)
-        else:
-            try:
-                state = await read_verification(handle, store)
-            except CheckpointError as exc:
-                if isinstance(body, VerificationStatus) and str(exc) in {
-                    "checkpoint_unavailable",
-                    "encryption_required",
-                }:
-                    return VerificationUnavailable(state="unavailable", job_handle=handle)
-                raise
+                await advance_verification(handle, store, client)
+        try:
+            state = await read_verification(handle, store)
+        except CheckpointError as exc:
+            if isinstance(body, VerificationStatus) and str(exc) in {
+                "checkpoint_unavailable",
+                "encryption_required",
+            }:
+                return VerificationUnavailable(state="unavailable", job_handle=handle)
+            raise
         try:
             return VerificationReport.model_validate(build_verification_report(handle, state))
         except ValueError:

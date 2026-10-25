@@ -70,6 +70,7 @@ COPY app/ ./app/
 COPY scripts/audit_claude_usage.py ./scripts/
 COPY scripts/verify_claude_cloud.py ./scripts/
 COPY scripts/claude_cloud_structure.py ./scripts/
+COPY scripts/claude_cloud_list_boundary.py ./scripts/
 COPY scripts/sidecar_pkg/source_catalog.py scripts/sidecar_pkg/source_catalog_data.py ./scripts/sidecar_pkg/
 COPY --from=frontend-builder /app/webapp/dist/ ./webapp/dist/
 
