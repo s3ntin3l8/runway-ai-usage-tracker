@@ -41,9 +41,10 @@ test('gives every icon-only control a 44px target on a phone', async ({ page }) 
   const tooSmall: string[] = [];
   let measured = 0;
 
-  for (const { path, name, marker } of PAGES) {
+  for (const spec of PAGES) {
+    const { path, name } = spec;
     await page.goto(`${DEMO_URL}${path}`);
-    await waitForApp(page, marker);
+    await waitForApp(page, spec);
 
     const found = await page.evaluate(
       ({ floor, route }) => {
@@ -81,9 +82,10 @@ test('gives the design system\'s actions a 44px height on a phone', async ({ pag
   const tooShort: string[] = [];
   let measured = 0;
 
-  for (const { path, name, marker } of PAGES) {
+  for (const spec of PAGES) {
+    const { path, name } = spec;
     await page.goto(`${DEMO_URL}${path}`);
-    await waitForApp(page, marker);
+    await waitForApp(page, spec);
 
     const found = await page.evaluate(
       ({ floor, route, markerClass }) => {
@@ -116,7 +118,7 @@ test('gives the tab strip a 44px height on a phone', async ({ page }) => {
   // to reach a tab. Six triggers that are 32px tall are six hard taps.
   await page.setViewportSize(PHONE);
   await page.goto(`${DEMO_URL}/provider/anthropic`);
-  await waitForApp(page, PAGES.find((p) => p.name === 'provider')!.marker);
+  await waitForApp(page, PAGES.find((p) => p.name === 'provider')!);
 
   const triggers = page.locator('[role="tab"]');
   const count = await triggers.count();

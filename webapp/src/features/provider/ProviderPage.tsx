@@ -339,7 +339,7 @@ export function ProviderPage() {
           )
         ) : (
           <Tabs value={tab} onValueChange={(next) => { if (isProviderTab(next)) setTab(next); }}>
-            <TabsList id="provider-tabs">
+            <TabsList>
               <TabsTrigger value="overview">Overview</TabsTrigger>
               <TabsTrigger value="activity">Activity</TabsTrigger>
               <TabsTrigger value="sessions">Sessions</TabsTrigger>

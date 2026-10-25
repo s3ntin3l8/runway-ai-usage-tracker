@@ -31,6 +31,15 @@ ROOT = Path(__file__).resolve().parents[2]
 PYTHON = ROOT / ".venv" / "bin" / "python"
 DEMO_PORT = int(os.environ.get("DEMO_PORT", "3965"))
 
+# The marker a demo leaves in its scratch dir when it was told to keep it.
+KEEP_MARKER = "keep"
+
+# How old a scratch dir has to be before the sweep takes it even when its
+# pid answers. A pid is reused, so a dir whose demo died days ago can point
+# at an unrelated process today; without a bound such a dir would live for
+# ever.
+STALE_AFTER_SECONDS = 24 * 60 * 60
+
 
 def _wait_for_http(url: str, timeout: float = 60.0) -> None:
     deadline = time.monotonic() + timeout
@@ -131,6 +140,12 @@ class Demo:
                 pass
             self.server.wait()
         if self.keep:
+            # The dir is the operator's now. The marker tells a later demo
+            # that this one was kept on purpose, so the sweep does not take
+            # it for a leftover: a kept demo's pid is dead the moment its
+            # process exits, and the sweep would delete the dir on that
+            # basis alone.
+            (self.demo_dir / KEEP_MARKER).write_text("kept")
             print(f"[demo] kept {self.demo_dir}")
             return
         shutil.rmtree(self.demo_dir, ignore_errors=True)
@@ -146,6 +161,14 @@ def _pid_is_alive(pid: int) -> bool:
     return True
 
 
+def _age_of(path: Path) -> float:
+    """Seconds since the path was last changed."""
+    try:
+        return time.time() - path.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
 def clean_stale_scratch_dirs() -> None:
     """Remove the scratch dirs of demos that are no longer running.
 
@@ -154,13 +177,33 @@ def clean_stale_scratch_dirs() -> None:
     the whole process group with SIGKILL. The demo's own pid tells a live
     demo from a dead one, so a scratch dir left behind by a killed demo does
     not pile up in the temp directory.
+
+    The pid alone does not settle three things:
+
+    - A dir that was kept on purpose (`--keep`) is the operator's, not ours
+      to delete. It says so itself.
+    - A demo that died before it wrote its pid leaves a dir with no pid at
+      all, and nothing to read. Its age decides instead.
+    - A pid is reused. The pid of a demo that died last week can belong to
+      an unrelated process today, and that would keep the dir alive for
+      ever, so an old dir goes even when its pid answers.
     """
     for candidate in Path(tempfile.gettempdir()).glob("runway-demo-*"):
+        if (candidate / KEEP_MARKER).exists():
+            continue  # a kept demo is deliberate
+        pid_file = candidate / "pid"
         try:
-            pid = int((candidate / "pid").read_text().strip())
+            pid = int(pid_file.read_text().strip())
+            age = _age_of(pid_file)
         except (OSError, ValueError):
-            continue  # not one of ours, or one that was never finished
-        if _pid_is_alive(pid):
+            # No pid to read: either this is not one of ours, or the demo
+            # died before it could write one. Only an old dir is cleaned, so
+            # a demo that is starting right now is never swept away.
+            if _age_of(candidate) < STALE_AFTER_SECONDS:
+                continue
+            shutil.rmtree(candidate, ignore_errors=True)
+            continue
+        if _pid_is_alive(pid) and age < STALE_AFTER_SECONDS:
             continue  # a live demo owns it
         shutil.rmtree(candidate, ignore_errors=True)
 
@@ -172,7 +215,10 @@ def start_demo(*, keep: bool = False, quiet: bool = False) -> Demo:
     clean_stale_scratch_dirs()
     demo_dir = Path(tempfile.mkdtemp(prefix="runway-demo-"))
     # The pid tells a later demo that this one is gone, so a demo that was
-    # killed with SIGKILL does not leave its scratch dir behind forever.
+    # killed with SIGKILL does not leave its scratch dir behind forever. It
+    # is written first, before the dir holds anything else: a demo that dies
+    # between making the dir and writing the pid leaves a dir nobody can
+    # read a pid from, and the sweep falls back to the dir's age for those.
     (demo_dir / "pid").write_text(str(os.getpid()))
     run_dir = demo_dir / "run"  # server cwd: no .env here
     for sub in ("home", "tmp", "run", "config"):

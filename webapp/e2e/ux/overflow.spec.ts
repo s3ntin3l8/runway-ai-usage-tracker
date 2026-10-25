@@ -20,11 +20,12 @@ import { DEMO_URL, PAGES, PHONE, SLACK, waitForApp } from './support';
 // A deliberate horizontal SCROLLER (the provider's tab strip) is exempt:
 // the reader can reach the content by scrolling it.
 
-for (const { path, name, marker } of PAGES) {
+for (const spec of PAGES) {
+  const { path, name } = spec;
   test(`does not scroll sideways at 390px on ${name}`, async ({ page }) => {
     await page.setViewportSize(PHONE);
     await page.goto(`${DEMO_URL}${path}`);
-    await waitForApp(page, marker);
+    await waitForApp(page, spec);
 
     const measured = await page.evaluate(() => {
       const doc = document.documentElement;

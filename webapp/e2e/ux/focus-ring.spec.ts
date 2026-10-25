@@ -15,7 +15,7 @@ import { DEMO_URL, PAGES, PHONE, waitForApp } from './support';
 test('every control the keyboard reaches shows its focus ring inside the viewport', async ({ page }) => {
   await page.setViewportSize(PHONE);
   await page.goto(`${DEMO_URL}/provider/anthropic`);
-  await waitForApp(page, PAGES.find((p) => p.name === 'provider')!.marker);
+  await waitForApp(page, PAGES.find((p) => p.name === 'provider')!);
 
   // The provider page has the densest strip of controls on the app: the
   // header actions, the tab strip (which scrolls sideways) and the bottom
@@ -90,15 +90,14 @@ test('the deep-linked tab is brought into view instead of sitting off-screen', a
   // or the reader lands on a page that looks like the wrong tab is selected.
   await page.setViewportSize(PHONE);
   await page.goto(`${DEMO_URL}/provider/anthropic?tab=cost`);
-  await waitForApp(page, PAGES.find((p) => p.name === 'provider')!.marker);
-  await page.waitForTimeout(500);
+  await waitForApp(page, PAGES.find((p) => p.name === 'provider')!);
 
   const active = page.locator('[role="tab"][data-state="active"]');
   await expect(active).toBeVisible();
-  // The strip scrolls smoothly (`scroll-smooth`), so the deep-linked tab is
-  // on its way into view rather than already there. The position is polled
-  // until the scroll has arrived: a tab that never comes into view fails
-  // this when the poll times out.
+  // The strip brings the selected tab into view with an immediate scroll, but
+  // the poll is what waits for it: a tab that never comes into view fails
+  // this when the poll times out, and the poll has no fixed sleep in front
+  // of it to paper over a tab that never arrives.
   await expect
     .poll(
       async () => {

@@ -11,6 +11,35 @@ export const DEMO_URL = 'http://127.0.0.1:3965';
 export const PHONE = { width: 390, height: 844 };
 
 /**
+ * A route the suite visits, and the seeded value it has to show before it is
+ * measured.
+ */
+export interface PageSpec {
+  /** The route the suite opens. */
+  path: string;
+  /** A short name for the route, used in the test names. */
+  name: string;
+  /**
+   * The seeded value the page has to show before it is measured: a
+   * provider's display name, a model id, the seeded account's address, a
+   * sidecar's name. None of them is a number that moves with the date, and
+   * none of them is derived from a count the seed happens to produce — a
+   * count changes the moment the seed grows a model, and a marker that
+   * changes with it is a marker that times out on a later run.
+   */
+  marker: string;
+  /**
+   * Set when the marker can only exist in a chart's text alternative.
+   *
+   * The rankings are drawn into a canvas, so their labels are pixels and a
+   * screen-reader list beside the chart — never text a reader can point at.
+   * That list is built from the rows the chart draws, so it exists only once
+   * the ranking has arrived, which is what the marker is there to prove.
+   */
+  inChartText?: boolean;
+}
+
+/**
  * The routes that carry content on a phone, and the seeded value each one
  * has to show before it is measured.
  *
@@ -19,20 +48,26 @@ export const PHONE = { width: 390, height: 844 };
  * surface the app has.
  *
  * The marker is what makes the suite honest, and every marker is a value
- * the seed produces: a provider's display name, a model count, the seeded
- * account's address, a sidecar's name. None of them is a number that moves
- * with the date. The settings page has no usage data of its own -- its
+ * the seed produces. The settings page has no usage data of its own -- its
  * content IS the section list, and the first section in it is the thing the
  * audit found missing.
  */
-export const PAGES = [
+export const PAGES: readonly PageSpec[] = [
   { path: '/', name: 'home', marker: 'ChatGPT' },
-  { path: '/insights', name: 'insights', marker: 'Top 8 models' },
+  {
+    path: '/insights',
+    name: 'insights',
+    // A seeded model id, not the ranking's title ("Top 8 models"): the
+    // title states a count, and the count changes whenever the seed's model
+    // set does.
+    marker: 'gpt-5.5',
+    inChartText: true,
+  },
   { path: '/history', name: 'history', marker: 'dev@example.com' },
   { path: '/fleet', name: 'fleet', marker: 'demo-workstation' },
   { path: '/settings', name: 'settings', marker: 'Providers' },
   { path: '/provider/anthropic', name: 'provider', marker: 'dev@example.com' },
-] as const;
+];
 
 /**
  * Wait for the app to have the seeded data and to have painted it.
@@ -55,10 +90,10 @@ export const PAGES = [
  *     one-pixel box inside a clipped subtree, and finding the text there
  *     would prove nothing about what the reader sees.
  */
-export async function waitForApp(page: Page, marker: string): Promise<void> {
+export async function waitForApp(page: Page, spec: PageSpec): Promise<void> {
   await page.locator('main').first().waitFor({ state: 'attached' });
   await waitForSeededServer(page);
-  await waitForSeededContent(page, marker);
+  await waitForSeededContent(page, spec);
   await waitForSettledPage(page);
 }
 
@@ -142,10 +177,17 @@ async function waitForSeededServer(page: Page): Promise<void> {
  * of the app's screen-reader-only helpers, and several of them repeat the
  * model names -- the chart's hidden legend, for one -- so a marker found
  * only there would mean the page was still a skeleton.
+ *
+ * A route that says its marker lives in a chart's text alternative is
+ * checked differently: the rankings are drawn into a canvas, so their
+ * labels are pixels and a screen-reader list beside the chart, never text a
+ * reader can point at. That list is built from the rows the chart draws, so
+ * it exists only once the ranking has arrived -- the same thing the
+ * readable rule proves for the other routes.
  */
-async function waitForSeededContent(page: Page, marker: string): Promise<void> {
+async function waitForSeededContent(page: Page, spec: PageSpec): Promise<void> {
   await page.waitForFunction(
-    (text) => {
+    ({ text, inChartText }) => {
       const screenReaderOnly = (el: Element): boolean => {
         for (let node = el.parentElement; node; node = node.parentElement) {
           const style = getComputedStyle(node);
@@ -159,16 +201,20 @@ async function waitForSeededContent(page: Page, marker: string): Promise<void> {
         return false;
       };
       for (const el of document.querySelectorAll('main *')) {
-        if (el.children.length > 0) continue; // a leaf holds the text itself
         if (!(el.textContent ?? '').includes(text)) continue;
+        const hidden = screenReaderOnly(el);
+        // The chart's text alternative: a list built from the rows the chart
+        // draws, so it exists only once the ranking has arrived.
+        if (inChartText && hidden) return true;
+        if (el.children.length > 0) continue; // a leaf holds the text itself
         const rect = el.getBoundingClientRect();
         if (rect.width < 4 || rect.height < 4) continue;
-        if (screenReaderOnly(el)) continue;
+        if (hidden) continue;
         return true;
       }
       return false;
     },
-    marker,
+    { text: spec.marker, inChartText: spec.inChartText ?? false },
     { timeout: READY_TIMEOUT },
   );
 }
