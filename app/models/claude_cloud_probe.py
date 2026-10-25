@@ -1,8 +1,19 @@
 """Strict operator inputs and sanitized evidence for the cloud diagnostic."""
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal, Self, cast
 
-from pydantic import BaseModel, ConfigDict, Field, StrictInt
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, model_validator
+
+from scripts.claude_cloud_structure import (
+    CATEGORIES,
+    FIELDS,
+    LOCATION_PATHS,
+    VALUE_TYPES,
+    StructureCategory,
+    StructureField,
+    StructureLocation,
+    StructureType,
+)
 
 
 class ClaudeCloudProbeRequest(BaseModel):
@@ -15,6 +26,7 @@ class ClaudeCloudProbeRequest(BaseModel):
     )
     session_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]{1,128}$")
     max_history_pages: StrictInt = Field(default=2, ge=1, le=3)
+    report_version: StrictInt = Field(default=1, ge=1, le=2)
 
 
 class CloudUsageObservation(BaseModel):
@@ -22,8 +34,8 @@ class CloudUsageObservation(BaseModel):
     report: dict[str, Any]
 
 
-class ClaudeCloudProbeReport(BaseModel):
-    format_version: Literal[1] = 1
+class _ClaudeCloudProbeFields(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     outcome: Literal[
         "sample_complete",
         "sample_limited",
@@ -58,3 +70,75 @@ class ClaudeCloudProbeReport(BaseModel):
     observations: list[CloudUsageObservation] = Field(default_factory=list)
     cloud_contract_verified: Literal[False] = False
     ready_for_ingestion: Literal[False] = False
+
+
+class ClaudeCloudProbeReport(_ClaudeCloudProbeFields):
+    format_version: Literal[1] = 1
+
+
+StructureCount = Annotated[StrictInt, Field(ge=0, le=150)]
+
+
+class CloudStructureLocationCounts(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    types: dict[StructureType, StructureCount]
+    categories: dict[StructureCategory, StructureCount]
+    fields: dict[StructureField, StructureCount]
+
+    @model_validator(mode="after")
+    def complete_keys(self) -> Self:
+        if (
+            set(self.types) != set(VALUE_TYPES)
+            or set(self.categories) != set(CATEGORIES)
+            or set(self.fields) != set(FIELDS)
+        ):
+            raise ValueError("invalid_structure")
+        return self
+
+
+class CloudStructure(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    events: StrictInt = Field(ge=0, le=150)
+    locations: dict[StructureLocation, CloudStructureLocationCounts]
+
+    @model_validator(mode="after")
+    def consistent_counts(self) -> Self:
+        if set(self.locations) != set(LOCATION_PATHS):
+            raise ValueError("invalid_structure")
+        for row in self.locations.values():
+            objects = row.types["object"]
+            if (
+                any(
+                    count > self.events
+                    for histogram in (row.types, row.categories, row.fields)
+                    for count in histogram.values()
+                )
+                or sum(row.types.values()) != self.events
+                or sum(row.categories.values()) != self.events
+                or row.categories["not_object"] != self.events - objects
+                or any(count > objects for count in row.fields.values())
+                or row.categories["missing"] != objects - row.fields["type"]
+            ):
+                raise ValueError("invalid_structure")
+        if self.locations["event"].types["object"] != self.events:
+            raise ValueError("invalid_structure")
+        for location, path in LOCATION_PATHS.items():
+            if path:
+                parent = next(key for key, parts in LOCATION_PATHS.items() if parts == path[:-1])
+                if (
+                    self.locations[location].types["missing"]
+                    != self.events - self.locations[parent].fields[cast(StructureField, path[-1])]
+                ):
+                    raise ValueError("invalid_structure")
+        return self
+
+
+class ClaudeCloudProbeReportV2(_ClaudeCloudProbeFields):
+    format_version: Literal[2] = 2
+    structure: CloudStructure
+
+    @model_validator(mode="after")
+    def matching_events(self) -> Self:
+        if self.structure.events != self.history_events:
+            raise ValueError("invalid_structure")
+        return self

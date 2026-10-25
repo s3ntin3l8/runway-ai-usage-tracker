@@ -8,7 +8,7 @@ uses only the Python standard library and reads stdin. It does not import the
 application, access its database, or read environment credentials.
 
 The diagnostic endpoint is delivered separately in #908. This evaluator supports
-its version-1 report; a different report version or additional field fails closed
+its version-1 and explicit version-2 reports; an unsupported report version or additional field fails closed
 until reviewed. It can be developed and tested before that endpoint is deployed.
 
 ## Before a live attempt
@@ -50,7 +50,7 @@ Prepare exactly one UTF-8 JSON object on stdin with these fields:
 | `image` | `ghcr.io/s3ntin3l8/runway@sha256:` followed by a lowercase 64-hex immutable image digest. |
 | `observed_at` | UTC time of the approved attempt, `YYYY-MM-DDTHH:MM:SSZ`. |
 | `deployment` | `selected-production` or `isolated-test`. |
-| `report` | The entire sanitized version-1 response from #908's diagnostic, without extra fields. |
+| `report` | The entire sanitized v1 or explicitly requested v2 diagnostic response, without extra fields. |
 
 The input contains **no request body**, admin credential, account/source/session
 ID, raw provider response, transcript, header, cursor or URL. Never obtain an
@@ -181,3 +181,37 @@ that release. Accepting both file-origin spellings fixes those offline cases;
 an unrelated filename continues to stop before provider access. This does not
 prove live provider access or any other #669 acceptance requirement. The retry
 was consumed; no provider retry, native lookup, refresh or activation followed.
+
+## Explicit version-2 structural evidence (#941)
+
+The request may include the strict integer `report_version: 2`. Omitting it
+returns the unchanged v1 field set. V2 has `format_version: 2` and adds
+`structure: {events, locations}`; envelope `format_version` stays 1. Values other
+than integers 1 and 2, including booleans and strings, fail closed.
+
+There is exactly one row per fixed path: `event` (the root), `data`, `content`,
+`message`, `payload`, `event.event`, `data.message`, `content.message`, and
+`event.event.message`. Paths traverse dictionaries only. Strings remain strings,
+including strings containing JSON, and arrays are counted without visiting
+items. Missing paths have their own type counter; null and boolean are distinct.
+
+Each row has fixed-key `types`, `categories` and `fields` histograms. Categories
+count the allowlisted `type` values assistant/result/user/system/tool_result/
+tool_use/stream_event/message/text/thinking. Arbitrary strings become `other`;
+missing/non-string type fields and non-object nodes have separate categories.
+The presence fields are type/event/message/data/content/payload/usage/modelUsage/
+role; only presence is counted, without returning any value. Every row has one
+type and one category count per event. There are no dynamic keys, paths, category
+strings, identifiers, message bodies or decoded JSON strings in this output.
+
+The API response model and standalone offline verifier validate every key, integer, bound, histogram
+total and parent/child presence relation against `history_events` (maximum 150).
+It runs with `python -I -S` without application/site-package imports. Source
+change, timeout or unavailable authority clears structural observations along
+with the prior usage evidence, retaining the requested report version.
+
+These counters distinguish sampled categories and container shapes; they never
+establish zero usage, a validated usage wrapper, accounting parity, coverage or
+permission to ingest. Existing acceptance flags remain false, and incomplete
+history or missing usage observations still stop evaluation. V2 makes no extra
+provider call and changes no request/page/time/byte/source/consent boundary.

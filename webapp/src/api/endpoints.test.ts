@@ -61,6 +61,16 @@ describe('endpoints', () => {
     expect(path).not.toContain('fixture');
   });
 
+  it('cloud structural reporting requires an explicit version-2 POST', async () => {
+    const body = { account_id: 'holder@example.com', source_id: 'file:/fixture', report_version: 2 as const };
+    mockFetch().mockResolvedValue(jsonResponse({ format_version: 2, outcome: 'source_unavailable' }));
+    await probeClaudeCloud(body);
+    const [path, init] = lastCall();
+    expect(path).toBe('/api/v1/system/debug/claude-cloud');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body as string)).toEqual(body);
+  });
+
   // --- GET wrappers (default method, no body) ---
 
   it('fetchLimits hits the limits path and returns the payload', async () => {

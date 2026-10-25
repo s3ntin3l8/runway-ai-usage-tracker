@@ -27,6 +27,7 @@ def request(**changes):
         "organization_id": None,
         "session_id": None,
         "max_history_pages": 2,
+        "report_version": 1,
     }
     values.update(changes)
     return SimpleNamespace(**values)
@@ -646,8 +647,9 @@ async def test_reenable_with_identical_token_invalidates_old_generation(environm
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("version", [1, 2])
 async def test_blocked_authority_thread_cannot_defeat_deadline_or_publish_late(
-    environment, monkeypatch
+    environment, monkeypatch, version
 ):
     import threading
 
@@ -668,10 +670,17 @@ async def test_blocked_authority_thread_cannot_defeat_deadline_or_publish_late(
     monkeypatch.setattr(probe, "TOTAL_TIMEOUT", 0.03)
     try:
         result = await asyncio.wait_for(
-            run(request(), lambda r: pytest.fail("Late authority work made a request")), 0.3
+            run(
+                request(report_version=version),
+                lambda r: pytest.fail("Late authority work made a request"),
+            ),
+            0.3,
         )
         assert started.is_set() and result["outcome"] == "timeout"
         assert result["observations"] == [] and not probe._gate.locked()
+        assert result["format_version"] == version
+        if version == 2:
+            assert result["structure"]["events"] == 0
     finally:
         release.set()
         assert await asyncio.to_thread(finished.wait, 1)
@@ -756,3 +765,74 @@ async def test_history_sink_rejects_unsafe_identifier_even_for_internal_callers(
         attempt = probe._Probe(request(), client)
         with pytest.raises(probe.ProbeError, match="^unsupported_contract$"):
             await attempt.history("../other?private", {})
+
+
+@pytest.mark.asyncio
+async def test_v2_reports_only_fixed_structure_without_decoding_strings(environment):
+    def upstream(r):
+        if r.url.path.endswith("/profile"):
+            return httpx.Response(200, json=profile())
+        if r.url.path == "/v1/code/sessions":
+            return httpx.Response(
+                200, json={"data": [{"id": "session-fixture"}], "next_cursor": None}
+            )
+        return httpx.Response(
+            200,
+            json={
+                "data": [
+                    {
+                        "sequence_num": "1",
+                        "type": "private-type",
+                        "private-key": "private-value",
+                        "payload": {"type": "user", "content": "private-transcript"},
+                        "content": '{"type":"assistant","private":"private-transcript"}',
+                    }
+                ],
+                "next_cursor": None,
+            },
+        )
+
+    report = await run(request(report_version=2), upstream)
+    assert report["format_version"] == 2 and report["requests"] == 3
+    assert report["structure"]["events"] == report["history_events"] == 1
+    rows = report["structure"]["locations"]
+    assert rows["event"]["categories"]["other"] == 1
+    assert rows["payload"]["categories"]["user"] == 1
+    assert rows["content"]["types"]["string"] == 1
+    assert report["observations"] == []
+    assert all(
+        secret not in json.dumps(report)
+        for secret in ("private-type", "private-key", "private-value", "private-transcript")
+    )
+
+
+@pytest.mark.asyncio
+async def test_v2_source_change_discards_prior_structural_observations(environment):
+    _, cache = environment
+    history_calls = 0
+
+    def upstream(r):
+        nonlocal history_calls
+        if r.url.path.endswith("/profile"):
+            return httpx.Response(200, json=profile())
+        if r.url.path == "/v1/code/sessions":
+            return httpx.Response(
+                200, json={"data": [{"id": "session-fixture"}], "next_cursor": None}
+            )
+        history_calls += 1
+        if history_calls == 2:
+            cache._source_cache.clear()
+        return httpx.Response(
+            200,
+            json={
+                "data": [{"sequence_num": str(history_calls), "data": usage()}],
+                "next_cursor": "next",
+            },
+        )
+
+    report = await run(request(report_version=2), upstream)
+    assert history_calls == 2 and report["outcome"] == "source_changed"
+    assert report["format_version"] == 2
+    assert report["history_events"] == report["structure"]["events"] == 0
+    assert report["observations"] == [] and report["account_verified"] is False
+    assert all(not any(row["types"].values()) for row in report["structure"]["locations"].values())

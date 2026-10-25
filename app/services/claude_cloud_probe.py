@@ -32,6 +32,7 @@ from app.services.probe_mode import probing
 from app.services.source_controls import allowed
 from app.services.token_cache import token_cache
 from scripts.audit_claude_usage import audit_messages
+from scripts.claude_cloud_structure import empty_structure, observe_structure
 from scripts.sidecar_pkg.source_catalog import source_for_origin
 
 BASE_URL = "https://api.anthropic.com"
@@ -46,9 +47,9 @@ class ProbeError(Exception):
     """Only internal, fixed outcome categories cross this boundary."""
 
 
-def _empty_report() -> dict[str, Any]:
-    return {
-        "format_version": 1,
+def _empty_report(report_version: int = 1) -> dict[str, Any]:
+    report: dict[str, Any] = {
+        "format_version": report_version,
         "outcome": "source_unavailable",
         "stage": "source",
         "requests": 0,
@@ -65,6 +66,10 @@ def _empty_report() -> dict[str, Any]:
         "cloud_contract_verified": False,
         "ready_for_ingestion": False,
     }
+
+    if report_version == 2:
+        report["structure"] = empty_structure()
+    return report
 
 
 def _uuid(value: object) -> str | None:
@@ -249,7 +254,7 @@ class _Probe:
         self.request = request
         self.client = client
         self.account = canonical_account_id(request.account_id)
-        self.report = _empty_report()
+        self.report = _empty_report(request.report_version)
         self.tokens: dict[str, str] = {}
         self.expected_org: str | None = None
         self.authority: tuple[Any, ...] = ()
@@ -385,6 +390,8 @@ class _Probe:
             self.report["history_pages"] += 1
             self.report["history_events"] += len(records)
             for event in records:
+                if self.request.report_version == 2:
+                    observe_structure(self.report["structure"], event)
                 raw_sequence = event.get("sequence_num")
                 sequence = None
                 if type(raw_sequence) is int and 0 <= raw_sequence < 2**63:
@@ -464,7 +471,7 @@ async def probe_cloud_history(
             except (ValueError, RecursionError):
                 attempt.report["outcome"] = "unsupported_contract"
             if attempt.report["outcome"] in ("source_changed", "timeout", "source_unavailable"):
-                report = _empty_report()
+                report = _empty_report(request.report_version)
                 report.update(
                     outcome=attempt.report["outcome"],
                     requests=attempt.report["requests"],

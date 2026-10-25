@@ -14,7 +14,11 @@ from starlette.types import Message
 
 from app.core.rate_limit import limiter
 from app.core.security import SESSION_COOKIE, require_admin_key
-from app.models.claude_cloud_probe import ClaudeCloudProbeReport, ClaudeCloudProbeRequest
+from app.models.claude_cloud_probe import (
+    ClaudeCloudProbeReport,
+    ClaudeCloudProbeReportV2,
+    ClaudeCloudProbeRequest,
+)
 from app.services.claude_cloud_probe import probe_cloud_history
 
 
@@ -77,7 +81,9 @@ class SanitizedProbeRoute(APIRoute):
 router = APIRouter(route_class=SanitizedProbeRoute)
 
 
-@router.post("/debug/claude-cloud", response_model=ClaudeCloudProbeReport)
+@router.post(
+    "/debug/claude-cloud", response_model=ClaudeCloudProbeReport | ClaudeCloudProbeReportV2
+)
 @limiter.limit("2/minute")
 async def probe_claude_cloud(
     request: Request,

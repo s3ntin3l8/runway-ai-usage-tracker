@@ -94,6 +94,7 @@ tests/
 # The server imports the pure usage audit and inert Keychain capability catalog.
 scripts/*
 !scripts/audit_claude_usage.py
+!scripts/claude_cloud_structure.py
 !scripts/sidecar_pkg/
 scripts/sidecar_pkg/*
 !scripts/sidecar_pkg/source_catalog.py

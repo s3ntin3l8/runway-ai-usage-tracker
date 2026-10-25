@@ -53,6 +53,11 @@ def test_admin_post_validates_and_returns_only_sanitized_schema(client):
     "change",
     [
         {"max_history_pages": True},
+        {"report_version": True},
+        {"report_version": "2"},
+        {"report_version": 2.0},
+        {"report_version": 0},
+        {"report_version": 3},
         {"max_history_pages": 4},
         {"session_id": "../../other?private"},
         {"oauth_token": "private-input"},
@@ -156,3 +161,22 @@ async def test_client_disconnect_is_clean_without_publishing_or_logging_body(cli
     assert response.status_code == 400
     assert response.body == b'{"detail":"probe_request_disconnected"}'
     service.assert_not_awaited()
+
+
+def test_explicit_v2_returns_structure_while_default_v1_is_unchanged(client):
+    from app.services.claude_cloud_probe import _empty_report
+
+    http, service = client
+    service.return_value = _empty_report(2)
+    response = http.post(
+        PATH, json={**BODY, "report_version": 2}, headers={"X-Admin-Key": "probe-test-admin"}
+    )
+    assert response.status_code == 200
+    assert response.json()["format_version"] == 2
+    assert response.json()["structure"]["events"] == 0
+    assert service.call_args.args[0].report_version == 2
+    limiter.reset()
+    service.return_value = _empty_report()
+    response = http.post(PATH, json=BODY, headers={"X-Admin-Key": "probe-test-admin"})
+    assert response.status_code == 200 and response.json()["format_version"] == 1
+    assert "structure" not in response.json()
