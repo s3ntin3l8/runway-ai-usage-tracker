@@ -48,6 +48,8 @@ frontend/css/styles.css
 !.vscode/settings.json
 !.vscode/launch.json
 .idea/
+# Mullion dev-server dock configuration — local IDE state.
+.crs/
 
 # --- PROJECT STATE & DATABASE ---
 *.db
@@ -93,6 +95,8 @@ app/brain/
 # --- SUPERPOWERS ---
 .superpowers/
 docs/superpowers/
+# Defensive: a superpowers folder at the repository root is scratch too.
+superpowers/
 
 # --- PYINSTALLER ---
 # No trailing slash, so a symlinked output tree is ignored too - see the

@@ -2,9 +2,9 @@
   "issue": 603,
   "scope": "actual Authentik/Traefik TLS deployment matrix; isolated synthetic app on existing infrastructure",
   "metadata": {
-    "tested_host": "runway-603.dev-01.in.s3ntin3l8.de",
-    "reference_deployment": "https://runway.dev-01.in.s3ntin3l8.de/",
-    "idp": "https://authentik.s3ntin3l8.de",
+    "tested_host": "runway-603.test.local",
+    "reference_deployment": "https://runway.test.local/",
+    "idp": "https://authentik.test.local",
     "operator": "Codex acting for repository owner on dev-01",
     "os": "Ubuntu 24.04.5 LTS",
     "kernel": "7.0.14-3-pve",
@@ -67,8 +67,8 @@
     "APP_PORT": 8765,
     "RUNWAY_CONFIG_DIR": "/data (disposable runway-603-data volume)",
     "DATABASE_PATH": "/data/runway.db",
-    "CORS_ORIGINS": "https://runway-603.dev-01.in.s3ntin3l8.de",
-    "PUBLIC_URL": "https://runway-603.dev-01.in.s3ntin3l8.de",
+    "CORS_ORIGINS": "https://runway-603.test.local",
+    "PUBLIC_URL": "https://runway-603.test.local",
     "TLS_TERMINATED": true,
     "TRUSTED_PROXY_IPS": [
       "172.20.0.254"
@@ -104,7 +104,7 @@
   },
   "authentik_config": {
     "mode": "forward_single",
-    "external_host": "https://runway-603.dev-01.in.s3ntin3l8.de",
+    "external_host": "https://runway-603.test.local",
     "authentication_flow": "runway-603-authentication",
     "authorization_flow": "default-provider-authorization-implicit-consent",
     "invalidation_flow": "default-provider-invalidation-flow",
@@ -146,7 +146,7 @@
       "expected": "Authentik redirect; private state unavailable",
       "actual": {
         "status": 302,
-        "location": "https://authentik.s3ntin3l8.de"
+        "location": "https://authentik.test.local"
       },
       "status": "pass"
     },
@@ -307,7 +307,7 @@
       "expected": "Authentik permission-denied page",
       "actual": {
         "final_status": 200,
-        "final_host": "authentik.s3ntin3l8.de",
+        "final_host": "authentik.test.local",
         "denial_text_present": true
       },
       "status": "pass"
@@ -523,7 +523,7 @@
             "path": "/api/v1/system/dashboard-layout",
             "peer": "172.20.0.1",
             "status": 403,
-            "host": "runway-603.dev-01.in.s3ntin3l8.de",
+            "host": "runway-603.test.local",
             "origin": "",
             "xff": "172.20.0.254"
           },
@@ -532,7 +532,7 @@
             "path": "/api/v1/system/dashboard-layout",
             "peer": "172.20.0.1",
             "status": 403,
-            "host": "runway-603.dev-01.in.s3ntin3l8.de",
+            "host": "runway-603.test.local",
             "origin": "",
             "xff": "172.20.0.254"
           },
@@ -541,7 +541,7 @@
             "path": "/api/v1/system/dashboard-layout",
             "peer": "172.20.0.1",
             "status": 403,
-            "host": "runway-603.dev-01.in.s3ntin3l8.de",
+            "host": "runway-603.test.local",
             "origin": "",
             "xff": "172.20.0.254"
           },
@@ -550,7 +550,7 @@
             "path": "/api/v1/system/dashboard-layout",
             "peer": "172.20.0.1",
             "status": 403,
-            "host": "runway-603.dev-01.in.s3ntin3l8.de",
+            "host": "runway-603.test.local",
             "origin": "",
             "xff": "172.20.0.254"
           }
@@ -689,7 +689,7 @@
       "case": "unauthenticated-dashboard-browser",
       "expected": "real Authentik login challenge",
       "actual": {
-        "final_host": "authentik.s3ntin3l8.de",
+        "final_host": "authentik.test.local",
         "final_path": "/if/flow/runway-603-authentication/",
         "status": 200,
         "login_form_visible": true,
@@ -701,7 +701,7 @@
       "case": "allowed-dashboard-browser",
       "expected": "dashboard HTML accessible after real SSO",
       "actual": {
-        "final_host": "runway-603.dev-01.in.s3ntin3l8.de",
+        "final_host": "runway-603.test.local",
         "final_path": "/",
         "status": 200,
         "login_form_visible": false,

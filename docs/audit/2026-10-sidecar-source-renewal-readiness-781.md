@@ -28,10 +28,10 @@ not a local permission grant or the runtime `renewal_supported` result. The exis
 xAI (Grok), Antigravity (agy), Claude Code and Codex (ChatGPT) keep-alive mechanisms
 are a different capability from a source's direct Keychain write support. Do not
 infer one from the other.
-See [source reporting](../scripts/sidecar_pkg/source_settings.py),
-[Fleet reporting](../scripts/sidecar_pkg/source_protocol.py),
-[admin Fleet status](../app/api/endpoints/fleet_sources.py), and
-[keep-alive ownership rules](../app/services/refresh_policy.py).
+See [source reporting](../../scripts/sidecar_pkg/source_settings.py),
+[Fleet reporting](../../scripts/sidecar_pkg/source_protocol.py),
+[admin Fleet status](../../app/api/endpoints/fleet_sources.py), and
+[keep-alive ownership rules](../../app/services/refresh_policy.py).
 
 ## Native source inventory
 
@@ -57,7 +57,7 @@ no discovered accounts or installation-specific identifiers are included.
 | `antigravity.agy-cli` | Antigravity-owned macOS Keychain login. | Local keep-alive can invoke `agy models` after expiry, gated by local consent and effective keep-alive. This is owner cooperation, not Runway editing the item. Current packaged owner-rotation/quiet-access and signed continuity still need evidence. |
 | `antigravity.windows-credential` | Antigravity-owned Windows Credential Manager login. | Owner-command keep-alive exists; a macOS result is not Windows proof. No independent Runway grant established by this inventory. |
 
-The source of truth is the static [catalog](../scripts/sidecar_pkg/source_catalog.py)
+The source of truth is the static [catalog](../../scripts/sidecar_pkg/source_catalog.py)
 and generated rules. Shared Safe Storage access never opts another scraper in.
 Disabling a scraper, a remote pause or a denial must retain their existing local
 operation/forwarding boundaries; this document changes none of them.
@@ -81,10 +81,10 @@ path.
 | Claude status-line observations | The existing `file_json_statusline` rule reads recently written quota observations. | No credential renewal. Provider docs describe quota fields only after the session's first API response, with independently optional windows. This cannot establish offline or inactive-session freshness. |
 | Other file/environment/Safari/local usage inputs | Existing scraping/collection paths. | Do not add Keychain opt-ins or a generic renewal claim to these paths. A source containing a token is not evidence of an independently authorized renewable grant. |
 
-Relevant implementations: [Claude file renewal](../scripts/sidecar_pkg/anthropic_renewer.py),
-[Codex renewal](../scripts/sidecar_pkg/codex_renewer.py),
-[xAI renewal](../scripts/sidecar_pkg/xai_renewer.py), and
-[owner-command keep-alive](../scripts/sidecar_pkg/keep_alive.py).
+Relevant implementations: [Claude file renewal](../../scripts/sidecar_pkg/anthropic_renewer.py),
+[Codex renewal](../../scripts/sidecar_pkg/codex_renewer.py),
+[xAI renewal](../../scripts/sidecar_pkg/xai_renewer.py), and
+[owner-command keep-alive](../../scripts/sidecar_pkg/keep_alive.py).
 Historical verification claims above come from existing repository evidence; no
 live acceptance was repeated or upgraded by this documentation audit.
 
@@ -97,7 +97,7 @@ offline; there are no heartbeat credential leases.
 
 ## Claude decision and prerequisites for the next experiment
 
-The [#886 evidence](claude-keychain-helper-authorization-773.md#hosted-results-2026-10-24)
+The [#886 evidence](../evidence/acceptance/claude-keychain-helper-authorization-773.md#hosted-results-2026-10-24)
 established a fresh-process helper read of its own item, followed by denial of the
 separately trusted Python reader. Ordinary trust entries did not establish shared
 protected-data access. The selected partition identity tracked the creator. The

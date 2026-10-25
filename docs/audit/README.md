@@ -105,3 +105,6 @@ touched.
 | Audit | Scope | Outcome |
 |---|---|---|
 | [2026-10-webapp-ui-ux.md](2026-10-webapp-ui-ux.md) | Webapp UI/UX — accessibility, mobile ergonomics, data honesty | 2 P0 and 24 P1 fixed; 4 further P1 found by the strengthened guard and fixed; guardrails added; the P2/P3 backlog filed as issues #948–#953 |
+| [2026-10-sidecar-source-authorization-delivery.md](2026-10-sidecar-source-authorization-delivery.md) | Sidecar sources — the Sources consent model | Frozen snapshot of the delivery of #780; the durable reference is [`../source-consent.md`](../source-consent.md) |
+| [2026-10-sidecar-source-renewal-readiness-781.md](2026-10-sidecar-source-renewal-readiness-781.md) | Sidecar sources — renewal readiness (#781) | Frozen snapshot: implemented mechanisms against the remaining acceptance gates |
+| [2026-10-cicd-edge-release-recovery.md](2026-10-cicd-edge-release-recovery.md) | CI/CD — the edge release failures after #674 and #680 | Frozen incident record |

@@ -1,7 +1,7 @@
 http:
   routers:
     rw603-private:
-      rule: Host(`runway-603.dev-01.in.s3ntin3l8.de`)
+      rule: Host(`runway-603.test.local`)
       entryPoints:
       - websecure
       priority: 10
@@ -11,7 +11,7 @@ http:
       tls:
         certResolver: cloudflare
     rw603-fleet:
-      rule: Host(`runway-603.dev-01.in.s3ntin3l8.de`) && (Path(`/api/v1/fleet/ingest`)
+      rule: Host(`runway-603.test.local`) && (Path(`/api/v1/fleet/ingest`)
         || Path(`/api/v1/fleet/config`) || Path(`/api/v1/fleet/credentials/manifest`))
       entryPoints:
       - websecure
@@ -22,7 +22,7 @@ http:
       tls:
         certResolver: cloudflare
     rw603-outpost:
-      rule: Host(`runway-603.dev-01.in.s3ntin3l8.de`) && PathPrefix(`/outpost.goauthentik.io/`)
+      rule: Host(`runway-603.test.local`) && PathPrefix(`/outpost.goauthentik.io/`)
       entryPoints:
       - websecure
       priority: 150
@@ -31,7 +31,7 @@ http:
       tls:
         certResolver: cloudflare
     rw603-recovery:
-      rule: Host(`runway-603.dev-01.in.s3ntin3l8.de`) && Path(`/validation-break-glass/api/v1/system/dashboard-layout`)
+      rule: Host(`runway-603.test.local`) && Path(`/validation-break-glass/api/v1/system/dashboard-layout`)
       entryPoints:
       - websecure
       priority: 200
@@ -81,7 +81,7 @@ http:
     rw603-operator:
       ipAllowList:
         sourceRange:
-        - 192.168.2.152/32
+        - 192.0.2.10/32
   services:
     rw603:
       loadBalancer:

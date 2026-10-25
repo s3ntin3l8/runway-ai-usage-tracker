@@ -132,7 +132,7 @@ read it on its own: the read goes through the Keychain worker, and the user auth
 the local Sources UI (**Authorize** raises the macOS "Runway wants to access 'gemini' in your
 keychain" prompt; after allowing it, the background read is silent and the grant can be withdrawn
 in Keychain Access). Until then the source is off and nothing is read — see
-[docs/sidecar-source-authorization.md](../sidecar-source-authorization.md).
+[docs/source-consent.md](../source-consent.md).
 
 The origin is `keychain:gemini:antigravity` on every platform that keeps the credential in an OS
 store, so the same Google account is filed under one cache key whichever store it came from. The
@@ -143,7 +143,7 @@ present and a platform-specific mapping would file one account under two keys.
 > **The macOS credential follows the negotiated model.** Like every other Keychain-backed
 > credential it leaves the host only when the user has granted the source locally, authorized
 > the entry, and the device's negotiated scope includes it — see
-> [docs/sidecar-source-authorization.md](../sidecar-source-authorization.md).
+> [docs/source-consent.md](../source-consent.md).
 
 ### Token lifetime & keep-alive
 
