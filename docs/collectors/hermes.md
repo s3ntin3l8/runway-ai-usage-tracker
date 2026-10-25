@@ -20,7 +20,7 @@ Runway extracts session token usage and estimated/actual costs sidecar-side from
 | Event extractor (sidecar) | `scripts/sidecar_pkg/event_extractors/hermes.py` | Queries `state.db` instances, calculates incremental deltas, and maps canonical providers |
 | Sidecar runner | `scripts/sidecar.py` | Discovers Hermes DB paths, builds canonical hints, and dispatches extraction cycles |
 | Detection rules | `scripts/sidecar.py` `__REGISTRY__["hermes"]` | Discovers Hermes installations via `~/.hermes/state.db` and `~/.hermes/config.yaml` |
-| Watermark state | `~/.config/runway/sidecar/hermes_watermark.json` | Persists per-slice high-water marks for ongoing sessions |
+| Watermark state | `~/.config/runway/sidecar/hermes_watermark.jsonl` | Persists per-slice high-water marks for ongoing sessions |
 
 ## Overview
 
@@ -49,10 +49,10 @@ Hermes records metrics in two primary tables:
 
 ### Incremental Delta Tracking
 
-Because `session_model_usage` counters accumulate over the lifetime of a session slice (or long-running Discord thread), the extractor maintains high-water marks in `~/.config/runway/sidecar/hermes_watermark.json` (or `$RUNWAY_CONFIG_DIR/sidecar/hermes_watermark.json`).
+Because `session_model_usage` counters accumulate over the lifetime of a session slice (or long-running Discord thread), the extractor maintains high-water marks in `~/.config/runway/sidecar/hermes_watermark.jsonl` (or `$RUNWAY_CONFIG_DIR/sidecar/hermes_watermark.jsonl`).
 
 On **Windows** the same file lives under `%APPDATA%\runway\sidecar\`
-(`hermes_watermark.json`), falling back to `~/AppData/Roaming/runway/sidecar/`
+(`hermes_watermark.jsonl`), falling back to `~/AppData/Roaming/runway/sidecar/`
 when `APPDATA` is unset.
 
 On each sidecar poll:
@@ -63,12 +63,35 @@ On each sidecar poll:
   hermes|<profile>|<session_id>|<model>|<task>|c<api_call_count>s<emission_seq>
   ```
 - Stable event IDs ensure that discrete tasks, ongoing sessions, and late cost updates never trigger duplicate-event drops or double-counting in Runway's `EventIngestor`.
-- **Watermark Lifecycle & Bounding:** High-water marks are keyed by `(resolved_db_path, profile, session, model, billing_provider, task)`. A key carries the database path and the session identity, so it runs to roughly 450 bytes; the file is megabytes on a host with thousands of sessions, and it is rewritten in full whenever a slice changes. Each slice records a `last_seen` timestamp, which is what lets the compaction below reclaim the slices whose source is gone — a database that no longer exists, or a session that Hermes deleted from a database that is still there.
+- **Watermark Lifecycle & Bounding:** High-water marks are keyed by `(resolved_db_path, account, profile, session, model, billing_provider, task)`. The database path is stored once per database rather than once per slice, so it is no longer the bulk of the file. Each slice records a `last_seen` timestamp, which is what lets the compaction below reclaim the slices whose source is gone — a database that no longer exists, or a session that Hermes deleted from a database that is still there.
 - **Entrypoint Propagation:** Sessions preserve their runtime origin in Runway's `entrypoint` field: default API sessions set `entrypoint="hermes"`, while sessions originating from specific platforms set `entrypoint="hermes-<source>"` (e.g. `hermes-discord`, `hermes-cron`, `hermes-webui`).
+
+### The Watermark Log
+
+`hermes_watermark.jsonl` is an **append-only log**: one JSON line per change, each holding the database it belongs to and the slices that changed.
+
+```json
+{"db": "/Users/you/.hermes/state.db", "accounts": {"default": {"default|<session>|<model>|…": {…}}}}
+```
+
+A cycle appends the slices that moved instead of rewriting the whole file. That is what the file was rewritten for: the whole state was serialized and written on every cycle that changed anything, and the Hermes extraction runs on every poll, so the bytes written per day grew with a file that never stopped growing.
+
+- **The write is flushed and synced before the cycle returns.** The emission counter of a slice lives in the watermark *and* in the event id, so a lost update means an event id the server has already seen — and the usage behind it would be dropped.
+- **A forgotten slice is appended as `null`**, so the log says it is gone and the next cycle does not put it back.
+- **A damaged line is skipped, not fatal.** A crash during the write can leave a torn line; the log is a cache, and refusing to read it would lose every mark in it.
+- **The log is compacted** once it holds more lines than the state it carries: the state is then the cheaper file to write, and the compaction writes every mark out, so it cannot lose one.
+
+The database path is stored **once per database** — it used to be repeated in the key of every slice, which is where most of the bytes of a large watermark went. The account is a level of the state, so an account id that holds a `|` cannot shift the fields behind it.
+
+An existing install's flat `hermes_watermark.json` is read **once**, when the log does not exist yet, and written out in the new format. Every mark that can be read is carried over — a mark is the difference between what the sidecar already reported and what it would report next, so a lost mark is a session whose whole lifetime is reported a second time. The legacy file is **left on disk**: a sidecar that is reverted reads it and re-reports only the usage since the migration, where a missing file would make it re-report the whole Hermes history.
+
+The one-time read is recorded in the marker `hermes_watermark.json.migrated`, next to the legacy file. Without it, deleting the log would refill it with the legacy baseline and the re-scan below would silently do nothing on every upgraded install. The marker is written only after the log itself is on disk, so a failed write leaves the migration to be retried rather than dropping the baseline for good.
+
+A legacy key is matched against the discovered databases **longest path first**: one path can be a prefix of another (`/data/a` of `/data/a|b|c`), and the character behind it in the longer path is then a `|`, so the shorter path also matches the longer key and would file the mark under a database that does not exist.
 
 ### Watermark Compaction
 
-The watermark used to only ever grow: a deleted profile, a test fixture that was unpacked and removed, or a folder the user cleaned up left its slices behind forever, and the whole file was rewritten on every cycle that changed anything — so the bytes written per day grew with a file that never stopped growing.
+The watermark used to only ever grow: a deleted profile, a test fixture that was unpacked and removed, or a folder the user cleaned up left its slices behind forever — and the whole file was rewritten on every cycle that changed anything, so the bytes written per day grew with a file that never stopped growing.
 
 A slice's high-water mark is now forgotten when **all** of these hold:
 
@@ -82,7 +105,7 @@ The idle window and the proof of death are both load-bearing, because the server
 - The server deduplicates usage events on the **exact** `(provider_id, event_id)` and keeps the first row it stored. A re-emitted Hermes event carries a restarted counter (`c<calls>s<emission_seq>`), so its id differs from the original and the server files it as *new* usage.
 - Without a baseline the extractor would report the session's **whole lifetime** as new usage instead of the increment — the server would count that session twice.
 
-So the mark of everything that could still move is kept: an active session (recent `last_seen`), a database that exists but was not discovered, a database whose rows could not be listed (a permission error is not "it is gone"), and any key whose path cannot be read out unambiguously. The one residual case is a session that sat idle for more than 30 days, whose source was deleted, and which comes back and resumes activity — it is counted once extra.
+So the mark of everything that could still move is kept: an active session (recent `last_seen`), a database that exists but was not discovered, and a database whose rows could not be listed (a permission error is not "it is gone"). The one residual case is a session that sat idle for more than 30 days, whose source was deleted, and which comes back and resumes activity — it is counted once extra.
 
 The compaction runs even when the host has **no Hermes database left at all** — that is exactly the host whose watermark is full of dead keys, so finding nothing to collect is not a reason to skip it.
 
@@ -175,7 +198,7 @@ To prevent unmapped events from corrupting labeled quota gauges or leaking acros
 ### No events collected
 - Ensure `~/.hermes/state.db` or `~/.hermes/profiles/*/state.db` exists and has executed sessions.
 - Check sidecar logs for `[hermes] collecting...` and ensure `hermes` is not excluded in `RUNWAY_PROVIDERS`.
-- Check if `hermes_watermark.json` already recorded the sessions. To re-scan, delete `~/.config/runway/sidecar/hermes_watermark.json`.
+- Check if `hermes_watermark.jsonl` already recorded the sessions. To re-scan, delete `~/.config/runway/sidecar/hermes_watermark.jsonl`. On an install that was upgraded from the flat format, the migrated legacy baseline is **not** restored: the `hermes_watermark.json.migrated` marker keeps the legacy file from being read a second time.
 
 ### Events appear as "Unassigned usage" in Fleet UI
 - This is normal for newly routed canonical providers (e.g. MiniMax, Kimi).

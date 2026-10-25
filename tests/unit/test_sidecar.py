@@ -3956,24 +3956,33 @@ def test_the_hermes_extractor_compacts_the_watermark_without_any_database(monkey
     keys of databases that no longer exist, and the parser is what prunes
     them (#926). An early return would keep every key forever.
     """
-    from scripts.sidecar_pkg.event_extractors.hermes import parse_hermes_events
+    from scripts.sidecar_pkg.event_extractors.hermes import (
+        _load_hermes_watermark,
+        parse_hermes_events,
+    )
     from scripts.sidecar_pkg.event_watermark import EventWatermark
 
-    state_file = tmp_path / "hermes_watermark.json"
+    state_file = tmp_path / "hermes_watermark.jsonl"
     gone_db = tmp_path / "profiles" / "gone" / "state.db"
     state_file.write_text(
         json.dumps(
             {
-                f"default|{gone_db.resolve()}|default|sess|model|hermes|||": {
-                    "input_tokens": 1,
-                    "output_tokens": 0,
-                    "cost_usd": 0.0,
-                    "api_call_count": 1,
-                    "emission_seq": 1,
-                    "last_seen": 1.0,
-                }
+                "db": str(gone_db.resolve()),
+                "accounts": {
+                    "default": {
+                        "default|sess|model|hermes|||": {
+                            "input_tokens": 1,
+                            "output_tokens": 0,
+                            "cost_usd": 0.0,
+                            "api_call_count": 1,
+                            "emission_seq": 1,
+                            "last_seen": 1.0,
+                        }
+                    }
+                },
             }
-        ),
+        )
+        + "\n",
         encoding="utf-8",
     )
     monkeypatch.setattr(sidecar, "_discover_hermes_db_paths", lambda: [])
@@ -3982,4 +3991,7 @@ def test_the_hermes_extractor_compacts_the_watermark_without_any_database(monkey
     events = extractor("default", EventWatermark(tmp_path / "event-watermark.json"), 30)
 
     assert events == []
-    assert json.loads(state_file.read_text(encoding="utf-8")) == {}
+    # The log is append-only: the slice is superseded by a null, so the
+    # state it holds is empty even though the line is still in the file.
+    state, _ = _load_hermes_watermark(state_file)
+    assert not any(slices for accounts in state.values() for slices in accounts.values())
