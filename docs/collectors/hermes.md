@@ -95,10 +95,12 @@ To prevent unmapped events from corrupting labeled quota gauges or leaking acros
    Three rules keep this from becoming a cross-host attribution leak:
 
    - **Per host.** Only the accounts *this* sidecar reported for the provider are considered. A deployment-wide identity never reaches a host that did not report it (the same rule as #319).
-   - **Unambiguous.** Exactly one account resolves the event. Zero (the credential carries no identity) or several (the host holds more than one account for the provider) leave the event held for the operator, exactly as before.
+   - **The credential the host presents today.** A source answers only when it is the newest row for its origin, still enabled, and not rejected by the provider. A rotation — the same file now holding a different login — leaves the previous row behind, and that row is history: the newer one answers instead. A source the operator turned off, or one the provider refused (`auth_failed`), identifies nothing. A host whose current credential has no resolved identity yet (still in the pending slot) has no answer, so its events are held back rather than stamped on the login it used to have.
    - **Never over a tag.** An operator tag always wins over the machine's answer, and an archived account takes no new usage — a retired account holds the event back rather than receiving it.
 
    **Coverage.** The rule can only fire for a provider whose native credential carries an identity. On the shipped sidecar that is **Anthropic** (the Claude Code OAuth account email) and **xAI** (the Grok CLI identity); providers whose credential carries no email — MiniMax, Kimi, Ollama, OpenRouter, DeepSeek — have nothing to resolve from, so their events are still held for assignment until the operator tags them once. The rule is not a universal fix: it removes the manual tag for the providers that can answer, and leaves the rest exactly where they were.
+
+   **Related providers are not consulted.** The lookup asks for `push.provider_id` only. A host whose Google identity lives on its `antigravity` credential therefore does not resolve its `gemini` events — `related_account_provider_ids()` maps `gemini` → `antigravity`, but that mapping stays an explicit operator tag.
 
    **Already-held events.** An event that was held back resolves on a later push once the provider can be answered, and its pending copy is dropped with it — the "Unassigned usage" card stops listing an event that is already counted.
 

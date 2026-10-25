@@ -1004,6 +1004,60 @@ class TestSidecarNativeAccounts:
         s.commit()
         assert sidecar_native_accounts(s, "anthropic", "host-a") == {"me@example.com"}
 
+    def test_a_disabled_source_is_not_an_answer(self):
+        """The operator turned this source off: it identifies nothing."""
+        s = _mem_session()
+        s.add(self._row(enabled=False))
+        s.commit()
+        assert sidecar_native_accounts(s, "anthropic", "host-a") == set()
+
+    def test_a_rejected_credential_is_not_an_answer(self):
+        """The provider refused the credential; it no longer names the account."""
+        s = _mem_session()
+        s.add(self._row(health="auth_failed"))
+        s.commit()
+        assert sidecar_native_accounts(s, "anthropic", "host-a") == set()
+
+    def test_a_rotation_answers_with_the_new_account(self):
+        """The same origin now holds a different login.
+
+        The row the rotation left behind is history; the newer one is the
+        credential the host presents today.
+        """
+        s = _mem_session()
+        s.add(self._row(account_id="old@example.com", last_seen=datetime(2026, 10, 1, tzinfo=UTC)))
+        s.add(self._row(account_id="new@example.com", last_seen=datetime(2026, 10, 2, tzinfo=UTC)))
+        s.commit()
+        assert sidecar_native_accounts(s, "anthropic", "host-a") == {"new@example.com"}
+
+    def test_a_rotation_to_an_unresolved_credential_has_no_answer(self):
+        """The host's current credential has no resolved identity yet.
+
+        The account it used to have is not the answer — the event is held
+        back rather than stamped on a login that is gone.
+        """
+        s = _mem_session()
+        s.add(self._row(account_id="old@example.com", last_seen=datetime(2026, 10, 1, tzinfo=UTC)))
+        s.add(
+            self._row(
+                account_id="default",
+                last_seen=datetime(2026, 10, 2, tzinfo=UTC),
+            )
+        )
+        s.commit()
+        assert sidecar_native_accounts(s, "anthropic", "host-a") == set()
+
+    def test_two_origins_with_two_accounts_are_ambiguous(self):
+        """Two credentials the host presents, for two accounts."""
+        s = _mem_session()
+        s.add(self._row(source_id="sidecar:host-a:a", account_id="one@example.com"))
+        s.add(self._row(source_id="sidecar:host-a:b", account_id="two@example.com"))
+        s.commit()
+        assert sidecar_native_accounts(s, "anthropic", "host-a") == {
+            "one@example.com",
+            "two@example.com",
+        }
+
     def test_a_local_ingest_has_no_sidecar_id(self):
         """An ingest without a sidecar id is the "local" host."""
         s = _mem_session()

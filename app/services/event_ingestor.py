@@ -146,6 +146,10 @@ class EventIngestor:
         copy is then stale: the "Unassigned usage" card would keep listing an
         event that is already counted, and a later assignment would move a
         row that is already stored.
+
+        Every copy goes, not just the pushing host's: ``usage_events`` holds
+        one row per ``(provider_id, event_id)``, so a copy another host
+        pushed for the same event is stale for the same reason.
         """
         for row in self.session.exec(
             select(PendingUsageEvent).where(
