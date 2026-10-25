@@ -12,6 +12,7 @@ import httpx
 from pydantic import TypeAdapter
 from sqlalchemy.exc import SQLAlchemyError
 
+from app.models.claude_cloud_list_observation import RejectedListEvidence
 from app.models.claude_cloud_probe import ClaudeCloudProbeRequest
 from app.models.claude_cloud_verification import (
     CheckpointRecord,
@@ -28,7 +29,14 @@ from app.services.claude_cloud_ledger import (
     usage_timestamp,
 )
 from scripts.audit_claude_usage import audit_messages
-from scripts.claude_cloud_list_boundary import job_digest as _digest
+from scripts.claude_cloud_list_boundary import (
+    BoundaryDecodeError,
+    decode_boundary_json,
+    observe_list_boundary,
+)
+from scripts.claude_cloud_list_boundary import (
+    job_digest as _digest,
+)
 
 _RECORD: TypeAdapter[CheckpointRecord] = TypeAdapter(CheckpointRecord)
 
@@ -97,6 +105,8 @@ class _VerificationProbe(probe._Probe):
         self.key = bytes.fromhex(claim.state.job_key)
         self.start_bytes = claim.state.total_bytes
         self.profile_ids: tuple[str | None, str | None] = (None, None)
+        self.inspect_list_response = False
+        self.list_metadata: dict[str, Any] = {}
         request = ClaudeCloudProbeRequest(
             account_id=claim.state.account_id,
             source_id=claim.state.source_id,
@@ -155,42 +165,88 @@ class _VerificationProbe(probe._Probe):
             self.state.seen_cursors.append(digest)
         self.state.next_cursor = cursor
 
-    async def list_page(self, headers: dict[str, str]) -> None:
-        params: dict[str, Any] = {"limit": 20}
-        if self.state.next_cursor is not None:
-            params["cursor"] = self.state.next_cursor
-        rows, cursor = probe._page(await self.get("/v1/code/sessions", headers, params), 20)
-        ids = [row.get("id") for row in rows]
-        if any(not isinstance(sid, str) or not probe._SESSION_ID.fullmatch(sid) for sid in ids):
-            raise probe.ProbeError("unsupported_contract")
-        digests = [_digest(self.key, b"listed-session", sid) for sid in ids]
-        if len(set(digests)) != len(digests) or set(digests).intersection(self.state.seen_sessions):
-            raise probe.ProbeError("unsupported_contract")
-        if self.state.listed_sessions + len(rows) > 20000:
-            raise probe.ProbeError("limit_reached")
-        self._cursor(cursor, "listing")
-        self.state.seen_sessions.extend(digests)
-        self.state.listed_sessions += len(rows)
-        self.state.list_pages += 1
-        for row, sid in zip(rows, ids, strict=True):
-            if self.state.selected_session is None and (
-                self.state.target_session is None or self.state.target_session == sid
-            ):
-                self.state.selected_session = cast(str, sid)
-                environment = row.get("environment")
-                kind = environment.get("kind") if isinstance(environment, dict) else None
-                if kind in ("anthropic_cloud", "bridge"):
-                    self.state.execution_kind = kind
-        if cursor is None:
-            self.state.list_complete = True
-            if self.state.selected_session is None:
-                self.state.phase = "complete"
-                self.state.outcome = (
-                    "target_not_found" if self.state.target_session else "no_sessions"
+    def _response_encoding(self, response: httpx.Response) -> str:
+        encoding = super()._response_encoding(response)
+        if self.inspect_list_response:
+            self.list_metadata["response_encoding"] = (
+                "identity" if encoding == "identity" else "unsupported"
+            )
+        return encoding
+
+    def _decode(self, body: bytearray) -> Any:
+        if not self.inspect_list_response:
+            return super()._decode(body)
+        try:
+            # Keep the existing worker decoder's acceptance semantics unchanged.
+            payload = super()._decode(body)
+        except (probe.ProbeError, ValueError, RecursionError):
+            try:
+                decode_boundary_json(body)
+            except BoundaryDecodeError as exc:
+                self.list_metadata.update(
+                    json_state=exc.category,
+                    duplicate_json_keys=exc.duplicates,
+                    nonfinite_json_values=exc.nonfinite,
                 )
             else:
-                self.state.phase = "history"
-        await self.commit_response()
+                self.list_metadata["json_state"] = "invalid_json"
+            raise probe.ProbeError("unsupported_contract") from None
+        self.list_metadata.update(
+            json_state="decoded",
+            boundary=observe_list_boundary(
+                payload, self.key, set(self.state.seen_sessions), set(self.state.seen_cursors)
+            ),
+        )
+        return payload
+
+    async def list_page(self, headers: dict[str, str]) -> None:
+        self.inspect_list_response = True
+        self.list_metadata = {}
+        try:
+            params: dict[str, Any] = {"limit": 20}
+            if self.state.next_cursor is not None:
+                params["cursor"] = self.state.next_cursor
+            rows, cursor = probe._page(await self.get("/v1/code/sessions", headers, params), 20)
+            ids = [row.get("id") for row in rows]
+            if any(not isinstance(sid, str) or not probe._SESSION_ID.fullmatch(sid) for sid in ids):
+                raise probe.ProbeError("unsupported_contract")
+            digests = [_digest(self.key, b"listed-session", sid) for sid in ids]
+            if len(set(digests)) != len(digests) or set(digests).intersection(
+                self.state.seen_sessions
+            ):
+                raise probe.ProbeError("unsupported_contract")
+            if self.state.listed_sessions + len(rows) > 20000:
+                raise probe.ProbeError("limit_reached")
+            self._cursor(cursor, "listing")
+            self.state.seen_sessions.extend(digests)
+            self.state.listed_sessions += len(rows)
+            self.state.list_pages += 1
+            for row, sid in zip(rows, ids, strict=True):
+                if self.state.selected_session is None and (
+                    self.state.target_session is None or self.state.target_session == sid
+                ):
+                    self.state.selected_session = cast(str, sid)
+                    environment = row.get("environment")
+                    kind = environment.get("kind") if isinstance(environment, dict) else None
+                    if kind in ("anthropic_cloud", "bridge"):
+                        self.state.execution_kind = kind
+            if cursor is None:
+                self.state.list_complete = True
+                if self.state.selected_session is None:
+                    self.state.phase = "complete"
+                    self.state.outcome = (
+                        "target_not_found" if self.state.target_session else "no_sessions"
+                    )
+                else:
+                    self.state.phase = "history"
+            await self.commit_response()
+        except probe.ProbeError as exc:
+            if str(exc) == "unsupported_contract" and self.list_metadata:
+                await self.check_source()
+                self.state.rejected_list = RejectedListEvidence.model_validate(self.list_metadata)
+            raise
+        finally:
+            self.inspect_list_response = False
 
     def _sequence(self, event: dict[str, Any]) -> int | None:
         raw = event.get("sequence_num")
@@ -383,6 +439,7 @@ def build_verification_report(handle: str, state: VerificationState) -> dict[str
     return {
         "format_version": 1,
         "job_handle": handle,
+        "rejected_list": state.rejected_list.model_dump() if safe and state.rejected_list else None,
         "started_at": state.created_at,
         "deadline": state.deadline,
         "last_verified_at": state.last_verified_at if safe else None,

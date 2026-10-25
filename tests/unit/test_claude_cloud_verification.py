@@ -307,6 +307,11 @@ async def test_list_repetition_stops_without_an_automatic_retry(source_environme
 
     state = await advance(handle, store, upstream)
     assert state.outcome == "unsupported_contract" and len(calls) == 3
+    assert state.rejected_list is not None
+    boundary = state.rejected_list.boundary
+    assert boundary is not None
+    assert boundary.cursor_repeated is (mode == "cursor_loop")
+    assert boundary.previously_seen_ids == (1 if mode == "duplicate_session" else 0)
     await advance(handle, store, upstream)
     assert len(calls) == 3
 

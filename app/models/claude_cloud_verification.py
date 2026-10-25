@@ -13,6 +13,8 @@ from pydantic import (
     model_validator,
 )
 
+from app.models.claude_cloud_list_observation import RejectedListEvidence
+
 Counter = Annotated[StrictInt, Field(ge=0, lt=2**63)]
 Digest = Annotated[StrictStr, Field(pattern=r"^[a-f0-9]{64}$")]
 Handle = Annotated[StrictStr, Field(pattern=r"^[a-f0-9]{32}$")]
@@ -200,6 +202,7 @@ class VerificationState(_PrivateModel):
     list_pages: Annotated[StrictInt, Field(ge=0, le=512)] = 0
     history_pages: Annotated[StrictInt, Field(ge=0, le=512)] = 0
     history_events: Annotated[StrictInt, Field(ge=0, le=100000)] = 0
+    rejected_list: RejectedListEvidence | None = None
     list_complete: bool = False
     history_complete: bool = False
     next_cursor: Annotated[StrictStr, Field(min_length=1, max_length=2048)] | None = None
@@ -225,6 +228,17 @@ class VerificationState(_PrivateModel):
         known_sequences = set(self.sequences)
         if (
             not self.created_at <= self.deadline <= self.created_at + 1800
+            or (
+                self.rejected_list is not None
+                and not (
+                    self.phase == "stopped"
+                    and self.outcome == "unsupported_contract"
+                    and self.subject is not None
+                    and self.organization is not None
+                    and not self.list_complete
+                    and self.history_pages == 0
+                )
+            )
             or len(self.seen_sessions) != self.listed_sessions
             or len(set(self.seen_sessions)) != len(self.seen_sessions)
             or len(set(self.seen_cursors)) != len(self.seen_cursors)
@@ -343,6 +357,7 @@ class VerificationReport(_PrivateModel):
     organization_verified: bool
     listed_sessions: Counter
     list_pages: Counter
+    rejected_list: RejectedListEvidence | None = None
     list_complete: bool
     history_pages: Counter
     history_events: Counter
