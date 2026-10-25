@@ -9,23 +9,33 @@
 ## 🔑 Credential Management
 
 ### Environment Variables (.env)
-Credentials MUST be stored in a `.env` file at the project root. This file is excluded from version control via `.gitignore`.
-Refer to [.env.example](file:///.env.example) for the required structure.
+Credentials **may** be supplied through a `.env` file at the project root. The file is excluded from version control via `.gitignore`, and every variable in it is optional — the app starts with no `.env` at all. Credentials also reach the server through the sidecar and through the Settings → Providers UI, which is the v3 model.
+
+Refer to [.env.example](../.env.example) for the full contract — it is the single source of truth for every supported variable, its default and an explanation.
 
 ### Automatic Protection (Pre-commit)
 The project uses `pre-commit` hooks to prevent accidental credential leaking.
 
 **Installation:**
 ```bash
-pip install pre-commit
-pre-commit install
-pre-commit run --all-files  # Optional: Test on existing files
+make install-hooks
 ```
 
-**What it checks:**
-- `detect-secrets` - Scans for API keys, tokens, and secrets
-- `check-json` - Validates JSON syntax
-- `trailing-whitespace` & `end-of-file-fixer`
+`make install-hooks` is the supported path. It copies `scripts/hooks/git-hook.sh` into `.git/hooks/` — a plain `pip install pre-commit; pre-commit install` writes a script with the interpreter baked in, so it is **not** the supported route here (see `.pre-commit-config.yaml`).
+
+**What it checks — 13 hooks:**
+- `detect-secrets` — scans for API keys, tokens and secrets, against `.secrets.baseline`
+- `check-json` — validates JSON syntax
+- `check-yaml` — validates YAML syntax
+- `check-added-large-files` — rejects files over 1000 KB
+- `check-merge-conflict` — rejects unresolved conflict markers
+- `trailing-whitespace` and `end-of-file-fixer`
+- `ruff` and `ruff-format` — Python lint and format
+- `mypy` — Python type checking
+- `pytest` (unit) and `pytest` (all) — the test suite
+- `eslint` — the frontend linter
+
+The git hook runs the same set as `make lint` plus the frontend lint, so a commit is checked the way CI will check it.
 
 ## 🛰️ Ingestion API Security (Sidecars)
 

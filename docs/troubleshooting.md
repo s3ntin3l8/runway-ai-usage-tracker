@@ -12,7 +12,7 @@ macOS Keychain or Windows DPAPI mechanism.
 Run the sidecar with verbose logging and trigger a collection:
 
 ```bash
-python3 scripts/sidecar.py --log-level DEBUG --once
+python3 scripts/sidecar.py --run-once
 ```
 
 A working browser cookie path produces a line like `[<provider>] cookie '<name>' found on <domain>`. If that line is absent for the providers you expect (Claude, ChatGPT, Ollama, OpenCode, Kimi Coding) **and** you are logged into them in Chrome/Edge 127+, ABE is the most likely cause. Cross-check by logging into the same provider in Safari (macOS) or Firefox (Linux/Windows) and re-running — if the cookie is then found, ABE was blocking decryption.
@@ -100,7 +100,7 @@ reg add "HKLM\SOFTWARE\Policies\Microsoft\Edge" /v ApplicationBoundEncryptionEna
 reg delete "HKLM\SOFTWARE\Policies\Microsoft\Edge" /v ApplicationBoundEncryptionEnabled /f
 ```
 
-After relaunching the browser with ABE disabled, run `python3 scripts/sidecar.py --log-level DEBUG --once` and confirm the cookie-found log line appears. Then extract your session token into an environment variable (see the Alternative section above) and re-enable ABE.
+After relaunching the browser with ABE disabled, run `python3 scripts/sidecar.py --run-once` and confirm the cookie-found log line appears. Then extract your session token into an environment variable (see the Alternative section above) and re-enable ABE.
 
 ## Cookie store unavailable (the browser holds it open)
 

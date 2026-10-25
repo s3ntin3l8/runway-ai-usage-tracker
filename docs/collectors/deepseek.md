@@ -148,11 +148,10 @@ match yet.
 ## Related Files
 
 | File | Purpose |
-|------|---------|
-| `app/services/collectors/deepseek.py` | Main collector |
-| `app/services/pricing_seed.py` | Off-peak DeepSeek rates for event costing |
-| `app/core/config.py` | Settings (API key) |
-| `scripts/sidecar_pkg/event_extractors/opencode.py` | BYOK → `deepseek` event mapping |
+|---|---|
+| `app/services/collectors/deepseek.py` | Collector entry point — the prepaid balance endpoint |
+| `app/services/collectors/base.py` | Collector base class |
+| `scripts/sidecar.py` | Sidecar credential rules and event dispatch |
 
 ## References
 
@@ -161,5 +160,3 @@ match yet.
 - **Balance endpoint contract:** `GET /user/balance` — not linked from the
   current docs nav; response shape cross-checked against CodexBar's
   [DeepSeek provider docs](https://github.com/steipete/CodexBar/blob/main/docs/deepseek.md)
-
-*Last updated: 2026-09-26*

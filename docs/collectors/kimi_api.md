@@ -29,7 +29,7 @@ The Kimi API collector uses a single API key for authentication:
 
 ```python
 {
-    "service": "Kimi API",
+    "service_name": "Kimi API",
     "icon": "🌙",
     "remaining": "$45.75",
     "unit": "balance",
@@ -78,8 +78,10 @@ Sidecar uses same API key. No aggregation needed (balance is account-wide). See 
 ## Related Files
 
 | File | Purpose |
-|------|---------|
-| `app/services/collectors/kimi_api.py` | Main collector |
+|---|---|
+| `app/services/collectors/kimi_api.py` | Collector entry point — the prepaid balance endpoint |
+| `app/services/collectors/base.py` | Collector base class |
+| `scripts/sidecar.py` | Sidecar credential rules and event dispatch |
 
 ## References
 

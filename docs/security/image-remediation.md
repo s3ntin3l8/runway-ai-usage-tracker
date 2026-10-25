@@ -4,6 +4,13 @@ Baseline: image index `sha256:fd1e442ff3cb8e505ee0a35bf409c4b4d2aac1092ef5cc0efa
 
 The original scan reported 477 matches per architecture (28 Critical, 147 High); 144 reported fixes. Python 3.12.13 and both copies of pip 25.0.1 are replaced/removed. The candidate uses Python 3.12.15, a refreshed Debian Bookworm runtime, no curl, no pip/setuptools/wheel, and no inherited setuid/setgid permissions.
 
+> **The baseline image above was the Debian 12 (Bookworm) build.** The server
+> image moved to **Debian 13 (trixie)** on 2026-10-23 (#855), which re-reviewed
+> the exception set against the new base. `Dockerfile` now pins
+> `python:3.12-slim-trixie` and `node:24-trixie-slim` by digest. The
+> applicability decisions below were re-reviewed in that change; read them
+> against the **current** image, not against the historical Bookworm one.
+
 Critical/High applicability decisions below must be reviewed with the exact-version, per-architecture exception entries. This is not a zero-vulnerability claim. Authoritative Debian tracker data was fetched on 2026-10-10; scanner database identity and all raw reports are retained in audit artifacts.
 
 | Advisory | Runtime applicability decision |
@@ -40,6 +47,13 @@ Critical/High applicability decisions below must be reviewed with the exact-vers
 ## Validation and closure
 
 Before closure, attach the original and replacement audit artifacts, record both replacement architecture digests and image index digest, and confirm public promotion passed the gate. Keep #602 open until the replacement image has actually been published; a source PR alone does not replace released bytes.
+
+> **The table above is a snapshot of one scan, not the live exception set.**
+> The live list is [`image-exceptions.json`](image-exceptions.json) — 14 CVEs —
+> and it is what the release gate actually enforces. The advisories recorded
+> here that are *not* in that file were either fixed by a base-image refresh or
+> re-classified as not applicable. Read the two together: this document is the
+> **narrative**, the JSON is the **policy**.
 
 Evidence collected during implementation includes source searches for FTS/MATCH/arbitrary SQL, native scanf/wide I/O, GSSAPI, GnuTLS, DTLS and subprocess usage, and a non-root candidate import/runtime-library inventory. The standard server smoke check must start with isolated data and exercise `/api/v1/system/health`. Full tests remain required to verify application behavior after the base refresh.
 

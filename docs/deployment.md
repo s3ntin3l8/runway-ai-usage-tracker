@@ -166,7 +166,7 @@ RUNWAY_API_KEY="$INGEST_API_KEY" \
 python3 scripts/sidecar.py
 ```
 
-Pre-built binaries are attached to every [GitHub release](https://github.com/s3ntin3l8/runway-ai-usage-tracker/releases): `Runway-Sidecar-macOS-<version>.zip` and `Runway-Sidecar-Windows-<version>.zip`. See [sidecar.md](sidecar.md) for the desktop app installer flow and payload format.
+Pre-built binaries are attached to every [GitHub release](https://github.com/s3ntin3l8/runway-ai-usage-tracker/releases): the user-facing installers `Runway-Sidecar-macOS-<version>.dmg` and `Runway-Sidecar-Windows-<version>-setup.exe`, plus the portable self-update payloads `Runway-Sidecar-macOS-<version>.zip` and `Runway-Sidecar-Windows-<version>.zip`. See [sidecar.md](sidecar.md) for the desktop app installer flow and [sidecar-build.md](sidecar-build.md) for the asset-naming contract.
 
 The sidecar only needs outbound HTTP — no inbound ports.
 
@@ -175,6 +175,7 @@ The sidecar only needs outbound HTTP — no inbound ports.
 | Provider | Sidecar required? | Notes |
 |----------|:-----------------:|-------|
 | **Claude** | ⚠️ Yes for cookie-based auth | OAuth bearer via `CLAUDE_CODE_OAUTH_TOKEN` works server-only |
+| **Claude Console** | ⚠️ Yes for cookie-based auth | A separate connection from the Claude API one; it authenticates with the platform.claude.com `sessionKey` cookie, so the sidecar supplies it |
 | **Gemini** | ⚠️ Yes | The server reads no `~/.gemini` login; the sidecar pushes the OAuth bundle (the server then refreshes it) and adds local-log enrichment |
 | **GitHub Copilot** | Optional | `GITHUB_TOKEN` or the UI GitHub login works server-only; `gh` CLI logins (`hosts.yml`, keyring) are read by the sidecar |
 | **ChatGPT** | ⚠️ Yes for cookie-based auth | OAuth bearer via `CHATGPT_OAUTH_TOKEN` works server-only |
@@ -196,6 +197,11 @@ The sidecar only needs outbound HTTP — no inbound ports.
 
 ## Configuration
 
+> **`.env.example` is the single env-var contract.** It documents every
+> supported variable, with the default and an explanation. This table lists the
+> ones that decide whether a deployment works; the rest are documented in the
+> template itself.
+
 The relevant env vars apply to both runtimes:
 
 | Variable | Required | Purpose |
@@ -216,7 +222,46 @@ The relevant env vars apply to both runtimes:
 | `SESSION_REMEMBER_DAYS` | optional (default `30`) | Session lifetime when the login uses "remember me" |
 | `RUNWAY_BUILD_SHA` | optional | The commit this build came from, shown in Settings → About. The official Docker image bakes it in at build time; set it by hand for a source or pip install |
 
-For local single-host development the only mandatory variable is `INGEST_API_KEY` (default `sidecar-default-secret` ships in `.env.example`). For any multi-host or Docker deployment, `DB_ENCRYPTION_KEY`, `TLS_TERMINATED`, `CORS_ORIGINS`, and an admin gate (`ADMIN_API_KEY` or `TRUSTED_PROXY_IPS` with forward-auth) become hard requirements; the server fails fast on startup otherwise.
+### Provider limits and overrides
+
+These tune the collectors rather than the deployment. All are optional.
+
+| Variable | Purpose |
+|---|---|
+| `CLAUDE_FREE_LIMIT` | Override the assumed free-tier limit for Claude |
+| `CLAUDE_PRO_LIMIT` | Override the assumed Pro-tier limit for Claude |
+| `CLAUDE_MAX_LIMIT` | Override the assumed Max-tier limit for Claude |
+| `CLAUDE_OAUTH_CLIENT_ID` | Client id used for the Claude OAuth exchange |
+| `ZAI_API_HOST` | Override the zAI API host |
+| `ZAI_QUOTA_URL` | Override the zAI quota endpoint |
+| `OPENCODE_GO_API_KEY` | API key for the OpenCode Go service |
+| `OPENCODE_WORKSPACE_ID` | Workspace id used for OpenCode requests |
+| `BROWSER_PREFERENCE` | Order of browsers to search for cookies. Options: `safari`, `chrome`, `chromium`, `edge`, `firefox` |
+
+### Runtime and storage
+
+| Variable | Purpose |
+|---|---|
+| `APP_PORT` | Port the server listens on (the container exposes `8765`) |
+| `DATABASE_PATH` | Path to the SQLite database file |
+| `LOG_FORMAT` | Log output format |
+| `CREDENTIAL_TOKEN_TTL_SECONDS` | Lifetime of the short-lived, per-account credential tokens `GET /fleet/config` issues to signed/loopback sidecar callers (default `3600`) |
+| `PENDING_CREDENTIAL_PREVIEW_MAX_AGE_SECONDS` | How long quota-only previews for unresolved sidecar credentials stay visible before their values are cleared (default `86400`) |
+| `KEYCHAIN_PROMPT_MODE` | How the sidecar handles OS keychain prompts |
+
+### Token auto-refresh
+
+The server can refresh OAuth tokens it holds. This is **off unless enabled**.
+
+| Variable | Purpose |
+|---|---|
+| `TOKEN_AUTO_REFRESH_ENABLED` | Turn background token auto-refresh on |
+| `TOKEN_AUTO_REFRESH_INTERVAL_SECONDS` | How often the background refresher runs |
+| `TOKEN_AUTO_REFRESH_THRESHOLD_SECONDS` | Refresh a token this long before it expires |
+
+For local single-host development the only mandatory variable is `INGEST_API_KEY` — and `.env.example` ships it **empty**. With it unset the server starts normally and sidecar ingest is simply **disabled**; nothing warns you that ingest is off. The literal `sidecar-default-secret` is only the *insecure-default detection constant* the server uses to recognise a well-known placeholder — it is never shipped as a value. For any multi-host or Docker deployment, `DB_ENCRYPTION_KEY`, `TLS_TERMINATED`, `CORS_ORIGINS`, and an admin gate (`ADMIN_API_KEY` or `TRUSTED_PROXY_IPS` with forward-auth) become hard requirements; the server fails fast on startup otherwise.
+
+Four real settings are **listed in `.env.example`** alongside the rest, all of them commented out: `SESSION_SECRET` (the session-signing key), `SESSION_LIFETIME_HOURS` and `SESSION_REMEMBER_DAYS` (session lifetimes), and `RUNWAY_INSECURE` (disable TLS verification on the sidecar — sidecar-side only). All four are optional; unset, they keep the built-in defaults — a generated signing key, a 12-hour session, a 30-day remembered session, and TLS verification on.
 
 ## Data Collection & Caching
 
@@ -224,7 +269,7 @@ Runway uses **SmartCollector** for intelligent caching.
 
 ### Cache TTL
 
-The built-in default for every registered collector is **15 minutes (900 seconds)**, set in `app/services/collector_manager.py`. There is no longer a per-provider TTL table baked into the code — the schedule is uniform.
+The built-in default for every registered collector is **15 minutes (900 seconds)**. The schedule is set by a per-provider TTL table in `app/services/collector_manager.py` — one entry per registered provider, currently all 900 seconds, so the schedule is uniform in practice but the table is real and is what a future per-provider change would edit.
 
 You can override the polling cadence at two layers:
 
@@ -263,5 +308,4 @@ storage and allocator controls, reproducible benchmarks, and rollout measurement
 ---
 
 See [sidecar.md](sidecar.md) for detailed sidecar configuration and the ingest payload format.
-
-*Last updated: 2026-06-14*
+See [sidecar-build.md](sidecar-build.md) for building and packaging the sidecar.

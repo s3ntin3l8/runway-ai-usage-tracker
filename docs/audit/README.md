@@ -107,4 +107,31 @@ touched.
 | [2026-10-webapp-ui-ux.md](2026-10-webapp-ui-ux.md) | Webapp UI/UX — accessibility, mobile ergonomics, data honesty | 2 P0 and 24 P1 fixed; 4 further P1 found by the strengthened guard and fixed; guardrails added; the P2/P3 backlog filed as issues #948–#953 |
 | [2026-10-sidecar-source-authorization-delivery.md](2026-10-sidecar-source-authorization-delivery.md) | Sidecar sources — the Sources consent model | Frozen snapshot of the delivery of #780; the durable reference is [`../source-consent.md`](../source-consent.md) |
 | [2026-10-sidecar-source-renewal-readiness-781.md](2026-10-sidecar-source-renewal-readiness-781.md) | Sidecar sources — renewal readiness (#781) | Frozen snapshot: implemented mechanisms against the remaining acceptance gates |
-| [2026-10-cicd-edge-release-recovery.md](2026-10-cicd-edge-release-recovery.md) | CI/CD — the edge release failures after #674 and #680 | Frozen incident record |
+| [2026-10-cicd-edge-release-recovery.md](2026-10-cicd-edge-release-recovery.md) | CI/CD — the edge release failures after #674 and #680 | Frozen incident record; the release choreography it describes is now [`../ci-cd.md`](../ci-cd.md) |
+
+## Frozen snapshots
+
+The last three rows are **not** maintained reports. They are point-in-time
+records — an approved plan, a readiness inventory, an incident log — frozen at
+the date they were written. Each carries a banner saying so.
+
+> **If a claim in a frozen snapshot contradicts a current reference document,
+> the reference document wins.** These files record what was true on their date,
+> not what is true now.
+
+| Frozen record | Superseded by |
+|---|---|
+| `2026-10-sidecar-source-authorization-delivery.md` | [`../source-consent.md`](../source-consent.md) — the Sources consent model, who grants it, and what withdrawal does |
+| `2026-10-sidecar-source-renewal-readiness-781.md` | [`../collectors/claude.md`](../collectors/claude.md) — the renewal capability split |
+| `2026-10-cicd-edge-release-recovery.md` | [`../ci-cd.md`](../ci-cd.md) — the release and signing choreography |
+
+## Acceptance evidence is the exception
+
+The rule above — *the report is committed, the evidence stays local* — applies
+to **captures**: screenshots and videos of a running app, which are
+regenerable from a demo instance and carry permanent history weight.
+
+It does **not** apply to the acceptance records in
+[`../evidence/`](../evidence/). Those are the recorded outcomes of past
+verification runs. They are not regenerable — the run happened once — and six
+of them are cited from live issues. They stay in the repository.

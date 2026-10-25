@@ -11,8 +11,8 @@ Authentik/Traefik matrix. Follow [physical-validation.md](physical-validation.md
   `http://127.0.0.1:18653`, dashboard `http://127.0.0.1:18655`. Obtain the PC's
   helper-visible IPv4 and OS/browser versions before allowing its traffic.
 - Use an explicitly controlled domain and fresh HTTP hostnames for **each target,
-  browser and run**. A helper on dev-01 can bind a private LAN address on a
-  shared interface, not a separate physical test VLAN. The
+  browser and run**. A helper on dev-01 can bind `192.0.2.10`; this is a private
+  LAN address on a shared interface, not a separate physical test VLAN. The
   fixture is isolated by process, explicit bind address and client allow-list.
   Use the confirmed PC source IPv4 as a `/32`; the helper's own `/32` may also
   be admitted for controller diagnostics. Membership is checked against the
@@ -38,24 +38,19 @@ confirmed client IP, fresh hostnames and protected certificate paths:
 
 ```bash
 sudo systemd-run --unit=runway603-windows-helper \
-  --property=User=<HELPER_LINUX_USER> --property=AmbientCapabilities=CAP_NET_BIND_SERVICE \
+  --property=User=bjoern --property=AmbientCapabilities=CAP_NET_BIND_SERVICE \
   --property=NoNewPrivileges=yes --property=RuntimeMaxSec=4h \
   --working-directory=/absolute/path/to/helper-worktree \
   /absolute/path/to/helper-worktree/.venv/bin/python \
   -m scripts.security_browser_helper \
-  --bind <HELPER_LAN_IPV4> --dns-port 53 \
-  --allowed-client '<WINDOWS_IPV4>/32' --allowed-client <HELPER_LAN_IPV4>/32 \
+  --bind 192.0.2.10 --dns-port 53 \
+  --allowed-client '<WINDOWS_IPV4>/32' --allowed-client 192.0.2.10/32 \
   --fixture 'sidecar,<FRESH_SIDECAR_FQDN>,http://127.0.0.1:18653' \
   --fixture 'dashboard,<FRESH_DASHBOARD_FQDN>,http://127.0.0.1:18655' \
   --tls-hostname '<TLS_FQDN>' --https-port 19443 \
   --tls-cert /protected/test/fullchain.pem --tls-key /protected/test/tls.key \
   --evidence-dir /protected/test/run-01
 ```
-
-`<HELPER_LAN_IPV4>` is the helper host's own address on the LAN interface the
-fixture binds to. It must be an address the helper can actually bind; a
-documentation-range address such as `192.0.2.0/24` cannot be bound and the
-listener fails with `EADDRNOTAVAIL`.
 
 Only the transient test unit receives the low-port capability. Existing resolver,
 Runway, Authentik, proxy routes, firewall policy and normal DNS settings are not
@@ -87,7 +82,7 @@ NRPT rules; preserve the rule identifiers for removal:
 ```powershell
 $ProbeNames = @('<TLS_FQDN>', '<FRESH_SIDECAR_FQDN>', '<FRESH_DASHBOARD_FQDN>')
 $ProbeRules = foreach ($ProbeName in $ProbeNames) {
-    Add-DnsClientNrptRule -Namespace $ProbeName -NameServers '<HELPER_LAN_IPV4>' `
+    Add-DnsClientNrptRule -Namespace $ProbeName -NameServers '192.0.2.10' `
         -Comment 'Runway #603 isolated helper' -PassThru
 }
 $ProbeRules | Select-Object Name, Namespace, NameServers

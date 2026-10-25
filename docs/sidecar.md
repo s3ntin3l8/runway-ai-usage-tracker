@@ -193,24 +193,47 @@ The **Runway Sidecar** is a lightweight, zero-dependency Python script that coll
 You can run the same daemon two ways:
 
 1. **`scripts/sidecar.py`** — invoke the Python source directly. Best when you already have a Python toolchain checked out.
-2. **`runway-sidecar-cli`** — the precompiled single-file binary from `Runway-Sidecar-Linux-CLI.tar.gz`. Drop it into a slim container or a server with no Python install. Every flag below works against either entry point — substitute `./runway-sidecar-cli` for `python3 scripts/sidecar.py`.
+2. **`runway-sidecar-cli`** — the precompiled single-file binary from `Runway-Sidecar-Linux-CLI-<version>.tar.gz`. Drop it into a slim container or a server with no Python install. Every flag below works against either entry point — substitute `./runway-sidecar-cli` for `python3 scripts/sidecar.py`.
 
 ## Quick Start
 
 ```bash
 # 1. Create config file (auto-created on first run)
-python3 scripts/sidecar.py
+python3 scripts/sidecar.py --run-once
 # Edit ~/.config/runway/sidecar/config.json with your API URL and key
 
-# 2. Test without pushing
-python3 scripts/sidecar.py --dry-run
+# 2. Run once and exit (collect + push, then stop)
+python3 scripts/sidecar.py --run-once
 
-# 3. Run once
-python3 scripts/sidecar.py
-
-# 4. Run as daemon (recommended)
+# 3. Run as daemon (recommended) — this is also the default when no mode flag is given
 python3 scripts/sidecar.py --daemon
 ```
+
+### CLI reference
+
+The complete flag set. Anything not listed here is **not** a flag — the sidecar
+exits with an argparse error (status 2) on an unknown one.
+
+| Flag | Effect |
+|---|---|
+| `--config PATH` | Use `PATH` instead of the default `config.json` location. |
+| `--run-once` | Run a single collection cycle and exit. |
+| `--daemon` | Run continuously with periodic collection. **This is the default** when no mode flag is given. |
+| `--keep-alive` | Daemon mode: renew the Antigravity (agy) access token with `agy models` when it lapses, and refresh the xAI (Grok), Claude Code and Codex (ChatGPT) logins in their CLIs' own credential files before they expire. Opt-in; `"keep_alive": true` in `config.json` is the same switch. |
+| `--self-update` (alias `--update`) | Download, verify and install the latest build, then exit. |
+| `--rollback` | Swap back the build kept by the last self-update, then exit. |
+| `--pair LINK_OR_SERVER [CODE]` | Pair with a Runway server using a one-time code from the dashboard (*Fleet → Add sidecar → Pair*). Accepts a `runway-sidecar://pair?…` link or `SERVER_URL CODE`. Writes `api_url`/`api_key` to the config, then exits. |
+| `--version` | Print the sidecar version and exit. |
+| `--probe-minimax-code` | Read-only diagnostic: report what the sidecar can read from the MiniMax Code runtime store on this host. Exits 0 when the store was found and understood, 1 when there is nothing to read or the schema has drifted. |
+| `--verify-update ARCHIVE --bundle BUNDLE` | Verify an update archive against a Sigstore bundle **without installing it**. Exits 0 on success, 1 on failure. |
+| `--authorize-keychain-source SOURCE` | Authorize one catalogued Keychain source on this host, then exit. `SOURCE` is one of the names the source catalogue knows. macOS only, and only from the packaged build. |
+| `--authorize-claude-keychain` | Authorize one Claude Code Keychain read on macOS, then exit — no desktop startup and no background renewal. |
+| `--runway-keychain-worker` | The Keychain IPC worker: read one request from stdin, write the answer to stdout, repeat. This is the sidecar's own channel, not a user-facing mode. |
+
+Two separate, read-only diagnostics are parsed before the main parser:
+`--probe-minimax-code` and `--verify-update`. Three more commands are matched
+before it and never reach argparse: `--authorize-keychain-source`,
+`--authorize-claude-keychain` and `--runway-keychain-worker`.
 
 ## Features
 
@@ -220,7 +243,7 @@ python3 scripts/sidecar.py --daemon
 - **Offline Queue:** Caches metrics locally when server unreachable
 - **Retry Logic:** Exponential backoff for failed pushes
 - **PID File:** Prevents multiple daemon instances
-- **13 Providers:** Claude, GitHub Copilot, Gemini, ChatGPT, OpenRouter, MiniMax, OpenCode, Ollama, zAI, Kimi, Kimi K2, Antigravity (quota via server-side API collector; sidecar ships the OAuth token and token/cost enrichment only)
+- **16 Providers:** Claude, Claude Console, GitHub Copilot, Gemini, ChatGPT, OpenRouter, MiniMax, OpenCode, Ollama, zAI, Kimi API, Kimi Coding, Kimi K2, DeepSeek, xAI (Grok), Antigravity (quota via server-side API collector; sidecar ships the OAuth token and token/cost enrichment only). See [`collectors/README.md`](collectors/README.md) for the provider ↔ module ↔ rule map, and note that two further sources are **sidecar-only** and are not server providers: `hermes` and `minimax_code`.
 - **Event Batching:** Per-message events (Claude, Codex, Gemini, OpenCode, MiniMax Code) shipped in 1000-event batches
 - **Persistent Watermark:** `~/.config/runway-sidecar/event-watermark.json` tracks last-pushed timestamp per (provider, account). The MiniMax Code extractor keeps an id-based cursor of its own in `minimax_code_watermark.json` next to the sidecar's state, because the runtime's request timestamps are not globally monotonic — see [`docs/collectors/minimax.md`](collectors/minimax.md#minimax-code-traffic)
 - **HMAC-SHA256 Signing:** Secure payload verification
@@ -249,13 +272,20 @@ The default location for Runway's (and Sidecar's) configuration files is platfor
   "retry_backoff_seconds": 5,
   "queue_max_size_mb": 10,
   "log_level": "INFO",
-  "log_file_enabled": true,
-  "auto_update": false,
-  "keep_alive": false,
-  "claude_config_dirs": [],
-  "codex_home": []
+  "log_file_enabled": true
 }
 ```
+
+Two more keys are read when present:
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `auto_update` | `true` \| `false` | **absent** | An explicit value **overrides** the server toggle and the dashboard's per-sidecar override — `true` always auto-installs, `false` never does. **Omitting the key defers to the server toggle**; it does not mean "off". |
+| `keep_alive` | `true` \| `false` | `false` | Enables the keep-alive renewers (Antigravity, xAI, Claude Code, Codex). Equivalent to `--keep-alive`. |
+
+`claude_config_dirs` and `codex_home` are also accepted as config keys (a list or a
+comma-separated string) and are documented under *Logins in a custom directory*
+below. They are not part of `DEFAULT_CONFIG`, so they have no default value.
 
 **Log level from the dashboard.** `log_level` is read once at startup, but you can raise it without touching the machine: a sidecar's **Settings** dialog (Fleet → Settings) has a **Logging** section with a **Log level** list (*Use sidecar config* / Debug / Info / Warning / Error). The server sends it as `log_level` on every check-in and the sidecar applies it immediately, no restart; read the output with **Logs** on the card. *Use sidecar config* (or **Reset** under a Debug banner) puts the `config.json` level back. The override is not written to the config, so a config rewrite cannot undo it, and it stays until you reset it — the card shows a `debug logging` badge meanwhile. The sidecar reports the level it logs at (`log_level`); builds that predate this (they report nothing) get an explanation and an **Update it** button instead of the control. The tray app takes the override too; its own base level is INFO.
 
@@ -263,14 +293,46 @@ The default location for Runway's (and Sidecar's) configuration files is platfor
 
 The sidecar's polling cadence is server-controlled (via the `poll_providers` field returned from `/api/v1/fleet/ingest`); there is no local `interval_seconds` or `providers` config. Configure per-provider intervals and enable/disable in the Runway dashboard's fleet settings. `poll_providers` lists the enabled providers, the passive ones (cards present but no config row), and the sidecar-only event providers (`hermes`, whose events are filed under the providers it calls, and `minimax_code`, the MiniMax Code runtime ledger, whose events are filed under `minimax`); the last is a scheduling id only, never shown as a provider. It always follows the fleet default interval (there is no per-provider setting for it) and keeps running when every real provider is disabled.
 
+### Host environment variables
+
+The sidecar reads a small set of **host-side** environment variables. These are
+a different contract from the server's `.env` template — the sidecar runs on
+the *workstation*, so these are set in the shell, in a systemd unit, or in a
+launch agent.
+
+| Variable | Effect |
+|---|---|
+| `RUNWAY_CONFIG_DIR` | Absolute path override for the config directory. The sidecar config is then expected at `<RUNWAY_CONFIG_DIR>/sidecar/config.json`. |
+| `RUNWAY_API_URL` | Server URL, overriding `api_url` in `config.json`. |
+| `RUNWAY_API_KEY` | HMAC ingest key, overriding `api_key` in `config.json`. |
+| `RUNWAY_CA_BUNDLE` | Path to a CA bundle used to verify the server's TLS certificate. `SSL_CERT_FILE` is also honoured as a process-wide trust override. |
+| `RUNWAY_INSECURE` | `1` disables TLS certificate verification entirely. HMAC still authenticates payloads, but the channel is no longer confidential — prefer a real CA bundle. |
+| `SSL_CERT_FILE` | Explicit process-wide trust override. An invalid path makes verification fail. |
+| `RUNWAY_UPDATE_CHANNEL` | Overrides the update channel (`stable` / `beta` / `edge`) for this host. |
+| `CLAUDE_CONFIG_DIR` | Comma-separated extra Claude Code state directories to search, **in addition to** `~/.claude`. |
+| `CODEX_HOME` | Comma-separated extra Codex state directories to search, **in addition to** `~/.codex`. |
+| `OPENCODE_DB` | Path to the opencode SQLite event database, when it is not in the default location. |
+| `GROK_HOME` | Home directory of the Grok CLI, when it is not `~/.grok`. |
+| `GROK_OAUTH_TOKEN` | xAI access token for the `xai` collector. **This is a server-side registry variable and is not listed in the server's `.env.example`.** |
+| `HERMES_HOME` | Home directory of the Hermes agent, when it is not `~/.hermes`. Hermes is a **sidecar-only** source — the server does not list it as a provider. |
+| `MINIMAX_CODE_HOME` | Home directory of the MiniMax Code runtime. |
+| `MINIMAX_DATA_DIR` | Data directory of the MiniMax Code runtime. |
+
+> Use the `claude_config_dirs` / `codex_home` **config keys** rather than the
+> environment variables when the sidecar runs as a service, because a service
+> does not inherit your shell's environment.
+
 ## Usage
 
 ### One-Shot Mode
 
 Run once and exit:
 ```bash
-python3 scripts/sidecar.py
+python3 scripts/sidecar.py --run-once
 ```
+
+> Without a mode flag the sidecar runs as a **daemon**. `--run-once` is what
+> makes it collect a single cycle and exit.
 
 ### Daemon Mode
 
@@ -395,7 +457,6 @@ launchctl start com.runway.sidecar
 | **Ollama** | Session cookie | `OLLAMA_SESSION_TOKEN` or browser cookie |
 | **Kimi K2** | API key | `KIMI_K2_API_KEY` |
 | **Antigravity** | OAuth token (server-side API collector) | sidecar scrapes `~/.gemini/antigravity-cli/antigravity-oauth-token` — or, where agy keeps no token file, the `gemini:antigravity` Windows Credential Manager entry and the macOS `gemini`/`antigravity` login Keychain entry — and ships it to the server; server queries the Code Assist cloud API for quota. Sidecar emits only token/cost enrichment (never quota). |
-| **Antigravity** | OAuth token (server-side API collector) | sidecar scrapes `~/.gemini/antigravity-cli/antigravity-oauth-token` — or, on macOS with agy 1.4.3+, the login Keychain entry `gemini`/`antigravity` — and ships it to the server; server queries the Code Assist cloud API for quota. Sidecar emits only token/cost enrichment (never quota). |
 
 ### The Antigravity CLI credential on macOS
 
@@ -480,7 +541,7 @@ Example queue file:
 1. Sidecar extracts tokens, cards, and per-message events from local files/keychain/IDE logs
 2. Signs payload with `api_key` using HMAC-SHA256
 3. Sends to server via `POST /api/v1/fleet/ingest`
-4. Server verifies signature, stores tokens in memory cache (30-min TTL), upserts cards into `latest_usage`, and ingests events into `usage_events` (deduped by `(provider_id, account_id, event_id)`)
+4. Server verifies signature, stores tokens in memory cache (30-min TTL), upserts cards into `latest_usage`, and ingests events into `usage_events` (deduped by `(provider_id, event_id)` — see [`migration-v3.md`](migration-v3.md))
 5. Server makes any required API calls using cached tokens
 
 **Security:**
@@ -499,9 +560,14 @@ View logs:
 # Follow log
 tail -f ~/.config/runway/sidecar/sidecar.log
 
-# Verbose mode (one-shot)
-python3 scripts/sidecar.py --verbose --dry-run
+# Raise the level for one cycle (the level lives in config.json, not a flag)
+#   "log_level": "DEBUG"
+python3 scripts/sidecar.py --run-once
 ```
+
+There is no `--verbose` flag. To get debug output, set `"log_level": "DEBUG"` in
+`config.json` — or raise it live from the dashboard without touching the machine
+(see *Log level from the dashboard* above).
 
 ### Browser cookie stores
 
@@ -562,12 +628,16 @@ display rather than filtered.
 
 ### Sidecar not collecting
 ```bash
-# Test specific provider
-python3 scripts/sidecar.py --provider anthropic --dry-run --verbose
+# Run a single collection cycle and read the log
+python3 scripts/sidecar.py --run-once
 
-# Check env vars
+# Check the provider credentials the host exposes
 env | grep -E "(GITHUB|ZAI|KIMI|CLAUDE)"
 ```
+
+There is no `--provider` flag — the sidecar has no per-provider selector. Use
+the dashboard's Fleet settings to enable or disable providers, or the
+`--probe-minimax-code` diagnostic to inspect one host-side store.
 
 ### Push failures
 - Verify API URL is reachable: `curl http://server:8765/api/v1/system/health`
@@ -618,31 +688,7 @@ rm ~/.config/runway/sidecar/sidecar.pid
 python3 scripts/sidecar.py --daemon
 ```
 
----
-
-See [Collector Docs](../docs/collectors/) for provider-specific setup details.
-
-*Last updated: 2026-05-09*
-
-### Update resource budgets
-
-Portable update archives are limited to **256 MiB**, signature bundles to **1 MiB**,
-checksum responses to **4 KiB**, and release metadata to **4 MiB**. Current signed
-edge payloads measured on 2026-10-10 are Linux CLI 52,153,543 bytes, Linux tray
-59,861,976 bytes, Windows 38,049,361 bytes, and macOS 92,751,463 bytes. Archives
-therefore have nearly three times the largest current package's size in headroom.
-
-Actual bytes are counted even if Content-Length is absent or incorrect. Overflow
-is a permanent failure: the response closes, temporary bytes are removed, and the
-installed copy/rollback slot remain unchanged. There is no operator override.
-Local archives are rejected before hashing when oversized. Release packaging
-checks the same archive/bundle budgets so legitimate packages cannot silently
-outgrow the updater. A future budget increase must update the documented limits
-and ship through a reviewed change. Signature verification remains mandatory.
-
-Release signing uses Cosign 3 modern bundles. Before publishing, CI verifies every portable archive with the same Python verifier and exact main-branch identity used by the updater. Older legacy bundles fail closed; a checksum cannot substitute for a valid signature.
-
-### Extra login directories from Fleet
+## Extra login directories from Fleet
 
 Fleet → a machine's Settings → **Login directories** accepts Claude Code and Codex
 state directories, one per line. These are additions to standard locations,
@@ -667,7 +713,7 @@ The server never expands or opens these paths. Tray collection uses the same
 settings; tray keep-alive remains unsupported (#548), and custom macOS keychain
 renewal remains tracked separately (#526).
 
-### macOS Claude Code Keychain renewal (#526)
+## macOS Claude Code Keychain renewal (#526)
 
 Claude Code Keychain discovery remains read-only by default. To allow this
 machine to renew those logins, add **`"claude_keychain_renewal": true`** to its
@@ -721,3 +767,14 @@ native credential compatibility. Keep #526 open until this acceptance passes.
 
 The remaining native renewal acceptance is tracked in
 [#750](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/750).
+
+---
+
+## Related
+
+- [Collector docs](collectors/) — provider-specific setup details.
+- [Source consent](source-consent.md) — which local sources may be read, and who grants that.
+- [Sidecar build and packaging](sidecar-build.md) — building the sidecar from source, packaging, signing and update budgets.
+- [Sidecar memory measurements](sidecar-memory.md) — reproducible memory comparisons.
+- [Server memory](server-memory.md) — the server-side counterpart.
+- [Security model](SECURITY.md) — trust policy for the fleet ingest channel.

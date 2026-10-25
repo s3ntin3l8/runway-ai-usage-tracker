@@ -215,12 +215,11 @@ auth) the weekly card is the primary quota and stays.
 ## Related Files
 
 | File | Purpose |
-|------|---------|
-| `app/services/collectors/kimi_coding.py` | Main collector |
-| `app/services/collectors/kimi_api.py` | Moonshot Open Platform balance |
-| `app/services/collectors/kimi_k2.py` | Kimi K2 (kimi-k2.ai) credits |
-| `scripts/migrate_kimi_coding_key.py` | Move misfiled API key to the right slot |
-| `scripts/cleanup_opencode_kimi_card.py` | Remove stale opencode-derived card |
+|---|---|
+| `app/services/collectors/kimi_coding.py` | Collector entry point |
+| `app/services/collectors/base.py` | Collector base class |
+| `scripts/sidecar.py` | Sidecar credential rules and event dispatch |
+| `scripts/migrate_kimi_coding_key.py` | One-shot migration of the key stored in the `session_cookie` slot |
 
 ## References
 

@@ -7,6 +7,8 @@ make install    # venv + Python deps + webapp deps + git hooks (pre-commit & pre
 ```
 
 On native Windows, install Python 3.12+ and Node.js 22.22.2+ (including npm 11.11+).
+The supported Node versions are `^22.22.2 || ^24.15.0 || >=26.0.0` — npm **rejects**
+Node 23.x and Node 24.0–24.14.
 `winget install OpenJS.NodeJS.LTS` puts Node in the per-user PATH, and that
 only applies to *new* processes — start a fresh shell (or a fresh agent
 session) before `node`/`npm` resolve. Then run these commands in PowerShell
@@ -17,7 +19,9 @@ python scripts/dev_checks.py install
 python scripts/dev_checks.py gate
 ```
 
-Individual commands are `lint`, `test`, `web-test`, and `install-hooks`; the
+Individual commands are `lint`, `mypy`, `unit`, `test`, `web-lint`, `web-test`,
+`install-hooks`, `install-python`, `gate`, `test-shard`, `record-shard-weights`,
+`test-windows` and `remove-worktree`; the
 same runner also works on Linux and macOS. It uses this checkout's `.venv`,
 sets UTF-8 mode for Python child processes, installs the lockfile dependency
 graph with `npm ci`, and gives pytest fresh owned home, config, app-data and
@@ -59,10 +63,17 @@ and it is the only thing that tells npm whether to install the glibc or the
 musl build of `sharp`, `rollup` and `rolldown` - without it npm installs both,
 which grew `node_modules/@img` from 19M to 37M on a glibc host. npm 10 does
 not write the field at all, so `npm install --package-lock-only` under npm 10
-silently removes it from all 35 platform entries; npm 11.11 and later write
+silently removes it from all 43 platform entries; npm 11.11 and later write
 it. That is why the npm version is pinned rather than left to whatever happens
 to be installed. `tests/unit/test_webapp_lockfile.py` fails if the field goes
 missing.
+
+The lockfile currently carries the field on **43** entries — 16 `@img/sharp-*`,
+13 `@rollup/rollup-*`, 6 `@rolldown/binding-*`, 4 `@tailwindcss/oxide-*` and 4
+`lightningcss-*`. The test pins **35** of them — the 16 sharp, 13 rollup and 6
+rolldown packages — so a regeneration that drops the field from one of those
+still fails. The eight newer oxide and lightningcss entries are not in the
+fixture, so stripping the field from them alone would not.
 
 The native Windows CI job runs the suite as four parallel shards. The same
 split is available locally:

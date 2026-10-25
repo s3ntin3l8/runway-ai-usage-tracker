@@ -1,40 +1,131 @@
 # API Reference
 
-All API routes are under `/api/v1/`.
+All server API routes are under `/api/v1/`. The one exception is the sidecar's
+own loopback settings API, which is served by the sidecar process on the
+machine that holds the credentials — it is not a server route and has no
+`/api/v1/` prefix. See
+[Local sidecar Keychain source settings](#local-sidecar-keychain-source-settings).
+
+## Auth
+
+Every route is protected by one of the schemes below. The `Auth` column of
+every table names the scheme a route accepts.
+
+| Scheme | Applies to | Carried as |
+|--------|------------|-----------|
+| `Admin` | every route marked `Admin` | `X-Admin-Key` header, the `runway_session` cookie, or a trusted proxy's identity header |
+| `HMAC` | the sidecar-facing fleet routes | `X-Signature` + `X-Timestamp` |
+| `Device HMAC` | `POST /api/v1/fleet/source-sync` | the same headers, signed with an enrolled device key and carrying `X-Runway-Device-Id` |
+| `Optional HMAC` | `GET /api/v1/fleet/config` | the same headers; an unsigned caller gets the redacted view |
+| `Public` | routes marked `Public` | nothing |
+
+### Admin authentication
+
+`require_admin_key` accepts any one of:
+
+- `X-Admin-Key: <ADMIN_API_KEY>` — the header path, for scripts and API clients;
+- the `runway_session` cookie minted by `POST /api/v1/auth/session`;
+- an identity header asserted by a forward-auth proxy (`X-Forwarded-User` by
+  default, `Remote-User` as a fallback) — honoured only when the request's
+  source IP is in `TRUSTED_PROXY_IPS` and the asserted user passes
+  `FORWARD_AUTH_ALLOWED_USERS` / `FORWARD_AUTH_ALLOWED_GROUPS`;
+- localhost trust: a loopback client against a loopback-bound server is an
+  administrator without any credential;
+- an instance with no `ADMIN_API_KEY` configured and a loopback bind, which is
+  open by design.
+
+Anything else is `403` ("Invalid or missing admin key"). See
+[SECURITY.md](SECURITY.md) and [forward-auth.md](forward-auth.md).
+
+### Fleet ingest authentication
+
+`POST /api/v1/fleet/ingest`, `POST /api/v1/fleet/credentials/manifest` and
+`POST /api/v1/fleet/source-sync` are authenticated with an HMAC-SHA256
+signature over the timestamp and the raw body, sent as `X-Signature` and
+`X-Timestamp`. `GET /api/v1/fleet/config` accepts the same scheme optionally:
+an unsigned caller gets the redacted public view, a signed caller gets the
+account data for its own `sidecar_id`. A device-enrolled sidecar signs with its
+own device key and adds `X-Runway-Device-Id`; a shared ingest key can neither
+authenticate a device header nor claim a reserved `device-<32 lowercase hex>`
+registry identity.
+
+### Forward auth / SSO
+
+Runway ships no built-in OIDC client. A forward-auth proxy in front of it does
+the real authentication and asserts the identity in a header; Runway trusts
+that header only from an IP in `TRUSTED_PROXY_IPS`, which is the actual
+security boundary. See [forward-auth.md](forward-auth.md) for the Authentik
+walkthrough.
+
+### Which routes need administrator authentication
+
+Every `/api/v1/usage/*` route, the fleet sidecar inventory and detail routes,
+the system state and provider configuration routes, and the GitHub OAuth
+status routes require administrator authentication in network mode. Localhost
+trust remains available with valid local `Host` and browser `Origin` headers.
+
+The public bootstrap endpoints are `/api/v1/system/settings`,
+`/api/v1/system/health` and `/api/v1/system/sidecar-downloads`; fleet
+`/api/v1/fleet/config` retains its redacted public view and signed sidecar
+behavior.
+
+### Admin session (browser)
+
+The dashboard authenticates via an HttpOnly, `SameSite=Strict` session cookie.
+Scripts and
+API clients can keep sending the `X-Admin-Key` header instead. See [SECURITY.md](SECURITY.md)
+for cookie flags, `SESSION_SECRET`, and session lifetime.
+
+| Method | Route | Auth | Description |
+|--------|-------|------|-------------|
+| `POST` | `/api/v1/auth/session` | Public | Validate `ADMIN_API_KEY` and set the session cookie (`remember` extends lifetime). Rate-limited 10/min. When no admin key is configured the instance is open |
+| `POST` | `/api/v1/auth/logout` | Public | Clear this browser's session cookie (other sessions unaffected) |
+| `POST` | `/api/v1/auth/revoke-all` | Admin | Rotate `SESSION_SECRET` — invalidates every session everywhere (6/min) |
+
+### GitHub Device Flow
+
+| Method | Route | Auth | Description |
+|--------|-------|------|-------------|
+| `GET` | `/api/v1/auth/github/init` | Admin | Begin GitHub OAuth Device Flow — starts a device-flow login that ends with this server storing a GitHub credential |
+| `POST` | `/api/v1/auth/github/poll` | Admin | Poll for completion — on success this persists a GitHub access token to disk |
+| `GET` | `/api/v1/auth/github/status` | Admin | Current GitHub auth state |
+| `POST` | `/api/v1/auth/github/logout` | Admin | Discard stored GitHub token |
+
+See [Sidecar Documentation](sidecar.md) for ingest authentication and payload format.
 
 ## Usage & history
 
-| Method | Route | Description |
-|--------|-------|-------------|
-| `GET` | `/api/v1/usage/limits` | All current quota cards (instant, from in-memory registry) |
-| `GET` | `/api/v1/usage/sources` | Distinct sidecar IDs with message usage events |
-| `GET` | `/api/v1/usage/fleet` | Fleet HUD: critical gauge + secondary limits per (provider, account), with `window_aggregations.longest` per-model/per-sidecar splits, plus `blocked_sources` (credential sources a machine could not read) and `merged_accounts` (the accounts that were merged away, and the account each of them became — a merged-away account holds no credential and has no quota card, so it is not an entry of its own) |
-| `GET` | `/api/v1/usage/cumulative` | Usage totals across sidecars (lifetime/year/month/day); `since`/`until` narrow to a window and optional `sidecar_id` scopes to one source |
-| `GET` | `/api/v1/usage/forecast` | Theil-Sen projection to reset; `include_series=true` returns drill-down points |
-| `GET` | `/api/v1/usage/history/windows` | Paginated closed quota windows |
-| `GET` | `/api/v1/usage/history/snapshots` | Paginated snapshot rows with per-series delta |
-| `GET` | `/api/v1/usage/history/chart` | Time-series data for percent/tokens/cost visualisations; optional `sidecar_id` scopes token/cost bars, while `group=provider` collapses bars to one segment per provider |
-| `GET` | `/api/v1/usage/history/window-detail` | Fill-up series + by-model breakdown for one window |
-| `GET` | `/api/v1/usage/history/deltas` | Event-sourced consumption deltas; optional `sidecar_id` scopes to one source |
-| `GET` | `/api/v1/usage/events` | Recent event tail for (provider, account) |
-| `GET` | `/api/v1/usage/events/range` | Earliest/latest event timestamps for (provider, account), optionally scoped by `sidecar_id` |
-| `GET` | `/api/v1/usage/window-history` | Closed-window history with per-model & per-sidecar splits; optional `series_model_id` and `series_variant` scope to a quota series and retain legacy unscoped rows; for scoped requests, an omitted/empty variant means `default` |
-| `GET` | `/api/v1/usage/heatmap` | 7×24 hour-of-day activity grid; optional `sidecar_id` and `exclude_cache` filters |
-| `GET` | `/api/v1/usage/sessions` | Top-N sessions (`sort_by=tokens` or `recent`), optionally scoped by `sidecar_id` |
-| `GET` | `/api/v1/usage/sessions/paginated` | Paginated session browser with server-side sort (`sort_by=recent\|tokens\|duration\|messages\|cost`, `sort_dir=asc\|desc`) and optional `project` / `sidecar_id` filters |
-| `GET` | `/api/v1/usage/projects` | Distinct project names seen in events, optionally scoped by `sidecar_id` |
-| `GET` | `/api/v1/usage/top-projects` | Top projects ranked by `metric=tokens\|cost\|sessions`, optionally scoped by `sidecar_id` |
-| `GET` | `/api/v1/usage/top-tools` | Top tools by invocation volume, optionally scoped by `sidecar_id` |
-| `GET` | `/api/v1/usage/top-models` | Cross-provider Top Models ranked by `metric=tokens\|cost`, optionally scoped by `sidecar_id` |
-| `GET` | `/api/v1/usage/top-sessions` | Cross-provider Top Sessions ranked by `metric=tokens\|cost`, optionally scoped by `provider_id`/`sidecar_id` — the sessions behind a usage spike, across every provider |
-| `GET` | `/api/v1/usage/top-hosts` | Cross-provider Top Hosts ranked by `metric=tokens\|cost`, optionally scoped by `provider_id`/`sidecar_id` — the machines that pushed the events |
-| `GET` | `/api/v1/usage/source-apps` | Client apps that produced events, ranked by `metric=tokens\|cost`; several apps can share one provider, so this is what says which app spent the quota. Optionally scoped by `provider_id`/`account_id`/`sidecar_id` |
-| `GET` | `/api/v1/usage/global-stats` | Global cross-provider snapshot; optional `sidecar_id` and `exclude_cache` filters |
-| `GET` | `/api/v1/usage/cost-forecast` | MTD cost + 7-day burn extrapolated to EOM; optional `exclude_cache` |
-| `GET` | `/api/v1/usage/anomalies` | Z-score spike detection vs. historical mean; omitted/empty `sidecar_id` selects the all-source rollup, while a non-empty ID selects that source |
-| `GET` | `/api/v1/usage/archived-providers` | Lifetime stats for archived providers, kept out of the main fleet view |
-| `POST` | `/api/v1/usage/reset/{provider}` | Clear terminal failure state for a provider |
-| `POST` | `/api/v1/usage/collect/{provider}` | Force immediate re-collection for one provider |
+| Method | Route | Auth | Description |
+|--------|-------|------|-------------|
+| `GET` | `/api/v1/usage/limits` | Admin | All current quota cards, read from the `LatestUsage` table (an empty table falls back to an in-memory collection) |
+| `GET` | `/api/v1/usage/sources` | Admin | Distinct sidecar IDs (`sidecar_ids`) and client apps (`source_apps`) with message usage events |
+| `GET` | `/api/v1/usage/fleet` | Admin | Fleet HUD: critical gauge + secondary limits per (provider, account), with `window_aggregations.longest` per-model/per-sidecar splits, plus `blocked_sources` (credential sources a machine could not read) and `merged_accounts` (the accounts that were merged away, and the account each of them became — a merged-away account holds no credential and has no quota card, so it is not an entry of its own) |
+| `GET` | `/api/v1/usage/cumulative` | Admin | Usage totals across sidecars (lifetime/year/month/day); `since`/`until` narrow to a window and optional `sidecar_id` scopes to one source |
+| `GET` | `/api/v1/usage/forecast` | Admin | Theil-Sen projection to reset; `include_series=true` returns drill-down points |
+| `GET` | `/api/v1/usage/history/windows` | Admin | Paginated closed quota windows |
+| `GET` | `/api/v1/usage/history/snapshots` | Admin | Paginated snapshot rows with per-series delta |
+| `GET` | `/api/v1/usage/history/chart` | Admin | Time-series data for percent/tokens/cost visualisations; optional `sidecar_id` scopes token/cost bars, while `group=provider` collapses bars to one segment per provider |
+| `GET` | `/api/v1/usage/history/window-detail` | Admin | Fill-up series + by-model breakdown for one window |
+| `GET` | `/api/v1/usage/history/deltas` | Admin | Event-sourced consumption deltas; optional `sidecar_id` scopes to one source |
+| `GET` | `/api/v1/usage/events` | Admin | Recent event tail for (provider, account) |
+| `GET` | `/api/v1/usage/events/range` | Admin | Earliest/latest event timestamps for (provider, account), optionally scoped by `sidecar_id` |
+| `GET` | `/api/v1/usage/window-history` | Admin | Closed-window history with per-model & per-sidecar splits; optional `series_model_id` and `series_variant` scope to a quota series and retain legacy unscoped rows; for scoped requests, an omitted/empty variant means `default` |
+| `GET` | `/api/v1/usage/heatmap` | Admin | 7×24 hour-of-day activity grid; optional `sidecar_id` and `exclude_cache` filters |
+| `GET` | `/api/v1/usage/sessions` | Admin | Top-N sessions (`sort_by=tokens` or `recent`), optionally scoped by `sidecar_id` |
+| `GET` | `/api/v1/usage/sessions/paginated` | Admin | Paginated session browser with server-side sort (`sort_by=recent\|tokens\|duration\|messages\|cost`, `sort_dir=asc\|desc`) and optional `project` / `sidecar_id` filters |
+| `GET` | `/api/v1/usage/projects` | Admin | Distinct project names seen in events, optionally scoped by `sidecar_id` |
+| `GET` | `/api/v1/usage/top-projects` | Admin | Top projects ranked by `metric=tokens\|cost\|sessions`, optionally scoped by `sidecar_id` |
+| `GET` | `/api/v1/usage/top-tools` | Admin | Top tools by invocation volume, optionally scoped by `sidecar_id` |
+| `GET` | `/api/v1/usage/top-models` | Admin | Cross-provider Top Models ranked by `metric=tokens\|cost`, optionally scoped by `sidecar_id` |
+| `GET` | `/api/v1/usage/top-sessions` | Admin | Cross-provider Top Sessions ranked by `metric=tokens\|cost`, optionally scoped by `provider_id`/`sidecar_id` — the sessions behind a usage spike, across every provider |
+| `GET` | `/api/v1/usage/top-hosts` | Admin | Cross-provider Top Hosts ranked by `metric=tokens\|cost`, optionally scoped by `provider_id`/`sidecar_id` — the machines that pushed the events |
+| `GET` | `/api/v1/usage/source-apps` | Admin | Client apps that produced events, ranked by `metric=tokens\|cost`; several apps can share one provider, so this is what says which app spent the quota. Optionally scoped by `provider_id`/`account_id`/`sidecar_id` |
+| `GET` | `/api/v1/usage/global-stats` | Admin | Global cross-provider snapshot; optional `sidecar_id` and `exclude_cache` filters |
+| `GET` | `/api/v1/usage/cost-forecast` | Admin | MTD cost + 7-day burn extrapolated to EOM; optional `exclude_cache` |
+| `GET` | `/api/v1/usage/anomalies` | Admin | Z-score spike detection vs. historical mean; omitted/empty `sidecar_id` selects the all-source rollup, while a non-empty ID selects that source |
+| `GET` | `/api/v1/usage/archived-providers` | Admin | Lifetime stats for archived providers, kept out of the main fleet view |
+| `POST` | `/api/v1/usage/reset/{provider}` | Admin | Clear terminal failure state for a provider |
+| `POST` | `/api/v1/usage/collect/{provider}` | Admin | Force immediate re-collection for one provider |
 
 For `/usage/cumulative`, `by_sidecar` normally contains per-source totals alongside
 the all-source total. When `sidecar_id` is supplied, the top-level bucket is
@@ -57,64 +148,133 @@ attributable and are left out of the ranking.
 
 ## Fleet / Ingestion
 
-| Method | Route | Description |
-|--------|-------|-------------|
-| `POST` | `/api/v1/fleet/ingest` | Push metrics + events from a sidecar (HMAC-SHA256 signed, 600/min/IP) |
-| `GET` | `/api/v1/fleet/sidecars` | List all registered sidecars |
-| `GET` | `/api/v1/fleet/sidecars/{id}` | Single sidecar details |
-| `PATCH` | `/api/v1/fleet/sidecars/{id}` | Update custom name or tags (admin) |
-| `DELETE` | `/api/v1/fleet/sidecars/{id}` | Remove sidecar from registry (admin) |
-| `POST` | `/api/v1/fleet/sidecars/{id}/pause` | Pause collection on a sidecar (admin) |
-| `PUT` | `/api/v1/fleet/sidecars/{id}/settings` | Override the fleet-wide auto-update flag and/or update channel for one sidecar, or set its log level — body `{"auto_update": true\|false\|null, "update_channel": "stable"\|"beta"\|"edge"\|null, "log_level": "DEBUG"\|"INFO"\|"WARNING"\|"ERROR"\|null}` (the level is case-insensitive; an unknown one is `422`; delivered as `log_level` on the ingest response, `null` = the sidecar's own level, applied without a restart; the list adds `log_level_desired` and the sidecar-reported `log_level`). A key that is left out stays as it is; `null` clears that override so the sidecar follows the fleet again. An unknown channel is `422`. Delivered as `sidecar_auto_update` / `sidecar_update_channel` on its next ingest response; the response echoes the overrides and the effective values. The sidecar list adds `auto_update_desired` / `update_channel_desired` (the overrides), `effective_auto_update` / `effective_update_channel` (what it is told) and `auto_update` / `update_channel` (what the sidecar reports; `null` = older sidecar) (admin) |
-| `PUT` | `/api/v1/fleet/sidecars/{id}/keep-alive` | Turn a sidecar's keep-alive (renewal of the agy, Claude Code, Codex and xAI logins) on or off remotely — body `{"enabled": true\|false\|null}`, `null` defers to the sidecar's own flag and the fleet-wide default (`sidecar_keep_alive_default` in app-config). An optional `provider` (one of `antigravity`, `anthropic`, `chatgpt`, `xai`) targets just that login: `enabled` then sets or (`null`) clears that login's override on top of the sidecar-level setting, and the response lists `keep_alive_desired_providers`. Delivered as `keep_alive_desired` / `keep_alive_desired_providers` on its next ingest response; the sidecar applies it without a restart (admin) |
-| `POST` | `/api/v1/fleet/sidecars/{id}/resume` | Resume collection on a sidecar (admin) |
-| `POST` | `/api/v1/fleet/sidecars/{id}/update` | Queue a one-shot self-update for the sidecar; applies on its next heartbeat (admin) |
-| `GET` | `/api/v1/fleet/config` | Active collection config the sidecar should poll; unsigned/non-loopback callers get only the `enabled`/`strategies` view, no account data |
-| `POST` | `/api/v1/fleet/pairing-codes` | Mint a one-time pairing code + `runway-sidecar://pair` deep link for a new sidecar (admin) |
-| `POST` | `/api/v1/fleet/pair` | Unauthenticated one-time-code redeem: exchanges a pairing code for `api_url` + ingest key (10/min/IP) |
-| `POST` | `/api/v1/fleet/credentials/manifest` | Sidecar reports credential origins found this cycle (an entry may carry `reason: "token_withheld"` when the token stayed on the machine because the server cannot verify that provider by source); Claude OAuth entries may include a claimed `account_id`, which Runway matches to an enabled account or surfaces for assignment. `hint_providers` names the providers whose hints the sidecar holds (at most 256 ids — the sidecar truncates to that cap, because an oversized list is rejected and a rejected manifest drops the cycle's `completed_providers` with it), so the server answers for those too. The response's `resolved` map is **complete per provider**: every origin the server resolves for a provider it answered for, and an empty map for a provider it resolves none for — so a sidecar may replace what it holds for those providers instead of merging into it, and a hint the server stopped holding (the account was archived, the tag was deleted) is dropped on the next manifest instead of surviving until the next `/fleet/config`. A provider answered with an empty map is dropped from the sidecar's cache as well, so it leaves `hint_providers` and is not asked about again |
-| `GET` | `/api/v1/fleet/credentials/tags` | List every resolved credential tag (deployment-wide and per-sidecar scopes); each carries `origin_label`, `origin_app` (the tool that owns the file, e.g. `Codex CLI`), `origin_path` (home collapsed to `~`) and `origin_detail` (for a cookie: the browser and profile it came from, e.g. `Chrome · Profile 1` (null for an Anthropic cookie origin, whose private browser profile is never exposed)) so the UI doesn't parse raw origin strings; also `last_matched_at` (freshest machine-reported credential the rule resolved, `null` = never) and `stale` (the `stale_credential_rules` data-health check would list it) |
-| `POST` | `/api/v1/fleet/credentials/tags` | Resolve a pending credential origin to a configured account (admin). `scope: "deployment"` (all machines) is refused with 422 for `cookie:` and `keychain:` origins, which exist on one machine only; `path:` and `env:` origins can still be tagged deployment-wide (a shared home directory is one origin). A tag written against a plain origin also applies to its key-scoped form (`env:ZAI_API_KEY` covers `env:ZAI_API_KEY#<fp>`). The response is `{"status": "ok", "target_archived": false}`; `target_archived` is `true` when the target account is archived — the mapping is then *parked*: it resolves the origin (the credential stops being pending and the operator is not warned any more) but stays inert while the account is archived (no hint ships to the sidecar, no new usage is stamped on the archived account, no collector runs for the provider). Restoring the account revives the mapping automatically — see [Parked mappings](#parked-mappings) |
-| `DELETE` | `/api/v1/fleet/credentials/tags` | Remove one resolved tag in a given scope (admin) |
-| `GET` | `/api/v1/fleet/credentials/tags/pending` | List credential origins awaiting operator resolution, with a claimed Claude account ID when available, safe quota previews, and staleness status. Each item also carries `origin_label` (what the credential is, e.g. `Browser cookie`), `origin_app` (the tool that owns it, e.g. `Chrome` for a native Claude cookie or `Codex CLI` for a file) and `origin_detail` (for a cookie: the browser and profile it came from, e.g. `Chrome · Profile 1`; `null` when the machine could not name the jar (null for an Anthropic cookie origin, whose private browser profile is never exposed)) so the UI can say "browser cookie" instead of showing the raw `cookie:<provider>/session` origin |
-| `GET` | `/api/v1/fleet/events/pending` | Paginated queue of events held back under an unresolved `default` identity (admin) |
-| `GET` | `/api/v1/fleet/events/pending/sessions` | Paginated pending events grouped by provider, host, and session; supports `sidecar_id`, `provider_id`, and session/model `search` filters (admin) |
-| `POST` | `/api/v1/fleet/events/pending/assign` | Assign up to 1000 pending events to one account, promoting them into `usage_events` and creating provider/host mappings (admin). Archived accounts are accepted (disabled ones are not). An optional `target_provider_id` assigns the events to an account of a related provider instead (allow-list: `gemini` → `antigravity`; anything else is a 422); the events are re-homed to that provider and later events from the host follow. The response echoes `target_provider_id`; `provider_id`/`target_provider_id`/`assigned` describe the first provider group only (back-compat), while `mappings` lists every group as `{provider_id, target_provider_id, account_id, assigned}` |
-| `POST` | `/api/v1/fleet/events/pending/assign-batch` | Assign up to 10000 pending events across provider-specific accounts (each assignment takes the same optional `target_provider_id`); validates the full batch before promotion and returns the created provider/host mappings, each with its `target_provider_id` (admin). One provider on one host can't be mapped to two different targets in a single batch. A larger selection is not an error: the Fleet UI splits it into requests of at most 10000 event ids and sends them one after another |
+| Method | Route | Auth | Description |
+|--------|-------|------|-------------|
+| `POST` | `/api/v1/fleet/ingest` | HMAC | Push metrics + events from a sidecar (HMAC-SHA256 signed, 600/min/IP) |
+| `GET` | `/api/v1/fleet/sidecars` | Admin | List all registered sidecars |
+| `GET` | `/api/v1/fleet/sidecars/{sidecar_id}` | Admin | Single sidecar details |
+| `PATCH` | `/api/v1/fleet/sidecars/{sidecar_id}` | Admin | Update custom name or tags |
+| `DELETE` | `/api/v1/fleet/sidecars/{sidecar_id}` | Admin | Remove sidecar from registry |
+| `POST` | `/api/v1/fleet/sidecars/{sidecar_id}/pause` | Admin | Pause collection on a sidecar |
+| `PUT` | `/api/v1/fleet/sidecars/{sidecar_id}/settings` | Admin | Override the fleet-wide auto-update flag and/or update channel for one sidecar, or set its log level — body `{"auto_update": true\|false\|null, "update_channel": "stable"\|"beta"\|"edge"\|null, "log_level": "DEBUG"\|"INFO"\|"WARNING"\|"ERROR"\|null}` (the level is case-insensitive; an unknown one is `422`; delivered as `log_level` on the ingest response, `null` = the sidecar's own level, applied without a restart; the list adds `log_level_desired` and the sidecar-reported `log_level`). A key that is left out stays as it is; `null` clears that override so the sidecar follows the fleet again. An unknown channel is `422`. Delivered as `sidecar_auto_update` / `sidecar_update_channel` on its next ingest response; the response echoes the overrides and the effective values. The sidecar list adds `auto_update_desired` / `update_channel_desired` (the overrides), `effective_auto_update` / `effective_update_channel` (what it is told) and `auto_update` / `update_channel` (what the sidecar reports; `null` = older sidecar) |
+| `PUT` | `/api/v1/fleet/sidecars/{sidecar_id}/keep-alive` | Admin | Turn a sidecar's keep-alive (renewal of the agy, Claude Code, Codex and xAI logins) on or off remotely — body `{"enabled": true\|false\|null}`, `null` defers to the sidecar's own flag and the fleet-wide default (`sidecar_keep_alive_default` in app-config). An optional `provider` (one of `antigravity`, `anthropic`, `chatgpt`, `xai`) targets just that login: `enabled` then sets or (`null`) clears that login's override on top of the sidecar-level setting, and the response lists `keep_alive_desired_providers`. Delivered as `keep_alive_desired` / `keep_alive_desired_providers` on its next ingest response; the sidecar applies it without a restart |
+| `POST` | `/api/v1/fleet/sidecars/{sidecar_id}/resume` | Admin | Resume collection on a sidecar |
+| `POST` | `/api/v1/fleet/sidecars/{sidecar_id}/update` | Admin | Queue a one-shot self-update for the sidecar; applies on its next heartbeat |
+| `GET` | `/api/v1/fleet/config` | Optional HMAC | Active collection config the sidecar should poll; unsigned/non-loopback callers get only the `enabled`/`strategies` view, no account data |
+| `POST` | `/api/v1/fleet/pairing-codes` | Admin | Mint a one-time pairing code + `runway-sidecar://pair` deep link for a new sidecar |
+| `POST` | `/api/v1/fleet/pair` | Public | Unauthenticated one-time-code redeem: exchanges a pairing code for `api_url` + ingest key (10/min/IP) |
+| `POST` | `/api/v1/fleet/credentials/manifest` | HMAC | Sidecar reports credential origins found this cycle (an entry may carry `reason: "token_withheld"` when the token stayed on the machine because the server cannot verify that provider by source); Claude OAuth entries may include a claimed `account_id`, which Runway matches to an enabled account or surfaces for assignment. `hint_providers` names the providers whose hints the sidecar holds (at most 256 ids — the sidecar truncates to that cap, because an oversized list is rejected and a rejected manifest drops the cycle's `completed_providers` with it), so the server answers for those too. The response's `resolved` map is **complete per provider**: every origin the server resolves for a provider it answered for, and an empty map for a provider it resolves none for — so a sidecar may replace what it holds for those providers instead of merging into it, and a hint the server stopped holding (the account was archived, the tag was deleted) is dropped on the next manifest instead of surviving until the next `/fleet/config`. A provider answered with an empty map is dropped from the sidecar's cache as well, so it leaves `hint_providers` and is not asked about again |
+| `GET` | `/api/v1/fleet/credentials/tags` | Admin | List every resolved credential tag (deployment-wide and per-sidecar scopes); each carries `origin_label`, `origin_app` (the tool that owns the file, e.g. `Codex CLI`), `origin_path` (home collapsed to `~`) and `origin_detail` (for a cookie: the browser and profile it came from, e.g. `Chrome · Profile 1` (null for an Anthropic cookie origin, whose private browser profile is never exposed)) so the UI doesn't parse raw origin strings; also `last_matched_at` (freshest machine-reported credential the rule resolved, `null` = never) and `stale` (the `stale_credential_rules` data-health check would list it) |
+| `POST` | `/api/v1/fleet/credentials/tags` | Admin | Resolve a pending credential origin to a configured account. `scope: "deployment"` (all machines) is refused with 422 for `cookie:` and `keychain:` origins, which exist on one machine only; `path:` and `env:` origins can still be tagged deployment-wide (a shared home directory is one origin). A tag written against a plain origin also applies to its key-scoped form (`env:ZAI_API_KEY` covers `env:ZAI_API_KEY#<fp>`). The response is `{"status": "ok", "target_archived": false}`; `target_archived` is `true` when the target account is archived — the mapping is then *parked*: it resolves the origin (the credential stops being pending and the operator is not warned any more) but stays inert while the account is archived (no hint ships to the sidecar, no new usage is stamped on the archived account, no collector runs for the provider). Restoring the account revives the mapping automatically — see [Parked mappings](#parked-mappings) |
+| `DELETE` | `/api/v1/fleet/credentials/tags` | Admin | Remove one resolved tag in a given scope |
+| `GET` | `/api/v1/fleet/credentials/tags/pending` | Admin | List credential origins awaiting operator resolution, with a claimed Claude account ID when available, safe quota previews, and staleness status. Each item also carries `origin_label` (what the credential is, e.g. `Browser cookie`), `origin_app` (the tool that owns it, e.g. `Chrome` for a native Claude cookie or `Codex CLI` for a file) and `origin_detail` (for a cookie: the browser and profile it came from, e.g. `Chrome · Profile 1`; `null` when the machine could not name the jar (null for an Anthropic cookie origin, whose private browser profile is never exposed)) so the UI can say "browser cookie" instead of showing the raw `cookie:<provider>/session` origin |
+| `GET`/`POST` | `/api/v1/fleet/credentials/{source_id}/claude-organizations` | Admin | Inspect eligible organizations or select one using an exact pending sidecar source (no credential values returned) |
+| `GET` | `/api/v1/fleet/events/pending` | Admin | Paginated queue of events held back under an unresolved `default` identity |
+| `GET` | `/api/v1/fleet/events/pending/sessions` | Admin | Paginated pending events grouped by provider, host, and session; supports `sidecar_id`, `provider_id`, and session/model `search` filters |
+| `POST` | `/api/v1/fleet/events/pending/assign` | Admin | Assign up to 1000 pending events to one account, promoting them into `usage_events` and creating provider/host mappings. Archived accounts are accepted (disabled ones are not). An optional `target_provider_id` assigns the events to an account of a related provider instead (allow-list: `gemini` → `antigravity`; anything else is a 422); the events are re-homed to that provider and later events from the host follow. The response echoes `target_provider_id`; `provider_id`/`target_provider_id`/`assigned` describe the first provider group only (back-compat), while `mappings` lists every group as `{provider_id, target_provider_id, account_id, assigned}` |
+| `POST` | `/api/v1/fleet/events/pending/assign-batch` | Admin | Assign up to 10000 pending events across provider-specific accounts (each assignment takes the same optional `target_provider_id`); validates the full batch before promotion and returns the created provider/host mappings, each with its `target_provider_id`. One provider on one host can't be mapped to two different targets in a single batch. A larger selection is not an error: the Fleet UI splits it into requests of at most 10000 event ids and sends them one after another |
 
 The grouped pending-events response reports `total_events` across the full queue and `matching_events` for the current filters; `total_groups` is the filtered group count used for pagination.
 
-## System
+## System: status and configuration
 
-| Method | Route | Description |
-|--------|-------|-------------|
-| `GET` | `/api/v1/system/health` | Liveness check |
-| `GET` | `/api/v1/system/status` | Collector cache states and error counts |
-| `GET`/`POST` | `/api/v1/fleet/credentials/{source_id}/claude-organizations` | Inspect eligible organizations or select one using an exact pending sidecar source (admin; no credential values returned) |
-| `POST` | `/api/v1/system/provider-config/console-organizations` | Discover API organizations using a supplied Console `session_cookie` (admin; cookie is not persisted) |
-| `GET` | `/api/v1/system/settings` | Non-sensitive runtime configuration: `version` (the release this build belongs to), `build_sha` (the commit the running build was built from, `null` when the build carries none — every `:edge` image ships the same `version`, so this is what identifies one exact build), `latest_version`/`update_available`, `app_host`/`app_port`, `encryption_enabled`, `admin_auth_required`, `auth_methods`, `user_context`, `is_authenticated` |
-| `GET` | `/api/v1/system/audit-log` | Append-only admin-mutation trail |
-| `GET` | `/api/v1/system/token-health` | Health of every credential (cache, dashboard-saved, server env/file): `status` is `valid`/`expiring`/`expired`/`invalid` (provider rejected it)/`failing` (not rejected, but its collections have kept failing for over an hour)/`stale` (sidecar stopped re-reporting it)/`unknown`; `removable` is false for config/server-managed rows. Status uses the same rules as `GET /system/credentials` (expiry, a provider rejection, and staleness), so the two views agree. A **retired** account's credential is not listed at all: nothing live is held for it, so there is nothing to collect with and nothing to refresh. Values are never returned — only types and origin. **Legacy:** the webapp no longer reads this; credential alerts still build on it because webhook scoping depends on its synthetic account ids (`server`, `config:<account>`), so use `GET /system/credentials` for new clients |
-| `GET` | `/api/v1/system/credentials` | Credential inventory (admin): provider → account → source. Each source carries its machine, origin (`origin_kind`: `machine`/`config`/`server`; `origin_type`: what the credential is: `file`/`env`/`cookie`/`keychain`, or `sidecar` for an origin the server doesn't recognise; `origin_app`/`origin_path`: the tool that owns a machine's credential file and its `~`-collapsed path; `origin_detail`: for a cookie, the browser and profile it came from (e.g. `Chrome · Profile 1`), `null` when the machine could not name the jar (null for an Anthropic cookie origin, whose private browser profile is never exposed); `login_hint`: how to re-authenticate that tool; `machine_stale`: the machine stopped checking in, by Fleet's rule; `shared_with`: the other machines reporting the same secret, matched by fingerprint (a rotating login copied between machines signs the others out; the fingerprint itself is never returned; `shared_with_stale` is the subset on machines that stopped checking in, which the UI doesn't warn about) — each `machines[]` entry has the same `stale`), sources within an account are ordered active → healthy → dead, why it maps to its account (`local`/`verified`/`claim`/`operator`/`config`/`server`/`pending`), `status` (`valid`/`expiring`/`expired`/`invalid`/`failing`/`stale`/`unknown`), expiry, token types, `can_refresh` (the server can refresh it), `refreshed_by` (`server`, or `machine` for a rotating provider's login that a sidecar's CLI owns and the server must not refresh), `keep_alive` (`on`/`off`/`unknown` for a machine-sourced agy, Claude Code, Codex or xAI login that carries a refresh credential, live or not: whether that sidecar runs with `--keep-alive`; `unknown` = an older sidecar that does not report it; `null` when not applicable) and `keep_alive_desired` (the operator's server-side override for that login's sidecar, `null` = none; differs from `keep_alive` while a request is pending). Both are resolved per login: a per-login report/override (see the keep-alive `PUT` above) wins over the sidecar-level one, and collection provenance (`health` is `untried` for a credential that has never been attempted, else `healthy`/`degraded`/`auth_failed`/`unavailable`); `is_active` marks the source behind the account's latest successful collection. `rejected` is true when the provider rejected the credential, and `redundant` when it is expired and unrefreshable but another healthy credential for the same account can stand in for it (the Home banners skip those, exactly as Token Health's `redundant` does). `blocked_collection` lists unmapped, token-withheld origins whose provider has no collection from any enabled source in the last 6 hours (the Home "credential unmapped" banner; `unmapped_count` counts only origins without an effective hint, like the Untagged list). `unused_reason` (`provider_disabled`/`default_disabled`/`account_keyed_config`/`shadowed_by_config_key`) explains why a server env/file credential that is present isn't feeding any collection; such credentials are read from the host at request time, so they appear even before a first collection. `blocked_sources` lists the credential sources a machine found but could not read (a browser cookie store the browser holds open, or one whose values are app-bound encrypted): each entry names the provider, the store (`source_store`), the reason (`reason`: `source_locked`/`source_unsupported`/`source_unreadable`), the detail (`detail`) and the fix (`remedy`), and says whether the provider is still collecting from another source (`collecting`) — those are the "Unavailable" tab, the Home "cookie store unavailable" banner, and the provider page's empty state. An account carries `archived` when its `provider_configs` row is archived: the account is retired, nothing is collected for it, and a credential mapped onto it is *parked*. An account that was **merged away** holds no credential at all, so it is not among the accounts above: `merged_accounts` lists those accounts (`provider_id`, `account_id`, `destination_account_id`, `merged_at`) and says where each of them went — the difference between "this account no longer exists" and "this account never existed". Never returns secret values |
-| `POST` | `/api/v1/system/credentials/{provider}/{account_id}/{source_id}/refresh` | Refresh one source's OAuth token (replaces the removed per-account `/system/token-health/refresh` and `DELETE /system/token-health/...`; `409` for a login a machine's CLI owns) and write it back into that source's bundle (admin) |
-| `DELETE` | `/api/v1/system/credentials/{provider}/{account_id}/{source_id}` | Forget one machine-reported credential (admin); it returns on the machine's next report if still present. `409` for config / server-env credentials |
-| `POST` | `/api/v1/system/credentials/{provider}/{account_id}/remove` | Forget several machine-reported credentials of one account at once (admin, 10/min). Body `{"source_ids": [...]}` (1–50). Returns `{removed, skipped}`; config/server-managed or unknown sources are reported under `skipped` (`managed_elsewhere`/`not_found`) instead of failing the batch. A removed login's token is kept in the account cache while another remaining source still holds it |
-| `POST` | `/api/v1/system/force-collect` | Trigger immediate collection cycle, fan out to sidecars |
-| `POST` | `/api/v1/system/cleanup` | Prune stale records and inactive sidecars (admin) |
-| `POST` | `/api/v1/system/wake` | Reset dormancy, restore normal polling |
-| `POST` | `/api/v1/system/check-updates` | Force an immediate GitHub release poll for server + sidecars, refreshing the update-banner cache (admin) |
-| `POST` | `/api/v1/system/debug/sources/{provider_id}` | Try each credential source of one account (`account_id`, default `default`) once, live, and report per source: `outcome` (`healthy`/`degraded`/`auth_failed`/`unavailable`, or `waiting_on_machine`/`disabled`/`pending`/`over_limit` for a source that was deliberately not called; at most 12 sources are called per request and `truncated` says when more were left out), `http_status`, `error_type`, a redacted `message`, `cards`, `duration_ms` (admin, `5/minute`). Writes nothing — no health/attempt update, promotion, backoff or cookie-tag change — and never refreshes a token; each source runs (a few at a time) on its own copy of the collector in a probe mode that also suppresses token-cache stores, the account's rejected flag and provider error events, pinned to that source. Never returns secret values |
-| `POST` | `/api/v1/system/debug/claude-cloud` | Explicit admin-only diagnostic for one cached Claude source (`2/minute`, one in flight per worker). Strict body: `account_id`, `source_id`, optional `organization_id`/`session_id`, integer `max_history_pages` 1–3 (default 2), optional strict integer `report_version` 1 or 2 (default 1); maximum 8 KiB and no duplicate keys. Verifies holder/org, rechecks source and consent, then samples the first 20 sessions and at most 150 events for one listed session. Default v1 is unchanged; explicit v2 adds fixed structural counts at declared paths and an independent SDK-style audit at object-valued `payload`, without decoding strings or traversing arrays. Its observations may use `event`, `data`, `content`, or `payload`; v1 retains only the first three. Location reports are never combined. Fixed outcomes, numeric observations and separate unverified SDK-envelope audits only; never returns identifiers, credentials, cursors, content or raw errors. Bounded to 30s, 1 MiB/response, 4 MiB total, five GETs; no discovery, redirect, compression, retry, refresh, promotion, health or usage write. GET is inert. `sample_complete` applies only to the sampled page chain; `cloud_contract_verified` and `ready_for_ingestion` stay false. See [cloud diagnostic details and readiness](evidence/acceptance/claude-cloud-accounting-669.md#operator-triggered-server-diagnostic) |
-| `GET` | `/api/v1/system/debug/raw/{provider_id}` | Run collector and return raw HTTP exchanges (debug; secrets redacted best-effort, admin); optional `account_id` selects that account's collector. Omitting it preserves provider-wide lookup and captures the first active match (or creates the registered collector if none is active) |
-| `GET`/`POST`/`PATCH`/`DELETE` | `/api/v1/system/webhooks[...]` | CRUD + test for Discord/Slack threshold alerts; optional `account_id` scopes an alert to one account; `credential_alerts` (default true) also fires the same webhook when a matching credential's Token Health goes expired/invalid (admin) |
-| `GET`/`PUT`/`DELETE` | `/api/v1/system/provider-config[s]/{...}` | Per-provider config CRUD (admin write); DELETE soft-archives and clears any matching `credential_tags` hints. PUT with `{"archived": true}` archives the account (`archived=true`, forced `enabled=false`) and **evicts its cached credential**, so a retired account holds nothing live and nothing refreshable; the stored credential (`api_key`, `session_cookie`) stays, so `{"archived": false}` makes the account usable again immediately (a machine-reported credential returns with the machine's next push). A retired account holds no credential at all: the secret is kept nowhere — the machine's next push records the source but stores no secret for a retired account, and any copy at rest is retired with the account. **An account that was merged away cannot be restored or given a credential**: any write that would make it an account again — `{"archived": false}`, a credential write, or a PUT that creates the row — is refused with `409`, and the message names the account it went to. Restoring it would resurrect a phantom (the merge moved its history and its credential to the destination). A merge that kept its journal of what it moved can be put back instead — see `POST /provider-account-unmerge/apply`. `GET /provider-configs` lists the merges per provider under `merged_accounts` (`account_id`, `destination_account_id`, `merged_at`; a chain of merges is reported at its end), and every account entry carries `merged_into` when that account was merged away |
-| `PATCH` | `/api/v1/system/provider-config/{provider_id}/{account_id}/credential-sources` | Set enabled state and zero-based order for every known source on this account (admin); duplicate priorities are allowed and ties sort by `source_id`; optional `all_machines` applies each listed source preference to matching sidecar origins across hosts; values are never returned |
-| `POST` | `/api/v1/system/provider-account-merge/{preview\|apply}` | Merge one account into another (admin): the account's usage history, quota cards, credential-source rows, operator tags and **its credential** move to the destination, and the source id is retired — a machine that still claims it has its credential filed under the destination, not under a resurrected account. `preview` reports what would move and how many rows collide; `apply` performs the merge (`confirm_collisions` to accept the deduplication, `confirm_shared_default` to merge with the shared `default` identity). Refused when either side was already merged away. The merge is visible to the operator afterwards: the merged-away account is listed under `merged_accounts` (see `GET /provider-configs`) and in Settings → Providers, and it cannot be restored |
-| `POST` | `/api/v1/system/provider-account-unmerge/{preview\|apply}` | Undo one merge (admin): the rows the merge moved go back to the account they came from, the credential sources, operator tags and durable contributions follow, the provider row is restored and the merge record is deleted — the retired id names an account again. `preview` reports what goes back, what cannot (the duplicates the merge dropped, the stored credential it wiped) and the rows that got in the way; `apply` performs the un-merge (`confirm_collisions` to accept dropping a row that got in the way, `previewed_collisions` the count the preview showed — the rows may not have changed since). Refused (`409`) when the merge has no journal, when the destination was merged away too (a chain is unwound from the end), when the rows in the way changed since the preview, or when a row is in the way and the collision was not confirmed; `404` when no merge is recorded for the account |
-| `POST` | `/api/v1/system/provider-config/preview-account` | Suggest an `account_id`/label for a new credential before saving it; `detect_billing: true` additionally proves how the account bills and returns it as `suggested_billing_type` (a proof costs a round trip to Claude, so it is asked for, not done on every keystroke) |
-| `GET`/`PUT` | `/api/v1/system/app-config` | Global app config (admin write); includes `sidecar_update_channel`, `sidecar_auto_update` and `sidecar_keep_alive_default` (fleet-wide keep-alive default: on for every sidecar without its own override; omitted fields in a `PUT` keep their stored value) |
-| `GET`/`PUT` | `/api/v1/system/dashboard-layout` | Persisted dashboard layout (admin for reads and writes) |
-| `GET` | `/api/v1/system/sidecar-downloads` | Cached GitHub release assets for the Fleet page's *Add sidecar* card; `?channel=stable\|beta\|edge` (public) |
+| Method | Route | Auth | Description |
+|--------|-------|------|-------------|
+| `GET` | `/api/v1/system/health` | Public | Liveness check |
+| `GET` | `/api/v1/system/status` | Admin | Collector cache states and error counts |
+| `GET` | `/api/v1/system/settings` | Public | Non-sensitive runtime configuration: `version` (the release this build belongs to), `build_sha` (the commit the running build was built from, `null` when the build carries none — every `:edge` image ships the same `version`, so this is what identifies one exact build), `latest_version`/`update_available`, `app_host`/`app_port`, `encryption_enabled`, `admin_auth_required`, `auth_methods`, `user_context`, `is_authenticated` |
+| `GET` | `/api/v1/system/audit-log` | Admin | Append-only admin-mutation trail |
+| `GET` | `/api/v1/system/sidecar-downloads` | Public | Cached GitHub release assets for the Fleet page's *Add sidecar* card; `?channel=stable\|beta\|edge` |
+| `GET` | `/api/v1/system/app-config` | Admin | Global app config; includes `sidecar_update_channel`, `sidecar_auto_update` and `sidecar_keep_alive_default` (fleet-wide keep-alive default: on for every sidecar without its own override) |
+| `PUT` | `/api/v1/system/app-config` | Admin | Update the global app config; omitted fields in a `PUT` keep their stored value |
+| `GET` | `/api/v1/system/dashboard-layout` | Admin | Persisted dashboard layout |
+| `PUT` | `/api/v1/system/dashboard-layout` | Admin | Update the persisted dashboard layout |
+| `POST` | `/api/v1/system/force-collect` | Admin | Trigger immediate collection cycle, fan out to sidecars |
+| `POST` | `/api/v1/system/cleanup` | Admin | Prune stale records and inactive sidecars |
+| `POST` | `/api/v1/system/wake` | Admin | Reset dormancy, restore normal polling |
+| `POST` | `/api/v1/system/check-updates` | Admin | Force an immediate GitHub release poll for server + sidecars, refreshing the update-banner cache |
+
+## System: credentials
+
+| Method | Route | Auth | Description |
+|--------|-------|------|-------------|
+| `GET` | `/api/v1/system/token-health` | Admin | Health of every credential (cache, dashboard-saved, server env/file): `status` is `valid`/`expiring`/`expired`/`invalid` (provider rejected it)/`failing` (not rejected, but its collections have kept failing for over an hour)/`stale` (sidecar stopped re-reporting it)/`unknown`; `removable` is false for config/server-managed rows. Status uses the same rules as `GET /system/credentials` (expiry, a provider rejection, and staleness), so the two views agree. A **retired** account's credential is not listed at all: nothing live is held for it, so there is nothing to collect with and nothing to refresh. Values are never returned — only types and origin. **Legacy:** the webapp no longer reads this; credential alerts still build on it because webhook scoping depends on its synthetic account ids (`server`, `config:<account>`), so use `GET /system/credentials` for new clients |
+| `GET` | `/api/v1/system/credentials` | Admin | Credential inventory: provider → account → source. The response never contains secret values. The fields of a source, an account and the inventory itself are listed in [Credential inventory fields](#credential-inventory-fields) |
+| `POST` | `/api/v1/system/credentials/migration-notice/dismiss` | Admin | Dismiss the credential-file migration notice for this installation; returns `{"status": "ok"}`. The dismissal is idempotent, persists for the installation, and is not reset by later removals |
+| `POST` | `/api/v1/system/credentials/{provider}/{account_id}/{source_id}/refresh` | Admin | Refresh one source's OAuth token (replaces the removed per-account `/system/token-health/refresh` and `DELETE /system/token-health/...`; `409` for a login a machine's CLI owns) and write it back into that source's bundle |
+| `DELETE` | `/api/v1/system/credentials/{provider}/{account_id}/{source_id}` | Admin | Forget one machine-reported credential; it returns on the machine's next report if still present. `409` for config / server-env credentials |
+| `POST` | `/api/v1/system/credentials/{provider}/{account_id}/remove` | Admin | Forget several machine-reported credentials of one account at once (10/min). Body `{"source_ids": [...]}` (1–50). Returns `{removed, skipped}`; config/server-managed or unknown sources are reported under `skipped` (`managed_elsewhere`/`not_found`) instead of failing the batch. A removed login's token is kept in the account cache while another remaining source still holds it |
+
+### Credential inventory fields
+
+`GET /api/v1/system/credentials` answers with `providers` (provider → account
+→ source), `machines`, `unmapped_count`, `rule_count`,
+`pending_usage_events`, `blocked_collection`, `blocked_sources`,
+`merged_accounts` and `credential_file_migration_notice`.
+
+One source carries:
+
+| Field | Meaning |
+|-------|---------|
+| `source_id` | The source's identity |
+| `provider_id`, `account_id` | The account the source belongs to |
+| `origin_kind` | `machine` / `config` / `server` |
+| `origin_type` | What the credential is: `file`/`env`/`cookie`/`keychain`, or `sidecar` for an origin the server doesn't recognise |
+| `origin_app`, `origin_path` | The tool that owns a machine's credential file and its `~`-collapsed path |
+| `origin_detail` | For a cookie, the browser and profile it came from (e.g. `Chrome · Profile 1`); `null` when the machine could not name the jar (null for an Anthropic cookie origin, whose private browser profile is never exposed) |
+| `login_hint` | How to re-authenticate that tool |
+| `machine_stale` | The machine stopped checking in, by Fleet's rule |
+| `shared_with` | The other machines reporting the same secret, matched by fingerprint (a rotating login copied between machines signs the others out; the fingerprint itself is never returned) |
+| `shared_with_stale` | The subset of `shared_with` on machines that stopped checking in, which the UI doesn't warn about; each `machines[]` entry carries the same `stale` flag |
+| `mapping` | Why it maps to its account: `local`/`verified`/`claim`/`operator`/`config`/`server`/`pending` |
+| `status` | `valid`/`expiring`/`expired`/`invalid`/`failing`/`stale`/`unknown` |
+| `expires_at`, `expires_in_seconds` | Expiry of the credential |
+| `token_types` | The token types the source carries |
+| `can_refresh` | The server can refresh it |
+| `refreshed_by` | `server`, or `machine` for a rotating provider's login that a sidecar's CLI owns and the server must not refresh |
+| `keep_alive` | `on`/`off`/`unknown` for a machine-sourced agy, Claude Code, Codex or xAI login that carries a refresh credential, live or not: whether that sidecar runs with `--keep-alive`; `unknown` = an older sidecar that does not report it; `null` when not applicable |
+| `keep_alive_desired` | The operator's server-side override for that login's sidecar, `null` = none; differs from `keep_alive` while a request is pending |
+| `health` | Collection provenance: `untried` for a credential that has never been attempted, else `healthy`/`degraded`/`auth_failed`/`unavailable` |
+| `is_active` | The source behind the account's latest successful collection |
+| `rejected` | True when the provider rejected the credential |
+| `redundant` | True when it is expired and unrefreshable but another healthy credential for the same account can stand in for it (the Home banners skip those, exactly as Token Health's `redundant` does) |
+| `unused_reason` | Why a server env/file credential that is present isn't feeding any collection: `provider_disabled`/`default_disabled`/`account_keyed_config`/`shadowed_by_config_key`. Such credentials are read from the host at request time, so they appear even before a first collection |
+
+Sources within an account are ordered active → healthy → dead. Both keep-alive
+values are resolved per login: a per-login report/override (see the keep-alive
+`PUT` above) wins over the sidecar-level one.
+
+One account carries:
+
+| Field | Meaning |
+|-------|---------|
+| `archived` | The account's `provider_configs` row is archived: the account is retired, nothing is collected for it, and a credential mapped onto it is *parked* (see [Parked mappings](#parked-mappings)) |
+
+The inventory itself carries:
+
+| Field | Meaning |
+|-------|---------|
+| `blocked_collection` | Unmapped, token-withheld origins whose provider has no collection from any enabled source in the last 6 hours (the Home "credential unmapped" banner) |
+| `unmapped_count` | Counts only origins without an effective hint, like the Untagged list |
+| `blocked_sources` | The credential sources a machine found but could not read (a browser cookie store the browser holds open, or one whose values are app-bound encrypted). Each entry names the provider, the store (`source_store`), the reason (`reason`: `source_locked`/`source_unsupported`/`source_unreadable`), the detail (`detail`) and the fix (`remedy`), and says whether the provider is still collecting from another source (`collecting`) — those are the "Unavailable" tab, the Home "cookie store unavailable" banner, and the provider page's empty state |
+| `merged_accounts` | The accounts that were merged away (`provider_id`, `account_id`, `destination_account_id`, `merged_at`) and where each of them went. A merged-away account holds no credential at all, so it is not among the accounts above — this is the difference between "this account no longer exists" and "this account never existed" (see [Account lifecycle](#account-lifecycle)) |
+| `credential_file_migration_notice` | `null`, or `{providers: [{provider_id, name}], removed_count, recorded_at}` for confirmed legacy server credential-file removals. It contains no credential values or file paths (see [Credential-file migration notice](#credential-file-migration-notice)) |
+
+## System: provider configuration
+
+| Method | Route | Auth | Description |
+|--------|-------|------|-------------|
+| `GET` | `/api/v1/system/provider-configs` | Admin | Provider configuration listing: provider → account. Every account names the provider it belongs to (`accounts[].provider_id`), the merges per provider are listed under `merged_accounts`, and every merged-away account entry carries `merged_into` (see [Account lifecycle](#account-lifecycle)) |
+| `PUT` | `/api/v1/system/provider-config/{provider_id}/{account_id}` | Admin | Per-account provider configuration write (`enabled`, `archived`, `api_key`, `session_cookie` and the explicit clear flags). `{"archived": true}` retires the account and `{"archived": false}` restores it; a write that would resurrect a **merged-away** account is refused with `409`. See [Account lifecycle](#account-lifecycle) |
+| `DELETE` | `/api/v1/system/provider-config/{provider_id}/{account_id}` | Admin | Soft-archive an account and clear any matching `credential_tags` hints. See [Account lifecycle](#account-lifecycle) |
+| `PATCH` | `/api/v1/system/provider-config/{provider_id}/{account_id}/credential-sources` | Admin | Set enabled state and zero-based order for every known source on this account; duplicate priorities are allowed and ties sort by `source_id`; optional `all_machines` applies each listed source preference to matching sidecar origins across hosts; values are never returned |
+| `PUT` | `/api/v1/system/provider-account-label/{provider_id}/{account_id}` | Admin | Save the display label of one account independently of its collection settings (20/min). Body `{"account_label": "<name>"}` — at most 120 characters, `null` clears it. Returns `{"status": "saved", "provider_id": ..., "account_id": ...}`; `404` for an unknown provider. This is the write path behind the account-label behaviour described in [Automatically discovered Claude accounts](#automatically-discovered-claude-accounts) |
+| `POST` | `/api/v1/system/provider-account-merge/preview` | Admin | Report what a merge would move and how many rows collide. Body `{"provider_id", "source_account_id", "destination_account_id"}` plus optional `confirm_collisions` and `confirm_shared_default`. Does not change anything. See [Account lifecycle](#account-lifecycle) |
+| `POST` | `/api/v1/system/provider-account-merge/apply` | Admin | Merge one account into another — the usage history, quota cards, credential-source rows, operator tags and credential move to the destination, and the source id is retired. Body `{"provider_id", "source_account_id", "destination_account_id"}`; `confirm_collisions` accepts the deduplication, `confirm_shared_default` merges with the shared `default` identity. Refused when either side was already merged away. See [Account lifecycle](#account-lifecycle) |
+| `POST` | `/api/v1/system/provider-account-unmerge/preview` | Admin | Report what an un-merge would send back, what cannot go back, and the rows that got in the way. Body `{"provider_id", "source_account_id"}` plus optional `confirm_collisions`. Does not change anything. See [Account lifecycle](#account-lifecycle) |
+| `POST` | `/api/v1/system/provider-account-unmerge/apply` | Admin | Undo one merge. Body `{"provider_id", "source_account_id"}`; `confirm_collisions` and `previewed_collisions` acknowledge the preview. `409` when the merge has no journal, when the destination was merged away too, or when the rows in the way changed since the preview; `404` when no merge is recorded for the account. See [Account lifecycle](#account-lifecycle) |
+| `POST` | `/api/v1/system/provider-config/preview-account` | Admin | Suggest an `account_id`/label for a new credential before saving it; `detect_billing: true` additionally proves how the account bills and returns it as `suggested_billing_type` (a proof costs a round trip to Claude, so it is asked for, not done on every keystroke) |
+| `POST` | `/api/v1/system/provider-config/console-organizations` | Admin | Discover API organizations using a supplied Console `session_cookie` (cookie is not persisted) |
 
 Every account in the provider-configs listing names the provider it belongs
 to (`accounts[].provider_id`). The Claude family groups several providers
@@ -122,56 +282,62 @@ under one card, so an account listed under the family is still addressed by
 its own provider — a rename, an archive or a billing model never lands on the
 family's representative.
 
-An account that was **merged away** is not an account any more: the merge
-moved its history and its credential to the destination, so it holds nothing.
-The row the merge left behind stays in `accounts` (archived, no credential) and
-carries `merged_into`, so a client can tell a merged-away account from an
-account that was merely archived; the provider's `merged_accounts` lists every
-merged-away account with the account it became. Settings → Providers lists
-them under "Merged accounts", where the un-merge is offered: they cannot be
-restored by a plain write, but a merge that kept a journal of what it moved can
-be put back (`POST /api/v1/system/provider-account-unmerge/apply`).
+The archive / merge / un-merge semantics of an account are described once,
+under [Account lifecycle](#account-lifecycle). A credential mapping onto an
+archived account is *parked* — see [Parked mappings](#parked-mappings).
 
-### Data health (admin)
+## System: webhooks
+
+| Method | Route | Auth | Description |
+|--------|-------|------|-------------|
+| `GET` | `/api/v1/system/webhooks` | Admin | List configured threshold-alert webhooks |
+| `POST` | `/api/v1/system/webhooks` | Admin | Create a threshold-alert webhook |
+| `PATCH` | `/api/v1/system/webhooks/{webhook_id}` | Admin | Update a threshold-alert webhook |
+| `DELETE` | `/api/v1/system/webhooks/{webhook_id}` | Admin | Delete a threshold-alert webhook |
+| `POST` | `/api/v1/system/webhooks/{webhook_id}/test` | Admin | Send a test alert to one webhook |
+
+An alert's optional `account_id` scopes it to one account; `credential_alerts`
+(default true) also fires the same webhook when a matching credential's Token
+Health goes expired/invalid.
+
+Webhook URLs must use the supported HTTPS endpoint hosts: Slack
+(`hooks.slack.com`) or Discord (`discord.com` and the legacy `discordapp.com`).
+Webhook list entries include optional `validation_error` text for saved URLs
+blocked by the current destination policy. Configured encryption failures
+return HTTP 503 and refuse credential persistence.
+
+## System: diagnostics
+
+| Method | Route | Auth | Description |
+|--------|-------|------|-------------|
+| `POST` | `/api/v1/system/debug/sources/{provider_id}` | Admin | Try each credential source of one account (`account_id`, default `default`) once, live, and report per source: `outcome` (`healthy`/`degraded`/`auth_failed`/`unavailable`, or `waiting_on_machine`/`disabled`/`pending`/`over_limit` for a source that was deliberately not called; at most 12 sources are called per request and `truncated` says when more were left out), `http_status`, `error_type`, a redacted `message`, `cards`, `duration_ms` (`5/minute`). Writes nothing — no health/attempt update, promotion, backoff or cookie-tag change — and never refreshes a token; each source runs (a few at a time) on its own copy of the collector in a probe mode that also suppresses token-cache stores, the account's rejected flag and provider error events, pinned to that source. Never returns secret values |
+| `POST` | `/api/v1/system/debug/claude-cloud` | Admin | Explicit admin-only diagnostic for one cached Claude source (`2/minute`, one in flight per worker). Strict body: `account_id`, `source_id`, optional `organization_id`/`session_id`, integer `max_history_pages` 1–3 (default 2), optional strict integer `report_version` 1 or 2 (default 1); maximum 8 KiB and no duplicate keys. Verifies holder/org, rechecks source and consent, then samples the first 20 sessions and at most 150 events for one listed session. Default v1 is unchanged; explicit v2 adds fixed structural counts at declared paths and an independent SDK-style audit at object-valued `payload`, without decoding strings or traversing arrays. Its observations may use `event`, `data`, `content`, or `payload`; v1 retains only the first three. Location reports are never combined. Fixed outcomes, numeric observations and separate unverified SDK-envelope audits only; never returns identifiers, credentials, cursors, content or raw errors. Bounded to 30s, 1 MiB/response, 4 MiB total, five GETs; no discovery, redirect, compression, retry, refresh, promotion, health or usage write. GET is inert. `sample_complete` applies only to the sampled page chain; `cloud_contract_verified` and `ready_for_ingestion` stay false. See [cloud diagnostic details and readiness](evidence/acceptance/claude-cloud-accounting-669.md#operator-triggered-server-diagnostic) |
+| `GET` | `/api/v1/system/debug/raw/{provider_id}` | Admin | Run collector and return raw HTTP exchanges (debug; secrets redacted best-effort); optional `account_id` selects that account's collector. Omitting it preserves provider-wide lookup and captures the first active match (or creates the registered collector if none is active) |
+
+## Data health (admin)
 
 See [docs/data-health.md](data-health.md) for what each check finds and fixes.
 
-| Method | Route | Description |
-|--------|-------|-------------|
-| `GET` | `/api/v1/system/data-health/` | Cached scan report; starts the initial background scan. Returns `scan_error` and keeps any prior report stale after a failure; retry with `POST /rescan` |
-| `POST` | `/api/v1/system/data-health/rescan` | Start a fresh scan (`202`; no-op if one is already running) |
-| `POST` | `/api/v1/system/data-health/{check_id}/preview` | Read-only preview of a fix for one finding group — body: `{group_key, params}`; may include safe samples and a required `confirmation_text` |
-| `POST` | `/api/v1/system/data-health/{check_id}/apply` | Apply a fix (`202`, returns `job_id`) — body: `{group_key, params, confirm: true}`; `409` if the latest scan failed, a scan/job is running, or the check is blocked by an upstream finding |
-| `GET` | `/api/v1/system/data-health/jobs/{job_id}` | Poll a started fix job's status/result |
-
-## Auth
-
-### Admin session (browser)
-
-The dashboard authenticates via an HttpOnly, `SameSite=Strict` session cookie. Scripts and
-API clients can keep sending the `X-Admin-Key` header instead. See [SECURITY.md](SECURITY.md)
-for cookie flags, `SESSION_SECRET`, and session lifetime.
-
-| Method | Route | Description |
-|--------|-------|-------------|
-| `POST` | `/api/v1/auth/session` | Validate `ADMIN_API_KEY` and set the session cookie (`remember` extends lifetime). Rate-limited 10/min. When no admin key is configured the instance is open |
-| `POST` | `/api/v1/auth/logout` | Clear this browser's session cookie (other sessions unaffected) |
-| `POST` | `/api/v1/auth/revoke-all` | Rotate `SESSION_SECRET` — invalidates every session everywhere (admin, 6/min) |
-
-### GitHub Device Flow
-
-| Method | Route | Description |
-|--------|-------|-------------|
-| `GET` | `/api/v1/auth/github/init` | Begin GitHub OAuth Device Flow |
-| `POST` | `/api/v1/auth/github/poll` | Poll for completion |
-| `GET` | `/api/v1/auth/github/status` | Current GitHub auth state |
-| `POST` | `/api/v1/auth/github/logout` | Discard stored GitHub token |
-
-See [Sidecar Documentation](sidecar.md) for ingest authentication and payload format.
+| Method | Route | Auth | Description |
+|--------|-------|------|-------------|
+| `GET` | `/api/v1/system/data-health/` | Admin | Cached scan report; starts the initial background scan. Returns `scan_error` and keeps any prior report stale after a failure; retry with `POST /rescan` |
+| `POST` | `/api/v1/system/data-health/rescan` | Admin | Start a fresh scan (`202`; no-op if one is already running) |
+| `POST` | `/api/v1/system/data-health/{check_id}/preview` | Admin | Read-only preview of a fix for one finding group — body: `{group_key, params}`; may include safe samples and a required `confirmation_text` |
+| `POST` | `/api/v1/system/data-health/{check_id}/apply` | Admin | Apply a fix (`202`, returns `job_id`) — body: `{group_key, params, confirm: true}`. `400` when the `confirm` field is missing or when no scan has run yet; `404` for an unknown `check_id`; `409` if the latest scan failed, a scan/job is running, or the check is blocked by an upstream finding |
+| `GET` | `/api/v1/system/data-health/jobs/{job_id}` | Admin | Poll a started fix job's status/result |
 
 ## LimitCard Schema
 
 ```typescript
+interface TokenUsage {
+  input?: number;
+  output?: number;
+  reasoning?: number;
+  cache_read?: number;
+  cache_create?: number;
+  total?: number;
+}
+
 interface LimitCard {
   // Core display fields
   service_name: string;     // Provider name (e.g., "Claude Pro")
@@ -179,8 +345,8 @@ interface LimitCard {
   remaining: string;        // Remaining quota (e.g., "85%", "$12.50")
   unit: string;             // Unit description (e.g., "tokens", "/ 100")
   reset: string;            // Human-readable reset (e.g., "in 4h 23m")
-  health: string;           // "good" | "warning" | "critical"
-  pace: string;             // "Stable" | "Moderate Burn" | "Fast Burn"
+  health: string;           // "good" | "warning" | "critical" | "unknown"
+  pace: string;             // "Stable" | "Sustainable" | "Moderate Burn" | "Fast Burn" | "Pending Reset" | "Exhausted"
   detail: string;           // Additional context
 
   // Identity & routing
@@ -194,7 +360,7 @@ interface LimitCard {
   used_value?: number;      // Raw used amount
   limit_value?: number;     // Raw limit amount
   is_unlimited?: boolean;
-  unit_type?: string;       // "currency" | "tokens" | "requests" | "percent"
+  unit_type?: string;       // "currency" | "tokens" | "requests" | "minutes" | "percent" | "generic"
   currency?: string;      // "USD" | "EUR" | "CNY"
   credit_breakdown?: Array<{ // Optional purchased/promotional balance explanation
     kind: 'purchased' | 'subscription' | 'promotion';
@@ -219,7 +385,7 @@ interface LimitCard {
   by_model?: Record<string, {  // Per-model breakdown
     cost: number;           // Cost for this model
     msgs: number;           // Messages from this model
-    tokens?: number;        // Tokens for this model (if available)
+    tokens?: TokenUsage;    // Token breakdown for this model (an object, not a number)
   }>;
   msgs?: number;            // Total message count
   pct_used?: number;      // Percentage used based on cost
@@ -233,7 +399,7 @@ interface LimitCard {
   error_type?: string;    // Populated when collection fails — surfaces as an Error Card
   stale?: boolean;        // Cache served past STALE_CEILING — real but old data (since #293)
   collection_failing?: boolean;  // Collection is failing; set alongside `stale`, drives frontend cardStale()
-  tier?: string;          // "Free" | "Pro" | "Enterprise"
+  tier?: string;          // "Free" | "Pro" | "Premium" | "Team" | "Enterprise" — the schema's vocabulary; the value is derived at runtime from the provider's plan
   billing_evidence?: string | null;  // "placeholder" | "prepaid_credit" - evidence that decides no billing model
   usage_url?: string;     // Link to provider usage page
   updated_at?: string;    // ISO 8601 timestamp
@@ -246,28 +412,118 @@ interface LimitCard {
 }
 ```
 
-See `../app/models/schemas.py` for the authoritative Pydantic definition. Token breakdown semantics, the `data_source`/`input_source` taxonomy, and the event-sourced data model are documented in [architecture.md](architecture.md) and [statistics.md](statistics.md).
+The `by_model` entry's `tokens` is an object, not a number — a per-model token
+breakdown:
 
+```json
+{
+  "by_model": {
+    "claude-sonnet-4": {
+      "cost": 1.25,
+      "msgs": 42,
+      "tokens": {
+        "input": 12000,
+        "output": 3400,
+        "reasoning": 0,
+        "cache_read": 9000,
+        "cache_create": 0,
+        "total": 15400
+      }
+    }
+  }
+}
+```
 
-Private `/usage/*` reads, fleet sidecar inventory/detail, system state and
-provider configuration reads, and GitHub OAuth status require administrator
-authentication in network mode. Localhost trust remains available with valid
-local Host and browser Origin headers. Public bootstrap endpoints are
-`/system/settings`, `/system/health`, and `/system/sidecar-downloads`; fleet
-`/config` retains its redacted public view and signed sidecar behavior.
-Webhook URLs must use the supported Slack or Discord HTTPS endpoint hosts.
+See `../app/models/schemas.py` for the authoritative Pydantic definition and
+`../webapp/src/api/types.ts` for the TypeScript mirror. Token breakdown semantics, the `data_source`/`input_source` taxonomy, and the event-sourced data model are
+documented in [architecture.md](architecture.md) and [statistics.md](statistics.md).
 
-Webhook list entries include optional `validation_error` text for saved URLs
-blocked by the current destination policy. Configured encryption failures return
-HTTP 503 and refuse credential persistence.
+## Account lifecycle
+
+An account is **archived** (retired but restorable), **merged away** (retired
+and not restorable — the merge moved its history and its credential to another
+account), or **parked** (a credential mapping that points at an archived
+account — see [Parked mappings](#parked-mappings)). This section is the
+canonical description of the first two; the endpoint tables above only point
+here.
+
+### Archived accounts
+
+`PUT /api/v1/system/provider-config/{provider_id}/{account_id}` with
+`{"archived": true}` archives the account (`archived=true`, forced
+`enabled=false`) and **evicts its cached credential**, so a retired account
+holds nothing live and nothing refreshable. The stored credential (`api_key`,
+`session_cookie`) stays, so `{"archived": false}` makes the account usable again
+immediately — a machine-reported credential returns with the machine's next
+push.
+
+A retired account holds no credential at all: the secret is kept nowhere — the
+machine's next push records the source but stores no secret for a retired
+account, and any copy at rest is retired with the account.
+
+`DELETE /api/v1/system/provider-config/{provider_id}/{account_id}` soft-archives
+the account and clears any matching `credential_tags` hints.
+
+### Merged-away accounts
+
+`POST /api/v1/system/provider-account-merge/apply` moves one
+account's usage history, quota cards, credential-source rows, operator tags and
+**its credential** to the destination, and retires the source id — a machine
+that still claims it has its credential filed under the destination, not under a
+resurrected account. `preview` reports what would move and how many rows
+collide; `apply` performs the merge (`confirm_collisions` to accept the
+deduplication, `confirm_shared_default` to merge with the shared `default`
+identity). It is refused when either side was already merged away.
+
+An account that was **merged away** is not an account any more: the merge
+moved its history and its credential to the destination, so it holds nothing.
+The row the merge left behind stays in `accounts` (archived, no credential) and
+carries `merged_into`, so a client can tell a merged-away account from an
+account that was merely archived; the provider's `merged_accounts` lists every
+merged-away account with the account it became (`account_id`,
+`destination_account_id`, `merged_at`; a chain of merges is reported at its
+end). Settings → Providers lists them under "Merged accounts", where the
+un-merge is offered: they cannot be restored by a plain write.
+
+**A merged-away account cannot be restored or given a credential**: any write
+that would make it an account again — `{"archived": false}`, a credential write,
+or a PUT that creates the row — is refused with `409`, and the message names
+the account it went to. Restoring it would resurrect a phantom (the merge
+moved its history and its credential to the destination). A merge that kept
+its journal of what it moved can be put back instead — see
+[Un-merge](#un-merge).
+
+### Un-merge
+
+`POST /api/v1/system/provider-account-unmerge/apply` undoes one
+merge: the rows the merge moved go back to the account they came from, the
+credential sources, operator tags and durable contributions follow, the
+provider row is restored and the merge record is deleted — the retired id
+names an account again. `preview` reports what goes back, what cannot (the
+duplicates the merge dropped, the stored credential it wiped) and the rows that
+got in the way; `apply` performs the un-merge (`confirm_collisions` to accept
+dropping a row that got in the way, `previewed_collisions` the count the
+preview showed — the rows may not have changed since). It is refused (`409`)
+when the merge has no journal, when the destination was merged away too (a
+chain is unwound from the end), when the rows in the way changed since the
+preview, or when a row is in the way and the collision was not confirmed;
+`404` when no merge is recorded for the account.
+
+The display label of an account — and the billing model derived from the cards
+it publishes — is described under
+[Automatically discovered Claude accounts](#automatically-discovered-claude-accounts).
+
+## Behaviour notes
 
 ### Signed fleet request retries
 
-Authenticated fleet ingest and signed config requests consume a durable, single-use signature receipt before handler effects. Reusing the same envelope returns HTTP `409` (`detail.error: "replayed_request"`), including after handler validation errors. Receipt storage failures return `503`. Generate a fresh timestamp and HMAC for every retry; the signing format is unchanged. Timestamps must be finite and no more than five minutes in the past or one minute in the future. Event identifiers continue to deduplicate retried usage events.
+Authenticated fleet ingest and signed config requests consume a durable, single-use signature receipt before handler effects. Reusing the same envelope returns HTTP `409`
+(`detail.error: "replayed_request"`), including after handler validation errors. Receipt storage failures return `503`. Generate a fresh timestamp and HMAC for every retry; the signing
+format is unchanged. Timestamps must be finite and no more than five minutes in the past or one minute in the future. Event identifiers continue to deduplicate retried usage events.
 
 ### Fleet login-directory additions
 
-`PUT /api/v1/fleet/sidecars/{id}/settings` accepts optional
+`PUT /api/v1/fleet/sidecars/{sidecar_id}/settings` accepts optional
 `claude_config_dirs` and `codex_home` arrays (maximum 32 directories each, 4096
 characters per path). Omission preserves the field; `null` or `[]` clears only
 that Fleet addition. Absolute POSIX/Windows and home-relative paths are accepted;
@@ -360,6 +616,9 @@ as well.
 `POST /api/v1/fleet/credentials/tags` reports which kind of mapping it wrote
 as `target_archived`.
 
+The archive / merge / un-merge semantics around a parked mapping are described
+under [Account lifecycle](#account-lifecycle).
+
 
 ### Automatic Claude browser connections
 
@@ -446,7 +705,9 @@ every member shares its credit, so the organization's name names it.
 
 The name is written to `ProviderConfig.account_label` when the account row is
 created, and an `account_label` nobody set is filled in on a later poll. A
-label the operator chose is never overwritten.
+label the operator chose is never overwritten — the operator's own label is
+written with
+`PUT /api/v1/system/provider-account-label/{provider_id}/{account_id}`.
 
 A card's label is the account's *name* — the member's email for a claude.ai
 account, the organization's name for a Console account — and it is what keys the
@@ -490,6 +751,12 @@ new Keychain discovery rule. Ordinary credential-file fallback remains supported
 
 ## Local sidecar Keychain source settings
 
+**These are the sidecar's own loopback routes**, served by the sidecar process
+on the machine that holds the credentials. They are *not* server routes: they
+have no `/api/v1/` prefix, the server never exposes them, and they are
+documented here only because the server-side protocol below interacts with
+them. See [Sidecar Documentation](sidecar.md) for the sidecar's full API.
+
 The loopback sidecar settings UI exposes GET /sources and POST /sources, with the
 existing exact Host and same-origin POST checks. These are local settings routes,
 not server-side authorization endpoints. GET is inert and returns only catalog
@@ -512,11 +779,11 @@ unaffected; Windows Credential Manager is outside this macOS permission model.
 Until #783's authenticated source lifecycle is implemented, newly opted-in
 Keychain credential cards and matching manifest observations are withheld from
 server forwarding. Existing server credentials are not silently revoked by a
-local checkbox. See #780 and docs/sidecar-source-authorization.md for the full
+local checkbox. See #780 and [source-consent.md](source-consent.md) for the full
 consent, withdrawal, remote-control and acceptance contract.
 
 
-### Fleet Keychain source lifecycle (protocol 1)
+## Fleet Keychain source lifecycle (protocol 1)
 
 Updated sidecars request device_protocol=1 and platform=Darwin|Linux|Windows
 when redeeming a pairing code. The platform is bound to the enrolled identity;
@@ -555,38 +822,11 @@ reverse proxy preserving the public path. Existing timestamp limits, body caps,
 and durable replay protection apply. A shared ingest key cannot authenticate a
 device header or claim a reserved device-<32 lowercase hex> registry identity.
 
-- POST /api/v1/fleet/source-sync: device-authenticated status and ordered
-  command acknowledgment. The body contains protocol=1, sources, and acknowledgments
-  ({id, status: applied|denied|superseded}). Source reports contain source_id,
-  provider_id, label, revision, generation, literal boolean read, state, new,
-  renewal_requested, renewal_supported, and optional last_read_at / last_renewed_at
-  Unix timestamps. Labels are canonical; unknown scrapers are not accepted.
-  The response lists accepted scraper IDs, withdrawals ({source_id, generation}),
-  and pending commands ({id, source_id, generation, action}).
-  Up to 256 pending commands are delivered in order per poll. Acknowledged
-  commands are retained for 30 days, always keeping each scraper's latest
-  ordering barrier; repeated acknowledgments after cleanup are harmless.
-  Reports from an older generation update contact time without changing consent.
-- GET /api/v1/fleet/sidecars/{sidecar_id}/sources: admin-authenticated, inert status.
-  Returns protocol=1, sources (FleetSourceStatus), and pending commands.
-  Source status extends the report with remote_paused, revoked, report_at,
-  report_stale, announcement, renewal_capable, collection_health
-  (withdrawn|paused|healthy|action_required|untried), and last_collection_at
-  (ISO UTC or null). Stale reports never expire eligible server credentials.
-  `report_at` / `report_stale` describe source reporting, independently of the
-  device registry's `last_seen` / connectivity and server collection health.
-  macOS sources send periodic consent/status reports. Windows Credential Manager
-  sources update source contact when credentials are submitted; heartbeat-only
-  ingest and empty source-sync requests do not refresh it. A Windows source report
-  can therefore be stale while the device is online and server collection is
-  healthy. This does not require another local read or invalidate its credentials.
-- POST /api/v1/fleet/sidecars/{sidecar_id}/sources/{source_id}/commands:
-  admin-authenticated {action}, one of pause, resume, revoke, request_setup,
-  or dismiss. Returns {id, status: pending}. Pause/revoke immediately withdraw
-  that source's server credentials. Resume requires current local read consent
-  and a matching non-revoked generation; it only clears a server pause after
-  acknowledgment. Setup requests create a local notice only. Dismissal is scoped
-  to the current catalog capability revision.
+| Method | Route | Auth | Description |
+|--------|-------|------|-------------|
+| `POST` | `/api/v1/fleet/source-sync` | Device HMAC | Device-authenticated status and ordered command acknowledgment. The body contains protocol=1, sources, and acknowledgments ({id, status: applied\|denied\|superseded}). Source reports contain source_id, provider_id, label, revision, generation, literal boolean read, state, new, renewal_requested, renewal_supported, and optional last_read_at / last_renewed_at Unix timestamps. Labels are canonical; unknown scrapers are not accepted. The response lists accepted scraper IDs, withdrawals ({source_id, generation}), and pending commands ({id, source_id, generation, action}). Up to 256 pending commands are delivered in order per poll. Acknowledged commands are retained for 30 days, always keeping each scraper's latest ordering barrier; repeated acknowledgments after cleanup are harmless. Reports from an older generation update contact time without changing consent |
+| `GET` | `/api/v1/fleet/sidecars/{sidecar_id}/sources` | Admin | Admin-authenticated, inert status. Returns protocol=1, sources (FleetSourceStatus), and pending commands. Source status extends the report with remote_paused, revoked, report_at, report_stale, announcement, renewal_capable, collection_health (withdrawn\|paused\|healthy\|action_required\|untried), and last_collection_at (ISO UTC or null). Stale reports never expire eligible server credentials. `report_at` / `report_stale` describe source reporting, independently of the device registry's `last_seen` / connectivity and server collection health. macOS sources send periodic consent/status reports. Windows Credential Manager sources update source contact when credentials are submitted; heartbeat-only ingest and empty source-sync requests do not refresh it. A Windows source report can therefore be stale while the device is online and server collection is healthy. This does not require another local read or invalidate its credentials |
+| `POST` | `/api/v1/fleet/sidecars/{sidecar_id}/sources/{source_id}/commands` | Admin | Admin-authenticated {action}, one of pause, resume, revoke, request_setup, or dismiss. Returns {id, status: pending}. Pause/revoke immediately withdraw that source's server credentials. Resume requires current local read consent and a matching non-revoked generation; it only clears a server pause after acknowledgment. Setup requests create a local notice only. Dismissal is scoped to the current catalog capability revision |
 
 Native credential cards and manifest entries carry keychain_consent with
 source_id, revision, and generation. The server checks device, provider, origin,

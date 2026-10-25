@@ -89,7 +89,8 @@ returned — this is a best-effort enrichment.
 
 ```python
 {
-    "service_name": "OpenRouter Credits",
+    "service_name": "OpenRouter",
+    "variant": "Credits",
     "icon": "🚀",
     "remaining": "$7.50",
     "unit": "USD",
@@ -109,7 +110,8 @@ returned — this is a best-effort enrichment.
 
 ```python
 {
-    "service_name": "OpenRouter Key Limit",
+    "service_name": "OpenRouter",
+    "variant": "Key Limit",
     "icon": "🔑",
     "remaining": "$19.50",
     "unit": "USD",
@@ -155,14 +157,14 @@ Sidecar uses the same API key. No aggregation needed. See [sidecar documentation
 ## Related Files
 
 | File | Purpose |
-|------|---------|
-| `app/services/collectors/openrouter.py` | Main collector |
-| `app/core/config.py` | Settings (API key, referer, title) |
+|---|---|
+| `app/services/collectors/openrouter.py` | Collector entry point |
+| `app/services/collectors/base.py` | Collector base class |
+| `scripts/sidecar.py` | Sidecar credential rules and event dispatch |
+| `scripts/sidecar_pkg/cookie_scan.py` | Cross-platform browser cookie store discovery |
 
 ## References
 
 - **OpenRouter:** https://openrouter.ai
 - **Credits API:** https://openrouter.ai/docs#credits
 - **Key API:** https://openrouter.ai/docs#key
-
-*Last updated: 2026-04-14*

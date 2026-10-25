@@ -7,7 +7,7 @@ GitHub Copilot quota collector. One endpoint (`copilot_internal/user`) returns t
 ## Overview
 
 - **Collection Strategy**: api (`copilot_internal/user`); no fallback endpoint
-- **Cards**: 2 cards (Completions, Chat) or 3 cards (Premium, Chat, Autocomplete)
+- **Cards**: 2 cards (Completions, Chat) or 3 cards (Premium Interactions, Chat, Included Credits)
 - **Authentication**: a GitHub OAuth token (device login, `gh`, or an editor sign-in) or a PAT; see [Credential Discovery](#credential-discovery)
 
 ## Setup Methods Quick Overview
@@ -16,7 +16,7 @@ The GitHub Copilot collector supports multiple authentication methods:
 
 1.  **Token**: Provide a static GitHub token. An OAuth token (from `gh auth login` or the device login) works best; a classic PAT may be rejected by the Copilot endpoints.
     *   **Method**: Set the `GITHUB_TOKEN` environment variable.
-    *   **Details**: Refer to the [Configuration section](#configuration) for `GITHUB_TOKEN` and the [Authentication section](#authentication) in the Overview.
+    *   **Details**: Refer to the [Configuration section](#configuration) for `GITHUB_TOKEN` and the [GitHub OAuth Setup](#github-oauth-setup) in the Overview.
 
 2.  **OAuth Device Flow**: Interactively log in via GitHub's OAuth Device Flow to obtain a token.
     *   **Method 1 (Default)**: Uses Runway's bundled public `GITHUB_CLIENT_ID`.
@@ -53,7 +53,8 @@ Identity comes from `api.github.com/user` (and `/user/emails` for the label).
 
 ```python
 {
-    "service": "Copilot (Completions)",
+    "service_name": "Copilot",
+    "variant": "Completions",
     "icon": "🐙",
     "remaining": "45",
     "unit": "/ 100",
@@ -137,13 +138,13 @@ The sidecar only extracts and forwards GitHub credentials; it never calls the Gi
 ## Related Files
 
 | File | Purpose |
-|------|---------|
-| `app/services/collectors/github.py` | Main collector |
-| `scripts/sidecar.py` | Sidecar (credential extraction only) |
+|---|---|
+| `app/services/collectors/github.py` | Collector entry point — the Copilot internal API |
+| `app/services/collectors/base.py` | Collector base class |
+| `scripts/sidecar.py` | Sidecar credential rules and event dispatch |
+| `scripts/sidecar_pkg/cookie_scan.py` | Cross-platform browser cookie store discovery |
 
 ## References
 
 - **GitHub Copilot:** https://github.com/features/copilot
 - **Token Settings:** https://github.com/settings/tokens
-
-*Last updated: 2026-04-10*
