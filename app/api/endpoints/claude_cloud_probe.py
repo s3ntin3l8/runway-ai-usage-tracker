@@ -32,6 +32,8 @@ def _request_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
 
 
 class SanitizedProbeRoute(APIRoute):
+    max_request_bytes = 8192
+
     def get_route_handler(self) -> Callable[[Request], Coroutine[Any, Any, Response]]:
         original = super().get_route_handler()
 
@@ -46,7 +48,7 @@ class SanitizedProbeRoute(APIRoute):
             try:
                 async for chunk in request.stream():
                     size += len(chunk)
-                    if size > 8192:
+                    if size > self.max_request_bytes:
                         return JSONResponse(
                             status_code=413, content={"detail": "probe_request_too_large"}
                         )

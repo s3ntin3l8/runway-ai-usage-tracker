@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends
 
 from app.api.endpoints.auth import router as auth_router
 from app.api.endpoints.claude_cloud_probe import router as claude_cloud_probe_router
+from app.api.endpoints.claude_cloud_verification import router as claude_cloud_verification_router
 from app.api.endpoints.data_health import router as data_health_router
 from app.api.endpoints.fleet import router as fleet_router
 from app.api.endpoints.fleet_sources import router as fleet_sources_router
@@ -23,6 +24,7 @@ v1_router.include_router(fleet_sources_router, prefix="/fleet", tags=["fleet"])
 v1_router.include_router(auth_router, prefix="/auth", tags=["auth"])
 v1_router.include_router(system_router, prefix="/system", tags=["system"])
 v1_router.include_router(claude_cloud_probe_router, prefix="/system", tags=["system"])
+v1_router.include_router(claude_cloud_verification_router, prefix="/system", tags=["system"])
 v1_router.include_router(data_health_router, prefix="/system/data-health", tags=["data-health"])
 
 # Include v1 into the main API router

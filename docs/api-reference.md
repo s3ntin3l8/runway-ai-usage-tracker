@@ -851,3 +851,64 @@ Pausing removes a contribution from selection but retains its encrypted bundle.
 An acknowledged, locally permitted resume can reuse that known bundle without
 a new credential read. Revocation and local opt-out erase the matching bundle
 and retain the consent-generation tombstone.
+
+### Resumable Claude cloud verification (operator only)
+
+`POST /api/v1/system/debug/claude-cloud-verification` uses existing admin,
+Host and CSRF protections. Maximum body: 256 KiB, no duplicate keys or unknown
+fields; six actions per minute. GET is inert. This is a separate protocol from
+the existing bounded `/debug/claude-cloud` sample; its v1/v2 behavior is unchanged.
+
+Actions:
+
+- `{"action":"start","account_id":"…","source_id":"…"}` records one job
+  using the exact eligible cached source. Optional `organization_id`, `session_id`,
+  `declared_category`, `job_key` and `expected_local` are strict inputs. Start
+  performs no provider requests. Expected local fixtures contain at most 256
+  reduced assistant records, strict numeric usage, and identities HMACed with the
+  supplied 32-byte hex job key. Never submit transcripts, tokens or raw message IDs.
+- `{"action":"step","job_handle":"…"}` explicitly advances one batch:
+  at most five GETs, 30 seconds, 4 MiB total and 1 MiB per response. Each step
+  rechecks profile/account/org and local source authority. The required session
+  list is exhausted before the selected session's history. No automatic history
+  sweep, retries, fallback, token refresh or collector activation.
+- `{"action":"status"}` reads the current durable job without provider I/O;
+  optional `job_handle` selects the exact job. Local source/consent authority is
+  rechecked before returning evidence, without changing an active checkpoint.
+  `last_verified_at` is the last
+  successful profile check, not a fresh status lookup. No job returns
+  `{"state":"absent"}`. If a checkpoint is unreadable (including an unavailable
+  encryption key), status returns `{"state":"unavailable","job_handle":"…"}`
+  so an admin can explicitly cancel it; status never deletes or replaces it.
+- `{"action":"cancel","job_handle":"…"}` removes the private checkpoint
+  between steps and returns `{"state":"cancelled"}`. An active lease returns
+  409 rather than claiming cancellation before the bounded step ends.
+
+Only one encrypted job exists at a time. Configured server encryption is required;
+there is no plaintext fallback. Every provider attempt is charged and journaled
+before dispatch. Clean batch boundaries resume; an ambiguous in-flight intent
+stops as interrupted and cannot replay. A job is limited to 512 attempts, 256 MiB,
+20,000 listed sessions, 100,000 history records and 30 minutes. Terminal failures
+never start another exchange. Fixed 409/404/503 error categories expose no values.
+
+The strict report contains `format_version: 1`, opaque transport `job_handle`,
+`started_at`, `deadline`, `last_verified_at`, `phase`, `outcome`, `requests`,
+`accepted_response_bytes`, `http_status`, account/org verification booleans,
+`listed_sessions`, `list_pages`, `list_complete`, history page/event/completion
+counts, numeric `sequence` diagnostics, SDK-envelope `audit`, `comparison`,
+`subagent_comparison`, fixed `scope_observations`, `declared_category` and
+`execution_kind`. Comparisons report input/cache overlap only; children remain
+separate from main-agent totals. Execution metadata is an observation, not proven
+provenance. No provider/account/message IDs, model names, source IDs, cursors,
+HMACs, salt, transcript content or raw errors leave the report.
+
+All `cloud_contract_verified`, `ready_for_ingestion`, `live_acceptance_passed` and
+`provenance_verified` flags remain false. Complete pagination is not complete
+accounting or coverage acceptance. Remove `job_handle` before retaining evidence.
+The standalone `scripts/verify_claude_cloud.py` accepts the resulting report in an
+**envelope version 2**, alongside immutable `source_commit`, `image`, `observed_at`
+and `deployment`. Existing envelope version 1 remains unchanged. Version 2 always
+returns `stop` with remaining accounting/coverage/provenance checks; supplied
+build metadata is not authenticated by the offline validator.
+
+See [the #956 design and acceptance boundaries](claude-complete-history-verification-956.md).
