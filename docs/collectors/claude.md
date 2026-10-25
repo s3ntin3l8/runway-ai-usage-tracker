@@ -183,7 +183,7 @@ The server never opens browser stores or Keychain. Windows/Linux discovery
 retains its existing behavior; native automatic Console discovery is enabled
 for macOS. Ordinary sign-in, expiry and revocation still apply. Native Chrome
 source-runtime evidence is recorded in
-[automatic connection acceptance](../claude-automatic-native-acceptance-671.md).
+[automatic connection acceptance](../evidence/acceptance/claude-automatic-native-acceptance-671.md).
 
 A completed provider scan can still be empty when a browser store or Keychain is
 inaccessible. Runway preserves last-good credential sources in that case. It retires
@@ -293,7 +293,7 @@ scoped macOS acceptance in #672, optional browser acceptance in #683, and renewa
 ### macOS browser acceptance and store diagnostics
 
 Chrome, Safari and Claude Desktop passed the scoped packaged-app acceptance in
-[#672](../claude-native-macos-acceptance-672.md). Safari discovery covers legacy,
+[#672](../evidence/acceptance/claude-native-macos-acceptance-672.md). Safari discovery covers legacy,
 container and separate profile cookie stores. macOS may require user-controlled
 privacy access; an inaccessible store is never treated as logout.
 
