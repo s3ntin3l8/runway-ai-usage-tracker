@@ -87,7 +87,7 @@ An existing install's flat `hermes_watermark.json` is read **once**, when the lo
 
 The one-time read is recorded in the marker `hermes_watermark.json.migrated`, next to the legacy file. Without it, deleting the log would refill it with the legacy baseline and the re-scan below would silently do nothing on every upgraded install. The marker is written only after the log itself is on disk, so a failed write leaves the migration to be retried rather than dropping the baseline for good.
 
-A legacy key is matched against the discovered databases **longest path first**: a path that ends in a `|` is a prefix of another path, and the shorter one would match the longer key and file the mark under a database that does not exist.
+A legacy key is matched against the discovered databases **longest path first**: one path can be a prefix of another (`/data/a` of `/data/a|b|c`), and the character behind it in the longer path is then a `|`, so the shorter path also matches the longer key and would file the mark under a database that does not exist.
 
 ### Watermark Compaction
 

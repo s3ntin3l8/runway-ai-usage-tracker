@@ -400,12 +400,14 @@ def _split_legacy_watermark_key(
     Returns None when the key holds no path at all: such a key is not the
     mark of any slice, so there is nothing to keep.
     """
-    # The longest path first. A path is a prefix of another one when it
-    # ends in a "|", and the shorter one then matches the longer key: the
-    # mark of "/data/a|b|c" would be filed under "/data/a", a database that
-    # does not exist, and would be reclaimed as a dead slice -- the real
-    # baseline lost, and the session's whole lifetime reported a second
-    # time.
+    # The longest path first. A path can be a prefix of another one --
+    # "/data/a" of "/data/a|b|c" -- and the character behind it in the
+    # longer path is then a "|", so the marker "|/data/a|" also matches
+    # inside "|/data/a|b|c|". On discovery order the shorter path would
+    # win: the mark of "/data/a|b|c" would be filed under "/data/a", a
+    # database that does not exist, and would be reclaimed as a dead slice
+    # -- the real baseline lost, and the session's whole lifetime reported
+    # a second time.
     for path in sorted(live_paths, key=len, reverse=True):
         marker = f"|{path}|"
         index = flat_key.rfind(marker)
