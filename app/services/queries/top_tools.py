@@ -13,10 +13,10 @@ from typing import Any
 from sqlalchemy import text
 from sqlmodel import Session
 
-from app.services.queries._shared import sqlite_utc_timestamp
+from app.services.queries._shared import RankedRows, sqlite_utc_timestamp
 
 
-def query_top_tools(
+def rank_top_tools(
     session: Session,
     *,
     since: datetime,
@@ -24,11 +24,14 @@ def query_top_tools(
     provider_id: str | None = None,
     sidecar_id: str | None = None,
     limit: int = 15,
-) -> list[dict[str, Any]]:
+) -> RankedRows:
     """Rank tool names by invocation count in ``[since, until)``.
 
     Each row: ``tool`` (name), ``calls`` (total invocations), ``msgs`` (distinct
     messages that used it). Ordered by calls desc.
+
+    ``total`` is the number of ranked groups before the ``LIMIT`` truncated
+    the result — how many tools the ranking had, not how many it shows.
     """
     until_clause = "AND e.ts < :until" if until is not None else ""
     provider_clause = "AND e.provider_id = :provider_id" if provider_id else ""
@@ -39,11 +42,22 @@ def query_top_tools(
         SELECT
             j.value          AS tool,
             COUNT(*)         AS calls,
-            COUNT(DISTINCT e.id) AS msgs
+            COUNT(DISTINCT e.id) AS msgs,
+            -- The untruncated size of the ranking. A window function is
+            -- evaluated after GROUP BY and before LIMIT, so this counts
+            -- every group of the same filter set in the one scan that
+            -- produces the rows — the count cannot disagree with them.
+            COUNT(*) OVER () AS total_groups
         FROM usage_events e
         JOIN json_each(e.tools_json) j
         WHERE e.kind = 'message'
           AND e.tools_json IS NOT NULL
+          -- An unnamed tool is not a tool. The SQL drops it as well as the
+          -- Python filter below, so the ranked group set and the returned
+          -- rows are the same set and the total counts exactly the tools
+          -- that were ranked. A JSON null value fails this comparison too,
+          -- which covers both.
+          AND j.value != ''
           AND e.ts >= :since
           {until_clause}
           {provider_clause}
@@ -63,8 +77,36 @@ def query_top_tools(
         params["sidecar_id"] = sidecar_id
 
     rows = session.exec(sql, params=params).all()  # type: ignore[call-overload]
-    return [
+    results = [
         {"tool": row.tool, "calls": int(row.calls or 0), "msgs": int(row.msgs or 0)}
         for row in rows
         if row.tool
     ]
+    # The count rides on every row of the ranking; an empty ranking had no
+    # groups to begin with.
+    total = int(rows[0].total_groups) if rows else 0
+    return RankedRows(rows=results, total=total)
+
+
+def query_top_tools(
+    session: Session,
+    *,
+    since: datetime,
+    until: datetime | None = None,
+    provider_id: str | None = None,
+    sidecar_id: str | None = None,
+    limit: int = 15,
+) -> list[dict[str, Any]]:
+    """The rows of the tool ranking in ``[since, until)``, capped at ``limit``.
+
+    See ``rank_top_tools`` for the ranking itself; this wrapper keeps the
+    older, rows-only signature for the callers that need nothing else.
+    """
+    return rank_top_tools(
+        session,
+        since=since,
+        until=until,
+        provider_id=provider_id,
+        sidecar_id=sidecar_id,
+        limit=limit,
+    ).rows

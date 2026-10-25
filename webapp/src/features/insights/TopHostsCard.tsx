@@ -21,6 +21,7 @@ import { useExcludeCache } from '@/hooks/useExcludeCache';
 import { formatAxisCost, formatAxisNumber, formatCost, formatTokens } from '@/lib/format';
 import { formatRangeLabel, type DateRangeValue } from '@/lib/timeRange';
 import { INSIGHTS_TOP_N, type TopMetric, useTopHosts } from './queries';
+import { rankTitle } from './rankTitle';
 import { costSegments, costTotal, tokenSegments, tokenTotal } from './rankSegments';
 import { CircleAlert } from 'lucide-react';
 
@@ -81,7 +82,10 @@ export function TopHostsCard({ range }: { range: DateRangeValue }) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Top {INSIGHTS_TOP_N} hosts · {formatRangeLabel(range)}</CardTitle>
+        <CardTitle>
+          {rankTitle(top.data?.total, top.data?.limit ?? INSIGHTS_TOP_N, 'hosts')} ·{' '}
+          {formatRangeLabel(range)}
+        </CardTitle>
         <SegmentedControl
           value={metric}
           onChange={(v) => setMetric(v as TopMetric)}

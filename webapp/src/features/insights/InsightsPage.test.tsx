@@ -2,6 +2,7 @@ import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/test/utils';
 import { InsightsPage } from './InsightsPage';
+import { INSIGHTS_TOP_N } from './queries';
 import * as api from '@/api/endpoints';
 
 vi.mock('@/api/endpoints');
@@ -56,28 +57,40 @@ describe('InsightsPage', () => {
     });
     vi.mocked(api.fetchHistoryChart).mockResolvedValue({ bars: [] });
     vi.mocked(api.fetchHistoryDeltas).mockResolvedValue({} as never);
+    // The rankings are empty, and each response says so: the untruncated
+    // total is 0 and the cap that was applied is the usual one.
     vi.mocked(api.fetchTopModels).mockResolvedValue({
       models: [],
       metric: 'tokens',
+      total: 0,
+      limit: INSIGHTS_TOP_N,
       generated_at: new Date().toISOString(),
     });
     vi.mocked(api.fetchTopProjects).mockResolvedValue({
       projects: [],
       metric: 'tokens',
+      total: 0,
+      limit: INSIGHTS_TOP_N,
       generated_at: new Date().toISOString(),
     });
     vi.mocked(api.fetchTopTools).mockResolvedValue({
       tools: [],
+      total: 0,
+      limit: INSIGHTS_TOP_N,
       generated_at: new Date().toISOString(),
     });
     vi.mocked(api.fetchTopSessions).mockResolvedValue({
       sessions: [],
       metric: 'tokens',
+      total: 0,
+      limit: INSIGHTS_TOP_N,
       generated_at: new Date().toISOString(),
     });
     vi.mocked(api.fetchTopHosts).mockResolvedValue({
       hosts: [],
       metric: 'tokens',
+      total: 0,
+      limit: INSIGHTS_TOP_N,
       generated_at: new Date().toISOString(),
     });
     vi.mocked(api.fetchSidecars).mockResolvedValue({ sidecars: [] });
@@ -89,8 +102,11 @@ describe('InsightsPage', () => {
 
   it('shows the session and host rankings next to the other insights', async () => {
     renderWithProviders(<InsightsPage />);
-    expect(await screen.findByText(/Top 12 sessions · Last 7 days/)).toBeInTheDocument();
-    expect(screen.getByText(/Top 12 hosts · Last 7 days/)).toBeInTheDocument();
+    // The mocked rankings are empty, so the title says there is nothing —
+    // a title that read "Top 12 sessions" would claim twelve that do not
+    // exist.
+    expect(await screen.findByText(/No sessions · Last 7 days/)).toBeInTheDocument();
+    expect(screen.getByText(/No hosts · Last 7 days/)).toBeInTheDocument();
     // The lifetime strip stays lifetime-scoped, and says so next to the
     // numbers — the range picker in the header does not apply to it.
     expect(screen.getByText('Global insights')).toBeInTheDocument();
@@ -99,7 +115,7 @@ describe('InsightsPage', () => {
 
   it('re-scopes the new rankings when the last-24-hours range is picked', async () => {
     renderWithProviders(<InsightsPage />);
-    await screen.findByText(/Top 12 sessions · Last 7 days/);
+    await screen.findByText(/No sessions · Last 7 days/);
 
     await userEvent.click(screen.getByRole('button', { name: 'Last 7 days' }));
     await userEvent.click(await screen.findByRole('button', { name: 'Last 24 hours' }));
@@ -108,8 +124,8 @@ describe('InsightsPage', () => {
       expect(api.fetchTopSessions).toHaveBeenCalledWith(expect.objectContaining({ days: 1 }));
       expect(api.fetchTopHosts).toHaveBeenCalledWith(expect.objectContaining({ days: 1 }));
     });
-    expect(await screen.findByText(/Top 12 sessions · Last 24 hours/)).toBeInTheDocument();
-    expect(screen.getByText(/Top 12 hosts · Last 24 hours/)).toBeInTheDocument();
+    expect(await screen.findByText(/No sessions · Last 24 hours/)).toBeInTheDocument();
+    expect(screen.getByText(/No hosts · Last 24 hours/)).toBeInTheDocument();
   });
   it('shows an error with a retry when a ranking request fails', async () => {
     // A failed request must not read as "there is no data".

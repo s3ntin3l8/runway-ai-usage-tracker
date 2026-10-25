@@ -8,7 +8,7 @@ import pytest
 from sqlmodel import Session, SQLModel, create_engine
 
 from app.models.db import UsageEvent
-from app.services.queries.top_projects import query_projects, query_top_projects
+from app.services.queries.top_projects import query_projects, query_top_projects, rank_top_projects
 
 
 @pytest.fixture
@@ -203,3 +203,46 @@ def test_an_empty_turn_id_falls_back_to_the_event_count(db_session):
         _add(db_session, event_id=f"c{index}", project="alpha", turn_id="")
     rows = query_top_projects(db_session, since=_SINCE, metric="tokens")
     assert rows[0]["msgs"] == 3
+
+
+def test_total_counts_the_groups_the_limit_cut(db_session):
+    for index in range(4):
+        _add(
+            db_session,
+            event_id=f"p{index}",
+            project=f"project-{index}",
+            tokens_input=index + 1,
+        )
+
+    ranked = rank_top_projects(db_session, since=_SINCE, metric="tokens", limit=2)
+
+    assert len(ranked.rows) == 2
+    assert ranked.total == 4
+
+
+def test_total_matches_the_rows_when_nothing_was_cut(db_session):
+    _add(db_session, event_id="a", project="alpha", tokens_input=100)
+    _add(db_session, event_id="b", project="beta", tokens_input=200)
+
+    ranked = rank_top_projects(db_session, since=_SINCE, metric="tokens")
+
+    assert ranked.total == len(ranked.rows) == 2
+
+
+def test_total_is_zero_for_an_empty_range(db_session):
+    _add(db_session, event_id="a", project="alpha", tokens_input=100)
+
+    ranked = rank_top_projects(db_session, since=_NOW + timedelta(days=1), metric="tokens")
+
+    assert ranked.rows == []
+    assert ranked.total == 0
+
+
+def test_total_follows_the_provider_filter(db_session):
+    _add(db_session, event_id="a", provider_id="anthropic", project="alpha", tokens_input=100)
+    _add(db_session, event_id="b", provider_id="gemini", project="beta", tokens_input=200)
+
+    scoped = rank_top_projects(db_session, since=_SINCE, metric="tokens", provider_id="gemini")
+
+    assert [r["project"] for r in scoped.rows] == ["beta"]
+    assert scoped.total == 1

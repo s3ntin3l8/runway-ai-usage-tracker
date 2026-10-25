@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import type { TopSessionEntry } from '@/api/types';
 import { renderWithProviders } from '@/test/utils';
 import { TopSessionsCard } from './TopSessionsCard';
+import { INSIGHTS_TOP_N } from './queries';
 import * as api from '@/api/endpoints';
 
 vi.mock('@/api/endpoints');
@@ -59,8 +60,16 @@ const mockSession: TopSessionEntry = {
   models: ['opus-4.8'],
 };
 
-function makeResponse(sessions: TopSessionEntry[], metric: string) {
-  return { sessions, metric, generated_at: new Date().toISOString() };
+// The response carries the untruncated total and the cap that was applied, so
+// the card's title can say how much of the ranking it is not showing.
+function makeResponse(sessions: TopSessionEntry[], metric: string, total = sessions.length) {
+  return {
+    sessions,
+    metric,
+    total,
+    limit: INSIGHTS_TOP_N,
+    generated_at: new Date().toISOString(),
+  };
 }
 
 function firstRow(): HTMLElement {

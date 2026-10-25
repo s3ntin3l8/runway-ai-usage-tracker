@@ -11,6 +11,7 @@ import { Skeleton, SkeletonRegion } from '@/components/ui/Skeleton';
 import { formatAxisNumber, formatCount } from '@/lib/format';
 import { formatRangeLabel, type DateRangeValue } from '@/lib/timeRange';
 import { INSIGHTS_TOP_N, useTopTools } from './queries';
+import { rankTitle } from './rankTitle';
 import { CircleAlert } from 'lucide-react';
 
 function toolRow(t: TopToolEntry): RankRow {
@@ -25,7 +26,10 @@ export function TopToolsCard({ range }: { range: DateRangeValue }) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Top {INSIGHTS_TOP_N} tools · {formatRangeLabel(range)}</CardTitle>
+        <CardTitle>
+          {rankTitle(top.data?.total, top.data?.limit ?? INSIGHTS_TOP_N, 'tools')} ·{' '}
+          {formatRangeLabel(range)}
+        </CardTitle>
         <span className="text-[11px] text-fg-subtle">Claude tool use</span>
       </CardHeader>
       <CardContent className="pt-2">

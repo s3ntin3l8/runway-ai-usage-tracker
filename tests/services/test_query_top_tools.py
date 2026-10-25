@@ -8,7 +8,7 @@ import pytest
 from sqlmodel import Session, SQLModel, create_engine
 
 from app.models.db import UsageEvent
-from app.services.queries.top_tools import query_top_tools
+from app.services.queries.top_tools import query_top_tools, rank_top_tools
 
 
 @pytest.fixture
@@ -29,10 +29,10 @@ _NOW = datetime(2026, 5, 21, 12, 0, 0, tzinfo=UTC)
 _SINCE = _NOW - timedelta(days=1)
 
 
-def _add(session, *, event_id, tools_json, ts=_NOW, kind="message"):
+def _add(session, *, event_id, tools_json, ts=_NOW, kind="message", provider_id="anthropic"):
     session.add(
         UsageEvent(
-            provider_id="anthropic",
+            provider_id=provider_id,
             account_id="acc1",
             event_id=event_id,
             tools_json=tools_json,
@@ -90,3 +90,58 @@ def test_same_day_bounds_include_current_day_and_exclude_until(db_session):
 
     rows = query_top_tools(db_session, since=since, until=until)
     assert rows == [{"tool": "Read", "calls": 1, "msgs": 1}]
+
+
+def test_total_counts_the_groups_the_limit_cut(db_session):
+    _add(db_session, event_id="e", tools_json='["A", "B", "C", "D"]')
+
+    ranked = rank_top_tools(db_session, since=_SINCE, limit=2)
+
+    assert len(ranked.rows) == 2
+    assert ranked.total == 4
+
+
+def test_total_matches_the_rows_when_nothing_was_cut(db_session):
+    _add(db_session, event_id="e", tools_json='["Read", "Write"]')
+
+    ranked = rank_top_tools(db_session, since=_SINCE)
+
+    assert ranked.total == len(ranked.rows) == 2
+
+
+def test_total_is_zero_for_an_empty_range(db_session):
+    _add(db_session, event_id="e", tools_json='["Read"]')
+
+    ranked = rank_top_tools(db_session, since=_NOW + timedelta(days=1))
+
+    assert ranked.rows == []
+    assert ranked.total == 0
+
+
+def test_total_ignores_an_unnamed_tool(db_session):
+    """An unnamed tool is not a tool — and it must not inflate the total."""
+    _add(db_session, event_id="e", tools_json='["Read", ""]')
+
+    ranked = rank_top_tools(db_session, since=_SINCE)
+
+    assert [r["tool"] for r in ranked.rows] == ["Read"]
+    assert ranked.total == 1
+
+
+def test_total_ignores_a_null_tool_name(db_session):
+    _add(db_session, event_id="e", tools_json='["Read", null]')
+
+    ranked = rank_top_tools(db_session, since=_SINCE)
+
+    assert [r["tool"] for r in ranked.rows] == ["Read"]
+    assert ranked.total == 1
+
+
+def test_total_follows_the_provider_filter(db_session):
+    _add(db_session, event_id="a", provider_id="anthropic", tools_json='["Read"]')
+    _add(db_session, event_id="b", provider_id="gemini", tools_json='["Write"]')
+
+    scoped = rank_top_tools(db_session, since=_SINCE, provider_id="gemini")
+
+    assert [r["tool"] for r in scoped.rows] == ["Write"]
+    assert scoped.total == 1

@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import type { TopHostEntry } from '@/api/types';
 import { renderWithProviders } from '@/test/utils';
 import { TopHostsCard } from './TopHostsCard';
+import { INSIGHTS_TOP_N } from './queries';
 import * as api from '@/api/endpoints';
 
 vi.mock('@/api/endpoints');
@@ -56,8 +57,10 @@ const mockHost: TopHostEntry = {
   providers: ['anthropic'],
 };
 
-function makeResponse(hosts: TopHostEntry[], metric: string) {
-  return { hosts, metric, generated_at: new Date().toISOString() };
+// The response carries the untruncated total and the cap that was applied, so
+// the card's title can say how much of the ranking it is not showing.
+function makeResponse(hosts: TopHostEntry[], metric: string, total = hosts.length) {
+  return { hosts, metric, total, limit: INSIGHTS_TOP_N, generated_at: new Date().toISOString() };
 }
 
 function firstRow(): HTMLElement {
@@ -128,6 +131,23 @@ describe('TopHostsCard', () => {
     const metricGroup = screen.getByRole('group', { name: 'Top hosts metric' });
     await userEvent.click(within(metricGroup).getByRole('radio', { name: 'Cost' }));
     await waitFor(() => expect(Number(firstRow().getAttribute('data-value'))).toBeCloseTo(0.15));
+  });
+
+  it('states how much of a truncated ranking it is not showing', async () => {
+    // The response says 34 hosts were ranked and the cap was 12, so the
+    // title has to say both — a title that read "Top 12 hosts" would read
+    // as the whole list.
+    vi.mocked(api.fetchTopHosts).mockResolvedValue(makeResponse([mockHost], 'tokens', 34));
+    renderWithProviders(<TopHostsCard range={{ days: 7 }} />);
+    expect(
+      await screen.findByText(`Top ${INSIGHTS_TOP_N} of 34 hosts · Last 7 days`),
+    ).toBeInTheDocument();
+  });
+
+  it('states the real size when the ranking was not truncated', async () => {
+    vi.mocked(api.fetchTopHosts).mockResolvedValue(makeResponse([mockHost], 'tokens'));
+    renderWithProviders(<TopHostsCard range={{ days: 7 }} />);
+    expect(await screen.findByText('Top 1 host · Last 7 days')).toBeInTheDocument();
   });
 
   it('shows skeleton during loading', () => {

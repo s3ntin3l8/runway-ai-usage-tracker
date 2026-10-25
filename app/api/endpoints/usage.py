@@ -56,11 +56,11 @@ from app.services.queries import (
     query_projects,
     query_sessions_paginated,
     query_source_apps,
-    query_top_hosts,
-    query_top_models,
-    query_top_projects,
-    query_top_sessions,
-    query_top_tools,
+    rank_top_hosts,
+    rank_top_models,
+    rank_top_projects,
+    rank_top_sessions,
+    rank_top_tools,
 )
 
 # Window type rank for selecting the "longest" window among multiple cards.
@@ -1153,6 +1153,7 @@ async def get_top_models(
     `fetch_fleet_view` for why) — this is a `GROUP BY` scan over usage_events.
     Response is cached (keyed by every query param) for `_TOP_N_CACHE_TTL`.
     """
+    # The key carries every filter the total depends on, so a cached entry never mixes counts.
     cache_key = f"top-models:{metric}:{days}:{since}:{until}:{exclude_cache}:{sidecar_id}:{limit}"
     cached = cache_get(cache_key)
     if cached is not None:
@@ -1160,7 +1161,8 @@ async def get_top_models(
 
     def _work() -> TopModelsResponse:
         since_utc = _resolve_ranking_since(session, since, days)
-        models = query_top_models(
+        # One query, so the rows and the count they describe cannot disagree.
+        ranked = rank_top_models(
             session,
             since=since_utc,
             until=parse_iso8601_utc(until) if until else None,
@@ -1170,7 +1172,13 @@ async def get_top_models(
             limit=limit,
         )
         return TopModelsResponse.model_validate(
-            {"models": models, "metric": metric, "generated_at": iso_utc(datetime.now(UTC))}
+            {
+                "models": ranked.rows,
+                "metric": metric,
+                "total": ranked.total,
+                "limit": limit,
+                "generated_at": iso_utc(datetime.now(UTC)),
+            }
         )
 
     result = await asyncio.to_thread(_work)
@@ -1596,13 +1604,15 @@ async def get_top_projects(
     Response is cached (keyed by every query param) for `_TOP_N_CACHE_TTL`.
     """
     provider_id = _normalize_filter(provider_id)
+    # The key carries every filter the total depends on, so a cached entry never mixes counts.
     cache_key = f"top-projects:{metric}:{days}:{since}:{until}:{exclude_cache}:{provider_id}:{sidecar_id}:{limit}"
     cached = cache_get(cache_key)
     if cached is not None:
         return cached
 
     def _work() -> TopProjectsResponse:
-        projects = query_top_projects(
+        # One query, so the rows and the count they describe cannot disagree.
+        ranked = rank_top_projects(
             session,
             since=_resolve_ranking_since(session, since, days),
             until=parse_iso8601_utc(until) if until else None,
@@ -1613,7 +1623,13 @@ async def get_top_projects(
             limit=limit,
         )
         return TopProjectsResponse.model_validate(
-            {"projects": projects, "metric": metric, "generated_at": iso_utc(datetime.now(UTC))}
+            {
+                "projects": ranked.rows,
+                "metric": metric,
+                "total": ranked.total,
+                "limit": limit,
+                "generated_at": iso_utc(datetime.now(UTC)),
+            }
         )
 
     result = await asyncio.to_thread(_work)
@@ -1651,6 +1667,7 @@ async def get_top_sessions(
     Response is cached (keyed by every query param) for `_TOP_N_CACHE_TTL`.
     """
     provider_id = _normalize_filter(provider_id)
+    # The key carries every filter the total depends on, so a cached entry never mixes counts.
     cache_key = (
         f"top-sessions:{metric}:{days}:{since}:{until}:{exclude_cache}:"
         f"{provider_id}:{sidecar_id}:{limit}"
@@ -1660,7 +1677,8 @@ async def get_top_sessions(
         return cached
 
     def _work() -> TopSessionsResponse:
-        sessions = query_top_sessions(
+        # One query, so the rows and the count they describe cannot disagree.
+        ranked = rank_top_sessions(
             session,
             since=_resolve_ranking_since(session, since, days),
             until=parse_iso8601_utc(until) if until else None,
@@ -1671,7 +1689,13 @@ async def get_top_sessions(
             limit=limit,
         )
         return TopSessionsResponse.model_validate(
-            {"sessions": sessions, "metric": metric, "generated_at": iso_utc(datetime.now(UTC))}
+            {
+                "sessions": ranked.rows,
+                "metric": metric,
+                "total": ranked.total,
+                "limit": limit,
+                "generated_at": iso_utc(datetime.now(UTC)),
+            }
         )
 
     result = await asyncio.to_thread(_work)
@@ -1710,6 +1734,7 @@ async def get_top_hosts(
     Response is cached (keyed by every query param) for `_TOP_N_CACHE_TTL`.
     """
     provider_id = _normalize_filter(provider_id)
+    # The key carries every filter the total depends on, so a cached entry never mixes counts.
     cache_key = (
         f"top-hosts:{metric}:{days}:{since}:{until}:{exclude_cache}:"
         f"{provider_id}:{sidecar_id}:{limit}"
@@ -1719,7 +1744,8 @@ async def get_top_hosts(
         return cached
 
     def _work() -> TopHostsResponse:
-        hosts = query_top_hosts(
+        # One query, so the rows and the count they describe cannot disagree.
+        ranked = rank_top_hosts(
             session,
             since=_resolve_ranking_since(session, since, days),
             until=parse_iso8601_utc(until) if until else None,
@@ -1730,7 +1756,13 @@ async def get_top_hosts(
             limit=limit,
         )
         return TopHostsResponse.model_validate(
-            {"hosts": hosts, "metric": metric, "generated_at": iso_utc(datetime.now(UTC))}
+            {
+                "hosts": ranked.rows,
+                "metric": metric,
+                "total": ranked.total,
+                "limit": limit,
+                "generated_at": iso_utc(datetime.now(UTC)),
+            }
         )
 
     result = await asyncio.to_thread(_work)
@@ -1758,13 +1790,15 @@ async def get_top_tools(
     query param) for `_TOP_N_CACHE_TTL`.
     """
     provider_id = _normalize_filter(provider_id)
+    # The key carries every filter the total depends on, so a cached entry never mixes counts.
     cache_key = f"top-tools:{days}:{since}:{until}:{provider_id}:{sidecar_id}:{limit}"
     cached = cache_get(cache_key)
     if cached is not None:
         return cached
 
     def _work() -> TopToolsResponse:
-        tools = query_top_tools(
+        # One query, so the rows and the count they describe cannot disagree.
+        ranked = rank_top_tools(
             session,
             since=_resolve_ranking_since(session, since, days),
             until=parse_iso8601_utc(until) if until else None,
@@ -1773,7 +1807,12 @@ async def get_top_tools(
             limit=limit,
         )
         return TopToolsResponse.model_validate(
-            {"tools": tools, "generated_at": iso_utc(datetime.now(UTC))}
+            {
+                "tools": ranked.rows,
+                "total": ranked.total,
+                "limit": limit,
+                "generated_at": iso_utc(datetime.now(UTC)),
+            }
         )
 
     result = await asyncio.to_thread(_work)

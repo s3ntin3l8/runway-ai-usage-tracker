@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import type { TopProjectEntry } from '@/api/types';
 import { renderWithProviders } from '@/test/utils';
 import { TopProjectsCard } from './TopProjectsCard';
+import { INSIGHTS_TOP_N } from './queries';
 import * as api from '@/api/endpoints';
 
 vi.mock('@/api/endpoints');
@@ -54,8 +55,16 @@ const mockProjectWithCache: TopProjectEntry = {
   cost_cache_create: 0.01,
 };
 
-function makeResponse(projects: TopProjectEntry[], metric: string) {
-  return { projects, metric, generated_at: new Date().toISOString() };
+// The response carries the untruncated total and the cap that was applied, so
+// the card's title can say how much of the ranking it is not showing.
+function makeResponse(projects: TopProjectEntry[], metric: string, total = projects.length) {
+  return {
+    projects,
+    metric,
+    total,
+    limit: INSIGHTS_TOP_N,
+    generated_at: new Date().toISOString(),
+  };
 }
 
 function capturedOption(): Record<string, unknown> {
@@ -81,6 +90,19 @@ describe('TopProjectsCard', () => {
     const option = capturedOption();
     const yAxis = option.yAxis as { data: string[] };
     expect(yAxis.data).toContain('my-app');
+  });
+
+  it('names the scope in the title, and says how much of the ranking is hidden', async () => {
+    // The Activity tab scopes the card to one provider, and used to override
+    // the title with a bare "Top projects" that stated neither a cap nor a
+    // total.
+    vi.mocked(api.fetchTopProjects).mockResolvedValue(makeResponse([mockProject], 'tokens', 34));
+    renderWithProviders(
+      <TopProjectsCard range={{ days: 7 }} providerId="anthropic" scopeLabel="March 2026" />,
+    );
+    expect(
+      await screen.findByText(`Top ${INSIGHTS_TOP_N} of 34 projects · March 2026`),
+    ).toBeInTheDocument();
   });
 
   it('default metric is tokens', async () => {

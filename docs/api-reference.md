@@ -146,6 +146,12 @@ row carries the number of distinct `sessions` that ran on it. Events with no
 `session_id` — or, for the host ranking, no pushing host — are not
 attributable and are left out of the ranking.
 
+Every ranking response (`/usage/top-models`, `/usage/top-projects`,
+`/usage/top-sessions`, `/usage/top-hosts`, `/usage/top-tools`) also carries
+`total` — the number of ranked groups before `limit` truncated the result —
+and the `limit` that was applied, so a capped ranking can still say how many
+groups it left out.
+
 ## Fleet / Ingestion
 
 | Method | Route | Auth | Description |

@@ -8,7 +8,7 @@ import pytest
 from sqlmodel import Session, SQLModel, create_engine
 
 from app.models.db import UsageEvent
-from app.services.queries.top_models import query_top_models
+from app.services.queries.top_models import query_top_models, rank_top_models
 
 
 @pytest.fixture
@@ -45,6 +45,7 @@ def _add(
     cost_cache_read: float = 0.0,
     cost_cache_create: float = 0.0,
     kind: str = "message",
+    sidecar_id: str = "local",
 ) -> None:
     session.add(
         UsageEvent(
@@ -62,7 +63,7 @@ def _add(
             cost_usd=cost_usd,
             cost_cache_read=cost_cache_read,
             cost_cache_create=cost_cache_create,
-            sidecar_id="local",
+            sidecar_id=sidecar_id,
             kind=kind,
         )
     )
@@ -195,3 +196,69 @@ def test_limit_caps_rows(db_session):
     rows = query_top_models(db_session, since=_SINCE, metric="tokens", limit=2)
     assert len(rows) == 2
     assert [r["model_id"] for r in rows] == ["model-4", "model-3"]
+
+
+def test_total_counts_the_groups_the_limit_cut(db_session):
+    for i in range(5):
+        _add(
+            db_session,
+            event_id=f"m{i}",
+            provider_id="anthropic",
+            model_id=f"model-{i}",
+            tokens_input=i + 1,
+        )
+
+    ranked = rank_top_models(db_session, since=_SINCE, metric="tokens", limit=2)
+
+    assert len(ranked.rows) == 2
+    assert ranked.total == 5
+
+
+def test_total_matches_the_rows_when_nothing_was_cut(db_session):
+    _add(db_session, event_id="a", provider_id="anthropic", model_id="opus", tokens_input=100)
+    _add(db_session, event_id="b", provider_id="anthropic", model_id="sonnet", tokens_input=200)
+
+    ranked = rank_top_models(db_session, since=_SINCE, metric="tokens")
+
+    assert ranked.total == len(ranked.rows) == 2
+
+
+def test_total_is_zero_for_an_empty_range(db_session):
+    _add(db_session, event_id="a", provider_id="anthropic", model_id="opus", tokens_input=100)
+
+    ranked = rank_top_models(db_session, since=_NOW + timedelta(days=1), metric="tokens")
+
+    assert ranked.rows == []
+    assert ranked.total == 0
+
+
+def test_total_follows_the_sidecar_filter(db_session):
+    _add(
+        db_session,
+        event_id="a",
+        provider_id="anthropic",
+        model_id="opus",
+        sidecar_id="host-a",
+        tokens_input=100,
+    )
+    _add(
+        db_session,
+        event_id="b",
+        provider_id="anthropic",
+        model_id="sonnet",
+        sidecar_id="host-b",
+        tokens_input=200,
+    )
+
+    scoped = rank_top_models(db_session, since=_SINCE, metric="tokens", sidecar_id="host-b")
+
+    assert [r["model_id"] for r in scoped.rows] == ["sonnet"]
+    assert scoped.total == 1
+
+
+def test_the_rows_only_wrapper_still_returns_the_rows(db_session):
+    _add(db_session, event_id="a", provider_id="anthropic", model_id="opus", tokens_input=100)
+
+    rows = query_top_models(db_session, since=_SINCE, metric="tokens")
+
+    assert [r["model_id"] for r in rows] == ["opus"]

@@ -19,10 +19,10 @@ from sqlalchemy import text
 from sqlmodel import Session
 
 from app.models._datetime import iso_utc
-from app.services.queries._shared import _parse_ts, sqlite_utc_timestamp
+from app.services.queries._shared import RankedRows, _parse_ts, sqlite_utc_timestamp
 
 
-def query_top_sessions(
+def rank_top_sessions(
     session: Session,
     *,
     since: datetime,
@@ -32,7 +32,7 @@ def query_top_sessions(
     provider_id: str | None = None,
     sidecar_id: str | None = None,
     limit: int = 15,
-) -> list[dict[str, Any]]:
+) -> RankedRows:
     """Rank ``session_id`` across all providers/accounts in ``[since, until)``.
 
     Each row carries the session's ``project`` / ``cwd`` / ``sidecar_id`` — the
@@ -54,6 +54,9 @@ def query_top_sessions(
     greatest of them while the UI reads the value as "the host that pushed
     this". ``ranked`` numbers each session's events newest-first and the
     aggregate keeps row 1's values.
+
+    ``total`` is the number of ranked groups before the ``LIMIT`` truncated
+    the result — how many sessions the ranking had, not how many it shows.
     """
     until_clause = "AND ts < :until" if until is not None else ""
     provider_clause = "AND provider_id = :provider_id" if provider_id else ""
@@ -138,7 +141,12 @@ def query_top_sessions(
             SUM(cost_cache_read)                                AS cost_cache_read,
             SUM(cost_cache_create)                              AS cost_cache_create,
             GROUP_CONCAT(DISTINCT provider_id)                  AS providers_csv,
-            GROUP_CONCAT(DISTINCT model_id)                     AS models_csv
+            GROUP_CONCAT(DISTINCT model_id)                     AS models_csv,
+            -- The untruncated size of the ranking. A window function is
+            -- evaluated after GROUP BY and before LIMIT, so this counts
+            -- every group of the same filter set in the one scan that
+            -- produces the rows — the count cannot disagree with them.
+            COUNT(*) OVER ()                                    AS total_groups
         FROM ranked
         GROUP BY session_id
         ORDER BY {order_expr} DESC, ts_end DESC, session_id
@@ -188,4 +196,35 @@ def query_top_sessions(
                 "models": models,
             }
         )
-    return results
+    # The count rides on every row of the ranking; an empty ranking had no
+    # groups to begin with.
+    total = int(rows[0].total_groups) if rows else 0
+    return RankedRows(rows=results, total=total)
+
+
+def query_top_sessions(
+    session: Session,
+    *,
+    since: datetime,
+    until: datetime | None = None,
+    metric: str = "tokens",
+    exclude_cache: bool = False,
+    provider_id: str | None = None,
+    sidecar_id: str | None = None,
+    limit: int = 15,
+) -> list[dict[str, Any]]:
+    """The rows of the session ranking in ``[since, until)``, capped at ``limit``.
+
+    See ``rank_top_sessions`` for the ranking itself; this wrapper keeps the
+    older, rows-only signature for the callers that need nothing else.
+    """
+    return rank_top_sessions(
+        session,
+        since=since,
+        until=until,
+        metric=metric,
+        exclude_cache=exclude_cache,
+        provider_id=provider_id,
+        sidecar_id=sidecar_id,
+        limit=limit,
+    ).rows

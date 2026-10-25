@@ -8,7 +8,7 @@ import pytest
 from sqlmodel import Session, SQLModel, create_engine
 
 from app.models.db import UsageEvent
-from app.services.queries.top_sessions import query_top_sessions
+from app.services.queries.top_sessions import query_top_sessions, rank_top_sessions
 
 
 @pytest.fixture
@@ -323,3 +323,41 @@ def test_an_event_id_is_scoped_to_its_provider(db_session):
 
     rows = query_top_sessions(db_session, since=_SINCE, metric="tokens")
     assert rows[0]["msgs"] == 2
+
+
+def test_total_counts_the_groups_the_limit_cut(db_session):
+    for index in range(5):
+        _add(db_session, event_id=f"e{index}", session_id=f"s{index}", tokens_input=index + 1)
+
+    ranked = rank_top_sessions(db_session, since=_SINCE, metric="tokens", limit=2)
+
+    assert len(ranked.rows) == 2
+    assert ranked.total == 5
+
+
+def test_total_matches_the_rows_when_nothing_was_cut(db_session):
+    _add(db_session, event_id="a", session_id="s1", tokens_input=100)
+    _add(db_session, event_id="b", session_id="s2", tokens_input=200)
+
+    ranked = rank_top_sessions(db_session, since=_SINCE, metric="tokens")
+
+    assert ranked.total == len(ranked.rows) == 2
+
+
+def test_total_is_zero_for_an_empty_range(db_session):
+    _add(db_session, event_id="a", session_id="s1", tokens_input=100)
+
+    ranked = rank_top_sessions(db_session, since=_NOW + timedelta(days=1), metric="tokens")
+
+    assert ranked.rows == []
+    assert ranked.total == 0
+
+
+def test_total_follows_the_provider_filter(db_session):
+    _add(db_session, event_id="a", provider_id="anthropic", session_id="s1", tokens_input=100)
+    _add(db_session, event_id="b", provider_id="gemini", session_id="s2", tokens_input=200)
+
+    scoped = rank_top_sessions(db_session, since=_SINCE, metric="tokens", provider_id="gemini")
+
+    assert [r["session_id"] for r in scoped.rows] == ["s2"]
+    assert scoped.total == 1

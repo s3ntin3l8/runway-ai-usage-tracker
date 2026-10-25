@@ -16,6 +16,7 @@ Modules:
     snapshots — quota-snapshot timelines for the History dashboard tab
 """
 
+from app.services.queries._shared import RankedRows
 from app.services.queries.anomaly import query_anomalies
 from app.services.queries.cumulative import query_cumulative_live
 from app.services.queries.events import count_events, event_time_range, query_events
@@ -39,17 +40,18 @@ from app.services.queries.snapshots import (
     query_windows,
 )
 from app.services.queries.source_apps import query_source_apps
-from app.services.queries.top_hosts import query_top_hosts
-from app.services.queries.top_models import query_top_models
-from app.services.queries.top_projects import query_projects, query_top_projects
-from app.services.queries.top_sessions import query_top_sessions
-from app.services.queries.top_tools import query_top_tools
+from app.services.queries.top_hosts import query_top_hosts, rank_top_hosts
+from app.services.queries.top_models import query_top_models, rank_top_models
+from app.services.queries.top_projects import query_projects, query_top_projects, rank_top_projects
+from app.services.queries.top_sessions import query_top_sessions, rank_top_sessions
+from app.services.queries.top_tools import query_top_tools, rank_top_tools
 from app.services.queries.windows import (
     query_window_aggregation,
     query_window_history,
 )
 
 __all__ = [
+    "RankedRows",
     "count_events",
     "count_sessions",
     "event_time_range",
@@ -77,4 +79,9 @@ __all__ = [
     "query_window_detail",
     "query_window_history",
     "query_windows",
+    "rank_top_hosts",
+    "rank_top_models",
+    "rank_top_projects",
+    "rank_top_sessions",
+    "rank_top_tools",
 ]

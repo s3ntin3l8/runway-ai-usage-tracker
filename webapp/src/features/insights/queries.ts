@@ -15,11 +15,13 @@ import { useUsageSource } from '@/hooks/useUsageSource';
 export type TopMetric = 'tokens' | 'cost';
 
 /**
- * How many rows the rankings ask for. The backend has no "total" for these
- * lists (the query is a GROUP BY with a LIMIT), so the card title states the
- * cap — "Top 12 models" rather than "Top models", which read as a complete
- * ranking. Keep the two in step: the number is shared by the query and the
- * label.
+ * How many rows the rankings ask for.
+ *
+ * The backend reports the untruncated total alongside the rows, so a card
+ * title can say "Top 12 of 34 models" — the cap AND how much was left out.
+ * This constant is only the cap the dashboard asks for; the titles read the
+ * numbers from the response itself, so a label cannot drift from the query
+ * that produced it.
  */
 export const INSIGHTS_TOP_N = 12;
 export type ProjectMetric = 'tokens' | 'cost' | 'sessions';
