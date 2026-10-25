@@ -373,7 +373,12 @@ class _Probe:
         self.report["stage"] = "history"
         self.report["history_complete"] = False
         records_by_location: dict[str, list[dict[str, Any]]] = {
-            key: [] for key in ("event", "data", "content")
+            key: []
+            for key in (
+                ("event", "data", "content", "payload")
+                if self.request.report_version == 2
+                else ("event", "data", "content")
+            )
         }
         seen_cursors: set[str] = set()
         sequences: set[int] = set()

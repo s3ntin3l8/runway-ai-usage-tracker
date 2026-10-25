@@ -247,11 +247,12 @@ def _report(value: Any) -> None:
     if version == 2:
         _structure(value["structure"], value["history_events"])
     observations = value["observations"]
-    _require(type(observations) is list and len(observations) <= 3)
+    allowed_locations = {"event", "data", "content"} | ({"payload"} if version == 2 else set())
+    _require(type(observations) is list and len(observations) <= len(allowed_locations))
     locations = set()
     for observation in observations:
         _keys(observation, {"location", "report"})
-        _choice(observation["location"], {"event", "data", "content"})
+        _choice(observation["location"], allowed_locations)
         _require(observation["location"] not in locations)
         locations.add(observation["location"])
         _audit(observation["report"])

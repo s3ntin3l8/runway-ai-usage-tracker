@@ -458,3 +458,28 @@ def test_v2_cli_rejects_unknown_structural_keys_without_echoing_them():
     assert result.returncode == 2 and result.stderr == b""
     assert json.loads(result.stdout)["reasons"] == ["invalid_evidence"]
     assert b"private-transcript-key" not in result.stdout
+
+
+@pytest.mark.parametrize("version", [1, 2])
+def test_payload_observation_allowed_only_in_explicit_v2(version):
+    value = structured_evidence() if version == 2 else evidence()
+    value["report"]["observations"][0]["location"] = "payload"
+    if version == 1:
+        with pytest.raises(EvidenceError):
+            evaluate(value)
+    else:
+        result = evaluate(value)
+        assert result["status"] == "sample_observed"
+        assert result["ready_for_ingestion"] is False
+
+
+def test_four_independent_v2_locations_are_not_combined():
+    value = structured_evidence()
+    original = value["report"]["observations"][0]
+    value["report"]["observations"] = [
+        {"location": location, "report": copy.deepcopy(original["report"])}
+        for location in ("event", "data", "content", "payload")
+    ]
+    result = evaluate(value)
+    assert result["status"] == "stop"
+    assert "usage_requires_review" in result["reasons"]

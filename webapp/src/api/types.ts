@@ -1455,9 +1455,14 @@ export interface CloudStructure {
 }
 
 export type ClaudeCloudProbeReport = ClaudeCloudProbeFields & (
-  | { format_version: 1 }
-  | { format_version: 2; structure: CloudStructure }
+  | { format_version: 1; observations: CloudUsageObservation<'event' | 'data' | 'content'>[] }
+  | { format_version: 2; structure: CloudStructure; observations: CloudUsageObservation<'event' | 'data' | 'content' | 'payload'>[] }
 );
+
+interface CloudUsageObservation<L extends string> {
+  location: L;
+  report: Record<string, unknown>;
+}
 
 interface ClaudeCloudProbeFields {
   outcome:
@@ -1476,8 +1481,6 @@ interface ClaudeCloudProbeFields {
   history_events: number;
   history_complete: boolean | null;
   sequence: { numeric: number; invalid: number; duplicates: number; gaps: number; out_of_order: number };
-  /** Separate, unverified envelope locations; never combine them into consumption. */
-  observations: { location: 'event' | 'data' | 'content'; report: Record<string, unknown> }[];
   cloud_contract_verified: false;
   ready_for_ingestion: false;
 }

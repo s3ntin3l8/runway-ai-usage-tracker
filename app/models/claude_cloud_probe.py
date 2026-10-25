@@ -34,6 +34,11 @@ class CloudUsageObservation(BaseModel):
     report: dict[str, Any]
 
 
+class CloudUsageObservationV2(BaseModel):
+    location: Literal["event", "data", "content", "payload"]
+    report: dict[str, Any]
+
+
 class _ClaudeCloudProbeFields(BaseModel):
     model_config = ConfigDict(extra="forbid")
     outcome: Literal[
@@ -67,13 +72,13 @@ class _ClaudeCloudProbeFields(BaseModel):
     history_events: int = 0
     history_complete: bool | None = None
     sequence: dict[Literal["numeric", "invalid", "duplicates", "gaps", "out_of_order"], int]
-    observations: list[CloudUsageObservation] = Field(default_factory=list)
     cloud_contract_verified: Literal[False] = False
     ready_for_ingestion: Literal[False] = False
 
 
 class ClaudeCloudProbeReport(_ClaudeCloudProbeFields):
     format_version: Literal[1] = 1
+    observations: list[CloudUsageObservation] = Field(default_factory=list)
 
 
 StructureCount = Annotated[StrictInt, Field(ge=0, le=150)]
@@ -135,6 +140,7 @@ class CloudStructure(BaseModel):
 
 class ClaudeCloudProbeReportV2(_ClaudeCloudProbeFields):
     format_version: Literal[2] = 2
+    observations: list[CloudUsageObservationV2] = Field(default_factory=list)
     structure: CloudStructure
 
     @model_validator(mode="after")
