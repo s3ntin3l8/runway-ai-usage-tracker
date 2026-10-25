@@ -78,7 +78,11 @@ export function HistoryChart({
       itemStyle: { color: t.series[i % t.series.length], borderRadius: [0, 0, 0, 0] },
       data: bars.map((b) => {
         const seg = b.segments.find((s) => s.label === label);
-        if (!seg) return 0;
+        // A bucket with no such segment is MISSING, not zero. Returning 0
+        // would draw a zero-height bar and the tooltip would read "$0.00" —
+        // which says the bucket cost nothing rather than that it is not
+        // there. `null` leaves the stack alone and the tooltip says "—".
+        if (!seg) return null;
         return dropCache ? seg.value - (seg.value_cache ?? 0) : seg.value;
       }),
     }));

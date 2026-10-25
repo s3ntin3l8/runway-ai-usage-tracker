@@ -18,7 +18,11 @@
 export function errorMessage(value: unknown, fallback: string): string {
   if (typeof value === 'object' && value !== null) {
     const message = (value as { message?: unknown }).message;
-    if (typeof message === 'string') return message;
+    // An empty message is no message. A thrown value that says nothing still
+    // has to render as *something*: a caller that gates an error state on a
+    // truthy string would otherwise fall through to the empty state, which
+    // is the failure this helper exists to prevent.
+    if (typeof message === 'string' && message.trim() !== '') return message;
   }
   return fallback;
 }

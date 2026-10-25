@@ -130,6 +130,25 @@ describe('formatPct', () => {
     expect(formatPct(99.96)).toBe('99.96%');
     expect(formatPct(99.999)).toBe('99.999%');
   });
+  it('keeps widening until the value reads below 100%', () => {
+    // The widening has to go as far as the value needs: three extra
+    // decimals were not enough, and a share that rounded onto the ceiling
+    // would claim "100%" for a quota that is not finished.
+    expect(formatPct(99.9999)).toBe('99.9999%');
+    expect(formatPct(99.9999999)).toBe('99.9999999%');
+  });
+  it('bounds a value that no display precision states', () => {
+    // Ten extra decimals is as far as the display goes. Past that the
+    // honest answer is a bound rather than a number: ">99.99%" is nearly
+    // exhausted, where "100%" is finished.
+    expect(formatPct(99.99999999999999)).toBe('>99.99%');
+  });
+  it('never rounds onto 100% under an explicit digits argument either', () => {
+    // The invariant is unconditional — an explicit precision is the floor
+    // the value is rendered at, not a licence to claim 100%.
+    expect(formatPct(99.96, 1)).toBe('99.96%');
+    expect(formatPct(42.567, 1)).toBe('42.6%');
+  });
   it('still renders a real 100% as 100%', () => {
     expect(formatPct(100)).toBe('100%');
     expect(formatPct(0)).toBe('0%');

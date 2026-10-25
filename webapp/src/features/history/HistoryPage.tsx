@@ -20,6 +20,7 @@ import { useAnomalies, useFleet, useProviderConfigs } from '@/features/home/quer
 import { useExcludeCache } from '@/hooks/useExcludeCache';
 import { useRangeParam } from '@/hooks/useRangeParam';
 import { formatCost, formatPct, formatTokens } from '@/lib/format';
+import { errorMessage } from '@/lib/errorMessage';
 import { formatRangeLabel } from '@/lib/timeRange';
 import { formatLocalDate } from '@/lib/tz';
 import { HistoryChart } from './HistoryChart';
@@ -129,7 +130,7 @@ export function HistoryPage() {
               <EmptyState
                 icon={CircleAlert}
                 title="Could not load this data"
-                description={chart.error.message}
+                description={errorMessage(chart.error, 'Could not load the usage history')}
                 action={
                   <Button size="sm" onClick={() => chart.refetch()}>
                     Retry
@@ -154,7 +155,7 @@ export function HistoryPage() {
                 (excludeCache ? (deltas.data?.token_cache_total ?? 0) : 0),
             )}
             loading={deltas.isPending}
-            error={deltas.isError ? deltas.error.message : undefined}
+            error={deltas.isError ? errorMessage(deltas.error, 'Could not load') : undefined}
           />
           <StatTile
             label={`Cost (${rangeLabel})`}
@@ -163,19 +164,19 @@ export function HistoryPage() {
                 (excludeCache ? (deltas.data?.cost_cache_total ?? 0) : 0),
             )}
             loading={deltas.isPending}
-            error={deltas.isError ? deltas.error.message : undefined}
+            error={deltas.isError ? errorMessage(deltas.error, 'Could not load') : undefined}
           />
           <StatTile
             label="Critical series"
             value={String(deltas.data?.critical_series_count ?? 0)}
             loading={deltas.isPending}
-            error={deltas.isError ? deltas.error.message : undefined}
+            error={deltas.isError ? errorMessage(deltas.error, 'Could not load') : undefined}
           />
           <StatTile
             label="Anomalies today"
             value={String(anomalies.data?.anomalies.length ?? 0)}
             loading={anomalies.isPending}
-            error={anomalies.isError ? anomalies.error.message : undefined}
+            error={anomalies.isError ? errorMessage(anomalies.error, 'Could not load') : undefined}
           />
         </div>
 
@@ -195,7 +196,7 @@ export function HistoryPage() {
               <EmptyState
                 icon={CircleAlert}
                 title="Could not load the quota windows"
-                description={windows.error.message}
+                description={errorMessage(windows.error, 'Could not load the quota windows')}
                 action={
                   <Button size="sm" onClick={() => windows.refetch()}>
                     Retry

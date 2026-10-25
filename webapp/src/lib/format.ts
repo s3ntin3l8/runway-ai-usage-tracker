@@ -104,21 +104,29 @@ export function formatCost(usd: number | null | undefined, currencyCode = 'USD')
   return f.format(usd);
 }
 
-// Percentage formatter. The default never rounds a share up onto 100%:
-// 99.6% is "99.6%", not "100%" — a quota that is nearly exhausted must not
-// read as one that is finished.
+// Percentage formatter. A share never rounds up onto 100%: 99.6% is
+// "99.6%", not "100%" — a quota that is nearly exhausted must not read as one
+// that is finished.
+//
+// The invariant is unconditional. An explicit `digits` sets the precision, not
+// a licence to claim 100%: it is the floor the value is rendered at, and the
+// widening below applies on top of it.
 export function formatPct(pct: number | null | undefined, digits?: number): string {
   if (pct === null || pct === undefined || Number.isNaN(pct)) return '—';
   const places = digits ?? 0;
   if (pct < 100 && Number(pct.toFixed(places)) >= 100) {
     // The rounding lands on the ceiling. Widen the precision until the value
-    // reads as what it is — up to three extra decimals, which is enough for
-    // any percentage a quota is derived from.
-    for (let extra = 1; extra <= 3; extra += 1) {
+    // reads as what it is — up to ten extra decimals, which is enough for
+    // any percentage a quota is derived from (a billion-token quota is
+    // 99.9999999% used at 999,999,999 tokens).
+    for (let extra = 1; extra <= 10; extra += 1) {
       const widened = places + extra;
       if (Number(pct.toFixed(widened)) < 100) return `${pct.toFixed(widened)}%`;
     }
-    return `${pct.toFixed(places + 3)}%`;
+    // Past ten decimals the value is within a rounding error of 100, and no
+    // display precision says what it is. A bound says it honestly:
+    // ">99.99%" is nearly exhausted, where "100%" is finished.
+    return '>99.99%';
   }
   return `${pct.toFixed(places)}%`;
 }
