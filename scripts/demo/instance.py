@@ -25,6 +25,7 @@ import time
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
+from typing import BinaryIO
 
 try:  # POSIX only; the demo itself is POSIX-only (it signals its own group).
     import fcntl
@@ -138,7 +139,7 @@ class Demo:
     keep: bool
     # The open lock on the scratch dir. It is held for as long as the demo
     # runs, so a later demo can tell that this one is still there.
-    lock_fd: int | None = None
+    lock_file: BinaryIO | None = None
 
     def stop(self) -> None:
         if self.server.poll() is None:
@@ -158,11 +159,8 @@ class Demo:
                 pass
             self.server.wait()
         if self.keep:
-            # The dir is the operator's now. The marker tells a later demo
-            # that this one was kept on purpose, so the sweep does not take
-            # it for a leftover: a kept demo's process is gone the moment it
-            # exits, and the lock alone would not tell the two apart.
-            _mark_kept(self.demo_dir)
+            # The dir is the operator's now, and it said so when it was
+            # made: the sweep does not take a marked dir for a leftover.
             print(f"[demo] kept {self.demo_dir}")
         else:
             shutil.rmtree(self.demo_dir, ignore_errors=True)
@@ -172,14 +170,14 @@ class Demo:
         self._release_lock()
 
     def _release_lock(self) -> None:
-        if self.lock_fd is None:
+        if self.lock_file is None:
             return
         # Releasing the lock is a best-effort courtesy to the next sweep: a
-        # close that fails has already lost the fd, and the process is about
-        # to end anyway, which releases the lock with it.
+        # close that fails has already lost the file, and the process is
+        # about to end anyway, which releases the lock with it.
         with contextlib.suppress(OSError):
-            os.close(self.lock_fd)
-        self.lock_fd = None
+            self.lock_file.close()
+        self.lock_file = None
 
 
 def _mark_kept(demo_dir: Path) -> None:
@@ -193,21 +191,26 @@ def _mark_kept(demo_dir: Path) -> None:
         print(f"[demo] could not mark {demo_dir} as kept: {e}")
 
 
-def _claim_demo_dir(demo_dir: Path) -> int | None:
+def _claim_demo_dir(demo_dir: Path) -> BinaryIO | None:
     """Lock the scratch dir for as long as this process lives.
 
     The lock is what a later demo reads: it can take the lock only when
     this demo is gone.
+
+    The lock is handed back as the open file rather than as a descriptor:
+    closing a file object twice is a no-op, so the demo can close it when
+    it stops and the caller can close it again without closing something
+    else that took the number in the meantime.
     """
     if fcntl is None:  # pragma: no cover - Windows
         return None
-    fd = os.open(demo_dir / LOCK_FILE, os.O_CREAT | os.O_RDWR, 0o600)
+    lock_file = open(demo_dir / LOCK_FILE, "a+b")
     try:
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:
-        os.close(fd)
+        lock_file.close()
         raise
-    return fd
+    return lock_file
 
 
 def _dir_is_claimed(demo_dir: Path) -> bool:
@@ -219,23 +222,21 @@ def _dir_is_claimed(demo_dir: Path) -> bool:
     if fcntl is None:  # pragma: no cover - Windows
         return False
     lock_path = demo_dir / LOCK_FILE
-    if not lock_path.exists():
-        return False  # never claimed: the demo died before it could
     try:
-        fd = os.open(lock_path, os.O_RDWR)
+        lock_file = open(lock_path, "r+b")
     except FileNotFoundError:
-        return False  # the demo removed it: never claimed
+        return False  # never claimed: the demo died before it could
     except OSError:
         # The lock cannot be read (no permission, too many open files, a
         # broken disk). That is not evidence that nobody owns the dir -- it
         # is evidence that we cannot tell -- so the dir is left alone.
         return True
     try:
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:
         return True  # held: a live demo owns this dir
     finally:
-        os.close(fd)
+        lock_file.close()
     return False
 
 
@@ -280,13 +281,18 @@ def start_demo(*, keep: bool = False, quiet: bool = False) -> Demo:
 
     clean_stale_scratch_dirs()
     demo_dir = Path(tempfile.mkdtemp(prefix="runway-demo-"))
+    if keep:
+        # The dir is the operator's from the moment it exists, and it says
+        # so: a start that fails later still leaves them the dir they asked
+        # for, and the sweep leaves a marked dir alone.
+        _mark_kept(demo_dir)
     # The lock is taken before the dir holds anything else. It is what tells
     # a later demo that this one is still running, so a demo that was killed
     # with SIGKILL does not leave its scratch dir behind for ever. A demo
     # that dies between making the dir and locking it leaves a dir nothing
     # can be read from, and the sweep takes one of those only once it is
     # old.
-    lock_fd = _claim_demo_dir(demo_dir)
+    lock_file = _claim_demo_dir(demo_dir)
     run_dir = demo_dir / "run"  # server cwd: no .env here
     for sub in ("home", "tmp", "run", "config"):
         (demo_dir / sub).mkdir(parents=True, exist_ok=True)
@@ -337,18 +343,13 @@ def start_demo(*, keep: bool = False, quiet: bool = False) -> Demo:
         )
         url = f"http://127.0.0.1:{DEMO_PORT}"
         _wait_for_http(f"{url}/")
-        return Demo(demo_dir=demo_dir, url=url, server=server, keep=keep, lock_fd=lock_fd)
+        return Demo(demo_dir=demo_dir, url=url, server=server, keep=keep, lock_file=lock_file)
     except BaseException:
         if server is not None:
-            Demo(demo_dir=demo_dir, url="", server=server, keep=keep, lock_fd=lock_fd).stop()
+            Demo(demo_dir=demo_dir, url="", server=server, keep=keep, lock_file=lock_file).stop()
         else:
-            if keep:
-                # The dir is the operator's, and a failed start is exactly
-                # when they want it: mark it kept, or the next sweep takes
-                # it for a leftover.
-                _mark_kept(demo_dir)
-            if lock_fd is not None:
-                os.close(lock_fd)
+            if lock_file is not None:
+                lock_file.close()
             if not keep:
                 shutil.rmtree(demo_dir, ignore_errors=True)
         raise
