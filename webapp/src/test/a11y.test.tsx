@@ -109,20 +109,26 @@ function blockingViolations(results: AxeResults) {
 // mobile scan no longer reaches them — the desktop layout is the superset.
 const originalMatchMedia = window.matchMedia;
 function installDesktopMatchMedia() {
-  const mql = {
-    matches: true,
-    media: '(min-width: 1024px)',
+  // Only the width query matches. The global setup reports every media
+  // query as not matching, so answering "yes" to all of them would also
+  // flip prefers-reduced-motion and prefers-color-scheme for this scan
+  // alone, and the comparison with the mobile scans would no longer be
+  // one-dimensional.
+  const mql = (media: string) => ({
+    matches: media === '(min-width: 1024px)',
+    media,
     onchange: null,
     addEventListener: vi.fn(),
     removeEventListener: vi.fn(),
     addListener: vi.fn(),
     removeListener: vi.fn(),
     dispatchEvent: vi.fn(),
-  };
-  window.matchMedia = vi.fn().mockReturnValue(mql) as unknown as typeof window.matchMedia;
+  });
+  window.matchMedia = vi.fn().mockImplementation(mql) as unknown as typeof window.matchMedia;
 }
 
-async function expectNoViolations() {  const results = await axe.run(document.body, AXE_OPTIONS);
+async function expectNoViolations() {
+  const results = await axe.run(document.body, AXE_OPTIONS);
   const blocking = blockingViolations(results);
   const summary = blocking
     .map(

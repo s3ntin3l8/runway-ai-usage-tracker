@@ -269,14 +269,16 @@ describe('SessionsTable narrow layout', () => {
       />,
     );
     // The header and the cell carry the same width cap: a long model id must
-    // not widen the column (and with it the table) on a phone.
+    // not widen the column (and with it the table) on a phone. The badge
+    // truncates to one line, so a wider cap buys nothing a reader can see
+    // and costs the phone the width.
     const header = screen.getByRole('columnheader', { name: 'Models' });
-    expect(header).toHaveClass('max-w-[10rem]');
+    expect(header).toHaveClass('max-w-[7rem]');
     expect(header).toHaveClass('sm:max-w-none');
 
     const badge = screen.getByText('claude-sonnet-4-5-20250929');
     const cell = badge.closest('td')!;
-    expect(cell).toHaveClass('max-w-[10rem]');
+    expect(cell).toHaveClass('max-w-[7rem]');
     expect(cell).toHaveClass('sm:max-w-none');
     // The badge can shrink, and the full id stays readable on hover.
     expect(badge).toHaveClass('min-w-0');

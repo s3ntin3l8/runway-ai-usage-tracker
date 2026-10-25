@@ -256,10 +256,12 @@ function SessionRow({
         <TD className="max-w-32 truncate font-mono text-xs" title={s.session_id}>
           {shortId}
         </TD>
-        <TD className="max-w-[10rem] sm:max-w-none">
+        <TD className="max-w-[7rem] sm:max-w-none">
           {/* min-w-0 lets a long model id shrink instead of widening the
               column; the badge keeps the full id in its title, so a hover
-              (or a long-press) still reveals it. */}
+              (or a long-press) still reveals it. The cap is 7rem rather
+              than 10rem: the badge truncates to one line, so a wider cap
+              buys nothing a reader can see and costs the phone the width. */}
           <span className="flex min-w-0 flex-wrap gap-1">
             {(s.models ?? []).map((m) => (
               <Badge key={m} variant="neutral" className="min-w-0" title={m}>
@@ -354,7 +356,7 @@ export function SessionsTable({
             <span className="sr-only">Details</span>
           </TH>
           <TH>Session</TH>
-          <TH className="max-w-[10rem] sm:max-w-none">Models</TH>
+          <TH className="max-w-[7rem] sm:max-w-none">Models</TH>
           {showProject ? <TH className="hidden sm:table-cell">Project</TH> : null}
           {showSidecar ? <TH className="hidden md:table-cell">Sidecar</TH> : null}
           {onSort ? (

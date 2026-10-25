@@ -32,10 +32,26 @@ export function TabsList({
     // The strip is width-constrained, so a trigger appearing or disappearing
     // (the provider strip adds "Debug" on demand) changes the scroll width
     // without resizing the strip itself.
-    const mutations = new MutationObserver(update);
-    mutations.observe(el, { childList: true });
+    //
+    // The triggers are observed as well as the strip. The strip's own box
+    // does not change when a trigger's does, and a trigger's width can move
+    // without the DOM moving at all — a web-font swap, or a re-rendered
+    // label. A fade that outlives its trigger is worse than no fade: it
+    // says there is more to the right when there is not.
     const sizes = new ResizeObserver(update);
-    sizes.observe(el);
+    const observeStrip = () => {
+      sizes.observe(el);
+      for (const trigger of el.children) sizes.observe(trigger);
+    };
+    observeStrip();
+    // `subtree` and `characterData` catch a trigger whose own label
+    // changes: the strip's scroll width moves, and an observer that only
+    // watches the strip's children would not fire.
+    const mutations = new MutationObserver(() => {
+      observeStrip();
+      update();
+    });
+    mutations.observe(el, { childList: true, subtree: true, characterData: true });
     return () => {
       el.removeEventListener('scroll', update);
       mutations.disconnect();
