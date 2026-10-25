@@ -340,6 +340,23 @@ class VerificationCancel(_PrivateModel):
     job_handle: Handle
 
 
+class VerificationArchiveStatus(_PrivateModel):
+    action: Literal["archive_status"]
+    job_handle: Handle
+
+
+class VerificationArchive(_PrivateModel):
+    action: Literal["archive"]
+    job_handle: Handle
+    revision: Counter
+
+
+class VerificationArchiveReport(_PrivateModel):
+    state: Literal["terminal", "not_terminal", "archived"]
+    job_handle: Handle
+    revision: Counter
+
+
 class VerificationReport(_PrivateModel):
     """Public fixed projection; identifiers appear only as an opaque transport handle."""
 

@@ -23,6 +23,9 @@ MAX_PLAINTEXT = 16 * 1024 * 1024
 LEASE_SECONDS = 45
 
 
+MAX_ARCHIVES = 64
+
+
 class CheckpointError(ValueError):
     """Only fixed categories cross the storage boundary."""
 
@@ -132,6 +135,11 @@ class CheckpointStore:
             connection.execute("BEGIN IMMEDIATE")
             if connection.execute("SELECT id FROM claude_cloud_verification WHERE id=1").fetchone():
                 raise CheckpointError("job_exists")
+            if connection.execute(
+                "SELECT job_handle FROM claude_cloud_verification_archives WHERE job_handle=?",
+                (handle,),
+            ).fetchone():
+                raise CheckpointError("checkpoint_unavailable")
             connection.execute(
                 "INSERT INTO claude_cloud_verification "
                 "(id,job_handle,revision,state_encrypted,lease_owner,lease_expires) "
@@ -140,6 +148,102 @@ class CheckpointStore:
             )
             connection.commit()
         return handle
+
+    def _archived_row(self, handle: str) -> sqlite3.Row:
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM claude_cloud_verification_archives WHERE job_handle=?", (handle,)
+            ).fetchone()
+        if row is None:
+            raise CheckpointError("not_found")
+        return row
+
+    def _decode_archive(self, row: sqlite3.Row) -> VerificationState:
+        state = self._decode(row)
+        if state.phase not in ("complete", "stopped"):
+            raise CheckpointError("checkpoint_unavailable")
+        return state
+
+    def archived_snapshot(self, handle: str) -> VerificationState:
+        """Local recovery only; never project historical usage without source authority."""
+        return self._decode_archive(self._archived_row(handle))
+
+    def archive_preview(self, handle: str) -> dict[str, str | int]:
+        """Inert administrative metadata; no provider or source credential operations."""
+        self._require_encryption()
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM claude_cloud_verification_archives WHERE job_handle=?", (handle,)
+            ).fetchone()
+            if row is not None:
+                self._decode_archive(row)
+                return {"state": "archived", "job_handle": handle, "revision": row["revision"]}
+            row = connection.execute(
+                "SELECT * FROM claude_cloud_verification WHERE id=1 AND job_handle=?", (handle,)
+            ).fetchone()
+            if row is None:
+                raise CheckpointError("not_found")
+            state = self._decode(row)
+            return {
+                "state": "terminal" if state.phase in ("complete", "stopped") else "not_terminal",
+                "job_handle": handle,
+                "revision": row["revision"],
+            }
+
+    def archive(self, handle: str, revision: int) -> None:
+        """Verify an unchanged encrypted terminal copy before atomically releasing its slot."""
+        self._require_encryption()
+        if type(revision) is not int or revision < 0:
+            raise CheckpointError("checkpoint_changed")
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            archived = connection.execute(
+                "SELECT * FROM claude_cloud_verification_archives WHERE job_handle=?", (handle,)
+            ).fetchone()
+            if archived is not None:
+                self._decode_archive(archived)
+                if archived["revision"] != revision:
+                    raise CheckpointError("checkpoint_changed")
+                return  # Idempotent; never touch a newer current job.
+            row = connection.execute(
+                "SELECT * FROM claude_cloud_verification WHERE id=1 AND job_handle=?", (handle,)
+            ).fetchone()
+            if row is None:
+                raise CheckpointError("not_found")
+            if row["revision"] != revision:
+                raise CheckpointError("checkpoint_changed")
+            if row["lease_owner"] is not None and row["lease_expires"] > self.clock():
+                raise CheckpointError("busy")
+            state = self._decode(row)
+            if state.phase not in ("complete", "stopped"):
+                raise CheckpointError("not_terminal")
+            count = connection.execute(
+                "SELECT count(*) FROM claude_cloud_verification_archives"
+            ).fetchone()[0]
+            if count >= MAX_ARCHIVES:
+                raise CheckpointError("archive_limit")
+            connection.execute(
+                "INSERT INTO claude_cloud_verification_archives "
+                "(job_handle,revision,state_encrypted,archived_at) VALUES (?,?,?,?)",
+                (handle, revision, row["state_encrypted"], self.clock()),
+            )
+            saved = connection.execute(
+                "SELECT * FROM claude_cloud_verification_archives WHERE job_handle=?", (handle,)
+            ).fetchone()
+            if (
+                saved is None
+                or saved["revision"] != revision
+                or saved["state_encrypted"] != row["state_encrypted"]
+                or self._decode(saved) != state
+            ):
+                raise CheckpointError("checkpoint_unavailable")
+            changed = connection.execute(
+                "DELETE FROM claude_cloud_verification WHERE id=1 AND job_handle=? AND revision=?",
+                (handle, revision),
+            ).rowcount
+            if changed != 1:
+                raise CheckpointError("checkpoint_changed")
+            connection.commit()
 
     def snapshot(self, handle: str) -> VerificationState:
         return self._decode(self._row(handle))

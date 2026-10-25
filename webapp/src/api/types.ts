@@ -1656,7 +1656,9 @@ export type ClaudeVerificationAction = {
   job_key?: string | null; expected_local?: ClaudeVerificationLocalRecord[];
   declared_category?: ClaudeVerificationCategory;
 } | { action: 'step' | 'cancel'; job_handle: string }
-  | { action: 'status'; job_handle?: string | null };
+  | { action: 'status'; job_handle?: string | null }
+  | { action: 'archive_status'; job_handle: string }
+  | { action: 'archive'; job_handle: string; revision: number };
 export interface ClaudeVerificationComparison {
   local_messages: number; cloud_messages: number; matched_messages: number;
   missing_messages: number; additional_cloud_messages: number; mismatched_messages: number;
@@ -1714,7 +1716,8 @@ export interface ClaudeVerificationReport {
   live_acceptance_passed: false; provenance_verified: false;
 }
 export type ClaudeVerificationResponse = ClaudeVerificationReport | { state: 'absent' | 'cancelled' }
-  | { state: 'unavailable'; job_handle: string };
+  | { state: 'unavailable'; job_handle: string }
+  | { state: 'terminal' | 'not_terminal' | 'archived'; job_handle: string; revision: number };
 
 /** Explicit failed-list inspection; never resumes or modifies the checkpoint. */
 export interface ClaudeListBoundaryRequest { job_handle: string }

@@ -890,7 +890,28 @@ Actions:
   between steps and returns `{"state":"cancelled"}`. An active lease returns
   409 rather than claiming cancellation before the bounded step ends.
 
-Only one encrypted job exists at a time. Configured server encryption is required;
+- `{"action":"archive_status","job_handle":"…"}` reads local administrative
+  metadata only and returns `state` (`terminal`, `not_terminal`, or `archived`),
+  exact transport `job_handle` and numeric `revision`. It performs no source
+  credential operations, provider requests or mutation. Historical usage is not
+  exported, even when the original source has become unavailable.
+- `{"action":"archive","job_handle":"…","revision":7}` explicitly preserves
+  that exact terminal checkpoint and releases the current-job slot atomically.
+  It returns `{"state":"archived","job_handle":"…","revision":7}` only after
+  verifying the unchanged encrypted copy and committing. A mismatched revision,
+  nonterminal job, active lease, or full archive returns 409. Retrying the same
+  archived handle/revision is idempotent and cannot affect a newer current job.
+  Archiving performs no provider or source credential operations. It never runs
+  implicitly during start/status/GET. Preserve a verified owner-only database
+  backup before live archival. Transport handles stay out of published evidence.
+
+Only one current encrypted job exists at a time; up to 64 terminal encrypted
+archives remain recoverable locally, with no automatic deletion or retention
+cleanup. A fresh start generates a new handle and, by default, a new job key.
+Operators supplying `job_key` for fixture HMACs must generate a new key per job.
+Source binding and request/byte/time budgets are recomputed for the new job;
+old intent/cursor state is never resumed or rebound.
+Configured server encryption is required;
 there is no plaintext fallback. Every provider attempt is charged and journaled
 before dispatch. Clean batch boundaries resume; an ambiguous in-flight intent
 stops as interrupted and cannot replay. A job is limited to 512 attempts, 256 MiB,

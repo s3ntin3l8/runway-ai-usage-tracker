@@ -15,6 +15,9 @@ from app.core.encryption import encryption_service
 from app.core.rate_limit import limiter
 from app.core.security import require_admin_key
 from app.models.claude_cloud_verification import (
+    VerificationArchive,
+    VerificationArchiveReport,
+    VerificationArchiveStatus,
     VerificationCancel,
     VerificationEmpty,
     VerificationReport,
@@ -23,6 +26,7 @@ from app.models.claude_cloud_verification import (
     VerificationStep,
     VerificationUnavailable,
 )
+from app.services import claude_cloud_probe as probe
 from app.services.claude_cloud_checkpoints import CheckpointError, CheckpointStore
 from app.services.claude_cloud_probe import ProbeError
 from app.services.claude_cloud_verification import (
@@ -42,7 +46,12 @@ def checkpoint_store() -> CheckpointStore:
 
 
 Action = Annotated[
-    VerificationStart | VerificationStep | VerificationStatus | VerificationCancel,
+    VerificationStart
+    | VerificationStep
+    | VerificationStatus
+    | VerificationCancel
+    | VerificationArchive
+    | VerificationArchiveStatus,
     Field(discriminator="action"),
 ]
 router = APIRouter(route_class=VerificationRoute)
@@ -50,7 +59,10 @@ router = APIRouter(route_class=VerificationRoute)
 
 @router.post(
     "/debug/claude-cloud-verification",
-    response_model=VerificationReport | VerificationEmpty | VerificationUnavailable,
+    response_model=VerificationReport
+    | VerificationEmpty
+    | VerificationUnavailable
+    | VerificationArchiveReport,
 )
 @limiter.limit("6/minute")
 async def verification_action(
@@ -61,6 +73,18 @@ async def verification_action(
     """Only step issues bounded GETs. Status and start use local state only."""
     try:
         store = checkpoint_store()
+        if isinstance(body, VerificationArchiveStatus):
+            return VerificationArchiveReport.model_validate(
+                await asyncio.to_thread(store.archive_preview, body.job_handle)
+            )
+        if isinstance(body, VerificationArchive):
+            if probe._gate.locked():
+                raise CheckpointError("busy")
+            async with probe._gate:
+                await asyncio.to_thread(store.archive, body.job_handle, body.revision)
+            return VerificationArchiveReport(
+                state="archived", job_handle=body.job_handle, revision=body.revision
+            )
         if isinstance(body, VerificationCancel):
             await asyncio.to_thread(store.cancel, body.job_handle)
             return {"state": "cancelled"}
@@ -96,7 +120,13 @@ async def verification_action(
             raise HTTPException(503, detail="invalid_verification_report") from None
     except CheckpointError as exc:
         category = str(exc)
-        if category in {"busy", "job_exists"}:
+        if category in {
+            "busy",
+            "job_exists",
+            "checkpoint_changed",
+            "not_terminal",
+            "archive_limit",
+        }:
             raise HTTPException(409, detail=category) from None
         if category == "not_found":
             raise HTTPException(404, detail=category) from None
