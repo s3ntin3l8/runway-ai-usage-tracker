@@ -2,10 +2,13 @@
 // the window archive (open + closed), and anomaly diagnostics.
 
 import { useEffect, useMemo, useState } from 'react';
+import { CircleAlert } from 'lucide-react';
 import type { HistoryWindowRow } from '@/api/types';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Badge } from '@/components/ui/Badge';
+import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { ExcludeCacheToggle } from '@/components/ui/ExcludeCacheToggle';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -124,6 +127,18 @@ export function HistoryPage() {
           <CardContent className="pt-4">
             {chart.isPending || fleet.isPending ? (
               <Skeleton className="h-72 w-full" />
+            ) : chart.isError ? (
+              // A failed request must not read as an empty result.
+              <EmptyState
+                icon={CircleAlert}
+                title="Could not load this data"
+                description={chart.error.message}
+                action={
+                  <Button size="sm" onClick={() => chart.refetch()}>
+                    Retry
+                  </Button>
+                }
+              />
             ) : !hasChartData ? (
               <p className="py-16 text-center text-xs text-fg-subtle">
                 No data points in this range.
@@ -173,6 +188,19 @@ export function HistoryPage() {
           {windows.isPending ? (
             <CardContent>
               <Skeleton className="h-32 w-full" />
+            </CardContent>
+          ) : windows.isError ? (
+            <CardContent>
+              <EmptyState
+                icon={CircleAlert}
+                title="Could not load the quota windows"
+                description={windows.error.message}
+                action={
+                  <Button size="sm" onClick={() => windows.refetch()}>
+                    Retry
+                  </Button>
+                }
+              />
             </CardContent>
           ) : (windows.data?.windows.length ?? 0) === 0 ? (
             <CardContent>

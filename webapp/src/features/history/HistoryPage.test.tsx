@@ -231,4 +231,23 @@ describe('HistoryPage', () => {
     // After toggle: tiles subtract cache (7K tokens, $7.50)
     expect(screen.getByText('7K')).toBeInTheDocument();
     expect(screen.getByText('$7.50')).toBeInTheDocument();
-  });});
+  });
+  it('shows an error with a retry when the chart request fails', async () => {
+    // A failed request must not read as "no data points in this range".
+    vi.mocked(api.fetchHistoryChart).mockRejectedValue(new Error('boom'));
+    renderWithProviders(<HistoryPage />);
+    expect(await screen.findByText(/could not load this data/i)).toBeInTheDocument();
+    expect(screen.getByText('boom')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument();
+  });
+
+  it('shows an error with a retry when the quota windows request fails', async () => {
+    // Same for the window archive: a failure must not read as "no windows in
+    // this range".
+    vi.mocked(api.fetchHistoryWindows).mockRejectedValue(new Error('windows boom'));
+    renderWithProviders(<HistoryPage />);
+    expect(await screen.findByText(/could not load the quota windows/i)).toBeInTheDocument();
+    expect(screen.getByText('windows boom')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument();
+  });
+});
