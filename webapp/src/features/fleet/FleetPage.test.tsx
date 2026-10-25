@@ -55,6 +55,17 @@ describe('FleetPage', () => {
     expect(screen.getByText('Add a sidecar')).toBeInTheDocument();
   });
 
+  it('shows an error state, not the empty state, when the request fails', async () => {
+    // The audit finding: a failed request rendered "No sidecars yet", which
+    // tells the user to install something they already have.
+    vi.mocked(api.fetchSidecars).mockRejectedValue(new Error('boom'));
+    renderWithProviders(<FleetPage />);
+    expect(await screen.findByText(/could not load the sidecars/i)).toBeInTheDocument();
+    expect(screen.getByText('boom')).toBeInTheDocument();
+    expect(screen.queryByText(/no sidecars yet/i)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument();
+  });
+
   it('links each sidecar to its credentials in Settings', async () => {
     vi.mocked(api.fetchSidecars).mockResolvedValue({
       sidecars: [sidecar(), sidecar({ sidecar_id: 'desktop', hostname: 'desktop' })],

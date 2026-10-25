@@ -8,7 +8,7 @@ import { Card } from '@/components/ui/Card';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { useExcludeCache } from '@/hooks/useExcludeCache';
 import { moneyLabel } from '@/lib/billingType';
-import { formatCost, formatTokens } from '@/lib/format';
+import { formatCost, formatCount, formatTokens } from '@/lib/format';
 
 interface AggregateStripProps {
   cost: CostForecastResponse | undefined;
@@ -77,7 +77,7 @@ export function AggregateStrip({
     {
       label: 'Tokens this month',
       value: formatTokens(tokens),
-      hint: msgs > 0 ? `${msgs.toLocaleString()} msgs` : undefined,
+      hint: msgs > 0 ? `${formatCount(msgs)} msgs` : undefined,
       loading: tokensLoading,
     },
   ];

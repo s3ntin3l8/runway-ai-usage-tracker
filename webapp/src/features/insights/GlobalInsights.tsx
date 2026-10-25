@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { StatTile } from '@/components/ui/StatTile';
 import { useExcludeCache } from '@/hooks/useExcludeCache';
-import { formatCost, formatPct, formatTokens } from '@/lib/format';
+import { formatCost, formatCount, formatPct, formatTokens } from '@/lib/format';
 import type { GlobalStatsResponse } from '@/api/types';
 import { CircleAlert } from 'lucide-react';
 
@@ -39,12 +39,12 @@ export function GlobalInsights({
     {
       label: 'Lifetime tokens',
       value: formatTokens(lifetimeTokens),
-      hint: life ? `${life.msgs.toLocaleString()} msgs` : undefined,
+      hint: life ? `${formatCount(life.msgs)} msgs` : undefined,
     },
     { label: 'Lifetime cost', value: formatCost(lifetimeCost) },
     {
       label: 'Sessions',
-      value: stats ? stats.sessions.count.toLocaleString() : '—',
+      value: stats ? formatCount(stats.sessions.count) : '—',
       hint: stats ? `${formatCost(stats.sessions.avg_cost)}/avg` : undefined,
     },
     {

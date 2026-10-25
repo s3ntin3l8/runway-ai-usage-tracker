@@ -13,7 +13,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { useExcludeCache } from '@/hooks/useExcludeCache';
-import { formatAxisCost, formatAxisNumber, formatCost, formatTokens } from '@/lib/format';
+import { formatAxisCost, formatAxisNumber, formatCost, formatCount, formatTokens } from '@/lib/format';
 import { formatRangeLabel, type DateRangeValue } from '@/lib/timeRange';
 import { INSIGHTS_TOP_N, type ProjectMetric, useTopProjects } from './queries';
 import { CircleAlert } from 'lucide-react';
@@ -91,7 +91,7 @@ function projectRow(
 const FORMAT: Record<ProjectMetric, (v: number) => string> = {
   tokens: (v) => formatTokens(v),
   cost: (v) => formatCost(v),
-  sessions: (v) => v.toLocaleString(),
+  sessions: (v) => formatCount(v),
 };
 
 const AXIS_FORMAT: Record<ProjectMetric, (v: number) => string> = {

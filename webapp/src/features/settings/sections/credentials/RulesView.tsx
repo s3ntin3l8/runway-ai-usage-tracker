@@ -19,6 +19,7 @@ import { buildSidecarNameMap, useSidecars } from '@/features/fleet/queries';
 import { useInvalidateCredentialViews } from '@/hooks/useInvalidateCredentialViews';
 import { maskAccountId } from '@/lib/accountDisplay';
 import { originTitleWithApp, originTitleWithDetail } from '@/lib/credentialOrigin';
+import { formatLocalDate } from '@/lib/tz';
 
 function ruleKey(t: CredentialTag): string {
   return `${t.provider_id}/${t.credential_origin}/${t.sidecar_id ?? '*'}`;
@@ -239,7 +240,7 @@ export function RulesView({ providerNames }: { providerNames?: Record<string, st
                           {t.stale ? (
                             <p className="text-[11px] text-warning">
                               {t.last_matched_at
-                                ? `No credential seen since ${new Date(t.last_matched_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}`
+                                ? `No credential seen since ${formatLocalDate(t.last_matched_at, { year: 'numeric', month: 'short', day: 'numeric' })}`
                                 : 'No credential has matched this rule'}
                               {' — Data Health can remove it.'}
                             </p>

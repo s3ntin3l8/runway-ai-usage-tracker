@@ -154,6 +154,7 @@ export function HistoryPage() {
                 (excludeCache ? (deltas.data?.token_cache_total ?? 0) : 0),
             )}
             loading={deltas.isPending}
+            error={deltas.isError ? deltas.error.message : undefined}
           />
           <StatTile
             label={`Cost (${rangeLabel})`}
@@ -162,16 +163,19 @@ export function HistoryPage() {
                 (excludeCache ? (deltas.data?.cost_cache_total ?? 0) : 0),
             )}
             loading={deltas.isPending}
+            error={deltas.isError ? deltas.error.message : undefined}
           />
           <StatTile
             label="Critical series"
             value={String(deltas.data?.critical_series_count ?? 0)}
             loading={deltas.isPending}
+            error={deltas.isError ? deltas.error.message : undefined}
           />
           <StatTile
             label="Anomalies today"
             value={String(anomalies.data?.anomalies.length ?? 0)}
             loading={anomalies.isPending}
+            error={anomalies.isError ? anomalies.error.message : undefined}
           />
         </div>
 

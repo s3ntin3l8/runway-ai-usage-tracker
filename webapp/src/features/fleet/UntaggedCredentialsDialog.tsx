@@ -48,6 +48,7 @@ import { buildSidecarNameMap, useSidecars } from './queries';
 import { useInvalidateCredentialViews } from '@/hooks/useInvalidateCredentialViews';
 import { ClaudeSourceOrganizationPicker } from './ClaudeSourceOrganizationPicker';
 import { maskAccountId } from '@/lib/accountDisplay';
+import { formatLocalDateTime } from '@/lib/tz';
 import {
   describeCredentialOrigin,
   originTitleWithApp,
@@ -473,7 +474,7 @@ function UntaggedRow({
         <p className="mt-2 rounded-sm bg-surface-2 px-2.5 py-2 text-[11px] text-fg-subtle" role="status">
           The quota preview expired. A fresh preview will appear after the next successful check.
           {entry.quota_preview_observed_at ? (
-            <> Last observed {new Date(entry.quota_preview_observed_at).toLocaleString()}.</>
+            <> Last observed {formatLocalDateTime(entry.quota_preview_observed_at)}.</>
           ) : null}
         </p>
       ) : null}
@@ -483,7 +484,7 @@ function UntaggedRow({
           <p className="font-medium">Live quota from this credential</p>
           {entry.quota_preview_observed_at ? (
             <p className="text-fg-subtle">
-              Observed {new Date(entry.quota_preview_observed_at).toLocaleString()}
+              Observed {formatLocalDateTime(entry.quota_preview_observed_at)}
             </p>
           ) : null}
           <ul className="mt-1 flex flex-col gap-0.5 text-fg-subtle">

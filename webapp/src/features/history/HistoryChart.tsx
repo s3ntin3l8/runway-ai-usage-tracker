@@ -5,7 +5,7 @@ import { useMemo } from 'react';
 import type { HistoryChartResponse } from '@/api/types';
 import { EChart } from '@/components/charts/EChart';
 import { baseAxisStyle, baseTooltip, useChartTokens } from '@/components/charts/theme';
-import { formatTokens } from '@/lib/format';
+import { formatAxisCost, formatCost, formatTokens } from '@/lib/format';
 import { formatLocalDateTime } from '@/lib/tz';
 import type { Metric } from './queries';
 
@@ -86,8 +86,11 @@ export function HistoryChart({
       tooltip: {
         trigger: 'axis' as const,
         ...baseTooltip(t),
-        valueFormatter: (v: number) =>
-          metric === 'cost' ? `$${Number(v).toFixed(2)}` : formatTokens(Number(v)),
+        // formatCost, not a hand-rolled `$${v.toFixed(2)}`: a bucket with no
+        // data is missing, not zero, and the shared helper says so. The
+        // percent branch above already distinguishes the two.
+        valueFormatter: (v: number | null) =>
+          metric === 'cost' ? formatCost(v) : formatTokens(v),
       },
       legend: {
         bottom: 0,
@@ -117,7 +120,9 @@ export function HistoryChart({
           color: t.axis,
           fontSize: 10,
           fontFamily: t.fontFamily,
-          formatter: (v: number) => (metric === 'cost' ? `$${v}` : formatTokens(v)),
+          // A hand-rolled `$${v}` prints the raw number and drops the cents;
+          // formatAxisCost is the compact, locale-pinned tick.
+          formatter: (v: number) => (metric === 'cost' ? formatAxisCost(v) : formatTokens(v)),
         },
       },
       series,

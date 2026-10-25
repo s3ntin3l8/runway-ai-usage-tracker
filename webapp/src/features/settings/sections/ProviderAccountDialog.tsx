@@ -46,6 +46,7 @@ import { useInvalidateCredentialViews } from '@/hooks/useInvalidateCredentialVie
 import { GitHubLoginSection } from './GitHubLoginSection';
 import { setPullToRefreshSuspended } from '@/lib/pullToRefresh';
 import { displayAccountName, accountSubtitle, maskAccountId } from '@/lib/accountDisplay';
+import { formatLocalDateTime } from '@/lib/tz';
 import { BILLING_TYPE_LABELS } from '@/lib/billingType';
 
 interface ProviderAccountDialogProps {
@@ -611,7 +612,7 @@ function SortableCredentialSourceRow({
             isCookie ? 'Browser session cookie — not a file' : null,
             source.source_detail,
             availability,
-            source.last_seen ? `seen ${new Date(source.last_seen).toLocaleString()}` : null,
+            source.last_seen ? `seen ${formatLocalDateTime(source.last_seen)}` : null,
           ]
             .filter(Boolean)
             .join(' · ')}

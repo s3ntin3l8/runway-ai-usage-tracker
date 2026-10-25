@@ -13,7 +13,7 @@ import { buttonVariants } from '@/components/ui/Button';
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/Table';
 import { buildSidecarNameMap, useSidecars } from '@/features/fleet/queries';
 import { cn } from '@/lib/cn';
-import { formatCost, formatDuration, formatTokens } from '@/lib/format';
+import { formatCost, formatCount, formatDuration, formatTokens } from '@/lib/format';
 import { DetailSection, Stat } from './detailPrimitives';
 import { bucketCost, sessionCachePct, sessionCost, sessionTokens } from './sessionMetrics';
 
@@ -114,7 +114,7 @@ function SessionDetail({ s, excludeCache }: { s: SessionEntry; excludeCache: boo
             <Stat label="Cache read" value={formatTokens(cacheRead)} />
             <Stat label="Cache write" value={formatTokens(cacheCreate)} />
             {reasoning > 0 ? <Stat label="Reasoning" value={formatTokens(reasoning)} /> : null}
-            <Stat label="Tool calls" value={toolCalls.toLocaleString()} />
+            <Stat label="Tool calls" value={formatCount(toolCalls)} />
             {cachePct != null ? <Stat label="Cache" value={`${cachePct}%`} /> : null}
           </div>
           {/* Cost per category, paired with the token grid above. Reasoning is
@@ -146,8 +146,8 @@ function SessionDetail({ s, excludeCache }: { s: SessionEntry; excludeCache: boo
                 title={<Badge variant="neutral">{m.model_id}</Badge>}
                 cost={bucketCost(m, excludeCache)}
                 metrics={[
-                  { label: 'Msgs', value: (m.msgs ?? 0).toLocaleString() },
-                  { label: 'Tools', value: (m.tool_calls ?? 0).toLocaleString() },
+                  { label: 'Msgs', value: formatCount(m.msgs ?? 0) },
+                  { label: 'Tools', value: formatCount(m.tool_calls ?? 0) },
                   { label: 'Tokens', value: formatTokens(m.tokens_total ?? 0) },
                   { label: 'In', value: formatTokens(m.tokens_input ?? 0) },
                   { label: 'Out', value: formatTokens(m.tokens_output ?? 0) },
@@ -171,14 +171,14 @@ function SessionDetail({ s, excludeCache }: { s: SessionEntry; excludeCache: boo
                 title={<span className="text-xs font-medium text-fg">{a.subagent_type}</span>}
                 cost={bucketCost(a, excludeCache)}
                 metrics={[
-                  { label: 'Turns', value: (a.turns ?? 0).toLocaleString() },
+                  { label: 'Turns', value: formatCount(a.turns ?? 0) },
                   // A provider that emits an event per request (MiniMax Code)
                   // counts more requests than turns; the split is only worth
                   // showing when the two differ.
                   ...(a.requests != null && a.requests !== (a.turns ?? 0)
-                    ? [{ label: 'Requests', value: a.requests.toLocaleString() }]
+                    ? [{ label: 'Requests', value: formatCount(a.requests) }]
                     : []),
-                  { label: 'Tools', value: (a.tool_calls ?? 0).toLocaleString() },
+                  { label: 'Tools', value: formatCount(a.tool_calls ?? 0) },
                   { label: 'Tokens', value: formatTokens(a.tokens_total ?? 0) },
                 ]}
               />
@@ -283,7 +283,7 @@ function SessionRow({
         <TD className="text-right font-mono tabular">
           {s.duration_seconds != null ? formatDuration(s.duration_seconds * 1000) : '—'}
         </TD>
-        <TD className="text-right font-mono tabular">{s.msgs ?? 0}</TD>
+        <TD className="text-right font-mono tabular">{formatCount(s.msgs ?? 0)}</TD>
         <TD className="text-right font-mono tabular">
           {formatTokens(sessionTokens(s, excludeCache))}
         </TD>

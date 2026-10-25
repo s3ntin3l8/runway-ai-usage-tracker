@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { buildSidecarNameMap, useSidecars } from '@/features/fleet/queries';
-import { formatCost, formatDuration, formatTokens, timeAgo } from '@/lib/format';
+import { formatCost, formatCount, formatDuration, formatTokens, timeAgo } from '@/lib/format';
 import { useProviderRecentSessions, type DateRange } from './queries';
 import { sessionCachePct, sessionCost, sessionTokens } from './sessionMetrics';
 
@@ -61,7 +61,7 @@ function SessionCard({
 
         <div className="grid grid-cols-2 gap-x-4 gap-y-2.5">
           <Stat label="Duration" value={formatDuration((s.duration_seconds ?? 0) * 1000)} />
-          <Stat label="Messages" value={(s.msgs ?? 0).toLocaleString()} />
+          <Stat label="Messages" value={formatCount(s.msgs ?? 0)} />
           <Stat label="Tokens" value={formatTokens(sessionTokens(s, excludeCache))} />
           <Stat label="Cost" value={formatCost(sessionCost(s, excludeCache))} />
         </div>

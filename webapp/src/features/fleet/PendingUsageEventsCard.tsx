@@ -24,6 +24,7 @@ import { buildSidecarNameMap, useSidecars } from './queries';
 import { assignBatchInChunks, type BatchAssignmentOutcome } from './pendingUsageBatch';
 import { labelOrMaskedId } from '@/lib/accountDisplay';
 import { errorMessage } from '@/lib/errorMessage';
+import { formatLocalDateTime } from '@/lib/tz';
 
 function sessionKey(group: PendingUsageSession) {
   const sessionIdentity = group.session_id ? `session:${group.session_id}` : `event:${group.event_ids[0]}`;
@@ -446,8 +447,8 @@ export function PendingUsageEventsCard() {
               const options = optionsForProvider(group.provider_id);
               const chosen = validChoice(group.provider_id, accounts[key]);
               const models = group.model_ids.length ? group.model_ids.join(', ') : 'Unknown model';
-              const first = new Date(group.first_ts).toLocaleString();
-              const last = new Date(group.last_ts).toLocaleString();
+              const first = formatLocalDateTime(group.first_ts);
+              const last = formatLocalDateTime(group.last_ts);
               return (
                 <TR key={key} className={selectedHere ? 'bg-accent-muted/40' : undefined}>
                   <TD>
