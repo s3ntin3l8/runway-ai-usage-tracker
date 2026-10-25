@@ -202,3 +202,47 @@ The findings themselves:
   "100%"; `HistoryChart` bypassing `formatCost`; a backend `Total:` that can contradict a
   chart's own segments; raw `toLocaleString()` in eight or more places; browser-timezone
   leakage in three dialogs.
+- **Backend `total` for the rankings** — the five top-N rankings are capped, so a card
+  can say "Top 12 hosts" but not "Top 12 of 34". The count is not in the response, and
+  the cap lives in two places: the backend defaults to 15 rows while the frontend asks
+  for 12, so a label built from a frontend constant can drift from what was queried.
+  The response has to carry the untruncated total and the limit applied, and the title
+  has to be derived from them.
+- **Mobile and table density** — a long model id pushes the Sessions column past the
+  viewport because the badge has no `max-w`; the heatmap's cells are about 11px wide at
+  390px because the chart grid and canvas are pinned to a desktop width; one table
+  mixes `1234`, `1,234` and `1.23M` in adjacent columns; the provider tab strip
+  overflows a phone with no scroll affordance; the provider Overview tab stacks about
+  nine panels with no priority signal.
+- **Chart colour and legend semantics** — `--chart-1` and `--chart-6` are 1.22:1 similar
+  in the dark theme, and the palette is already exceeded silently: the history charts
+  and the donuts pick colours with a modulo over six, so a seventh series repeats the
+  first. The two themes have different worst pairs (dark chart-1/chart-6, light
+  chart-1/chart-2), so one palette cannot be validated once. Axis labels are cut at ten
+  characters mid-word. Two implementations of the same rank bar disagree about what
+  "Total" means — one sums the segments it draws, the other uses the backend's
+  authoritative `cost_usd` — and only one of them discloses the difference. The heatmap
+  ramp is a sequential scale that no legend explains.
+- **Terminology and small accessibility gaps** — the legacy `?period=` deep link works
+  on the provider page but not on History or Insights; the provider status is derived
+  three times from three different windows, so the grid and the rail can disagree about
+  the same provider; a glide-path explanation lives in a `title` attribute on an
+  `aria-hidden` element, so it is hover-only; `aria-label` sits on role-less spans,
+  where it may be ignored; `EmptyState` renders its title as a `<p>`, so it is not
+  navigable; `outline-none` on the focusable tab panel suppresses the global focus
+  ring; the skeletons and the countdown announce nothing, so an async update is silent;
+  the `?tab=` deep link does not scroll the selected tab into view on a phone; and the
+  icon-only dismiss buttons are 24px against a 44px floor.
+- **Playwright UX smoke suite** — the axe guard and the token contrast guard are the
+  two permanent guardrails this audit added, and neither can see what needs a real
+  browser: horizontal overflow at 390px, a control below the touch floor, a focus ring
+  painted outside the viewport, a sticky header covering the content it should sit
+  above. The suite needs its own Playwright config (the existing one pins `testDir` to
+  the security tree), a populated server (the browser test server serves an empty
+  database; the demo instance is the only populated option), and a CI job.
+
+### Resolved since this audit
+
+The chevron-column-header bullet in the terminology backlog was already fixed by the
+audit branch itself — finding P1-28 named the column in both the sessions table and the
+cost table — so it is closed rather than outstanding.
