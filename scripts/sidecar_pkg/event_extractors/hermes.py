@@ -342,38 +342,132 @@ def _database_path_is_gone(db_path: str) -> bool:
     return False
 
 
+# The slice identity is the primary key of session_model_usage, so the rows
+# that are still there are exactly the slices that can still advance.
+_LIVE_SLICE_QUERY = """
+    SELECT session_id, model, billing_provider, billing_base_url, billing_mode, task
+    FROM session_model_usage
+"""
+
+
+def _hermes_slice_suffix(
+    profile_name: str,
+    session_id: Any,
+    model: Any,
+    billing_provider: Any,
+    billing_base_url: Any,
+    billing_mode: Any,
+    task: Any,
+) -> str:
+    """Return the slice part of a watermark key.
+
+    A watermark key is ``{account}|{resolved_db_path}|{slice}``, and the slice
+    is everything behind the path. It is built here for the key *and* for the
+    lookup of the slices that still exist, so the two cannot drift apart: a
+    comparison of two different strings would report a live slice as gone and
+    drop its high-water mark.
+    """
+    return (
+        f"{profile_name}|{session_id}|{model or 'unknown'}|{billing_provider or ''}"
+        f"|{billing_base_url or ''}|{billing_mode or ''}|{task or ''}"
+    )
+
+
+def _live_slice_suffixes(conn: sqlite3.Connection, profile_name: str) -> set[str] | None:
+    """Return the slices of a database whose row is still there.
+
+    ``None`` means "could not tell", and the caller then has to keep every
+    slice: a database we merely fail to read is not a database whose rows are
+    gone.
+    """
+    suffixes: set[str] = set()
+    try:
+        for row in iter_cursor(conn.execute(_LIVE_SLICE_QUERY)):
+            suffixes.add(
+                _hermes_slice_suffix(
+                    profile_name,
+                    row["session_id"],
+                    row["model"],
+                    row["billing_provider"],
+                    row["billing_base_url"],
+                    row["billing_mode"],
+                    row["task"],
+                )
+            )
+    except (sqlite3.Error, CursorReadError) as exc:
+        logger.warning("Failed to list the live Hermes slices: %s", exc)
+        return None
+    return suffixes
+
+
+def _match_discovered_db(key: str, markers: dict[str, str]) -> tuple[str, str] | None:
+    """Find the discovered database a watermark key belongs to.
+
+    Returns the resolved path of the database and the slice behind it, or
+    None when the key belongs to no discovered database. The path is matched
+    as a whole, between two separators, so neither a path that is the tail of
+    another path nor a path that holds a ``|`` can be mistaken for it.
+    """
+    for resolved, marker in markers.items():
+        index = key.find(marker)
+        if index != -1:
+            return resolved, key[index + len(marker) :]
+    return None
+
+
 def _prune_stale_watermark_slices(
     watermark_state: dict[str, Any],
     db_paths: list[Path],
     *,
     account_id: str,
     idle_cutoff: float,
+    live_slices: dict[str, set[str]] | None = None,
 ) -> int:
-    """Forget the high-water marks of a Hermes database that no longer exists.
+    """Forget the high-water marks of the slices that can no longer move.
 
     The watermark only ever grew. A deleted profile, a test fixture that was
     unpacked and removed or a folder the user cleaned up left its slices
     behind forever, and the whole file was rewritten on every cycle that
     changed anything -- so the bytes written per day grew with a file that
-    never stopped growing. Pruning the slices of a database that is gone
-    reclaims them.
+    never stopped growing. Pruning the slices that are provably dead reclaims
+    them.
 
-    A slice is forgotten only when **both** hold:
+    A slice is forgotten only when **all** of these hold:
 
-    * its database file no longer exists, and
     * its ``last_seen`` is older than ``idle_cutoff`` -- the session has been
-      quiet long enough that its row cannot advance unless a writer reappears
-      at a path that was gone.
+      quiet long enough that its row cannot advance unless a writer reappears,
+    * and its source is provably dead, which is one of
 
-    The second condition is what keeps this safe. The server deduplicates
-    usage events on the exact ``(provider_id, event_id)`` and keeps the first
-    row, but a re-emitted Hermes event carries a restarted counter
+      * **its database file no longer exists**, or
+      * **its row is gone from the database** (``live_slices`` says which
+        slices are still there).
+
+    The idle window is what keeps this safe. The server deduplicates usage
+    events on the exact ``(provider_id, event_id)`` and keeps the first row,
+    but a re-emitted Hermes event carries a restarted counter
     (``c<calls>s<emission_seq>``) and therefore a *different* id, so the
     server cannot recognise it. With no baseline the extractor would report
     the session's whole lifetime as new usage, and the server would count it
     twice. Keeping the mark of everything that could still move -- an active
-    session, a database that exists but was not discovered, a key we cannot
-    parse -- is what prevents that.
+    session, a database that exists but was not discovered, a database whose
+    rows could not be listed, a key we cannot parse -- is what prevents that.
+
+    The row check is the second half of that rule (#958). A session Hermes
+    deleted leaves its usage row behind as a tombstone in the watermark, and
+    the watermark of a long-lived install then grows with every session that
+    ever ran. A row that is gone cannot advance, so its mark is dead weight --
+    as long as the session has been quiet long enough that the row cannot
+    come back with the counters it had.
+
+    Args:
+        watermark_state: The watermark, pruned in place.
+        db_paths: The databases that were discovered this cycle.
+        account_id: The account the watermark is being collected for.
+        idle_cutoff: The timestamp below which a slice counts as idle.
+        live_slices: ``{resolved_db_path: {slice, ...}}`` -- the slices whose
+            row is still in the database. A database that is missing from it
+            (not discovered, unreadable, or a query that failed) keeps every
+            slice.
 
     Returns the number of forgotten slices.
     """
@@ -384,6 +478,12 @@ def _prune_stale_watermark_slices(
     # right there. Those truncated forms are the ones a key can carry.
     truncated_live = {live.split("|", 1)[0] for live in live_resolved if "|" in live}
 
+    # A key carries the whole resolved path of its database, so the database
+    # behind a key is found by looking for the path itself. That also finds
+    # the exact path of a database whose path holds a "|": the split cuts the
+    # path short, but the key still holds it whole.
+    markers = {live: f"|{live}|" for live in live_resolved}
+
     # One stat() per distinct database path, not per key: a host with a large
     # watermark would otherwise make thousands of syscalls every cycle.
     path_is_gone: dict[str, bool] = {}
@@ -391,17 +491,25 @@ def _prune_stale_watermark_slices(
     pruned: list[str] = []
     for key, value in watermark_state.items():
         db_path = _state_key_db_path(key, account_id)
-        if db_path is None:
-            # Not a key shape we wrote: leave it alone.
-            continue
-        if db_path not in path_is_gone:
-            # A database that exists but was not discovered may still be in
-            # use; only its own rows can say so, so it keeps its slices.
-            path_is_gone[db_path] = _database_path_is_gone(db_path)
-        if not path_is_gone[db_path]:
-            continue
-        if db_path in truncated_live:
-            # The real path holds a "|": this key's path was cut short.
+        file_gone = False
+        if db_path is not None:
+            if db_path not in path_is_gone:
+                # A database that exists but was not discovered may still be in
+                # use; only its own rows can say so, so it keeps its slices.
+                path_is_gone[db_path] = _database_path_is_gone(db_path)
+            file_gone = path_is_gone[db_path] and db_path not in truncated_live
+
+        row_gone = False
+        matched = _match_discovered_db(key, markers)
+        if matched is not None:
+            resolved, suffix = matched
+            live = (live_slices or {}).get(resolved)
+            if live is not None and suffix not in live:
+                # The row behind this slice is gone from a database we could
+                # read, so it can never advance again.
+                row_gone = True
+
+        if not (file_gone or row_gone):
             continue
         if not isinstance(value, dict):
             # A corrupt entry: keep it rather than guess what it was.
@@ -447,11 +555,17 @@ def parse_hermes_events(
     # A key runs to ~450 bytes with the path and the session identity in it, so the file is
     # megabytes on a host with thousands of sessions -- and it is rewritten in full whenever a
     # slice changes, so the bytes written per day grew with it. Each slice records 'last_seen',
-    # and the slices of a database that no longer exists are pruned once they have been idle
-    # for WATERMARK_PRUNE_IDLE_DAYS (see _prune_stale_watermark_slices).
+    # and a slice is forgotten once it has been idle for WATERMARK_PRUNE_IDLE_DAYS and its
+    # source is provably dead: either its database file is gone, or its row is gone from a
+    # database that is still there (see _prune_stale_watermark_slices).
     state_path = state_file or _default_watermark_state_path()
     watermark_state = _load_hermes_watermark(state_path)
     state_modified = False
+
+    # The slices whose row is still in the database, per database. A slice
+    # whose row is gone can never advance again, so its mark is dead weight
+    # once the session has been quiet for long enough (#958).
+    live_slices: dict[str, set[str]] = {}
 
     since_epoch = since.timestamp()
     events: list[UsageEventPush] = []
@@ -570,7 +684,10 @@ def parse_hermes_events(
                     curr_cost = float(actual_cost if actual_cost is not None else (est_cost or 0.0))
 
                     # Watermark key uniquely identifies this slice within the DB per account (including billing_base_url and billing_mode)
-                    state_key = f"{account_id}|{db_path.resolve()}|{profile_name}|{session_id}|{model}|{billing_provider}|{billing_base_url}|{billing_mode}|{task}"
+                    state_key = (
+                        f"{account_id}|{db_path.resolve()}|"
+                        f"{_hermes_slice_suffix(profile_name, session_id, model, billing_provider, billing_base_url, billing_mode, task)}"
+                    )
                     prev = state_updates.get(state_key, watermark_state.get(state_key, {}))
 
                     prev_in = int(prev.get("input_tokens", 0))
@@ -695,13 +812,21 @@ def parse_hermes_events(
                 del events[event_start:]
                 logger.warning("Failed to query Hermes state DB at %s: %s", db_path, exc)
                 continue
+
+            # The rows that are still there are the slices that can still
+            # advance. A database whose rows cannot be listed is left out, so
+            # that its slices keep their marks.
+            live = _live_slice_suffixes(conn, profile_name)
+            if live is not None:
+                live_slices[str(db_path.resolve())] = live
+
             # A failed cursor must not commit deltas for a partial DB scan.
             watermark_state.update(state_updates)
             state_modified = state_modified or bool(state_updates)
         finally:
             conn.close()
 
-    # Forget the slices of a database that is gone. This runs on every cycle,
+    # Forget the slices that can no longer move. This runs on every cycle,
     # not only when something changed: a cycle that emits nothing can still
     # shrink the file, and the shrink has to be written out or the next cycle
     # would put the pruned slices back.
@@ -710,6 +835,7 @@ def parse_hermes_events(
         db_paths,
         account_id=account_id,
         idle_cutoff=datetime.now(UTC).timestamp() - WATERMARK_PRUNE_IDLE_DAYS * 86400,
+        live_slices=live_slices,
     )
     if pruned:
         state_modified = True
