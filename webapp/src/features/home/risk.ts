@@ -118,6 +118,32 @@ export function atRiskItems(items: RiskItem[]): RiskItem[] {
   return items.filter((i) => i.level !== 'ok').sort((a, b) => b.score - a.score);
 }
 
+/**
+ * The status the home grid colours a provider by.
+ *
+ * The grid shows the provider's HEADLINE window — the critical gauge — while
+ * the "Needs attention" rail shows the window that is actually at risk, which
+ * may be a secondary limit. The two can therefore disagree about the same
+ * provider, and that is deliberate: the grid is a current-state view and the
+ * rail is an attention view. Anything that shows a provider's status must
+ * pick one of the two on purpose, so the choice lives here, in one place.
+ */
+export function providerStatus(item: RiskItem): QuotaStatus {
+  const gauge = item.entry.critical_gauge;
+  const status = item.status;
+  // A spend card has no derivable percentage, so cardStatus returns
+  // 'unknown'. Prefer 'ok' when there is real data, so the dot is not
+  // always grey.
+  if (
+    cardKind(gauge) === 'spend' &&
+    status === 'unknown' &&
+    (gauge.used_value != null || gauge.health === 'good')
+  ) {
+    return 'ok';
+  }
+  return status;
+}
+
 // Apply the persisted provider_order, appending unknown entries at the end
 // in their server order.
 export function applyLayoutOrder(items: RiskItem[], order: string[] | undefined): RiskItem[] {

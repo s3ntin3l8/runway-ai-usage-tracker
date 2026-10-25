@@ -35,8 +35,8 @@ import { formatCurrency, formatNumber, formatPct, formatTokens, timeAgo } from '
 import { maskAccountId } from '@/lib/accountDisplay';
 import { setPullToRefreshSuspended } from '@/lib/pullToRefresh';
 import { cardHeroLabel, cardHeroText, cardKind, cardPct, cardStale, cardStatus, cardTooltip, chipLabel, quotaUsedLabel, staleTitle, tokenUsageTotal, windowLabel } from '@/lib/quota';
-import type { QuotaStatus } from '@/lib/quota';
 import { providerPath } from './AtRiskRail';
+import { providerStatus } from './risk';
 import type { RiskItem } from './risk';
 
 interface ProviderGridProps {
@@ -113,7 +113,7 @@ function SortableProviderCard({
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: item.key,
   });
-  const { entry, status } = item;
+  const { entry } = item;
   const gauge = entry.critical_gauge;
   const name = providerNames.get(entry.provider_id) ?? entry.provider_id;
   const secondaries = entry.secondary_limits.slice(0, 3);
@@ -129,10 +129,9 @@ function SortableProviderCard({
 
   // Spend cards have no derivable percentage so cardStatus returns 'unknown'.
   // Prefer 'ok' when we have real data so the StatusDot isn't always grey.
-  const displayStatus: QuotaStatus =
-    kind === 'spend' && status === 'unknown' && (gauge.used_value != null || gauge.health === 'good')
-      ? 'ok'
-      : status;
+  // The derivation lives in risk.ts: the grid shows the provider's headline
+  // window, the rail shows the window that is at risk.
+  const displayStatus = providerStatus(item);
 
   // Hero label for the aria-label — meaningful per kind.
   const heroLabel = cardHeroText(gauge, excludeCache);

@@ -6,7 +6,7 @@ import { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { Skeleton } from '@/components/ui/Skeleton';
+import { Skeleton, SkeletonRegion } from '@/components/ui/Skeleton';
 import { StatTile } from '@/components/ui/StatTile';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { HistoryChart } from '@/features/history/HistoryChart';
@@ -61,9 +61,12 @@ export function OverallChartCard({ range }: { range: DateRangeValue }) {
           />
         </div>
         {chart.isPending ? (
-          <Skeleton className="h-72 w-full" />
+          <SkeletonRegion>
+            <Skeleton className="h-72 w-full" />
+          </SkeletonRegion>
         ) : chart.isError ? (
           <EmptyState
+            headingLevel="h3"
             icon={CircleAlert}
             title="Could not load this data"
             description={chart.error.message}

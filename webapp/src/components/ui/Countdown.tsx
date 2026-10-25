@@ -22,7 +22,12 @@ export function Countdown({ until, className, prefix = 'resets in' }: CountdownP
   const remaining = timeUntil(until);
   if (!remaining) return null;
   return (
-    <span className={cn('font-mono text-xs text-fg-muted tabular', className)}>
+    // role="timer" says "this is a clock" without announcing every tick —
+    // a live region here would interrupt a screen-reader user once a minute.
+    <span
+      role="timer"
+      className={cn('font-mono text-xs text-fg-muted tabular', className)}
+    >
       {prefix} {remaining}
     </span>
   );

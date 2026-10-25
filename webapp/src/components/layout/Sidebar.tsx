@@ -52,9 +52,15 @@ export function Sidebar() {
                   variant="warning"
                   className="ml-auto"
                   title={`${fleetUpdates} sidecar update${fleetUpdates === 1 ? '' : 's'} available`}
-                  aria-label={`${fleetUpdates} sidecar update${fleetUpdates === 1 ? '' : 's'} available`}
                 >
                   {fleetUpdates}
+                  {/* The badge's own aria-label would land on a role-less
+                      span, where it is ignored. The words go in the content,
+                      so the link's name carries them. */}
+                  <span className="sr-only">
+                    {' '}
+                    sidecar update{fleetUpdates === 1 ? '' : 's'} available
+                  </span>
                 </Badge>
               ) : null}
             </Link>

@@ -167,6 +167,7 @@ export function KitPage() {
               </TabsContent>
               <TabsContent value="three">
                 <EmptyState
+                  headingLevel="h3"
                   icon={Inbox}
                   title="No forecast yet"
                   description="Needs at least two snapshots in the current window."

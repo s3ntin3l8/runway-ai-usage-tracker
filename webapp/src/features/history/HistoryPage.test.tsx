@@ -114,6 +114,13 @@ describe('HistoryPage', () => {
     primeDefaults();
   });
 
+  it('honours the legacy ?period= deep link', async () => {
+    // The provider page already accepted ?period=; the same link must work
+    // here, or it lands on the default window.
+    renderWithProviders(<HistoryPage />, { route: '/history?period=2026-03' });
+    expect(await screen.findByText('Tokens (March 2026)')).toBeInTheDocument();
+  });
+
   it('renders the chart and the delta stat tiles', async () => {
     renderWithProviders(<HistoryPage />);
     expect(await screen.findByTestId('echart')).toBeInTheDocument();

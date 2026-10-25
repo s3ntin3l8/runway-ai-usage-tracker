@@ -32,7 +32,7 @@ import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ResponsiveDialog } from '@/components/ui/ResponsiveDialog';
-import { Skeleton } from '@/components/ui/Skeleton';
+import { Skeleton, SkeletonRegion } from '@/components/ui/Skeleton';
 import { StatusDot } from '@/components/ui/StatusDot';
 import { timeAgo } from '@/lib/format';
 import { AddSidecarCard } from './AddSidecarCard';
@@ -209,10 +209,12 @@ export function FleetPage() {
       <div className="p-4 lg:p-8">
         <PendingUsageEventsCard />
         {sidecars.isPending ? (
-          <div className="grid gap-3 lg:grid-cols-2">
-            <Skeleton className="h-40" />
-            <Skeleton className="h-40" />
-          </div>
+          <SkeletonRegion>
+            <div className="grid gap-3 lg:grid-cols-2">
+              <Skeleton className="h-40" />
+              <Skeleton className="h-40" />
+            </div>
+          </SkeletonRegion>
         ) : sidecars.isError ? (
           // A failed request is not an empty fleet. Reporting "No sidecars
           // yet" for a network error tells the user to install something

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { FleetEntry, ForecastEntry, LimitCard } from '@/api/types';
-import { applyLayoutOrder, atRiskItems, buildRiskItems, forecastLabel } from './risk';
+import { applyLayoutOrder, atRiskItems, buildRiskItems, forecastLabel, providerStatus } from './risk';
 
 const entry = (provider: string, pct: number | null, account = 'default'): FleetEntry => ({
   provider_id: provider,
@@ -208,6 +208,44 @@ describe('buildRiskItems', () => {
     const item = buildRiskItems([zeroBalance], [forecast('payg', 'risk', 120)])[0];
     expect(item.level).toBe('critical');
     expect(item.forecast?.status).toBe('risk');
+  });
+});
+
+describe('providerStatus', () => {
+  it('reports the critical gauge, not the window that is at risk', () => {
+    // The grid shows the headline window; the rail shows the risky one.
+    // They disagree on purpose, and each has one derivation.
+    const hotSecondary: FleetEntry = {
+      provider_id: 'claude',
+      account_id: 'default',
+      critical_gauge: { service_name: 'claude', pct_used: 20 } as LimitCard,
+      secondary_limits: [
+        { service_name: 'claude', pct_used: 90, window_type: 'weekly' } as LimitCard,
+      ],
+    };
+    const item = buildRiskItems([hotSecondary], [])[0];
+    expect(item.lead.card.window_type).toBe('weekly');
+    // The grid: the headline window, which is calm.
+    expect(providerStatus(item)).toBe('ok');
+    // The rail: the window that is at risk.
+    expect(item.lead.status).toBe('critical');
+  });
+
+  it('reports ok for a spend card that has real data', () => {
+    // A spend card has no percentage, so its status is "unknown"; the grid
+    // shows "ok" when there is real data behind it.
+    const spend: FleetEntry = {
+      provider_id: 'anthropic',
+      account_id: 'default',
+      critical_gauge: {
+        service_name: 'anthropic',
+        used_value: 12.5,
+        limit_value: 100,
+      } as unknown as LimitCard,
+      secondary_limits: [],
+    };
+    const items = buildRiskItems([spend], []);
+    expect(providerStatus(items[0])).toBe('ok');
   });
 });
 

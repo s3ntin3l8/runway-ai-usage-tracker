@@ -52,7 +52,10 @@ export function UpdateBanner() {
         type="button"
         onClick={dismiss}
         aria-label="Dismiss update notification"
-        className="shrink-0 rounded-sm p-1 hover:bg-warning/10"
+        // Touch floor: a 14px icon with 4px of padding is a 22px target, and
+        // the design system asks for 44px below the lg breakpoint. The same
+        // idiom Button uses for its icon sizes.
+        className="inline-flex shrink-0 items-center justify-center rounded-sm p-1 hover:bg-warning/10 min-h-11 min-w-11 lg:min-h-0 lg:min-w-0"
       >
         <X className="size-3.5" aria-hidden />
       </button>

@@ -232,6 +232,33 @@ describe('Banners collection failure', () => {
     await userEvent.click(screen.getByRole('button', { name: /dismiss/i }));
     expect(screen.queryByText(/collection failing/i)).not.toBeInTheDocument();
   });
+
+  it('gives the dismiss button the 44px touch floor on a phone', () => {
+    // A 14px icon with 4px of padding is a 22px target. The design system
+    // asks for 44px below the lg breakpoint, and the button is the only way
+    // to clear the banner on a phone.
+    localStorage.clear();
+    renderWithProviders(
+      <Banners
+        credentials={undefined}
+        anomalies={[]}
+        fleet={[
+          entry({
+            critical_gauge: card({
+              stale: true,
+              collection_failing: true,
+              detail: '⚠ Collection failing — x [Cached 1h ago]',
+            }),
+          }),
+        ]}
+      />,
+    );
+    const dismiss = screen.getByRole('button', { name: /dismiss/i });
+    expect(dismiss).toHaveClass('min-h-11');
+    expect(dismiss).toHaveClass('min-w-11');
+    expect(dismiss).toHaveClass('lg:min-h-0');
+    expect(dismiss).toHaveClass('lg:min-w-0');
+  });
 });
 
 const attention = (o: Partial<CredentialSourceView> = {}): CredentialSourceView =>

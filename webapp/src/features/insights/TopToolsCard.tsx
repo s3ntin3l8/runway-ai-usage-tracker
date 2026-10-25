@@ -7,7 +7,7 @@ import { RankBar, type RankRow } from '@/components/charts/RankBar';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { Skeleton } from '@/components/ui/Skeleton';
+import { Skeleton, SkeletonRegion } from '@/components/ui/Skeleton';
 import { formatAxisNumber, formatCount } from '@/lib/format';
 import { formatRangeLabel, type DateRangeValue } from '@/lib/timeRange';
 import { INSIGHTS_TOP_N, useTopTools } from './queries';
@@ -30,9 +30,12 @@ export function TopToolsCard({ range }: { range: DateRangeValue }) {
       </CardHeader>
       <CardContent className="pt-2">
         {top.isPending ? (
-          <Skeleton className="h-72 w-full" />
+          <SkeletonRegion>
+            <Skeleton className="h-72 w-full" />
+          </SkeletonRegion>
         ) : top.isError ? (
           <EmptyState
+            headingLevel="h3"
             icon={CircleAlert}
             title="Could not load this data"
             description={top.error.message}

@@ -38,7 +38,9 @@ export function HistoryPage() {
   const fleet = useFleet();
   const providerConfigs = useProviderConfigs();
   const anomalies = useAnomalies();
-  const [range, setRange] = useRangeParam();
+  // 'period' is the legacy deep-link key. The provider page already
+  // accepts it; honouring it here makes the same link work everywhere.
+  const [range, setRange] = useRangeParam('period');
   const [metric, setMetric] = useState<Metric>('percent');
   const [accountKey, setAccountKey] = useState<string | null>(null);
   const [detailRow, setDetailRow] = useState<HistoryWindowRow | null>(null);
@@ -194,6 +196,7 @@ export function HistoryPage() {
           ) : windows.isError ? (
             <CardContent>
               <EmptyState
+                headingLevel="h3"
                 icon={CircleAlert}
                 title="Could not load the quota windows"
                 description={errorMessage(windows.error, 'Could not load the quota windows')}
