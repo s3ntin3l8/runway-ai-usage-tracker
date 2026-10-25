@@ -903,7 +903,7 @@ The strict report contains `format_version: 1`, opaque transport `job_handle`,
 `listed_sessions`, `list_pages`, `list_complete`, history page/event/completion
 counts, numeric `sequence` diagnostics, SDK-envelope `audit`, `comparison`,
 `subagent_comparison`, fixed `scope_observations`, `declared_category` and
-`execution_kind`. Comparisons report input/cache overlap only; children remain
+`execution_kind`, optional `rejected_list`. Comparisons report input/cache overlap only; children remain
 separate from main-agent totals. Execution metadata is an observation, not proven
 provenance. No provider/account/message IDs, model names, source IDs, cursors,
 HMACs, salt, transcript content or raw errors leave the report.

@@ -76,6 +76,10 @@ async def test_old_checkpoint_has_unknown_rejection_and_source_change_suppresses
     await cache.remove_source("anthropic", ACCOUNT, SOURCE)
     suppressed = await read_verification(handle, store)
     assert suppressed.outcome == "source_changed"
+    from app.models.claude_cloud_verification import VerificationState
+
+    VerificationState.model_validate(suppressed.model_dump())
+    assert suppressed.rejected_list is None
     assert build_verification_report(handle, suppressed)["rejected_list"] is None
     assert store.snapshot(handle).rejected_list is not None
 
@@ -286,3 +290,26 @@ def test_rejected_metadata_strict_models_and_standalone_validator_agree(change):
         RejectedListEvidence.model_validate(evidence)
     with pytest.raises(EvidenceError, match="^invalid_evidence$"):
         _rejected_list(evidence)
+
+
+@pytest.mark.asyncio
+async def test_future_decoder_disagreement_keeps_rejection_evidence_unknown(
+    source_environment, monkeypatch
+):
+    from app.services import claude_cloud_verification as worker
+
+    store = store_for(source_environment)
+    handle = await start(store)
+    monkeypatch.setattr(worker, "decode_boundary_json", lambda body: {})
+    calls = []
+
+    def upstream(request):
+        calls.append(request)
+        if request.url.path.endswith("/profile"):
+            return httpx.Response(200, json=profile())
+        return httpx.Response(200, content=b'{"data":[],"data":[]}')
+
+    state = await advance(handle, store, upstream)
+    assert state.outcome == "unsupported_contract" and len(calls) == 2
+    assert state.rejected_list is None
+    assert build_verification_report(handle, state)["rejected_list"] is None

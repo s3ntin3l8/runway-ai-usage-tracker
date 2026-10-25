@@ -94,7 +94,12 @@ async def read_verification(handle: str, store: CheckpointStore) -> Verification
         # Authority is unavailable: suppress the projection below, without writing a lease.
         pass
     return state.model_copy(
-        update={"phase": "stopped", "outcome": "source_changed", "usage_records": []}
+        update={
+            "phase": "stopped",
+            "outcome": "source_changed",
+            "usage_records": [],
+            "rejected_list": None,
+        }
     )
 
 
@@ -189,7 +194,8 @@ class _VerificationProbe(probe._Probe):
                     nonfinite_json_values=exc.nonfinite,
                 )
             else:
-                self.list_metadata["json_state"] = "invalid_json"
+                # A future decoder disagreement provides no established failure category.
+                self.list_metadata.clear()
             raise probe.ProbeError("unsupported_contract") from None
         self.list_metadata.update(
             json_state="decoded",

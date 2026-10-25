@@ -11,11 +11,11 @@ SmallCount = Annotated[StrictInt, Field(ge=0, le=20)]
 Kind = Literal["missing", "null", "boolean", "number", "string", "array", "object", "not_object"]
 
 
-class _Strict(BaseModel):
+class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
 
-class ListBoundaryObservation(_Strict):
+class ListBoundaryObservation(StrictModel):
     top_level_kind: Kind
     data_kind: Kind
     record_count: Count | None
@@ -52,7 +52,7 @@ class ListBoundaryObservation(_Strict):
         return self
 
 
-class RejectedListEvidence(_Strict):
+class RejectedListEvidence(StrictModel):
     boundary: ListBoundaryObservation | None = None
     response_encoding: Literal["unknown", "identity", "unsupported"] = "unknown"
     json_state: Literal[

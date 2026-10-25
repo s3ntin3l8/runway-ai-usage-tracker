@@ -7,16 +7,16 @@ from pydantic import Field, StrictInt, model_validator
 from app.models.claude_cloud_list_observation import (
     Count,
     ListBoundaryObservation,
-    _Strict,
+    StrictModel,
 )
 from app.models.claude_cloud_verification import Handle
 
 
-class ListBoundaryRequest(_Strict):
+class ListBoundaryRequest(StrictModel):
     job_handle: Handle
 
 
-class ListBoundaryReport(_Strict):
+class ListBoundaryReport(StrictModel):
     format_version: Literal[1] = 1
     outcome: Literal[
         "observed",
