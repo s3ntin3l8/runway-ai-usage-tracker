@@ -204,7 +204,7 @@ role; only presence is counted, without returning any value. Every row has one
 type and one category count per event. There are no dynamic keys, paths, category
 strings, identifiers, message bodies or decoded JSON strings in this output.
 
-The standalone offline verifier validates every key, integer, bound, histogram
+The API response model and standalone offline verifier validate every key, integer, bound, histogram
 total and parent/child presence relation against `history_events` (maximum 150).
 It runs with `python -I -S` without application/site-package imports. Source
 change, timeout or unavailable authority clears structural observations along

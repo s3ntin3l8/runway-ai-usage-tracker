@@ -3,6 +3,8 @@
 import copy
 import json
 
+import pytest
+
 
 def test_declared_paths_describe_wrappers_without_returning_contents():
     from scripts.claude_cloud_structure import empty_structure, observe_structure
@@ -75,3 +77,66 @@ def test_provider_type_strings_cannot_spoof_reserved_meta_categories():
     assert row["categories"]["other"] == 4
     assert row["categories"]["missing"] == row["categories"]["not_object"] == 0
     assert row["fields"]["type"] == 4
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "location",
+        "type_key",
+        "negative",
+        "large",
+        "boolean",
+        "sum",
+        "field_bound",
+        "parent",
+        "category",
+    ],
+)
+def test_api_model_rejects_incomplete_or_inconsistent_histograms(mutation):
+    from pydantic import ValidationError
+
+    from app.models.claude_cloud_probe import CloudStructure
+    from scripts.claude_cloud_structure import empty_structure, observe_structure
+
+    value = empty_structure()
+    observe_structure(value, {"data": {"type": "assistant"}})
+    assert CloudStructure.model_validate(value).events == 1
+    row = value["locations"]["event"]
+    if mutation == "location":
+        del value["locations"]["payload"]
+    if mutation == "type_key":
+        del row["types"]["string"]
+    if mutation == "negative":
+        row["types"]["object"] = -5
+    if mutation == "large":
+        row["types"]["string"] = 999
+    if mutation == "boolean":
+        row["types"]["object"] = True
+    if mutation == "sum":
+        row["types"]["string"] = 1
+    if mutation == "field_bound":
+        value["locations"]["payload"]["fields"]["usage"] = 1
+    if mutation == "parent":
+        row["fields"]["data"] = 0
+    if mutation == "category":
+        row["categories"]["not_object"] = 1
+    with pytest.raises(ValidationError):
+        CloudStructure.model_validate(value)
+
+
+def test_api_v2_history_and_structure_event_counts_must_match():
+    from pydantic import ValidationError
+
+    from app.models.claude_cloud_probe import ClaudeCloudProbeReportV2
+    from scripts.claude_cloud_structure import empty_structure
+
+    value = {
+        "outcome": "source_unavailable",
+        "stage": "source",
+        "sequence": dict.fromkeys(("numeric", "invalid", "duplicates", "gaps", "out_of_order"), 0),
+        "structure": empty_structure(),
+        "history_events": 1,
+    }
+    with pytest.raises(ValidationError):
+        ClaudeCloudProbeReportV2.model_validate(value)
