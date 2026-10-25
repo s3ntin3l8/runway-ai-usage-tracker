@@ -18,16 +18,19 @@ import { chromium } from '@playwright/test';
  *    page, plus a short loop stepping through a provider's detail tabs
  *    (webm + mp4 + jpg poster; needs ffmpeg). Written to SCREENSHOTS_OUT_DIR.
  *  - audit: phone and tablet viewports of every page, dark and light, written
- *    to docs/ui-ux-audit/evidence/. The README profile is desktop-only, so the
- *    mobile layouts had no visual record at all; these are the reference
- *    images for the UI/UX audit. Nothing outside the evidence folder is
- *    touched.
+ *    to docs/audit/assets/<slug>/ (gitignored — the audit *report* is the
+ *    committed artifact, the captures stay local). The README profile is
+ *    desktop-only, so the mobile layouts had no visual record at all; these
+ *    are the reference images for a UI/UX audit. Nothing outside the audit
+ *    assets folder is touched.
  */
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const README_DIR = path.join(ROOT, 'assets/screenshots');
 const MANIFEST_DIR = path.join(ROOT, 'webapp/public/screenshots');
-const AUDIT_DIR = path.join(ROOT, 'docs/ui-ux-audit/evidence');
+// The audit assets are local only (see docs/audit/README.md). The slug names
+// the audit the captures belong to, so two audits never overwrite each other.
+const AUDIT_DIR = path.join(ROOT, 'docs/audit/assets', process.env.SCREENSHOTS_AUDIT_SLUG ?? 'audit');
 const WEB_URL = process.env.SCREENSHOTS_WEB_URL ?? 'http://127.0.0.1:3965';
 const PROFILE = process.env.SCREENSHOTS_PROFILE ?? 'readme';
 const PROVIDER = process.env.SCREENSHOTS_PROVIDER ?? 'anthropic';

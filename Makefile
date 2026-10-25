@@ -32,8 +32,8 @@ screenshots: ## Regenerate README (dark + light) and PWA manifest screenshots fr
 screenshots-landing: ## Landing-page stills + loop into OUT (default ./landing-shots); loop needs ffmpeg
 	$(PYTHON) -m scripts.demo.capture --profile landing --out "$(or $(OUT),landing-shots)"
 
-screenshots-audit: ## Phone + tablet stills of every page into docs/ui-ux-audit/evidence (UI/UX audit)
-	$(PYTHON) -m scripts.demo.capture --profile audit
+screenshots-audit: ## Phone + tablet stills of every page into docs/audit/assets/$(AUDIT) (local only; gitignored)
+	$(PYTHON) -m scripts.demo.capture --profile audit --audit-slug "$(or $(AUDIT),audit)"
 
 dev: ## Run development server (hot reload). Data → ./data (gitignored) unless RUNWAY_CONFIG_DIR is set.
 	$(LOAD_ENV); \

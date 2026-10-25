@@ -202,7 +202,7 @@ All routes are mounted under `/api/v1/`. See **[docs/api-reference.md](docs/api-
 
 ## UI/UX Audit
 
-The dashboard was audited for accessibility, mobile ergonomics and data honesty. See **[docs/ui-ux-audit.md](docs/ui-ux-audit.md)** for the findings, what was fixed, and the deferred backlog. The audit has two permanent guardrails in the test suite: an axe-core check over the main surfaces and a WCAG contrast check over the theme tokens.
+The dashboard was audited for accessibility, mobile ergonomics and data honesty. See **[docs/audit/2026-10-webapp-ui-ux.md](docs/audit/2026-10-webapp-ui-ux.md)** for the findings, what was fixed, and the deferred backlog. The audit has two permanent guardrails in the test suite: an axe-core check over the main surfaces and a WCAG contrast check over the theme tokens.
 
 ## Optional Security
 

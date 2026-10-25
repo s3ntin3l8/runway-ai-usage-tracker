@@ -108,6 +108,12 @@ docs/sidecar_implementation.md
 artifacts/
 *.py,cover
 
+# --- AUDIT ASSETS ---
+# Audit reports are committed under docs/audit/; their screenshot evidence
+# stays local. It is regenerable (make screenshots-audit) and it is not worth
+# the permanent history weight — see docs/audit/README.md.
+docs/audit/assets/
+
 # Developer worktrees (one worktree per branch under .wt/ — see AGENTS.md)
 .wt/
 

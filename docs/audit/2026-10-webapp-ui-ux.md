@@ -158,10 +158,20 @@ destructive-action confirm.
 
 ## Evidence
 
-`make screenshots-audit` captures every page at 390×844 (phone) and 768×1024 (tablet),
-dark and light, into `docs/ui-ux-audit/evidence/`. They are viewport-sized rather than
-full-page on purpose: a fixed bottom nav is captured at its viewport position, so a
-full-page shot would not show whether the last row of content clears it.
+The captures are local, not committed — the report is the artifact that lasts, and the
+images are regenerable. To take them again:
+
+```bash
+make screenshots-audit AUDIT=2026-10-webapp-ui-ux
+```
+
+That writes every page at 390×844 (phone) and 768×1024 (tablet), dark and light, into
+`docs/audit/assets/2026-10-webapp-ui-ux/`. The folder is gitignored: see
+[`README.md`](README.md) for why the report is committed and the assets are not.
+
+They are viewport-sized rather than full-page on purpose: a fixed bottom nav is
+captured at its viewport position, so a full-page shot would not show whether the last
+row of content clears it.
 
 The README profile (`make screenshots`) is desktop-only, so before this the mobile
 layouts had no visual record at all.
