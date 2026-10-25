@@ -1,7 +1,8 @@
 # Complete-history Claude verification (#956, parent #669)
 
-Implementation design: the usage reducer/comparator is implemented; checkpoint storage,
-pagination worker and operator protocol remain planned and are not available yet.
+Implementation: usage-only reduction, encrypted checkpoints, a bounded pagination worker,
+and the explicit admin protocol are implemented. Synthetic verification is separate from
+packaged and live acceptance; neither has passed for this protocol yet.
 
 ## Intent and evidence
 

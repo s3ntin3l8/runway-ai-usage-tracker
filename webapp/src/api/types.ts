@@ -1614,3 +1614,91 @@ export interface FleetSourceResponse {
   sources: FleetSourceStatus[];
   commands: FleetSourceCommand[];
 }
+
+/** Explicit #956 operator protocol. No action grants consent or refreshes tokens. */
+export type ClaudeVerificationCategory = 'cli_code' | 'desktop_code' | 'remote_code' | 'cowork'
+  | 'ordinary_chat' | 'mobile_only' | 'unknown';
+export interface ClaudeVerificationCounters {
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_input_tokens: number;
+  cache_creation_input_tokens: number;
+}
+export interface ClaudeVerificationLocalRecord {
+  type: 'assistant';
+  message: { id: string; usage: ClaudeVerificationCounters };
+  /** Job-scoped HMACs only; raw SDK identifiers are not accepted. */
+  parent_tool_use_id?: string | null;
+  session_scope?: string | null;
+  request_scope?: string | null;
+  record_version?: string | null;
+  scope_conflict?: boolean;
+  scope_unknown?: boolean;
+  event_sequence?: number | null;
+  sdk_timestamp?: number | null;
+  provider_timestamp?: number | null;
+  sdk_timestamp_unknown?: boolean;
+  provider_timestamp_unknown?: boolean;
+}
+export type ClaudeVerificationAction = {
+  action: 'start'; account_id: string; source_id: string;
+  organization_id?: string | null; session_id?: string | null;
+  job_key?: string | null; expected_local?: ClaudeVerificationLocalRecord[];
+  declared_category?: ClaudeVerificationCategory;
+} | { action: 'step' | 'cancel'; job_handle: string }
+  | { action: 'status'; job_handle?: string | null };
+export interface ClaudeVerificationComparison {
+  local_messages: number; cloud_messages: number; matched_messages: number;
+  missing_messages: number; additional_cloud_messages: number; mismatched_messages: number;
+  local_conflicts: number; cloud_conflicts: number;
+  local_unusable_records: number; cloud_unusable_records: number;
+  all_expected_input_cache_match: boolean;
+  cloud_contract_verified: false; ready_for_ingestion: false;
+}
+export interface ClaudeVerificationAudit {
+  format_version: 1; status: 'incomplete' | 'observations_only';
+  source_contract: 'sdk_style_jsonl'; assistant_output_accounting: 'excluded_placeholder';
+  cloud_contract_verified: false; ready_for_ingestion: false;
+  assistant: {
+    records: number; unique_messages: number; duplicate_messages: number;
+    conflicting_messages: number; subagent_records: number;
+    input_cache_observations: Omit<ClaudeVerificationCounters, 'output_tokens'> | null;
+  };
+  result: {
+    records: number; usage_observations: number; model_usage_observations: number;
+    last_usage_observation: ClaudeVerificationCounters | null;
+    last_model_usage_observation: ClaudeVerificationCounters | null;
+    usage_decreases: number; model_usage_decreases: number; error_results: number;
+  };
+  diagnostics: ('unsupported_record' | 'subagent_scope_excluded' | 'missing_assistant_identity'
+    | 'invalid_assistant_usage' | 'conflicting_assistant_usage' | 'output_placeholder_divergence'
+    | 'error_result_observed' | 'result_scope_unverified' | 'no_usage_observations'
+    | 'missing_result_usage' | 'invalid_result_usage' | 'missing_result_model_usage'
+    | 'invalid_result_model_usage')[];
+}
+export interface ClaudeVerificationReport {
+  format_version: 1;
+  /** Transport only; remove before saving or publishing sanitized evidence. */
+  job_handle: string;
+  started_at: number; deadline: number; last_verified_at: number | null;
+  phase: 'listing' | 'history' | 'complete' | 'stopped';
+  outcome: 'pending' | 'complete' | 'cancelled' | 'interrupted' | 'expired' | 'limit_reached'
+    | 'source_changed' | 'source_unavailable' | 'source_ineligible' | 'unsupported_source'
+    | 'identity_mismatch' | 'identity_unavailable' | 'rejected' | 'rate_limited' | 'timeout'
+    | 'unavailable' | 'unsupported_contract' | 'response_limit' | 'no_sessions' | 'target_not_found';
+  requests: number; accepted_response_bytes: number; http_status: number | null;
+  account_verified: boolean; organization_verified: boolean;
+  listed_sessions: number; list_pages: number; list_complete: boolean;
+  history_pages: number; history_events: number; history_complete: boolean;
+  sequence: { numeric: number; invalid: number; duplicates: number; gaps: number; out_of_order: number };
+  audit: ClaudeVerificationAudit;
+  comparison: ClaudeVerificationComparison; subagent_comparison: ClaudeVerificationComparison;
+  scope_observations: Record<'initializations' | 'session_scopes' | 'parent_scopes'
+    | 'unknown_parent_records' | 'request_scopes' | 'record_versions' | 'record_version_changes'
+    | 'scope_conflicts' | 'unknown_scope_records' | 'shared_session_scopes' | 'shared_parent_scopes', number>;
+  declared_category: ClaudeVerificationCategory;
+  execution_kind: 'anthropic_cloud' | 'bridge' | 'unknown';
+  cloud_contract_verified: false; ready_for_ingestion: false;
+  live_acceptance_passed: false; provenance_verified: false;
+}
+export type ClaudeVerificationResponse = ClaudeVerificationReport | { state: 'absent' | 'cancelled' };

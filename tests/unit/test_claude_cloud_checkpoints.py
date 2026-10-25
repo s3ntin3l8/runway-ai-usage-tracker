@@ -433,3 +433,14 @@ def test_inconsistent_checkpoint_cannot_claim_completed_or_valid_usage(tmp_path,
         ]
     with pytest.raises(ValidationError):
         VerificationState.model_validate(value)
+
+
+def test_clock_rollback_cannot_extend_the_job_deadline(tmp_path):
+    from app.services.claude_cloud_checkpoints import CheckpointError
+
+    store, state, _, _, clock = setup_store(tmp_path)
+    handle = store.create(state)
+    clock[0] = 999.0
+    with pytest.raises(CheckpointError, match="^expired$"):
+        store.claim(handle)
+    assert store.snapshot(handle).outcome == "expired"

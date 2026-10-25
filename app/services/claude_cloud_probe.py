@@ -254,7 +254,13 @@ def _page(payload: object, limit: int) -> tuple[list[dict[str, Any]], str | None
 
 
 class _Probe:
-    def __init__(self, request: ClaudeCloudProbeRequest, client: httpx.AsyncClient):
+    def __init__(
+        self,
+        request: ClaudeCloudProbeRequest,
+        client: httpx.AsyncClient,
+        *,
+        total_byte_limit: int = MAX_TOTAL_BYTES,
+    ):
         self.request = request
         self.client = client
         self.account = canonical_account_id(request.account_id)
@@ -263,6 +269,7 @@ class _Probe:
         self.expected_org: str | None = None
         self.authority: tuple[Any, ...] = ()
         self.total_bytes = 0
+        self.total_byte_limit = total_byte_limit
 
     async def check_source(self) -> None:
         try:
@@ -299,7 +306,7 @@ class _Probe:
                 self.total_bytes += len(chunk)
                 if (
                     len(body) + len(chunk) > MAX_RESPONSE_BYTES
-                    or self.total_bytes > MAX_TOTAL_BYTES
+                    or self.total_bytes > self.total_byte_limit
                 ):
                     raise ProbeError("response_limit")
                 body.extend(chunk)

@@ -23,11 +23,14 @@ def assistant(**changes):
     return {"type": "assistant", "message": {"id": "synthetic-message", "usage": counters}}
 
 
-def test_checkpoint_has_only_usage_and_job_scoped_message_identity():
+def test_checkpoint_has_only_usage_and_job_scoped_context():
     record = assistant()
     record.update({"session_id": "private-session", "cwd": "private-directory"})
     record["message"].update({"content": [{"text": "private-content"}], "model": "private-model"})
     value = normalize(record)
+    assert set(value) == {"type", "message", "session_scope"}
+    scope = value.pop("session_scope")
+    assert len(scope) == 64 and set(scope) <= set("0123456789abcdef")
     assert (
         value
         == {
@@ -72,7 +75,7 @@ def test_duplicate_and_conflict_semantics_survive_hmac_identity():
 
 def test_subagent_scope_is_retained_without_parent_identifier():
     value = normalize({**assistant(), "parent_tool_use_id": "private-parent"})
-    assert value["parent_tool_use_id"] is True
+    assert isinstance(value["parent_tool_use_id"], str) and len(value["parent_tool_use_id"]) == 64
     assert "private-parent" not in json.dumps(value)
     assert audit_messages([value])["assistant"]["subagent_records"] == 1
 
@@ -259,3 +262,113 @@ def test_checkpoint_preserves_per_model_scopes_without_retaining_names():
         "cache_read_input_tokens": 14,
         "cache_creation_input_tokens": 16,
     }
+
+
+def test_checkpoint_retains_domain_separated_session_request_and_parent_scopes():
+    record = assistant()
+    record["message"]["id"] = "private-shared"
+    record["message"]["requestId"] = "private-shared"
+    record.update(
+        session_id="private-shared", parent_tool_use_id="private-shared", version="2.1.45"
+    )
+    value = normalize(record)
+    hashes = {
+        value["message"]["id"],
+        value["session_scope"],
+        value["request_scope"],
+        value["parent_tool_use_id"],
+    }
+    assert len(hashes) == 4 and all(len(item) == 64 for item in hashes)
+    second = normalize(record, b"x" * 32)
+    assert hashes.isdisjoint(
+        {
+            second["message"]["id"],
+            second["session_scope"],
+            second["request_scope"],
+            second["parent_tool_use_id"],
+        }
+    )
+    assert value["record_version"] == "2.1.45"
+    assert "private-" not in json.dumps(value)
+    assert audit_messages([value])["assistant"]["subagent_records"] == 1
+
+
+def test_local_and_sdk_session_keys_correlate_without_retaining_raw_identity():
+    sdk = normalize({**assistant(), "session_id": "private-session"})
+    local = normalize({**assistant(), "sessionId": "private-session"})
+    assert sdk["session_scope"] == local["session_scope"]
+    assert "private-session" not in json.dumps([sdk, local])
+
+
+def test_conflicting_scope_metadata_cannot_claim_an_input_cache_match():
+    from app.services.claude_cloud_ledger import compare_usage_records
+
+    cloud = normalize({**assistant(), "session_id": "private-one", "sessionId": "private-two"})
+    assert cloud["scope_conflict"] is True
+    assert "session_scope" not in cloud
+    result = compare_usage_records([normalize(assistant())], [cloud])
+    assert result["cloud_unusable_records"] == 1
+    assert result["all_expected_input_cache_match"] is False
+
+
+def test_init_context_keeps_only_fixed_scope_and_version_metadata():
+    value = normalize(
+        {
+            "type": "system",
+            "subtype": "init",
+            "session_id": "private-session",
+            "version": "2.1.45",
+            "tools": [{"input": "private-input"}],
+            "cwd": "private-directory",
+            "apiKeySource": "private-key-source",  # pragma: allowlist secret - synthetic privacy fixture
+        }
+    )
+    assert set(value) == {"type", "subtype", "session_scope", "record_version"}
+    assert value["type"] == "system" and value["subtype"] == "init"
+    assert len(value["session_scope"]) == 64 and value["record_version"] == "2.1.45"
+    assert "private-" not in json.dumps(value)
+    assert normalize({"type": "system", "subtype": "private-unknown"}) is None
+
+
+def test_malformed_scope_metadata_is_unknown_without_retaining_strings_or_arrays():
+    value = normalize(
+        {**assistant(), "session_id": ["private-session"], "version": "private-version-text"}
+    )
+    assert value["scope_unknown"] is True
+    assert "session_scope" not in value and "record_version" not in value
+    assert "private-" not in json.dumps(value)
+
+
+def test_subagent_comparison_requires_the_same_parent_scope_without_consumption_claim():
+    from app.services.claude_cloud_ledger import compare_subagent_records
+
+    left = normalize({**assistant(), "parent_tool_use_id": "private-parent"})
+    same = normalize({**assistant(output_tokens=9), "parent_tool_use_id": "private-parent"})
+    other = normalize({**assistant(), "parent_tool_use_id": "private-other-parent"})
+    assert compare_subagent_records([left], [same])["all_expected_input_cache_match"] is True
+    assert compare_subagent_records([left], [other])["missing_messages"] == 1
+    assert compare_subagent_records([left], [other])["all_expected_input_cache_match"] is False
+    assert compare_subagent_records([left], [same])["ready_for_ingestion"] is False
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("1970-01-01T00:00:01.500Z", 1.5),
+        ("1970-01-01T01:00:01.500+01:00", 1.5),
+        ("1970-01-01T00:00:01.500", None),
+        (1.5, None),
+        (True, None),
+        ("private-invalid-timestamp", None),
+    ],
+)
+def test_usage_timestamps_require_explicit_timezone_and_never_guess_units(raw, expected):
+    from app.services.claude_cloud_ledger import usage_timestamp
+
+    assert usage_timestamp(raw) == expected
+
+
+def test_sdk_timestamp_is_normalized_without_preserving_raw_text():
+    value = normalize({**assistant(), "timestamp": "1970-01-01T01:00:01.500+01:00"})
+    assert value["sdk_timestamp"] == 1.5
+    assert "1970-" not in json.dumps(value)

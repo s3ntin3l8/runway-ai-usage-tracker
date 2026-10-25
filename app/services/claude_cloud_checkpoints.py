@@ -173,7 +173,7 @@ class CheckpointStore:
             raise CheckpointError("terminal")
         if row["lease_owner"] is not None or state.in_flight:
             self._stop(row, state, "interrupted")
-        if now >= state.deadline:
+        if not state.created_at <= now < state.deadline:
             self._stop(row, state, "expired")
         owner = secrets.token_hex(16)
         with self._connection() as connection:
@@ -199,7 +199,14 @@ class CheckpointStore:
             "declared_category",
             "expected_local",
         )
-        counters = ("requests", "total_bytes", "listed_sessions", "history_pages", "history_events")
+        counters = (
+            "requests",
+            "total_bytes",
+            "listed_sessions",
+            "list_pages",
+            "history_pages",
+            "history_events",
+        )
         if (
             any(getattr(old, key) != getattr(new, key) for key in immutable)
             or any(getattr(new, key) < getattr(old, key) for key in counters)

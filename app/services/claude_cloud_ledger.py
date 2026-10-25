@@ -7,6 +7,8 @@ within one explicitly authorized job; they are never public report fields.
 from __future__ import annotations
 
 import hmac
+import re
+from datetime import datetime
 from typing import Any
 
 from scripts.audit_claude_usage import MODEL_FIELDS, TOKEN_FIELDS
@@ -54,6 +56,69 @@ def _model_usage(value: object, key: bytes) -> object:
     return models
 
 
+def usage_timestamp(value: object) -> float | None:
+    """Parse only timezone-aware ISO timestamps; never guess seconds vs milliseconds."""
+    if not isinstance(value, str) or not 0 < len(value) <= 64:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if parsed.utcoffset() is None:
+            return None
+        epoch = parsed.timestamp()
+        return epoch if 0 <= epoch < 253402300800 else None
+    except (ValueError, OverflowError, OSError):
+        return None
+
+
+def _context(record: dict[str, Any], key: bytes) -> dict[str, Any]:
+    context: dict[str, Any] = {}
+    sdk, local = record.get("session_id"), record.get("sessionId")
+    if (
+        sdk is not None
+        and local is not None
+        and isinstance(sdk, str)
+        and isinstance(local, str)
+        and sdk != local
+    ):
+        context["scope_conflict"] = True
+    else:
+        raw_session = sdk if sdk is not None else local
+        if raw_session is not None:
+            scope = _identity(raw_session, key, b"session")
+            if scope is None:
+                context["scope_unknown"] = True
+            else:
+                context["session_scope"] = scope
+            if (
+                sdk is not None
+                and local is not None
+                and not (isinstance(sdk, str) and isinstance(local, str))
+            ):
+                context["scope_unknown"] = True
+    message = record.get("message")
+    if isinstance(message, dict) and message.get("requestId") is not None:
+        request = _identity(message["requestId"], key, b"request")
+        if request is None:
+            context["scope_unknown"] = True
+        else:
+            context["request_scope"] = request
+    version = record.get("version")
+    if version is not None:
+        if isinstance(version, str) and re.fullmatch(
+            r"[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4}(?:[-+][A-Za-z0-9.-]{1,32})?", version
+        ):
+            context["record_version"] = version
+        else:
+            context["scope_unknown"] = True
+    if record.get("timestamp") is not None:
+        timestamp = usage_timestamp(record["timestamp"])
+        if timestamp is None:
+            context["sdk_timestamp_unknown"] = True
+        else:
+            context["sdk_timestamp"] = timestamp
+    return context
+
+
 def usage_only_record(record: object, key: bytes) -> dict[str, Any] | None:
     """Keep fixed usage fields and pseudonymous message identity, or ignore it.
 
@@ -71,17 +136,22 @@ def usage_only_record(record: object, key: bytes) -> dict[str, Any] | None:
         digest = _identity(identifier, key, b"message")
         usage = _counters(message.get("usage"), {field: field for field in TOKEN_FIELDS})
         result: dict[str, Any] = {
+            **_context(record, key),
             "type": "assistant",
             "message": {"id": digest, "usage": usage if usage is not None else False},
         }
         if record.get("parent_tool_use_id") is not None:
-            result["parent_tool_use_id"] = True
+            parent = _identity(record["parent_tool_use_id"], key, b"parent")
+            result["parent_tool_use_id"] = parent if parent is not None else True
+            if parent is None:
+                result["scope_unknown"] = True
         return result
     if record.get("type") == "result":
         raw_usage = record.get("usage")
         usage = _counters(raw_usage, {field: field for field in TOKEN_FIELDS})
         subtype = record.get("subtype")
         return {
+            **_context(record, key),
             "type": "result",
             "subtype": (
                 "error_observed"
@@ -91,6 +161,8 @@ def usage_only_record(record: object, key: bytes) -> dict[str, Any] | None:
             "usage": usage if usage is not None else None if raw_usage is None else False,
             "modelUsage": _model_usage(record.get("modelUsage"), key),
         }
+    if record.get("type") == "system" and record.get("subtype") == "init":
+        return {"type": "system", "subtype": "init", **_context(record, key)}
     return None
 
 
@@ -104,6 +176,9 @@ def _comparison_side(
         if record.get("type") != "assistant":
             continue
         if record.get("parent_tool_use_id") is not None:
+            continue
+        if record.get("scope_conflict"):
+            unusable += 1
             continue
         raw = record.get("message")
         message = raw if isinstance(raw, dict) else {}
@@ -153,3 +228,30 @@ def compare_usage_records(
         "cloud_contract_verified": False,
         "ready_for_ingestion": False,
     }
+
+
+def compare_subagent_records(
+    local: list[dict[str, Any]], cloud: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Compare child messages within the same parent scope, separate from main usage."""
+
+    def children(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        selected = []
+        for row in records:
+            parent = row.get("parent_tool_use_id")
+            if row.get("type") != "assistant" or parent is None:
+                continue
+            message = row.get("message")
+            message = message if isinstance(message, dict) else {}
+            identifier = message.get("id")
+            composite = (
+                parent + ":" + identifier
+                if isinstance(parent, str) and isinstance(identifier, str)
+                else None
+            )
+            selected.append(
+                {**row, "parent_tool_use_id": None, "message": {**message, "id": composite}}
+            )
+        return selected
+
+    return compare_usage_records(children(local), children(cloud))

@@ -303,12 +303,208 @@ def _decision(status: str, reasons: list[str]) -> dict[str, Any]:
     }
 
 
+HISTORY_COMPARISON = {
+    "local_messages",
+    "cloud_messages",
+    "matched_messages",
+    "missing_messages",
+    "additional_cloud_messages",
+    "mismatched_messages",
+    "local_conflicts",
+    "cloud_conflicts",
+    "local_unusable_records",
+    "cloud_unusable_records",
+}
+HISTORY_SCOPES = {
+    "initializations",
+    "session_scopes",
+    "parent_scopes",
+    "unknown_parent_records",
+    "request_scopes",
+    "record_versions",
+    "record_version_changes",
+    "scope_conflicts",
+    "unknown_scope_records",
+    "shared_session_scopes",
+    "shared_parent_scopes",
+}
+HISTORY_OUTCOMES = (
+    OUTCOMES - {"sample_complete", "sample_limited", "sample_not_found", "busy"}
+) | {
+    "pending",
+    "complete",
+    "cancelled",
+    "interrupted",
+    "limit_reached",
+    "target_not_found",
+}
+
+
+def _history_comparison(value: Any) -> None:
+    _keys(
+        value,
+        HISTORY_COMPARISON
+        | {
+            "all_expected_input_cache_match",
+            "cloud_contract_verified",
+            "ready_for_ingestion",
+        },
+    )
+    _false_flags(value)
+    for name in HISTORY_COMPARISON:
+        _integer(value[name], 100_000)
+    _require(type(value["all_expected_input_cache_match"]) is bool)
+    shared = value["matched_messages"]
+    _require(shared + value["missing_messages"] == value["local_messages"])
+    _require(shared + value["additional_cloud_messages"] == value["cloud_messages"])
+    _require(value["mismatched_messages"] <= shared)
+    if value["all_expected_input_cache_match"]:
+        _require(value["local_messages"] > 0 and value["missing_messages"] == 0)
+        _require(
+            not any(
+                value[name]
+                for name in (
+                    "mismatched_messages",
+                    "local_conflicts",
+                    "cloud_conflicts",
+                    "local_unusable_records",
+                    "cloud_unusable_records",
+                )
+            )
+        )
+
+
+def _history_report(value: Any) -> None:
+    """Strict complete-chain projection. Transport handles must be removed first."""
+    _keys(
+        value,
+        {
+            "format_version",
+            "started_at",
+            "deadline",
+            "last_verified_at",
+            "phase",
+            "outcome",
+            "requests",
+            "accepted_response_bytes",
+            "http_status",
+            "account_verified",
+            "organization_verified",
+            "listed_sessions",
+            "list_pages",
+            "list_complete",
+            "history_pages",
+            "history_events",
+            "history_complete",
+            "sequence",
+            "audit",
+            "comparison",
+            "subagent_comparison",
+            "scope_observations",
+            "declared_category",
+            "execution_kind",
+            "cloud_contract_verified",
+            "ready_for_ingestion",
+            "live_acceptance_passed",
+            "provenance_verified",
+        },
+    )
+    _require(type(value["format_version"]) is int and value["format_version"] == 1)
+    _false_flags(value)
+    _require(value["live_acceptance_passed"] is False and value["provenance_verified"] is False)
+    for name in ("started_at", "deadline", "last_verified_at"):
+        number = value[name]
+        if name == "last_verified_at" and number is None:
+            continue
+        _require(type(number) in (int, float) and 0 <= number < 253402300800)
+    _require(0 < value["deadline"] - value["started_at"] <= 1800)
+    if value["last_verified_at"] is not None:
+        _require(value["started_at"] <= value["last_verified_at"] < value["deadline"])
+    _choice(value["phase"], {"listing", "history", "complete", "stopped"})
+    _choice(value["outcome"], HISTORY_OUTCOMES)
+    for name, maximum in (
+        ("requests", 512),
+        ("accepted_response_bytes", 256 * 1024 * 1024),
+        ("listed_sessions", 20_000),
+        ("list_pages", 512),
+        ("history_pages", 512),
+        ("history_events", 100_000),
+    ):
+        _integer(value[name], maximum)
+    for name in ("account_verified", "organization_verified", "list_complete", "history_complete"):
+        _require(type(value[name]) is bool)
+    _require(not value["organization_verified"] or value["account_verified"])
+    if value["http_status"] is not None:
+        _integer(value["http_status"], 599)
+        _require(value["http_status"] >= 100)
+    _require(value["list_pages"] + value["history_pages"] <= value["requests"])
+    _require(value["history_events"] <= value["history_pages"] * 50)
+    _require(value["listed_sessions"] <= value["list_pages"] * 20)
+    _counters(value["sequence"], SEQUENCE)
+    _require(all(n <= value["history_events"] for n in value["sequence"].values()))
+    _require(value["sequence"]["numeric"] + value["sequence"]["invalid"] == value["history_events"])
+    if value["outcome"] == "complete":
+        _require(
+            value["phase"] == "complete" and value["list_complete"] and value["history_complete"]
+        )
+        _require(value["account_verified"] and value["organization_verified"])
+    if value["history_complete"]:
+        _require(value["list_complete"] and value["history_pages"] > 0)
+    _audit(value["audit"])
+    _require(
+        value["audit"]["assistant"]["records"] + value["audit"]["result"]["records"]
+        <= value["history_events"]
+    )
+    for name in ("comparison", "subagent_comparison"):
+        _history_comparison(value[name])
+    _counters(value["scope_observations"], HISTORY_SCOPES)
+    _require(all(n <= value["history_events"] for n in value["scope_observations"].values()))
+    _choice(
+        value["declared_category"],
+        {
+            "cli_code",
+            "desktop_code",
+            "remote_code",
+            "cowork",
+            "ordinary_chat",
+            "mobile_only",
+            "unknown",
+        },
+    )
+    _choice(value["execution_kind"], {"anthropic_cloud", "bridge", "unknown"})
+
+
+def _history_decision(value: Any) -> dict[str, Any]:
+    report = value["report"]
+    _history_report(report)
+    reasons = []
+    if (
+        report["outcome"] != "complete"
+        or not report["history_complete"]
+        or not report["list_complete"]
+    ):
+        reasons.append("history_not_complete")
+    if report["sequence"]["numeric"] != report["history_events"] or any(
+        report["sequence"][name] for name in SEQUENCE - {"numeric"}
+    ):
+        reasons.append("sequence_requires_review")
+    # Complete pagination alone proves neither usage semantics nor source coverage.
+    reasons.extend(
+        ["accounting_requires_review", "coverage_requires_review", "provenance_requires_review"]
+    )
+    return {
+        **_decision("stop", reasons),
+        **{key: value[key] for key in ("source_commit", "image", "observed_at", "deployment")},
+        "report": json.loads(json.dumps(report)),
+    }
+
+
 def evaluate(value: Any) -> dict[str, Any]:
     """Accept only the version-1 allowlist; supplied provenance is never authenticated."""
     _keys(
         value, {"format_version", "source_commit", "image", "observed_at", "deployment", "report"}
     )
-    _require(type(value["format_version"]) is int and value["format_version"] == 1)
+    _require(type(value["format_version"]) is int and value["format_version"] in (1, 2))
     for key, pattern in (
         ("source_commit", r"[0-9a-f]{40}"),
         ("image", r"ghcr\.io/s3ntin3l8/runway@sha256:[0-9a-f]{64}"),
@@ -320,6 +516,8 @@ def evaluate(value: Any) -> dict[str, Any]:
     except ValueError:
         raise EvidenceError("invalid_evidence") from None
     _choice(value["deployment"], {"selected-production", "isolated-test"})
+    if value["format_version"] == 2:
+        return _history_decision(value)
     report = value["report"]
     _report(report)
     reasons = []

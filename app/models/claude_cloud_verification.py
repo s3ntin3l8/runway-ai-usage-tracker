@@ -1,5 +1,6 @@
 """Strict private checkpoint shapes; never return these through a public route."""
 
+import re
 from typing import Annotated, Literal, Self
 
 from pydantic import (
@@ -59,20 +60,50 @@ class CheckpointMessage(_PrivateModel):
         return value
 
 
-class CheckpointAssistant(_PrivateModel):
+class CheckpointContext(_PrivateModel):
+    session_scope: Digest | None = None
+    request_scope: Digest | None = None
+    record_version: (
+        Annotated[
+            StrictStr,
+            Field(pattern=r"^[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4}(?:[-+][A-Za-z0-9.-]{1,32})?$"),
+        ]
+        | None
+    ) = None
+    scope_conflict: bool = False
+    scope_unknown: bool = False
+    event_sequence: Counter | None = None
+    sdk_timestamp: float | None = Field(default=None, ge=0, lt=253402300800, allow_inf_nan=False)
+    provider_timestamp: float | None = Field(
+        default=None, ge=0, lt=253402300800, allow_inf_nan=False
+    )
+    sdk_timestamp_unknown: bool = False
+    provider_timestamp_unknown: bool = False
+
+
+class CheckpointAssistant(CheckpointContext):
     type: Literal["assistant"]
     message: CheckpointMessage
-    parent_tool_use_id: Literal[True] | None = None
+    parent_tool_use_id: Digest | Literal[True] | None = None
 
     @field_validator("parent_tool_use_id", mode="before")
     @classmethod
     def literal_parent_flag(cls, value: object) -> object:
-        if value is not None and value is not True:
+        if (
+            value is not None
+            and value is not True
+            and not (isinstance(value, str) and re.fullmatch(r"[a-f0-9]{64}", value))
+        ):
             raise ValueError("invalid_usage_record")
         return value
 
 
-class CheckpointResult(_PrivateModel):
+class CheckpointSystem(CheckpointContext):
+    type: Literal["system"]
+    subtype: Literal["init"]
+
+
+class CheckpointResult(CheckpointContext):
     type: Literal["result"]
     subtype: Literal["unclassified", "error_observed"]
     usage: UsageCounters | Literal[False] | None
@@ -99,7 +130,9 @@ class CheckpointResult(_PrivateModel):
         return self
 
 
-CheckpointRecord = Annotated[CheckpointAssistant | CheckpointResult, Field(discriminator="type")]
+CheckpointRecord = Annotated[
+    CheckpointAssistant | CheckpointResult | CheckpointSystem, Field(discriminator="type")
+]
 
 
 class SequenceCounts(_PrivateModel):
@@ -108,6 +141,30 @@ class SequenceCounts(_PrivateModel):
     duplicates: Counter = 0
     gaps: Counter = 0
     out_of_order: Counter = 0
+
+
+VerificationOutcome = Literal[
+    "pending",
+    "complete",
+    "cancelled",
+    "interrupted",
+    "expired",
+    "limit_reached",
+    "source_changed",
+    "source_unavailable",
+    "source_ineligible",
+    "unsupported_source",
+    "identity_mismatch",
+    "identity_unavailable",
+    "rejected",
+    "rate_limited",
+    "timeout",
+    "unavailable",
+    "unsupported_contract",
+    "response_limit",
+    "no_sessions",
+    "target_not_found",
+]
 
 
 class VerificationState(_PrivateModel):
@@ -133,32 +190,14 @@ class VerificationState(_PrivateModel):
     ] = "unknown"
     execution_kind: Literal["anthropic_cloud", "bridge", "unknown"] = "unknown"
     phase: Literal["listing", "history", "complete", "stopped"] = "listing"
-    outcome: Literal[
-        "pending",
-        "complete",
-        "cancelled",
-        "interrupted",
-        "expired",
-        "limit_reached",
-        "source_changed",
-        "source_unavailable",
-        "source_ineligible",
-        "unsupported_source",
-        "identity_mismatch",
-        "identity_unavailable",
-        "rejected",
-        "rate_limited",
-        "timeout",
-        "unavailable",
-        "unsupported_contract",
-        "response_limit",
-        "no_sessions",
-        "target_not_found",
-    ] = "pending"
+    outcome: VerificationOutcome = "pending"
     in_flight: bool = False
+    last_verified_at: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    last_http_status: Annotated[StrictInt, Field(ge=100, le=599)] | None = None
     requests: Annotated[StrictInt, Field(ge=0, le=512)] = 0
     total_bytes: Annotated[StrictInt, Field(ge=0, le=256 * 1024 * 1024)] = 0
     listed_sessions: Annotated[StrictInt, Field(ge=0, le=20000)] = 0
+    list_pages: Annotated[StrictInt, Field(ge=0, le=512)] = 0
     history_pages: Annotated[StrictInt, Field(ge=0, le=512)] = 0
     history_events: Annotated[StrictInt, Field(ge=0, le=100000)] = 0
     list_complete: bool = False
@@ -183,22 +222,29 @@ class VerificationState(_PrivateModel):
 
     @model_validator(mode="after")
     def consistent(self) -> Self:
+        known_sequences = set(self.sequences)
         if (
             not self.created_at <= self.deadline <= self.created_at + 1800
             or len(self.seen_sessions) != self.listed_sessions
             or len(set(self.seen_sessions)) != len(self.seen_sessions)
             or len(set(self.seen_cursors)) != len(self.seen_cursors)
             or self.sequence.numeric + self.sequence.invalid != self.history_events
-            or len(set(self.sequences)) != len(self.sequences)
+            or len(known_sequences) != len(self.sequences)
             or len(self.sequences) + self.sequence.duplicates != self.sequence.numeric
             or len(self.usage_records) > self.history_events
-            or self.history_pages > self.requests
+            or any(
+                record.event_sequence is not None and record.event_sequence not in known_sequences
+                for record in self.usage_records
+            )
+            or self.history_pages + self.list_pages > self.requests
             or (
                 self.phase == "history"
                 and (self.selected_session is None or not self.list_complete)
             )
             or (self.previous_sequence is None) != (self.sequence.numeric == 0)
-            or (self.previous_sequence is not None and self.previous_sequence not in self.sequences)
+            or (
+                self.previous_sequence is not None and self.previous_sequence not in known_sequences
+            )
             or any(
                 getattr(self.sequence, field) > self.history_events
                 for field in ("numeric", "invalid", "duplicates", "gaps", "out_of_order")
@@ -230,3 +276,105 @@ class CheckpointEnvelope(_PrivateModel):
     handle: Handle
     revision: Counter
     state: VerificationState
+
+
+class VerificationStart(_PrivateModel):
+    action: Literal["start"] = "start"
+    account_id: Annotated[StrictStr, Field(min_length=1, max_length=320)]
+    source_id: Annotated[StrictStr, Field(min_length=1, max_length=4096)]
+    organization_id: UUIDString | None = None
+    session_id: SessionID | None = None
+    job_key: Digest | None = None
+    expected_local: list[CheckpointAssistant] = Field(default_factory=list, max_length=256)
+    declared_category: Literal[
+        "cli_code",
+        "desktop_code",
+        "remote_code",
+        "cowork",
+        "ordinary_chat",
+        "mobile_only",
+        "unknown",
+    ] = "unknown"
+
+    @model_validator(mode="after")
+    def valid_fixture(self) -> Self:
+        if self.expected_local and (
+            self.job_key is None
+            or any(
+                row.message.id is None
+                or not isinstance(row.message.usage, UsageCounters)
+                or row.parent_tool_use_id is True
+                for row in self.expected_local
+            )
+        ):
+            raise ValueError("invalid_local_fixture")
+        return self
+
+
+class VerificationStep(_PrivateModel):
+    action: Literal["step"]
+    job_handle: Handle
+
+
+class VerificationStatus(_PrivateModel):
+    action: Literal["status"]
+    job_handle: Handle | None = None
+
+
+class VerificationCancel(_PrivateModel):
+    action: Literal["cancel"]
+    job_handle: Handle
+
+
+class VerificationReport(_PrivateModel):
+    """Public fixed projection; identifiers appear only as an opaque transport handle."""
+
+    format_version: Literal[1]
+    job_handle: Handle
+    started_at: float
+    deadline: float
+    last_verified_at: float | None
+    phase: Literal["listing", "history", "complete", "stopped"]
+    outcome: VerificationOutcome
+    requests: Counter
+    accepted_response_bytes: Counter
+    http_status: int | None
+    account_verified: bool
+    organization_verified: bool
+    listed_sessions: Counter
+    list_pages: Counter
+    list_complete: bool
+    history_pages: Counter
+    history_events: Counter
+    history_complete: bool
+    sequence: SequenceCounts
+    audit: dict[str, object]
+    comparison: dict[str, object]
+    subagent_comparison: dict[str, object]
+    scope_observations: dict[str, Counter]
+    declared_category: Literal[
+        "cli_code",
+        "desktop_code",
+        "remote_code",
+        "cowork",
+        "ordinary_chat",
+        "mobile_only",
+        "unknown",
+    ]
+    execution_kind: Literal["anthropic_cloud", "bridge", "unknown"]
+    cloud_contract_verified: Literal[False]
+    ready_for_ingestion: Literal[False]
+    live_acceptance_passed: Literal[False]
+    provenance_verified: Literal[False]
+
+    @model_validator(mode="after")
+    def allowlisted_report(self) -> Self:
+        from scripts.verify_claude_cloud import _history_report
+
+        report = self.model_dump(exclude={"job_handle"})
+        _history_report(report)
+        return self
+
+
+class VerificationEmpty(_PrivateModel):
+    state: Literal["absent", "cancelled"]
