@@ -38,11 +38,16 @@ function hostRow(
   const label = hostNames.get(h.sidecar_id) ?? h.sidecar_id;
 
   if (metric === 'cost') {
+    const segments = costSegments(h, series, excludeCache);
     return {
       label,
-      value: costTotal(h, excludeCache),
+      // The bar is the sum of the segments it draws, so the bar can never
+      // contradict them; the backend's authoritative total is disclosed
+      // beside it when the two differ.
+      value: segments.reduce((sum, seg) => sum + seg.value, 0),
+      reportedValue: costTotal(h, excludeCache),
       sub,
-      segments: costSegments(h, series, excludeCache),
+      segments,
     };
   }
   return {

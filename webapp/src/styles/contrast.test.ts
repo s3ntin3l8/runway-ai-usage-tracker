@@ -118,6 +118,57 @@ export function contrastRatio(
   return (hi + 0.05) / (lo + 0.05);
 }
 
+/**
+ * CIELAB dE between two colours — the perceptual distance.
+ *
+ * WCAG's contrast ratio says how much light a colour has; it says nothing
+ * about whether two colours look different from each other. Two hues of
+ * equal luminance can be told apart at a glance and still both sit at 4:1 on
+ * white, so a palette needs a second rule: no two series may be a shade of
+ * one another.
+ */
+export function deltaE(
+  a: { r: number; g: number; b: number },
+  b: { r: number; g: number; b: number },
+): number {
+  const lab = (c: { r: number; g: number; b: number }): [number, number, number] => {
+    const channel = (raw: number) => {
+      const s = raw / 255;
+      return s <= 0.04045 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+    };
+    const r = channel(c.r);
+    const g = channel(c.g);
+    const bl = channel(c.b);
+    // sRGB -> XYZ (D65), then the CIE L*a*b* transform.
+    const x = (0.4124564 * r + 0.3575761 * g + 0.1804375 * bl) / 0.95047;
+    const y = 0.2126729 * r + 0.7151522 * g + 0.072175 * bl;
+    const z = (0.0193339 * r + 0.119192 * g + 0.9503041 * bl) / 1.08883;
+    const f = (t: number) => (t > 216 / 24389 ? Math.cbrt(t) : (841 / 108) * t + 4 / 29);
+    const [fx, fy, fz] = [f(x), f(y), f(z)];
+    return [116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)];
+  };
+  const [l1, a1, b1] = lab(a);
+  const [l2, a2, b2] = lab(b);
+  return Math.sqrt((l1 - l2) ** 2 + (a1 - a2) ** 2 + (b1 - b2) ** 2);
+}
+
+/** The categorical series, in slot order. */
+const CHART_SERIES = ['chart-1', 'chart-2', 'chart-3', 'chart-4', 'chart-5', 'chart-6'];
+
+/**
+ * The minimum perceptual distance between two series.
+ *
+ * 25 is a judgement call, not a WCAG criterion: below about 10 two colours
+ * are the same to most readers, and above ~30 the palette starts looking
+ * arbitrary. The threshold is here to stop a *new* colour from being added
+ * next to an existing one — it is a floor on the palette, not a
+ * certification of it.
+ */
+const MIN_SERIES_DELTA = 25;
+
+/** The heat ramp is sequential, so its steps are closer together. */
+const MIN_RAMP_DELTA = 8;
+
 interface Check {
   label: string;
   fg: string;
@@ -173,5 +224,52 @@ describe.each(themes)('$name theme contrast', (theme) => {
       ratio,
       `${theme.name}: --${check.fg} on --${check.bg} is ${ratio.toFixed(2)}:1 (needs ${check.min}:1)`,
     ).toBeGreaterThanOrEqual(check.min);
+  });
+});
+
+describe.each(themes)('$name theme palette', (theme) => {
+  const token = (name: string): string => {
+    const value = theme.tokens[name];
+    if (value === undefined) throw new Error(`${theme.name}: missing --${name}`);
+    return value;
+  };
+
+  it('keeps every pair of series perceptually apart', () => {
+    const colours = CHART_SERIES.map((name) => parseColor(token(name)));
+    for (let i = 0; i < colours.length; i += 1) {
+      for (let j = i + 1; j < colours.length; j += 1) {
+        const distance = deltaE(colours[i], colours[j]);
+        expect(
+          distance,
+          `${theme.name}: --${CHART_SERIES[i]} and --${CHART_SERIES[j]} are only ${distance.toFixed(1)} dE apart (needs ${MIN_SERIES_DELTA})`,
+        ).toBeGreaterThanOrEqual(MIN_SERIES_DELTA);
+      }
+    }
+  });
+
+  it('keeps the top of the heat ramp readable on a card', () => {
+    // The bottom of a sequential ramp is *meant* to recede into the surface —
+    // that is what "low" looks like — so only the top stop carries the 3:1
+    // floor for graphical objects.
+    const card = parseColor(token('surface-1'));
+    const top = parseColor(token('chart-heat-4'));
+    const ratio = contrastRatio(top, card);
+    expect(
+      ratio,
+      `${theme.name}: --chart-heat-4 on --surface-1 is ${ratio.toFixed(2)}:1 (needs 3:1)`,
+    ).toBeGreaterThanOrEqual(3);
+  });
+
+  it('keeps the heat ramp readable as a gradient', () => {
+    const ramp = ['chart-heat-0', 'chart-heat-1', 'chart-heat-2', 'chart-heat-3', 'chart-heat-4'].map(
+      (name) => parseColor(token(name)),
+    );
+    for (let i = 0; i < ramp.length - 1; i += 1) {
+      const distance = deltaE(ramp[i], ramp[i + 1]);
+      expect(
+        distance,
+        `${theme.name}: heat ramp steps ${i} and ${i + 1} are only ${distance.toFixed(1)} dE apart (needs ${MIN_RAMP_DELTA})`,
+      ).toBeGreaterThanOrEqual(MIN_RAMP_DELTA);
+    }
   });
 });

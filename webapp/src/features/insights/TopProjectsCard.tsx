@@ -4,8 +4,7 @@
 
 import { useState } from 'react';
 import type { TopProjectEntry } from '@/api/types';
-import { RankBar, type RankRow, type RankSegment } from '@/components/charts/RankBar';
-import { COST_SEGMENT_KEYS, TOKEN_SEGMENT_KEYS } from '@/components/charts/segmentDefs';
+import { RankBar, type RankRow } from '@/components/charts/RankBar';
 import { useChartTokens } from '@/components/charts/theme';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -16,22 +15,8 @@ import { useExcludeCache } from '@/hooks/useExcludeCache';
 import { formatAxisCost, formatAxisNumber, formatCost, formatCount, formatTokens } from '@/lib/format';
 import { formatRangeLabel, type DateRangeValue } from '@/lib/timeRange';
 import { INSIGHTS_TOP_N, type ProjectMetric, useTopProjects } from './queries';
+import { costSegments, costTotal, tokenSegments } from './rankSegments';
 import { CircleAlert } from 'lucide-react';
-
-const COST_ACCESSORS: Record<string, (p: TopProjectEntry) => number> = {
-  cost_input: (p) => p.cost_input,
-  cost_output: (p) => p.cost_output,
-  cost_cache_read: (p) => p.cost_cache_read,
-  cost_cache_create: (p) => p.cost_cache_create,
-};
-
-const TOKEN_ACCESSORS: Record<string, (p: TopProjectEntry) => number> = {
-  tokens_input: (p) => p.tokens_input,
-  tokens_output: (p) => p.tokens_output,
-  tokens_reasoning: (p) => p.tokens_reasoning,
-  tokens_cache_read: (p) => p.tokens_cache_read,
-  tokens_cache_create: (p) => p.tokens_cache_create,
-};
 
 function projectRow(
   p: TopProjectEntry,
@@ -46,43 +31,25 @@ function projectRow(
   }
 
   if (metric === 'cost') {
-    const accessors = COST_ACCESSORS;
-    const segments: RankSegment[] = COST_SEGMENT_KEYS.map((k, i) => ({
-      key: k.key,
-      label: k.label,
-      color: series[i],
-      value: accessors[k.key]?.(p) ?? 0,
-    }));
-    if (excludeCache) {
-      for (const s of segments) {
-        if (s.key.startsWith('cost_cache')) s.value = 0;
-      }
-    }
+    const segments = costSegments(p, series, excludeCache);
     return {
       label: p.project,
-      value: p.cost_usd - (excludeCache ? p.cost_cache : 0),
+      // The bar length is the sum of the segments the bar draws; the
+      // backend's authoritative cost total is disclosed beside it when the
+      // two disagree (a provider that reports its own cost).
+      value: segments.reduce((sum, s) => sum + s.value, 0),
+      reportedValue: costTotal(p, excludeCache),
       sub,
       segments,
     };
   }
 
-  // tokens
-  const accessors = TOKEN_ACCESSORS;
-  const segments: RankSegment[] = TOKEN_SEGMENT_KEYS.map((k, i) => ({
-    key: k.key,
-    label: k.label,
-    color: series[i],
-    value: accessors[k.key]?.(p) ?? 0,
-  }));
-  if (excludeCache) {
-    for (const s of segments) {
-      if (s.key.startsWith('tokens_cache')) s.value = 0;
-    }
-  }
-  const cache = p.tokens_cache_read + p.tokens_cache_create;
+  // tokens — the backend's token total IS the sum of the components, so
+  // there is nothing to disclose beside the drawn total.
+  const segments = tokenSegments(p, series, excludeCache);
   return {
     label: p.project,
-    value: p.tokens_input + p.tokens_output + p.tokens_reasoning + (excludeCache ? 0 : cache),
+    value: segments.reduce((sum, s) => sum + s.value, 0),
     sub,
     segments,
   };

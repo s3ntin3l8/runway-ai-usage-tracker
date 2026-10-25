@@ -83,6 +83,53 @@ describe('CostDonut', () => {
   });
 });
 
+describe('CostDonut series cap', () => {
+  // Eight entries: the palette has six colours, so the last two share one
+  // "Other (2)" slice.
+  const data: Record<string, CumulativeModelBucket> = {
+    m1: { cost_usd: 8 },
+    m2: { cost_usd: 7 },
+    m3: { cost_usd: 6 },
+    m4: { cost_usd: 5 },
+    m5: { cost_usd: 4 },
+    m6: { cost_usd: 3 },
+    m7: { cost_usd: 2 },
+    m8: { cost_usd: 1 },
+  };
+
+  it('aggregates the entries past the sixth into one slice', () => {
+    render(<CostDonut data={data} />, { wrapper });
+    const series = captured.option!.series as Series;
+    const slices = series[0].data;
+    expect(slices).toHaveLength(7);
+    expect(slices.slice(0, 6).map((d) => d.name)).toEqual([
+      'm1',
+      'm2',
+      'm3',
+      'm4',
+      'm5',
+      'm6',
+    ]);
+    expect(slices[6]).toEqual({ name: 'Other (2)', value: 3 });
+  });
+
+  it('keeps the centre total the true total of every entry', () => {
+    render(<CostDonut data={data} />, { wrapper });
+    const series = captured.option!.series as {
+      label: { formatter: () => string };
+    }[];
+    // 8 + 7 + … + 1 — the two aggregated entries are in the total.
+    expect(series[0].label.formatter()).toBe(formatCost(36));
+  });
+
+  it('summarises only the slices the chart draws', () => {
+    const { getByText, queryByText } = render(<CostDonut data={data} />, { wrapper });
+    expect(getByText(`Other (2): ${formatCost(3)}`)).toBeInTheDocument();
+    expect(queryByText(`m7: ${formatCost(2)}`)).not.toBeInTheDocument();
+    expect(queryByText(`m8: ${formatCost(1)}`)).not.toBeInTheDocument();
+  });
+});
+
 describe('modelCost', () => {
   it('returns the full cost when not excluding cache', () => {
     expect(modelCost({ cost_usd: 5, cost_cache: 2 }, false)).toBe(5);

@@ -1,6 +1,6 @@
 // Generic horizontal ranking bar — one bar per row, largest at the top.
 // Supports simple single-value bars AND stacked bars with breakdown data.
-// Shared by Top Projects and Top Tools cards.
+// Shared by the Top Models, Top Projects, Top Sessions and Top Hosts cards.
 
 import { useMemo } from 'react';
 import { EChart } from './EChart';
@@ -16,10 +16,62 @@ export interface RankSegment {
 
 export interface RankRow {
   label: string;
-  /** Bar length and sort key. In stacked mode, should equal sum(segments[].value) for correct alignment. */
+  /**
+   * Bar length and sort key. In stacked mode this is the sum of the segments
+   * the bar draws: the bar must agree with the segments under it.
+   */
   value: number;
+  /**
+   * The backend's authoritative total, when it is NOT the sum of the drawn
+   * segments (a provider that reports its own cost). RankBar discloses it
+   * next to the drawn total instead of drawing a longer bar that contradicts
+   * the segments under it.
+   */
+  reportedValue?: number;
   sub?: string; // optional dim line in the tooltip
   segments?: RankSegment[]; // when present, renders stacked bars
+}
+
+/**
+ * The pixel budget for a y-axis label. ECharts measures the text and cuts it
+ * to fit (`overflow: 'truncate'`), so a long model or project name keeps as
+ * much of itself as the chart has room for — instead of being sliced at a
+ * fixed character count, which cut names mid-word.
+ */
+const Y_AXIS_LABEL_WIDTH = 120;
+
+/**
+ * Below this relative difference the drawn total and the reported total are
+ * the same number as far as the reader is concerned: float noise
+ * (0.1 + 0.2 = 0.30000000000000004) is not a disagreement.
+ */
+const REPORTED_EPSILON = 1e-9;
+
+/**
+ * The backend total to disclose for a row, or undefined when the two numbers
+ * agree.
+ *
+ * A difference counts as a disagreement only when it is more than a rounding
+ * error AND the two numbers render differently: a difference the formatter
+ * rounds away (a fraction of a cent) is invisible to the reader, so printing
+ * both numbers would only look like a bug.
+ */
+function disclosedReported(row: RankRow, format: (v: number) => string): number | undefined {
+  const reported = row.reportedValue;
+  if (reported === undefined || !Number.isFinite(reported)) return undefined;
+  const difference = Math.abs(reported - row.value);
+  const rounding = Math.max(REPORTED_EPSILON, Math.abs(row.value) * REPORTED_EPSILON);
+  if (difference <= rounding) return undefined;
+  if (format(reported) === format(row.value)) return undefined;
+  return reported;
+}
+
+/** The note under a row: its subtitle plus the disclosed backend total. */
+function rowNote(row: RankRow, format: (v: number) => string): string | undefined {
+  const reported = disclosedReported(row, format);
+  const parts = [row.sub, reported === undefined ? undefined : `reported ${format(reported)}`];
+  const note = parts.filter((part): part is string => Boolean(part)).join(' · ');
+  return note || undefined;
 }
 
 export function RankBar({
@@ -27,12 +79,18 @@ export function RankBar({
   format,
   axisFormat,
   className,
+  ariaLabel = 'Ranking chart',
+  caption = 'Ranking',
 }: {
   rows: RankRow[];
   format: (v: number) => string;
   /** Shorter formatter for x-axis ticks (tooltips keep `format`); avoids overlap on narrow screens. */
   axisFormat?: (v: number) => string;
   className?: string;
+  /** The chart's accessible name; the default is the generic "Ranking chart". */
+  ariaLabel?: string;
+  /** The caption of the text alternative; the default is the generic "Ranking". */
+  caption?: string;
 }) {
   const t = useChartTokens();
   const hasStacked = rows.some((r) => r.segments && r.segments.length > 0);
@@ -42,7 +100,14 @@ export function RankBar({
   // builder so the text alternative lists the rows in the order the chart
   // draws them.
   const sorted = useMemo(
-    () => [...rows].filter((r) => r.value > 0).sort((a, b) => a.value - b.value),
+    // A row survives if EITHER number says it is real. A provider that
+    // reports its own cost has no rate configured, so the segments sum to
+    // zero while the reported total is not — filtering on the drawn sum
+    // alone would drop the row that has a number to disclose.
+    () =>
+      [...rows]
+        .filter((r) => Math.max(r.value, r.reportedValue ?? 0) > 0)
+        .sort((a, b) => a.value - b.value),
     [rows],
   );
 
@@ -60,6 +125,26 @@ export function RankBar({
       },
     };
 
+    // ECharts truncates the label itself: it measures the text and cuts it to
+    // the pixel budget, so the label adapts to the chart instead of being
+    // sliced at a fixed character count.
+    const yAxisLabel = {
+      color: t.fgMuted,
+      fontSize: 11,
+      fontFamily: t.monoFamily,
+      width: Y_AXIS_LABEL_WIDTH,
+      overflow: 'truncate' as const,
+      ellipsis: '…',
+    };
+
+    const yAxis = {
+      type: 'category' as const,
+      data: categoryData,
+      ...baseAxisStyle(t),
+      splitLine: { show: false },
+      axisLabel: yAxisLabel,
+    };
+
     if (!hasStacked) {
       // Simple single-value bars (legacy path).
       return {
@@ -70,24 +155,20 @@ export function RankBar({
           axisPointer: { type: 'shadow' },
           formatter: (params: { name: string; value: number; dataIndex: number }[]) => {
             const p = params[0];
-            const sub = sorted[p.dataIndex]?.sub;
-            const subLine = sub ? `<br/><span style="opacity:.6">${sub}</span>` : '';
-            return `${p.name}: ${format(p.value)}${subLine}`;
+            const row = sorted[p.dataIndex];
+            const lines = [`${p.name}: ${format(p.value)}`];
+            const reported = row ? disclosedReported(row, format) : undefined;
+            if (reported !== undefined) {
+              lines.push(`<span style="opacity:.6">Reported: ${format(reported)}</span>`);
+            }
+            if (row?.sub) {
+              lines.push(`<span style="opacity:.6">${row.sub}</span>`);
+            }
+            return lines.join('<br/>');
           },
         },
         xAxis,
-        yAxis: {
-          type: 'category',
-          data: categoryData,
-          ...baseAxisStyle(t),
-          splitLine: { show: false },
-          axisLabel: {
-            color: t.fgMuted,
-            fontSize: 11,
-            fontFamily: t.monoFamily,
-            formatter: (v: string) => (v.length > 10 ? v.slice(0, 10) + '…' : v),
-          },
-        },
+        yAxis,
         series: [
           {
             type: 'bar',
@@ -157,6 +238,12 @@ export function RankBar({
             }
           }
           lines.push(`<span style="opacity:.6">Total: ${format(r.value)}</span>`);
+          // The backend's authoritative total, when it disagrees with the sum
+          // of the segments drawn above it.
+          const reported = disclosedReported(r, format);
+          if (reported !== undefined) {
+            lines.push(`<span style="opacity:.6">Reported: ${format(reported)}</span>`);
+          }
           if (r.sub) {
             lines.push(`<span style="opacity:.6">${r.sub}</span>`);
           }
@@ -164,33 +251,22 @@ export function RankBar({
         },
       },
       xAxis,
-      yAxis: {
-        type: 'category',
-        data: categoryData,
-        ...baseAxisStyle(t),
-        splitLine: { show: false },
-        axisLabel: {
-          color: t.fgMuted,
-          fontSize: 11,
-          fontFamily: t.monoFamily,
-          formatter: (v: string) => (v.length > 10 ? v.slice(0, 10) + '…' : v),
-        },
-      },
+      yAxis,
       series,
     };
   }, [sorted, format, axisFormat, t, hasStacked]);
 
   return (
     <>
-      <EChart option={option} className={className ?? 'h-72'} ariaLabel="Ranking chart" />
+      <EChart option={option} className={className ?? 'h-72'} ariaLabel={ariaLabel} />
       {/* The bar lengths and their segment split live only in the canvas and
           the hover tooltip, so they need a text alternative. */}
       <AccessibleSummary
-        caption="Ranking"
+        caption={caption}
         entries={sorted.map((r) => ({
           label: r.label,
           value: format(r.value),
-          note: r.sub,
+          note: rowNote(r, format),
           details: r.segments
             ?.filter((s) => s.value > 0)
             .map((s) => ({ label: s.label, value: format(s.value) })),

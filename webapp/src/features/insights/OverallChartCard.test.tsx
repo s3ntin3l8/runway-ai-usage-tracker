@@ -10,11 +10,19 @@ vi.mock('@/api/endpoints');
 vi.mock('@/components/charts/EChart', () => ({
   EChart: () => <div data-testid="echart" />,
 }));
-vi.mock('@/components/charts/theme', () => ({
-  useChartTokens: () => ({ series: ['#111'], accent: '#0af', fgMuted: '#888', axis: '#555' }),
-  baseTooltip: () => ({}),
-  baseAxisStyle: () => ({}),
-}));
+vi.mock('@/components/charts/theme', async () => {
+  // The rest of the module stays real: the chart caps its series with the
+  // helpers it exports.
+  const actual = await vi.importActual<typeof import('@/components/charts/theme')>(
+    '@/components/charts/theme',
+  );
+  return {
+    ...actual,
+    useChartTokens: () => ({ series: ['#111'], accent: '#0af', fgMuted: '#888', axis: '#555' }),
+    baseTooltip: () => ({}),
+    baseAxisStyle: () => ({}),
+  };
+});
 
 const bars: HistoryChartResponse = {
   bars: [

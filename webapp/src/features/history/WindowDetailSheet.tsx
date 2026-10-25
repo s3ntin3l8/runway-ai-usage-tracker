@@ -3,7 +3,12 @@
 import { useMemo } from 'react';
 import type { HistoryWindowRow, WindowDetailModelEntry } from '@/api/types';
 import { EChart } from '@/components/charts/EChart';
-import { baseAxisStyle, baseTooltip, useChartTokens } from '@/components/charts/theme';
+import {
+  baseAxisStyle,
+  baseTooltip,
+  splitChartSeries,
+  useChartTokens,
+} from '@/components/charts/theme';
 import { ResponsiveDialog } from '@/components/ui/ResponsiveDialog';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/Table';
@@ -41,9 +46,15 @@ function DetailBody({ row }: { row: HistoryWindowRow }) {
   const detail = useWindowDetail(row);
   const t = useChartTokens();
 
-  const option = useMemo(() => {
+  const built = useMemo(() => {
     if (!detail.data) return null;
     const byModel = detail.data.fill_by_model.filter((m) => m.model_id !== '');
+    // The palette has six colours: the model lines past the sixth are left
+    // out rather than drawn. A fill curve is a percentage of that model's
+    // OWN limit, so the overflow cannot be summed into one curve — 60% of
+    // one limit plus 60% of another is 120% of neither. The chart says how
+    // many models are out of the picture instead.
+    const { kept, hiddenCount } = splitChartSeries(byModel);
     const series = [
       {
         name: 'Total',
@@ -54,38 +65,41 @@ function DetailBody({ row }: { row: HistoryWindowRow }) {
         itemStyle: { color: t.accent },
         areaStyle: { color: t.accent, opacity: 0.08 },
       },
-      ...byModel.map((m, i) => ({
+      ...kept.map((m, i) => ({
         name: m.model_id,
         type: 'line' as const,
         showSymbol: false,
         data: m.series.map((p) => [Date.parse(p.ts), p.pct_used]),
-        lineStyle: { width: 1.25, type: 'dashed' as const, color: t.series[i % t.series.length] },
-        itemStyle: { color: t.series[i % t.series.length] },
+        lineStyle: { width: 1.25, type: 'dashed' as const, color: t.series[i] },
+        itemStyle: { color: t.series[i] },
       })),
     ];
     return {
-      tooltip: {
-        trigger: 'axis' as const,
-        ...baseTooltip(t),
-        valueFormatter: (v: number | null) => (v == null ? '—' : `${Number(v).toFixed(0)}%`),
+      hiddenCount,
+      option: {
+        tooltip: {
+          trigger: 'axis' as const,
+          ...baseTooltip(t),
+          valueFormatter: (v: number | null) => (v == null ? '—' : `${Number(v).toFixed(0)}%`),
+        },
+        legend: {
+          bottom: 0,
+          type: 'scroll' as const,
+          icon: 'circle',
+          itemWidth: 8,
+          itemHeight: 8,
+          textStyle: { color: t.fgMuted, fontSize: 11, fontFamily: t.fontFamily },
+        },
+        grid: { left: 36, right: 12, top: 12, bottom: 40 },
+        xAxis: { type: 'time' as const, ...baseAxisStyle(t), splitLine: { show: false } },
+        yAxis: {
+          type: 'value' as const,
+          max: 100,
+          ...baseAxisStyle(t),
+          axisLabel: { color: t.axis, fontSize: 10, fontFamily: t.fontFamily, formatter: '{value}%' },
+        },
+        series,
       },
-      legend: {
-        bottom: 0,
-        type: 'scroll' as const,
-        icon: 'circle',
-        itemWidth: 8,
-        itemHeight: 8,
-        textStyle: { color: t.fgMuted, fontSize: 11, fontFamily: t.fontFamily },
-      },
-      grid: { left: 36, right: 12, top: 12, bottom: 40 },
-      xAxis: { type: 'time' as const, ...baseAxisStyle(t), splitLine: { show: false } },
-      yAxis: {
-        type: 'value' as const,
-        max: 100,
-        ...baseAxisStyle(t),
-        axisLabel: { color: t.axis, fontSize: 10, fontFamily: t.fontFamily, formatter: '{value}%' },
-      },
-      series,
     };
   }, [detail.data, t]);
 
@@ -105,8 +119,15 @@ function DetailBody({ row }: { row: HistoryWindowRow }) {
 
   return (
     <div className="flex flex-col gap-4">
-      {option && detail.data!.fill_series.length > 0 ? (
-        <EChart option={option} className="h-64" />
+      {built?.option && detail.data!.fill_series.length > 0 ? (
+        <>
+          <EChart option={built.option} className="h-64" />
+          {built.hiddenCount > 0 ? (
+            <p className="mt-1 text-[11px] text-fg-subtle">
+              +{built.hiddenCount} more models not shown
+            </p>
+          ) : null}
+        </>
       ) : (
         <p className="py-6 text-center text-xs text-fg-subtle">No fill data recorded.</p>
       )}

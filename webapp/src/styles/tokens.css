@@ -52,12 +52,20 @@
   --unknown-muted: rgb(139 139 147 / 0.13);
 
   /* Charts */
-  --chart-1: #5e6ad2;
-  --chart-2: #4ea7fc;
-  --chart-3: #4cb782;
-  --chart-4: #e8a33d;
-  --chart-5: #d75fa1;
-  --chart-6: #8e6ee0;
+  /* The categorical palette. Two rules hold it together, and
+     src/styles/contrast.test.ts enforces both:
+       1. every colour is at least 3:1 against --surface-1 (WCAG 1.4.11);
+       2. every PAIR is at least 25 CIELAB dE apart, so two series are never
+          told apart by a shade.
+     The sixth slot is the violet one, and it is the only colour that had to
+     move: it sat 23 degrees of hue from the indigo in slot 1 (13.9 dE — the
+     audit's "1.22:1 similar"), so it now leans towards magenta. */
+  --chart-1: #5866ce;
+  --chart-2: #50aaff;
+  --chart-3: #45b47f;
+  --chart-4: #e5a136;
+  --chart-5: #da61a2;
+  --chart-6: #b76de6;
   --chart-grid: rgb(255 255 255 / 0.06);
   --chart-axis: #70707b;
   /* Sequential heatmap ramp (low → high). Dark: dark → bright. */
@@ -118,13 +126,16 @@
   --chart-axis: #8e8e96;
   /* The dark theme's categorical palette only reached 2.1-2.6:1 on a white
      card — below the 3:1 floor for graphical objects. These are the light
-     equivalents, all at or above 3.5:1 on white. */
-  --chart-1: #4c56c0;
-  --chart-2: #1771c7;
-  --chart-3: #21845a;
-  --chart-4: #b97a10;
-  --chart-5: #c2377f;
-  --chart-6: #7c3aed;
+     equivalents, all at or above 3:1 on white, and every pair is at least
+     25 CIELAB dE apart (see src/styles/contrast.test.ts). The light theme's
+     tightest pair was the two blues in slots 1 and 2 (22.7 dE), so slot 1
+     moved towards indigo and slot 2 towards a deeper blue. */
+  --chart-1: #5752bf;
+  --chart-2: #0776cd;
+  --chart-3: #278359;
+  --chart-4: #bc7d12;
+  --chart-5: #c33b7f;
+  --chart-6: #823df0;
   /* Sequential heatmap ramp (low → high). Light: light → dark. */
   --chart-heat-0: #eef2ff;
   --chart-heat-1: #c7d2fe;

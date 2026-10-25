@@ -116,6 +116,13 @@ export function UsageHeatmap({ cells, className }: { cells: HeatmapCell[]; class
 
   return (
     <>
+      {/* The ramp runs dark→bright in the dark theme and light→dark in the
+          light one, so the caption names the encoding rather than a
+          direction. Without it the scale bar is a row of numbers that
+          says nothing about what it scales. */}
+      <p className="mb-1 text-[10px] text-fg-subtle">
+        Shade shows token volume — the stronger the colour, the more tokens.
+      </p>
       {/* 24 stacked hour rows need more than the desktop canvas height; a
           caller-provided className always wins over the default. */}
       <EChart

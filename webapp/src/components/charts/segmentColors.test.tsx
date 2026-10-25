@@ -9,8 +9,8 @@ import { render } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { ThemeProvider } from '@/hooks/useTheme';
 import type { CumulativeModelBucket } from '@/api/types';
-import { TOKEN_SEGMENT_KEYS } from './segmentDefs';
-import { SEGMENT_COLOR_SLOT } from './segmentColors';
+import { TOKEN_SEGMENT_KEYS, COST_SEGMENT_KEYS } from './segmentDefs';
+import { SEGMENT_COLOR_SLOT, SEGMENT_ROLE_SLOT } from './segmentColors';
 import type { TokenSliceKey } from './tokenSlices';
 
 const captured: { option?: Record<string, unknown> } = {};
@@ -76,6 +76,27 @@ describe('segment colours', () => {
     expect(
       TOKEN_SEGMENT_KEYS.map((k) => SEGMENT_COLOR_SLOT[k.key as TokenSliceKey]),
     ).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  it('gives the cost breakdown the same colour slots as the token breakdown', () => {
+    // The slot order comes from TOKEN_SEGMENT_KEYS — the order the token bar,
+    // the donut and the stacked charts already share.
+    expect(SEGMENT_ROLE_SLOT.input).toBe(1);
+    expect(SEGMENT_ROLE_SLOT.output).toBe(2);
+    expect(SEGMENT_ROLE_SLOT.reasoning).toBe(3);
+    expect(SEGMENT_ROLE_SLOT.cache_read).toBe(4);
+    expect(SEGMENT_ROLE_SLOT.cache_create).toBe(5);
+
+    // The cost segments reuse those slots through their roles, so the two
+    // lists cannot drift apart: "Cache read" is --chart-4 whether the bar
+    // counts tokens or cost, and the cost bar never borrows the reasoning
+    // colour for it.
+    expect(COST_SEGMENT_KEYS.map((k) => SEGMENT_ROLE_SLOT[k.role])).toEqual([1, 2, 4, 5]);
+
+    // The token-keyed view agrees with the global table.
+    for (const k of TOKEN_SEGMENT_KEYS) {
+      expect(SEGMENT_COLOR_SLOT[k.key as TokenSliceKey]).toBe(SEGMENT_ROLE_SLOT[k.role]);
+    }
   });
 
   it('gives the bar and the donut the same colour for every segment', () => {

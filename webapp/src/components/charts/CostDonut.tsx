@@ -6,7 +6,7 @@ import type { CumulativeModelBucket } from '@/api/types';
 import { formatCost } from '@/lib/format';
 import { EChart } from './EChart';
 import { AccessibleSummary } from './accessibleSummary';
-import { baseTooltip, useChartTokens } from './theme';
+import { baseTooltip, capChartSlices, useChartTokens } from './theme';
 
 // Cost for one bucket. Excluding cache uses the token-priced non-cache
 // components; this remains meaningful when the displayed total is a source
@@ -38,12 +38,19 @@ export function CostDonut({
         .sort((a, b) => b.value - a.value),
     [data, excludeCache],
   );
+  // The palette has six colours: the entries past the sixth share one
+  // "Other (N)" slice instead of repeating a colour. The slice values still
+  // add up to every entry's cost, so the total in the middle stays the true
+  // one.
+  const capped = useMemo(() => capChartSlices(slices), [slices]);
   const option = useMemo(() => {
-    const total = slices
+    const total = capped.slices
       .filter((d) => selected[d.name] !== false)
       .reduce((sum, d) => sum + d.value, 0);
     return {
-      color: t.series,
+      // The last colour is the grey the "Other" slice takes; the six
+      // categorical colours ahead of it belong to the drawn entries.
+      color: [...t.series, t.fgMuted],
       tooltip: {
         ...baseTooltip(t),
         formatter: (p: { name: string; value: number; percent: number }) =>
@@ -74,11 +81,11 @@ export function CostDonut({
             fontFamily: t.monoFamily,
           },
           emphasis: { label: { show: true } },
-          data: slices,
+          data: capped.slices,
         },
       ],
     };
-  }, [slices, t, selected]);
+  }, [capped, t, selected]);
 
   return (
     <>
@@ -93,10 +100,11 @@ export function CostDonut({
         }
       />
       {/* The legend names the entries, but each cost exists only in the
-          canvas and the hover tooltip. */}
+          canvas and the hover tooltip. The summary lists the slices the
+          chart draws, so it cannot claim more entries than the chart shows. */}
       <AccessibleSummary
         caption="Cost by model"
-        entries={slices.map((s) => ({ label: s.name, value: formatCost(s.value) }))}
+        entries={capped.slices.map((s) => ({ label: s.name, value: formatCost(s.value) }))}
       />
     </>
   );
