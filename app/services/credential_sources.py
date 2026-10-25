@@ -664,6 +664,79 @@ def configured_account_ids(session: Session, provider_id: str) -> set[str]:
     )
 
 
+def sidecar_native_accounts(
+    session: Session,
+    provider_id: str,
+    sidecar_id: str | None,
+) -> set[str]:
+    """The accounts this host's own native collector reported for a provider.
+
+    A credential the sidecar found is filed under the account it resolved
+    to, so the row is the machine's own answer to "which account is this
+    provider on *this* host". It is the only host-scoped evidence available
+    for a provider whose events arrive without an identity — a Hermes event
+    is billed to the account of the upstream it called, and the sidecar only
+    knows the provider.
+
+    Only the credential the host *presents today* answers. A source is
+    current when it is the newest row for its origin, still enabled, and not
+    rejected:
+
+    - **Newest per origin.** A rotation — the same file now holding a
+      different login — leaves the previous row behind. The newer row is the
+      one the host presents; the older one is history.
+    - **Enabled.** A source the operator turned off is not an answer.
+    - **Not rejected.** A credential the provider refused (``auth_failed``)
+      does not identify the account any more.
+
+    The stored expiry is not consulted: it is the *access token's* expiry
+    for a rotating login and goes stale between rolls, so the credential
+    inventory reads the live bundle instead.
+
+    Two kinds of row are not an answer either way:
+
+    - the ``"default"`` sentinel — the credential's identity was never
+      resolved, so nothing is known about the account behind it;
+    - the pending slot — a credential whose identity is still being verified
+      is filed under a stable placeholder (the source id for Anthropic),
+      which is a slot, not an account. A host whose current credential sits
+      in that slot has no answer, so it is held back rather than resolved
+      against the account it used to have.
+
+    Only rows this sidecar reported are considered: a deployment-wide
+    identity must never reach a host that did not report it (the #319 rule).
+    """
+    rows = session.exec(
+        select(CredentialSource).where(
+            CredentialSource.provider_id == provider_id,
+            CredentialSource.sidecar_id == (sidecar_id or "local"),
+        )
+    ).all()
+    # The newest row per origin is the credential the host presents today.
+    newest: dict[str, tuple[Any, list[CredentialSource]]] = {}
+    for row in rows:
+        seen = row.last_seen
+        current = newest.get(row.source_id)
+        if current is None or (seen is not None and (current[0] is None or seen > current[0])):
+            newest[row.source_id] = (seen, [row])
+        elif seen == current[0]:
+            current[1].append(row)
+    out: set[str] = set()
+    for source_id, (_seen, current_rows) in newest.items():
+        for row in current_rows:
+            account_id = (row.account_id or "").strip()
+            if not account_id or account_id == "default":
+                continue
+            if account_id == pending_cache_slot(provider_id, row.source_id):
+                continue  # identity still pending — a slot, not an account
+            if not row.enabled:
+                continue  # the operator turned this source off
+            if row.health == "auth_failed":
+                continue  # the provider rejected the credential
+            out.add(canonical_account_id(account_id))
+    return out
+
+
 def real_account_ids(session: Session, provider_id: str) -> set[str]:
     """Accounts this provider really has: a configuration, a quota card, usage,
     or the tag/label an operator gave it.
