@@ -11,7 +11,9 @@ import pytest
 from scripts.sidecar_pkg.event_extractors import hermes as hermes_extractor
 from scripts.sidecar_pkg.event_extractors.hermes import (
     WATERMARK_PRUNE_IDLE_DAYS,
+    _database_markers,
     _discover_hermes_db_paths,
+    _match_discovered_dbs,
     _prune_stale_watermark_slices,
     map_hermes_canonical,
     map_hermes_provider_id,
@@ -1718,3 +1720,58 @@ def test_a_key_is_matched_against_every_database_it_could_belong_to(tmp_path):
     finally:
         db_one.unlink(missing_ok=True)
         db_two.unlink(missing_ok=True)
+
+
+def test_the_databases_a_key_could_belong_to_are_matched_longest_first():
+    """Every database a key could belong to is returned, longest path first.
+
+    The order is part of the contract: the longer path is the one the key
+    was written with, and the caller relies on the first match being it.
+    Pinned here rather than through the prune, so the assertion does not
+    depend on the iteration order of a set.
+    """
+    markers = _database_markers(["/a", "/a|b"])
+    matches = _match_discovered_dbs("default|/a|b|default|sess|model|hermes|||", markers)
+    assert matches == [
+        ("/a|b", "default|sess|model|hermes|||"),
+        ("/a", "b|default|sess|model|hermes|||"),
+    ]
+
+
+def test_a_key_of_a_database_whose_rows_could_not_be_listed_is_kept(monkeypatch, tmp_path):
+    """A key that could belong to two databases needs both of them listed.
+
+    One discovered path can be the prefix of another, so a key of a database
+    whose rows could not be listed also matches a database that was listed.
+    The unlisted database cannot say that its row is gone, so the slice
+    stays -- the reclaim of the other database must not reach it.
+    """
+    db_listed = tmp_path / "a"
+    db_unlisted = tmp_path / "a|b"
+    conn = make_hermes_db(str(db_listed))
+    conn.close()
+    conn = make_hermes_db(str(db_unlisted))
+    conn.close()
+    state_file = tmp_path / "hermes_watermark.json"
+    original = hermes_extractor._live_slice_suffixes
+
+    def _only_the_listed_database(conn, profile_name):
+        row = conn.execute("PRAGMA database_list").fetchone()
+        if row is not None and str(db_unlisted) in str(row[2]):
+            return None
+        return original(conn, profile_name)
+
+    try:
+        _parse([db_listed, db_unlisted], state_file)
+        assert len(_watermark_keys(state_file)) == 4
+
+        # The rows of the second database cannot be listed any more.
+        monkeypatch.setattr(hermes_extractor, "_live_slice_suffixes", _only_the_listed_database)
+        _parse([db_listed, db_unlisted], state_file)
+
+        keys = _watermark_keys(state_file)
+        assert len(keys) == 4
+        assert sum(1 for key in keys if "api-sess-kimi-01" in key) == 2
+    finally:
+        db_listed.unlink(missing_ok=True)
+        db_unlisted.unlink(missing_ok=True)

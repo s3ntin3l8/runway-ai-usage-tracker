@@ -26,6 +26,7 @@ import os
 import platform
 import sqlite3
 import sys
+from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -400,6 +401,21 @@ def _live_slice_suffixes(conn: sqlite3.Connection, profile_name: str) -> set[str
     return suffixes
 
 
+def _database_markers(live_paths: Iterable[str]) -> list[tuple[str, str]]:
+    """Return the markers of the discovered databases, longest path first.
+
+    The order is part of the contract: the longer path is the one a key was
+    written with when two of them match it (``/a|b`` and ``/a|b|c`` both
+    match a key that holds ``|/a|b|c|``), so the caller sees the right
+    database first. It is also fixed, so the outcome of a match never
+    depends on the iteration order of a set.
+    """
+    return sorted(
+        ((path, f"|{path}|") for path in live_paths),
+        key=lambda item: (-len(item[0]), item[0]),
+    )
+
+
 def _match_discovered_dbs(key: str, markers: list[tuple[str, str]]) -> list[tuple[str, str]]:
     """Find the discovered databases a watermark key may belong to.
 
@@ -408,11 +424,7 @@ def _match_discovered_dbs(key: str, markers: list[tuple[str, str]]) -> list[tupl
     split into fields, but it is still in the key as a whole -- so the
     database and the slice behind the key are both known exactly.
 
-    More than one database can match. Two discovered paths can be prefixes
-    of one another (``/a|b`` and ``/a|b|c`` both match a key that holds
-    ``|/a|b|c|``), and the longer path is the one the key was written with
-    -- so the markers are ordered longest first. Even so, a key can hold
-    the path of two databases at once, so every match is returned and the
+    More than one database can match, so every match is returned and the
     caller decides: a slice that is alive under *any* of them is alive.
     """
     matches: list[tuple[str, str]] = []
@@ -489,13 +501,8 @@ def _prune_stale_watermark_slices(
     # A key carries the whole resolved path of its database, so the database
     # behind a key is found by looking for the path itself. That also finds
     # the exact path of a database whose path holds a "|": the split cuts the
-    # path short, but the key still holds it whole. The markers are ordered
-    # longest first, so a key that holds two databases is matched against
-    # the longer path first.
-    markers = sorted(
-        ((live, f"|{live}|") for live in live_resolved),
-        key=lambda item: (-len(item[0]), item[0]),
-    )
+    # path short, but the key still holds it whole.
+    markers = _database_markers(live_resolved)
 
     # One stat() per distinct database path, not per key: a host with a large
     # watermark would otherwise make thousands of syscalls every cycle.
@@ -520,14 +527,15 @@ def _prune_stale_watermark_slices(
             # then keeps a live slice instead of dropping its mark, which is
             # the direction that cannot cost usage.
             alive = False
-            checkable = False
+            checkable = True
             for resolved, suffix in matches:
                 live = (live_slices or {}).get(resolved)
                 if live is None:
-                    # A database we could not list the rows of: it cannot say
-                    # that the row is gone.
-                    continue
-                checkable = True
+                    # A database we could not list the rows of cannot say
+                    # that a row is gone, so the slice stays -- even when
+                    # another database the key could belong to could.
+                    checkable = False
+                    break
                 if suffix in live:
                     alive = True
                     break
