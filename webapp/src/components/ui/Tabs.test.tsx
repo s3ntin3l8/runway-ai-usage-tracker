@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from './Tabs';
 
@@ -39,5 +39,29 @@ describe('Tabs', () => {
       'data-state',
       'active',
     );
+  });
+
+  it('scrolls the strip smoothly', () => {
+    render(<Harness />);
+    const list = screen.getByRole('tablist');
+    expect(list).toHaveClass('overflow-x-auto');
+    expect(list).toHaveClass('scroll-smooth');
+  });
+
+  it('fades the right edge only while tabs are scrolled off-screen', () => {
+    render(<Harness />);
+    const list = screen.getByRole('tablist');
+    // jsdom reports no overflow, so nothing is hidden and nothing is faded.
+    expect(list.className).not.toContain('mask-image');
+
+    Object.defineProperty(list, 'scrollWidth', { value: 600, configurable: true });
+    Object.defineProperty(list, 'clientWidth', { value: 300, configurable: true });
+    fireEvent.scroll(list);
+    expect(list.className).toContain('mask-image');
+
+    // Scrolled to the end: the fade has nothing left to point at.
+    Object.defineProperty(list, 'scrollLeft', { value: 300, configurable: true });
+    fireEvent.scroll(list);
+    expect(list.className).not.toContain('mask-image');
   });
 });

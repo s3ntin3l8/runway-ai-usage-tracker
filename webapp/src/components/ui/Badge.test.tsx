@@ -32,4 +32,15 @@ describe('Badge', () => {
     expect(el).toHaveClass('custom-cls');
     expect(el).toHaveAttribute('title', 'hi');
   });
+
+  it('bounds its own width so a long label cannot widen its container', () => {
+    render(<Badge data-testid="badge">claude-sonnet-4-5-20250929</Badge>);
+    const el = screen.getByTestId('badge');
+    // A badge is a flex child: without min-w-0 it refuses to shrink below
+    // its content, and without max-w-full it can exceed its cell. truncate
+    // then clips the overflow instead of pushing the layout wider.
+    expect(el).toHaveClass('max-w-full');
+    expect(el).toHaveClass('min-w-0');
+    expect(el).toHaveClass('truncate');
+  });
 });
