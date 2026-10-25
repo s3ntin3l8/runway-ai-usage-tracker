@@ -100,6 +100,7 @@ function primeDefaults() {
   vi.mocked(api.fetchProviderConfigs).mockResolvedValue({
     providers: [{ provider_id: 'claude', name: 'Claude' } as never],
   });
+  vi.mocked(api.fetchSidecars).mockResolvedValue({ sidecars: [] } as never);
   vi.mocked(api.getDashboardLayout).mockResolvedValue({
     provider_order: [],
     card_orders: {},
@@ -126,6 +127,39 @@ describe('HomePage', () => {
     expect(await screen.findByText(/no providers set up yet/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /add a provider/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /connect a sidecar/i })).toBeInTheDocument();
+  });
+
+  it('does not offer to connect a sidecar that is already paired', async () => {
+    vi.mocked(api.fetchFleetUsage).mockResolvedValue(fleetResponse([]));
+    vi.mocked(api.fetchSidecars).mockResolvedValue({
+      sidecars: [{ sidecar_id: 'laptop', hostname: 'workstation' }],
+    } as never);
+    renderWithProviders(<HomePage />);
+    expect(await screen.findByText(/sidecar connected, no provider yet/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /add a provider/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /manage sidecars/i })).toBeInTheDocument();
+    // The step they already finished is not offered again.
+    expect(screen.queryByRole('button', { name: /connect a sidecar/i })).not.toBeInTheDocument();
+  });
+
+  it('tells a configured provider apart from an unconfigured setup', async () => {
+    vi.mocked(api.fetchFleetUsage).mockResolvedValue(fleetResponse([]));
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({
+      providers: [
+        {
+          provider_id: 'claude',
+          name: 'Claude',
+          accounts: [
+            { account_id: 'default', api_key_set: true, session_cookie_set: false },
+          ],
+        },
+      ],
+    } as never);
+    renderWithProviders(<HomePage />);
+    expect(await screen.findByText(/nothing reported yet/i)).toBeInTheDocument();
+    // The header carries its own "Collect now"; the empty state adds one.
+    expect(screen.getAllByRole('button', { name: /collect now/i }).length).toBeGreaterThan(0);
+    expect(screen.queryByRole('button', { name: /add a provider/i })).not.toBeInTheDocument();
   });
 
   it('shows an error state when the fleet query fails', async () => {

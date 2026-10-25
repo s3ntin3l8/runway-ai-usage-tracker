@@ -12,6 +12,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { Inbox } from 'lucide-react';
 import { useForceCollect } from '@/hooks/useForceCollect';
 import { timeAgo } from '@/lib/format';
+import { useSidecars } from '@/features/fleet/queries';
 import { useDataHealthReport } from '@/features/settings/sections/dataHealth/queries';
 import { AggregateStrip } from './AggregateStrip';
 import { ArchivedSection } from './ArchivedSection';
@@ -45,6 +46,7 @@ export function HomePage() {
   // the tighter default poll.
   const dataHealth = useDataHealthReport(300_000);
   const providerConfigs = useProviderConfigs();
+  const sidecars = useSidecars();
   const layout = useDashboardLayout();
   const [showArchived, setShowArchived] = useState(false);
 
@@ -66,6 +68,12 @@ export function HomePage() {
       ),
     ).length;
   }, [providerConfigs.data]);
+
+  // Machines that are already paired. A paired sidecar with no provider
+  // account yet is a different situation from a fresh install, and the zero
+  // state has to say so: telling someone to "connect a sidecar" they have
+  // already connected sends them down a step they finished.
+  const sidecarCount = sidecars.data?.sidecars?.length ?? 0;
 
   const items = useMemo(
     () => buildRiskItems(fleet.data?.fleet ?? [], forecast.data?.forecasts ?? []),
@@ -152,45 +160,13 @@ export function HomePage() {
             }
           />
         ) : items.length === 0 ? (
-          <EmptyState
-            icon={Inbox}
-            title={configuredProviders > 0 ? 'Nothing reported yet' : 'No providers set up yet'}
-            description={
-              configuredProviders > 0
-                ? `${configuredProviders} provider${configuredProviders === 1 ? ' is' : 's are'} set up, but nothing has reported usage yet. Collect now, or check the sidecar.`
-                : 'Add a provider or connect a sidecar to start tracking usage.'
-            }
-            action={
-              configuredProviders > 0 ? (
-                <>
-                  <Button size="sm" onClick={() => collect.mutate()} loading={collect.isPending}>
-                    Collect now
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => navigate('/settings/providers')}
-                    className="ml-2"
-                  >
-                    Provider settings
-                  </Button>
-                </>
-              ) : (
-                <>
-                  <Button size="sm" onClick={() => navigate('/settings/providers')}>
-                    Add a provider
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => navigate('/fleet')}
-                    className="ml-2"
-                  >
-                    Connect a sidecar
-                  </Button>
-                </>
-              )
-            }
+          <HomeZeroState
+            configuredProviders={configuredProviders}
+            sidecarCount={sidecarCount}
+            collecting={collect.isPending}
+            onCollect={() => collect.mutate()}
+            onAddProvider={() => navigate('/settings/providers')}
+            onOpenFleet={() => navigate('/fleet')}
           />
         ) : (
           <>
@@ -212,6 +188,88 @@ export function HomePage() {
         <MergedSection />
       </div>
     </>
+  );
+}
+
+/**
+ * The zero state, in the three shapes it can take.
+ *
+ * A provider set up but silent is a different problem from a machine that
+ * is paired but has no provider account yet, and both differ from a fresh
+ * install. Each one names the step that is actually missing, so nobody is
+ * told to connect a sidecar they already connected.
+ */
+function HomeZeroState({
+  configuredProviders,
+  sidecarCount,
+  collecting,
+  onCollect,
+  onAddProvider,
+  onOpenFleet,
+}: {
+  configuredProviders: number;
+  sidecarCount: number;
+  collecting: boolean;
+  onCollect: () => void;
+  onAddProvider: () => void;
+  onOpenFleet: () => void;
+}) {
+  if (configuredProviders > 0) {
+    return (
+      <EmptyState
+        icon={Inbox}
+        title="Nothing reported yet"
+        description={`${configuredProviders} provider${configuredProviders === 1 ? ' is' : 's are'} set up, but nothing has reported usage yet. Collect now, or check the sidecar.`}
+        action={
+          <>
+            <Button size="sm" onClick={onCollect} loading={collecting}>
+              Collect now
+            </Button>
+            <Button size="sm" variant="ghost" onClick={onAddProvider} className="ml-2">
+              Provider settings
+            </Button>
+          </>
+        }
+      />
+    );
+  }
+
+  if (sidecarCount > 0) {
+    return (
+      <EmptyState
+        icon={Inbox}
+        title="Sidecar connected, no provider yet"
+        description={`${sidecarCount} machine${sidecarCount === 1 ? ' is' : 's are'} connected, but no provider account is set up yet. Add a provider to start tracking usage.`}
+        action={
+          <>
+            <Button size="sm" onClick={onAddProvider}>
+              Add a provider
+            </Button>
+            <Button size="sm" variant="ghost" onClick={onOpenFleet} className="ml-2">
+              Manage sidecars
+            </Button>
+          </>
+        }
+      />
+    );
+  }
+
+  return (
+    <EmptyState
+      icon={Inbox}
+      title="No providers set up yet"
+      description="Add a provider or connect a sidecar to start tracking usage."
+      action={
+        <>
+          <Button size="sm" onClick={onAddProvider}>
+            Add a provider
+          </Button>
+          <Button size="sm" variant="ghost" onClick={onOpenFleet} className="ml-2">
+            Connect a sidecar
+          </Button>
+        </>
+      }
+    />
   );
 }
 
