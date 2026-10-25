@@ -3770,3 +3770,129 @@ class TestResolvedHintsReplace:
         # The report still goes out, with fewer names than asked for.
         assert captured["sidecar_id"] == "alpha-host"
         assert captured["hint_providers"] == sorted(named)[: sidecar._MAX_HINT_PROVIDERS]
+
+
+class TestMiniMaxCodeSchedulingId:
+    """The MiniMax Code runtime ledger is collected under its own scheduling id.
+
+    The ledger lives in a local SQLite store on every host that ran the
+    client, while the ``minimax`` *provider* only exists once the host has
+    a MiniMax account (a provider config row or a quota card). Sharing the
+    provider's id tied the ledger's collection to that account, so a host
+    with neither saw its usage only on full cycles (#928).
+    """
+
+    @staticmethod
+    def _collection(monkeypatch, tmp_path, *, providers, tag_hints=None):
+        """Run a ``run_collection`` with the MiniMax Code extractor stubbed.
+
+        Everything else — the account resolution, the untagged origin and
+        the event stamping — is the real code path.
+        """
+        from app.models.schemas import UsageEventPush
+        from scripts.sidecar_pkg.credentials import CredentialCache
+        from scripts.sidecar_pkg.event_extractors import minimax_code as mm
+
+        cache = CredentialCache()
+        cache.replace(accounts={}, tokens={}, tag_hints=tag_hints or {})
+        monkeypatch.setattr(sidecar, "_CREDENTIAL_CACHE", cache)
+        monkeypatch.setattr(sidecar, "_get_credential_cache", lambda: cache)
+        monkeypatch.setattr(
+            sidecar,
+            "_LEGACY_EVENT_ACCOUNT_DISCOVERY",
+            {"minimax": lambda: "default", "minimax_code": lambda: "default"},
+        )
+        monkeypatch.setattr(sidecar, "_EVENT_PROVIDERS", frozenset({"minimax", "minimax_code"}))
+        monkeypatch.setattr(sidecar.GenericCollector, "collect_provider", lambda *a, **kw: ([], []))
+        posted: dict[str, Any] = {}
+
+        def _capture_manifest(*, entries, **kw):
+            posted["entries"] = entries
+
+        monkeypatch.setattr(sidecar, "_post_credential_manifest", _capture_manifest)
+
+        store = tmp_path / "runtime-state.sqlite"
+        store.touch()
+        monkeypatch.setattr(sidecar, "_discover_minimax_code_db_paths", lambda: [store])
+
+        parsed: list[dict[str, Any]] = []
+
+        def _parse(db_path, *, account_id, since, state_file):
+            parsed.append({"path": str(db_path), "account_id": account_id})
+            return [
+                UsageEventPush(
+                    provider_id="minimax",
+                    account_id=account_id,
+                    event_id="mm-1",
+                    ts="2026-10-20T10:00:00Z",
+                    source_app="minimax_code",
+                )
+            ]
+
+        monkeypatch.setattr(mm, "parse_minimax_code_events", _parse)
+        result = sidecar.run_collection(
+            config={"api_url": "http://x", "api_key": "k"},
+            providers=providers,
+        )
+        return result, posted, parsed
+
+    def test_the_events_keep_the_minimax_provider_id(self, monkeypatch, tmp_path):
+        """The scheduling id is the loop's key; the events still belong to
+        the ``minimax`` provider, so the server files them under it."""
+        result, _, _ = self._collection(monkeypatch, tmp_path, providers=["minimax_code"])
+        assert result.error_count == 0
+        assert [e["provider_id"] for e in result.events] == ["minimax"]
+        assert [e["source_app"] for e in result.events] == ["minimax_code"]
+
+    def test_the_minimax_account_hint_is_applied(self, monkeypatch, tmp_path):
+        """The hint lives in the *provider's* bucket, not the scheduling id's.
+
+        Reading it from the scheduling id would miss ``provider:minimax``
+        and drop every event back to "default" — the very "Unassigned
+        usage" state the new id exists to fix.
+        """
+        result, _, _ = self._collection(
+            monkeypatch,
+            tmp_path,
+            providers=["minimax_code"],
+            tag_hints={"minimax": {"provider:minimax": "me@example.com"}},
+        )
+        assert [e["account_id"] for e in result.events] == ["me@example.com"]
+
+    def test_an_untagged_origin_is_the_provider_s_one(self, monkeypatch, tmp_path):
+        """Without a hint the events ship under "default" and the operator is
+        pointed at ``provider:minimax`` — the origin they can actually tag.
+
+        ``provider:minimax_code`` would be a provider that does not exist.
+        """
+        _, posted, _ = self._collection(monkeypatch, tmp_path, providers=["minimax_code"])
+        assert posted["entries"] == [
+            {
+                "provider_id": "minimax_code",
+                "credential_origin": "provider:minimax",
+                "reason": "events_untagged",
+            }
+        ]
+
+    def test_the_ledger_is_read_once_per_cycle(self, monkeypatch, tmp_path):
+        """Both scheduling ids dispatch the same extractor.
+
+        A host with a MiniMax account is scheduled for both ``minimax`` and
+        ``minimax_code``, so without a per-cycle guard the same rows would
+        be read — and every event pushed — twice per cycle.
+        """
+        result, _, parsed = self._collection(
+            monkeypatch, tmp_path, providers=["minimax", "minimax_code"]
+        )
+        assert len(parsed) == 1
+        assert len(result.events) == 1
+
+    def test_a_server_that_knows_only_the_provider_still_collects(self, monkeypatch, tmp_path):
+        """An older server sends ``minimax`` but not ``minimax_code``.
+
+        The ledger must still be collected there, or a sidecar newer than
+        its server would silently stop reporting MiniMax Code usage.
+        """
+        result, _, parsed = self._collection(monkeypatch, tmp_path, providers=["minimax"])
+        assert len(parsed) == 1
+        assert [e["provider_id"] for e in result.events] == ["minimax"]

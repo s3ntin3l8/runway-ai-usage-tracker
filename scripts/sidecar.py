@@ -914,6 +914,23 @@ __REGISTRY__: dict[str, Any] = {
                 },
             ],
         },
+        "minimax_code": {
+            "name": "MiniMax Code",
+            "icon": "🛠️",
+            "rules": [
+                {
+                    "type": "file",
+                    "format": "yaml",
+                    "keyless_ok": True,
+                    "paths": [
+                        "~/.minimax/config.yaml",
+                        "~/.minimax-*/config.yaml",
+                        "~/.mavis/config.yaml",
+                        "~/.mavis-*/config.yaml",
+                    ],
+                },
+            ],
+        },
     },
 }
 # --- END INJECTED REGISTRY ---
@@ -3269,6 +3286,16 @@ _EVENT_WATERMARK_ALIASES: dict[tuple[str, str], tuple[str, str]] = {}
 # it does. Rebuilt every cycle.
 _IDENTITY_REPORT: dict[str, dict[str, str]] = {}
 
+# The MiniMax Code runtime stores already read in this collection cycle.
+#
+# The ledger is scheduled under two ids: ``minimax_code`` (always — the
+# client app is not an account) and ``minimax`` (when the host also has a
+# MiniMax account, the quota provider). Both dispatch the same extractor, so
+# without this the same rows would be read — and every event pushed — twice
+# per cycle. The first id to reach a store collects it; the second finds it
+# already taken. Cleared with the other per-cycle state.
+_MINIMAX_CODE_STORES_READ: set[str] = set()
+
 # Provider IDs that have event extractors. Per-account iteration loops over
 # each of these and stamps events with the resolved ``account_id``.
 _EVENT_PROVIDERS: frozenset[str] = frozenset(
@@ -3281,8 +3308,24 @@ _EVENT_PROVIDERS: frozenset[str] = frozenset(
         "xai",
         "hermes",
         "minimax",
+        # MiniMax Code's own runtime ledger. A scheduling id of its own: the
+        # ledger exists on every host that ran the client, while the
+        # ``minimax`` *provider* only exists once the host has a MiniMax
+        # account (a provider config row or a quota card). Sharing the
+        # provider's id tied the ledger's collection to that account, so a
+        # host with neither saw its usage only on full cycles (#928).
+        "minimax_code",
     }
 )
+
+# The provider whose *identity* an event provider's events belong to, when
+# the two differ. The MiniMax Code ledger is collected under its own
+# scheduling id, but its events carry ``provider_id="minimax"`` and are
+# tagged with the operator's MiniMax account — so the account hint and the
+# taggable credential origin are the ``minimax`` provider's, not the
+# scheduling id's. Without this the events would fall back to "default" and
+# land in "Unassigned usage" the moment the ledger moved to its own id.
+_EVENT_IDENTITY_PROVIDER: dict[str, str] = {"minimax_code": "minimax"}
 
 # Event sources that are not providers: Hermes calls other providers' accounts, so
 # its events belong to the provider each one used, never to a ``hermes`` account.
@@ -3323,6 +3366,10 @@ _LEGACY_EVENT_ACCOUNT_DISCOVERY: dict[str, Any] = {
     # events branch retargets it onto the operator's account through the
     # server's ``provider:minimax`` auto-hint.
     "minimax": lambda: globals()["_minimax_code_account_identity"]() or "default",
+    # The MiniMax Code runtime ledger, collected under its own scheduling id
+    # (see ``_EVENT_IDENTITY_PROVIDER``). Same local identity as ``minimax``:
+    # the bundle carries no email either.
+    "minimax_code": lambda: globals()["_minimax_code_account_identity"]() or "default",
 }
 
 
@@ -3378,6 +3425,10 @@ def _extract_events_for_provider(
         "hermes": _make_account_extractor_hermes(parse_hermes_events),
         # MiniMax Code's own runtime ledger: one event per API request.
         "minimax": _make_account_extractor_minimax_code(parse_minimax_code_events),
+        # The same ledger, collected under its own scheduling id so it runs
+        # on every poll cycle instead of only on a full cycle (#928). The
+        # events it produces still carry ``provider_id="minimax"``.
+        "minimax_code": _make_account_extractor_minimax_code(parse_minimax_code_events),
     }
 
     extractor = dispatch.get(provider_id)
@@ -3735,6 +3786,15 @@ def _make_account_extractor_minimax_code(parser: Any, state_file: Path | None = 
             cursor_file = get_sidecar_dir() / "minimax_code_watermark.json"
         events: list = []
         for db_path in db_paths:
+            # Read each store once per cycle, whichever scheduling id reaches
+            # it first (see ``_MINIMAX_CODE_STORES_READ``).
+            try:
+                db_key = str(db_path.resolve())
+            except OSError:
+                db_key = str(db_path)
+            if db_key in _MINIMAX_CODE_STORES_READ:
+                continue
+            _MINIMAX_CODE_STORES_READ.add(db_key)
             events.extend(
                 parser(
                     db_path,
@@ -5610,6 +5670,7 @@ def run_collection(config: dict[str, Any], providers: list[str] | None = None) -
     all_events: list[dict[str, Any]] = []
     _EVENT_WATERMARK_ALIASES.clear()
     _IDENTITY_REPORT.clear()
+    _MINIMAX_CODE_STORES_READ.clear()
     # A parked MiniMax Code cursor advance belongs to the cycle that made
     # it. A cycle that dies between the extraction and the push must not
     # leave it behind for a later cycle to commit — the rows it covers
@@ -5761,8 +5822,20 @@ def run_collection(config: dict[str, Any], providers: list[str] | None = None) -
                 # retag to that provider), so this branch just needs
                 # to keep iterating under the local identity — events
                 # that don't retag continue to ship under "default".
-                event_origin = credential_origin_for_provider(provider_id)
-                event_hint = server_account_tag_hints.get(provider_id, {}).get(event_origin)
+                # The account hint and the taggable origin belong to the
+                # *provider* the events are stamped with, which is not always
+                # the provider being iterated: the MiniMax Code ledger runs
+                # under its own scheduling id but its events carry
+                # ``provider_id="minimax"`` and are tagged with the operator's
+                # MiniMax account (#928). Reading the hint from the iterating
+                # id's own bucket would miss the ``provider:minimax``
+                # auto-hint and drop every event back to "default" — the
+                # very "Unassigned usage" state this id exists to fix.
+                identity_provider_id = _EVENT_IDENTITY_PROVIDER.get(provider_id, provider_id)
+                event_origin = credential_origin_for_provider(identity_provider_id)
+                event_hint = server_account_tag_hints.get(identity_provider_id, {}).get(
+                    event_origin
+                )
 
                 # PR #318 round-2 re-review (Hermes): the evidence gate below
                 # used a proxy (``scoped_accounts == [local or "default"]``
