@@ -1757,10 +1757,9 @@ def test_a_key_of_a_database_whose_rows_could_not_be_listed_is_kept(monkeypatch,
 
     def _only_the_listed_database(conn, profile_name):
         row = conn.execute("PRAGMA database_list").fetchone()
-        # SQLite reports the resolved path, which is not the path pytest
-        # handed out (macOS resolves /var to /private/var), so the two are
-        # compared resolved -- a substring check would never match and the
-        # test would pass without exercising anything.
+        # The two paths are compared resolved: SQLite reports the path it was
+        # given, and a resolved compare says the same thing whatever the
+        # platform does with its temporary directory.
         if row is not None and Path(row[2]).resolve() == db_unlisted.resolve():
             return None
         return original(conn, profile_name)
