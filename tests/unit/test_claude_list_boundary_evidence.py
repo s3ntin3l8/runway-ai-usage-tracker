@@ -84,3 +84,12 @@ def test_diagnostic_evidence_runs_as_one_file_without_application_or_site_packag
     )
     assert completed.returncode == 2
     assert json.loads(completed.stdout)["status"] == "stop"
+
+
+def test_unknown_checkpoint_prefix_stays_null_in_offline_evidence():
+    value = evidence()
+    value["report"] = _empty()
+    result = evaluate(value)
+    assert result["report"]["original_list_pages"] is None
+    assert result["report"]["original_listed_sessions"] is None
+    assert result["status"] == "stop"

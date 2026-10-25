@@ -609,9 +609,12 @@ def _boundary_report(value: Any) -> None:
     _choice(value["outcome"], BOUNDARY_OUTCOMES)
     _choice(value["stage"], {"checkpoint", "source", "profile", "sessions", "complete"})
     _integer(value["requests"], 2)
-    _integer(value["original_list_pages"], 512)
-    _integer(value["original_listed_sessions"], 20000)
-    _require(value["original_listed_sessions"] <= value["original_list_pages"] * 20)
+    pages, sessions = value["original_list_pages"], value["original_listed_sessions"]
+    _require((pages is None) == (sessions is None))
+    if pages is not None:
+        _integer(pages, 512)
+        _integer(sessions, 20000)
+        _require(sessions <= pages * 20)
     for name in ("account_verified", "organization_verified"):
         _require(type(value[name]) is bool)
     if value["http_status"] is not None:
@@ -643,6 +646,7 @@ def _boundary_report(value: Any) -> None:
     observed = value["outcome"] == "observed"
     _require((value["boundary"] is not None) == observed)
     if observed:
+        _require(pages is not None)
         _require(
             value["stage"] == "complete"
             and value["requests"] == 2

@@ -934,7 +934,11 @@ An unavailable/changed source or checkpoint stops before further operations.
 
 The fixed `format_version: 1` report returns `outcome`, `stage`, `requests`,
 `http_status`, verification booleans, `original_list_pages`,
-`original_listed_sessions` and optional `boundary`. Only outcome `observed` can
+`original_listed_sessions` and optional `boundary`. The original prefix counts
+are historical observations from an eligible, readable checkpoint, including on
+later source/provider failures; unreadable/ineligible counts remain `null` rather
+than a misleading zero. An initial known token expiry reports `expired`; later
+eligibility changes remain `source_changed`. Only outcome `observed` can
 have boundary evidence. Its fields are top-level/data/ID type categories, total
 and inspected record counts (at most 20 inspected), valid/invalid/duplicate and
 previously seen ID counts, cursor category (`missing`, `null`, `empty_string`,

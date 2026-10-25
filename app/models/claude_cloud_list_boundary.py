@@ -81,8 +81,8 @@ class ListBoundaryReport(_Strict):
     http_status: Annotated[StrictInt, Field(ge=100, le=599)] | None
     account_verified: bool
     organization_verified: bool
-    original_list_pages: Annotated[StrictInt, Field(ge=0, le=512)]
-    original_listed_sessions: Annotated[StrictInt, Field(ge=0, le=20000)]
+    original_list_pages: Annotated[StrictInt, Field(ge=0, le=512)] | None
+    original_listed_sessions: Annotated[StrictInt, Field(ge=0, le=20000)] | None
     boundary: ListBoundaryObservation | None
     response_encoding: Literal["unknown", "identity", "unsupported"]
     json_state: Literal[
@@ -103,6 +103,12 @@ class ListBoundaryReport(_Strict):
 
     @model_validator(mode="after")
     def observed_only(self) -> Self:
+        if (self.original_list_pages is None) != (self.original_listed_sessions is None) or (
+            self.original_list_pages is not None
+            and self.original_listed_sessions is not None
+            and self.original_listed_sessions > self.original_list_pages * 20
+        ):
+            raise ValueError("invalid_boundary_report")
         if (
             (
                 self.json_state in ("not_attempted", "decoded")
@@ -116,7 +122,8 @@ class ListBoundaryReport(_Strict):
         if (self.boundary is not None) != (self.outcome == "observed") or (
             self.outcome == "observed"
             and not (
-                self.stage == "complete"
+                self.original_list_pages is not None
+                and self.stage == "complete"
                 and self.requests == 2
                 and self.http_status == 200
                 and self.account_verified

@@ -32,6 +32,7 @@ from app.services.probe_mode import probing
 from app.services.source_controls import allowed
 from app.services.token_cache import token_cache
 from scripts.audit_claude_usage import audit_messages
+from scripts.claude_cloud_list_boundary import SESSION_ID as _SESSION_ID
 from scripts.claude_cloud_structure import empty_structure, observe_structure
 from scripts.sidecar_pkg.source_catalog import source_for_origin
 
@@ -44,7 +45,6 @@ OBSERVATION_LOCATIONS = {
     2: ("event", "data", "content", "payload"),
 }
 _gate = asyncio.Lock()
-_SESSION_ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 
 
 class ProbeError(Exception):

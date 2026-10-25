@@ -146,3 +146,10 @@ def test_source_digest_keeps_the_existing_nested_serialization_protocol():
             "77aac5f2dc0efec62466c387bc2935644c5608c63ff2bf2845bc10d536c7b336"  # pragma: allowlist secret - synthetic vector
         )
     )  # pragma: allowlist secret - synthetic compatibility vector
+
+
+def test_diagnostic_and_page_reader_share_the_same_session_id_validator():
+    from app.services import claude_cloud_probe as probe
+    from scripts.claude_cloud_list_boundary import SESSION_ID
+
+    assert probe._SESSION_ID is SESSION_ID

@@ -96,8 +96,8 @@ def _empty() -> dict[str, Any]:
         "http_status": None,
         "account_verified": False,
         "organization_verified": False,
-        "original_list_pages": 0,
-        "original_listed_sessions": 0,
+        "original_list_pages": None,
+        "original_listed_sessions": None,
         "boundary": None,
         "response_encoding": "unknown",
         "json_state": "not_attempted",
@@ -134,10 +134,17 @@ async def inspect_list_boundary(
                     ):
                         report["outcome"] = "checkpoint_ineligible"
                         return report
+                    # These are historical, already committed prefix counts, not fresh coverage.
+                    report.update(
+                        original_list_pages=state.list_pages,
+                        original_listed_sessions=state.listed_sessions,
+                    )
                     report["stage"] = "source"
                     try:
                         source = await probe._load_source(state.account_id, state.source_id)
-                    except probe.ProbeError:
+                    except probe.ProbeError as exc:
+                        if str(exc) == "expired":
+                            raise
                         raise probe.ProbeError("source_changed") from None
                     if not hmac.compare_digest(
                         _source_digest(bytes.fromhex(state.job_key), source), state.source_digest
@@ -170,8 +177,6 @@ async def inspect_list_boundary(
                             boundary=boundary,
                             account_verified=True,
                             organization_verified=True,
-                            original_list_pages=state.list_pages,
-                            original_listed_sessions=state.listed_sessions,
                         )
         except CheckpointError:
             report["outcome"] = "checkpoint_unavailable"

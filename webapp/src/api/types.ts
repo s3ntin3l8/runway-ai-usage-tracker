@@ -1741,8 +1741,8 @@ export interface ClaudeListBoundaryReport {
   http_status: number | null;
   account_verified: boolean;
   organization_verified: boolean;
-  original_list_pages: number;
-  original_listed_sessions: number;
+  original_list_pages: number | null;
+  original_listed_sessions: number | null;
   boundary: ClaudeListBoundaryObservation | null;
   cloud_contract_verified: false;
   ready_for_ingestion: false;

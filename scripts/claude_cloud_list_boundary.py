@@ -8,7 +8,7 @@ import re
 from typing import Any
 
 KINDS = ("missing", "null", "boolean", "number", "string", "array", "object", "not_object")
-SESSION_ID = re.compile(r"[A-Za-z0-9_-]{1,128}")
+SESSION_ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 
 
 def job_digest(key: bytes, domain: bytes, value: object) -> str:

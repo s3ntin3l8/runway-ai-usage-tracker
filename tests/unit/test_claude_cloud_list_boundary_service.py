@@ -265,3 +265,39 @@ async def test_unsupported_encoding_is_reported_without_decoding_or_retries(sour
     assert report["outcome"] == "unsupported_contract" and report["requests"] == 2
     assert report["response_encoding"] == "unsupported" and report["json_state"] == "not_attempted"
     assert report["boundary"] is None
+
+
+@pytest.mark.asyncio
+async def test_known_original_prefix_is_reported_even_when_provider_rejects(source_environment):
+    store, handle, _ = await stopped(source_environment)
+    report = await inspect(handle, store, lambda request: httpx.Response(401))
+    assert report["original_list_pages"] == report["original_listed_sessions"] == 1
+    assert report["outcome"] == "rejected" and report["boundary"] is None
+
+
+@pytest.mark.asyncio
+async def test_unavailable_checkpoint_prefix_remains_unknown(source_environment):
+    from app.models.claude_cloud_list_boundary import ListBoundaryReport
+
+    store, _, _ = await stopped(source_environment)
+    calls = []
+    report = await inspect("f" * 32, store, lambda request: calls.append(request))
+    ListBoundaryReport.model_validate(report)
+    assert report["original_list_pages"] is report["original_listed_sessions"] is None
+    assert report["outcome"] == "checkpoint_unavailable" and calls == []
+
+
+@pytest.mark.asyncio
+async def test_known_expired_source_is_not_relabelled_as_a_changed_bundle(
+    source_environment, monkeypatch
+):
+    store, handle, _ = await stopped(source_environment)
+
+    async def expired(*args):
+        raise probe.ProbeError("expired")
+
+    monkeypatch.setattr(probe, "_load_source", expired)
+    calls = []
+    report = await inspect(handle, store, lambda request: calls.append(request))
+    assert report["outcome"] == "expired" and calls == []
+    assert report["original_list_pages"] == 1
