@@ -993,3 +993,13 @@ class ClaudeCloudVerification(SQLModel, table=True):  # type: ignore[call-arg]
     state_encrypted: str
     lease_owner: str | None = None
     lease_expires: float = 0
+
+
+class ClaudeCloudVerificationArchive(SQLModel, table=True):  # type: ignore[call-arg]
+    """Original encrypted terminal envelopes retained by explicit admin action."""
+
+    __tablename__ = "claude_cloud_verification_archives"
+    job_handle: str = Field(primary_key=True)
+    revision: int
+    state_encrypted: str
+    archived_at: float

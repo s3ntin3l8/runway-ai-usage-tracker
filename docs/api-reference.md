@@ -890,12 +890,58 @@ Actions:
   between steps and returns `{"state":"cancelled"}`. An active lease returns
   409 rather than claiming cancellation before the bounded step ends.
 
-Only one encrypted job exists at a time. Configured server encryption is required;
+- `{"action":"archive_status","job_handle":"…"}` reads local administrative
+  metadata only and returns `state` (`terminal`, `not_terminal`, or `archived`),
+  exact transport `job_handle` and numeric `revision`. It performs no source
+  credential operations, provider requests or mutation. Historical usage is not
+  exported, even when the original source has become unavailable.
+- `{"action":"archive","job_handle":"…","revision":7}` explicitly preserves
+  that exact terminal checkpoint and releases the current-job slot atomically.
+  It returns `{"state":"archived","job_handle":"…","revision":7}` only after
+  verifying the unchanged encrypted copy and committing. A mismatched revision,
+  nonterminal job, active lease, or full archive returns 409. Retrying the same
+  archived handle/revision is idempotent and cannot affect a newer current job.
+  Archiving performs no provider or source credential operations. It never runs
+  implicitly during start/status/GET. Preserve a verified owner-only database
+  backup before live archival. Transport handles stay out of published evidence.
+
+Only one current encrypted job exists at a time; up to 64 terminal encrypted
+archives, capped at 64 MiB of ciphertext, remain recoverable locally with no
+automatic deletion. Both limits must permit a new archive. Each checkpoint accepts
+at most 16 MiB of plaintext /32 MiB of ciphertext; the combined archive byte limit
+prevents multiplying that worst case by 64. SQLite pages, WAL and backups add
+physical storage overhead beyond the logical ciphertext cap. A fresh start generates a new handle and, by default, a new job key.
+Operators supplying `job_key` for fixture HMACs must generate a new key per job.
+Source binding and request/byte/time budgets are recomputed for the new job;
+old intent/cursor state is never resumed or rebound.
+
+Configured server encryption is required;
 there is no plaintext fallback. Every provider attempt is charged and journaled
 before dispatch. Clean batch boundaries resume; an ambiguous in-flight intent
 stops as interrupted and cannot replay. A job is limited to 512 attempts, 256 MiB,
 20,000 listed sessions, 100,000 history records and 30 minutes. Terminal failures
 never start another exchange. Fixed 409/404/503 error categories expose no values.
+
+Owner-only recovery and pruning are maintenance operations, not API exports:
+
+1. Stop Runway and make an owner-only SQLite backup (directory mode 0700, file
+   mode 0600). Verify `PRAGMA quick_check` and preserve the original encryption
+   configuration securely; never print or send its key.
+2. `CheckpointStore.archived_snapshot(handle)` is intentionally internal for
+   local operator recovery/verification with that configuration. Keep decrypted
+   state in memory; compare fixed counters or encrypted envelopes without
+   serializing state, source identifiers, keys, cursors or transcript data.
+   An archived checkpoint is historical evidence, never a resumable job.
+3. If capacity is full, select the exact archive and revision locally. Before
+   deletion, verify that the backup contains the identical revision and encrypted
+   envelope. In one explicit SQLite transaction, use parameterized
+   `DELETE FROM claude_cloud_verification_archives WHERE job_handle=? AND revision=?`
+   and require exactly one affected row before committing. Roll back on mismatch.
+   Never prune the current `claude_cloud_verification` table. The verified backup
+   must remain retained and readable with the original encryption configuration.
+4. SQLite can reuse freed pages without shrinking the file. Optional offline
+   `VACUUM` needs adequate free disk space and a retained verified backup; it is
+   never run automatically. Restart only after integrity checks pass.
 
 The strict report contains `format_version: 1`, opaque transport `job_handle`,
 `started_at`, `deadline`, `last_verified_at`, `phase`, `outcome`, `requests`,
