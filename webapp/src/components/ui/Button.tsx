@@ -6,7 +6,14 @@ import { markFocusable } from '@/lib/focusable';
 // Exported so links that should look like buttons (e.g. downloads) can reuse
 // the styles without nesting a <button> inside an <a>.
 export const buttonVariants = cva(
-  'inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-sm font-medium whitespace-nowrap transition-colors duration-150 disabled:pointer-events-none disabled:opacity-50',
+  // `ui-button` is the design system's own marker for "this is one of our
+  // buttons". It carries no styles; it is the contract the browser-level UX
+  // suite matches on to measure the touch floor, so the suite measures the
+  // design system rather than a guess at how it happens to be styled. It
+  // sits on the shared string, so a link that is styled as a button is
+  // measured too -- the app has two of those, and they are exactly the
+  // controls a class-name heuristic would have missed.
+  'ui-button inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-sm font-medium whitespace-nowrap transition-colors duration-150 disabled:pointer-events-none disabled:opacity-50',
   {
     variants: {
       variant: {

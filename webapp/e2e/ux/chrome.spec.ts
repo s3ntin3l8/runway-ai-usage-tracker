@@ -13,7 +13,7 @@ import { DEMO_URL, PAGES, PHONE, waitForApp } from './support';
 test('the page reserves room for the fixed bottom nav', async ({ page }) => {
   await page.setViewportSize(PHONE);
   await page.goto(`${DEMO_URL}/insights`);
-  await waitForApp(page);
+  await waitForApp(page, PAGES.find((p) => p.name === 'insights')!.marker);
 
   const measured = await page.evaluate(() => {
     const nav = document.querySelector('nav.fixed');
@@ -33,11 +33,11 @@ test('the page reserves room for the fixed bottom nav', async ({ page }) => {
   ).toBeGreaterThanOrEqual(measured!.navHeight);
 });
 
-for (const { path, name } of PAGES) {
+for (const { path, name, marker } of PAGES) {
   test(`the fixed chrome does not cover the content on ${name}`, async ({ page }) => {
     await page.setViewportSize(PHONE);
     await page.goto(`${DEMO_URL}${path}`);
-    await waitForApp(page);
+    await waitForApp(page, marker);
 
     // Scroll to the very bottom: that is where the last of the content sits,
     // and where the nav is most likely to cover it.

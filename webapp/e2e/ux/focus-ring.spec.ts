@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { DEMO_URL, PHONE, waitForApp } from './support';
+import { DEMO_URL, PAGES, PHONE, waitForApp } from './support';
 
 // The audit's finding: `ui/Tabs.tsx` applied `outline-none` to a focusable
 // element, which suppressed the global focus ring. A control that is focused
@@ -15,7 +15,7 @@ import { DEMO_URL, PHONE, waitForApp } from './support';
 test('every control the keyboard reaches shows its focus ring inside the viewport', async ({ page }) => {
   await page.setViewportSize(PHONE);
   await page.goto(`${DEMO_URL}/provider/anthropic`);
-  await waitForApp(page);
+  await waitForApp(page, PAGES.find((p) => p.name === 'provider')!.marker);
 
   // The provider page has the densest strip of controls on the app: the
   // header actions, the tab strip (which scrolls sideways) and the bottom
@@ -30,11 +30,10 @@ test('every control the keyboard reaches shows its focus ring inside the viewpor
       const outline = style.outlineStyle !== 'none' && parseFloat(style.outlineWidth || '0') > 0;
       const ring = style.boxShadow !== 'none' && style.boxShadow !== '';
       const rect = el.getBoundingClientRect();
+      const label = el.getAttribute('aria-label');
+      const text = (el.textContent ?? '').trim();
       return {
-        name:
-          el.getAttribute('aria-label') ??
-          (el.textContent ?? '').trim().slice(0, 30) ??
-          el.tagName,
+        name: label ?? (text === '' ? el.tagName : text.slice(0, 30)),
         tag: el.tagName.toLowerCase(),
         outline,
         ring,
@@ -91,7 +90,7 @@ test('the deep-linked tab is brought into view instead of sitting off-screen', a
   // or the reader lands on a page that looks like the wrong tab is selected.
   await page.setViewportSize(PHONE);
   await page.goto(`${DEMO_URL}/provider/anthropic?tab=cost`);
-  await waitForApp(page);
+  await waitForApp(page, PAGES.find((p) => p.name === 'provider')!.marker);
   await page.waitForTimeout(500);
 
   const active = page.locator('[role="tab"][data-state="active"]');

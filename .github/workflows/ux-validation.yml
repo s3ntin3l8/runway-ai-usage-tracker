@@ -10,8 +10,15 @@ name: UX Validation
 on:
   pull_request:
     branches: [main]
+    # The job's inputs are wider than the webapp: the suite runs against the
+    # demo instance and needs the test dependencies, so a change to
+    # requirements-test.txt, to the demo's own scripts, or to this workflow
+    # has to run the gate that would catch it.
     paths:
       - 'webapp/**'
+      - 'scripts/demo/**'
+      - 'requirements-test.txt'
+      - '.github/workflows/ux-validation.yml'
   workflow_dispatch:
 permissions:
   contents: read

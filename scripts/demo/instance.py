@@ -115,15 +115,17 @@ class Demo:
 
     def stop(self) -> None:
         if self.server.poll() is None:
-            # Own session (start_new_session) so the whole group goes. The
-            # server can exit between poll() and killpg (e.g. it lost a port
-            # race); a ProcessLookupError then must not mask the real error.
+            # The server is stopped by name, because it shares the demo's
+            # process group rather than leading one of its own (see
+            # start_demo). It can exit between poll() and terminate() (e.g.
+            # it lost a port race); a ProcessLookupError then must not mask
+            # the real error.
             try:
-                os.killpg(self.server.pid, signal.SIGTERM)
+                self.server.terminate()
                 try:
                     self.server.wait(timeout=10)
                 except subprocess.TimeoutExpired:
-                    os.killpg(self.server.pid, signal.SIGKILL)
+                    self.server.kill()
             except ProcessLookupError:
                 # Already exited on its own; wait() below just reaps it.
                 pass
@@ -134,11 +136,44 @@ class Demo:
         shutil.rmtree(self.demo_dir, ignore_errors=True)
 
 
+def _pid_is_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # it exists; it just is not ours to signal
+    return True
+
+
+def clean_stale_scratch_dirs() -> None:
+    """Remove the scratch dirs of demos that are no longer running.
+
+    A demo that is stopped with SIGKILL cannot clean up after itself, and
+    that is how a supervisor stops it: Playwright's web server runner kills
+    the whole process group with SIGKILL. The demo's own pid tells a live
+    demo from a dead one, so a scratch dir left behind by a killed demo does
+    not pile up in the temp directory.
+    """
+    for candidate in Path(tempfile.gettempdir()).glob("runway-demo-*"):
+        try:
+            pid = int((candidate / "pid").read_text().strip())
+        except (OSError, ValueError):
+            continue  # not one of ours, or one that was never finished
+        if _pid_is_alive(pid):
+            continue  # a live demo owns it
+        shutil.rmtree(candidate, ignore_errors=True)
+
+
 def start_demo(*, keep: bool = False, quiet: bool = False) -> Demo:
     assert_ports_free([DEMO_PORT])
     ensure_spa_built()
 
+    clean_stale_scratch_dirs()
     demo_dir = Path(tempfile.mkdtemp(prefix="runway-demo-"))
+    # The pid tells a later demo that this one is gone, so a demo that was
+    # killed with SIGKILL does not leave its scratch dir behind forever.
+    (demo_dir / "pid").write_text(str(os.getpid()))
     run_dir = demo_dir / "run"  # server cwd: no .env here
     for sub in ("home", "tmp", "run", "config"):
         (demo_dir / sub).mkdir(parents=True, exist_ok=True)
@@ -177,7 +212,14 @@ def start_demo(*, keep: bool = False, quiet: bool = False) -> Demo:
             ],
             cwd=run_dir,
             env=env,
-            start_new_session=True,
+            # The server stays in the demo's own process group on purpose.
+            # A supervisor that stops the demo -- Playwright's web server
+            # runner kills the whole group with SIGKILL -- then takes the
+            # server with it. A server in a session of its own outlived the
+            # demo, went on holding the port, and went on holding the demo's
+            # stdout open, so the supervisor waited for a pipe that never
+            # closed and the run never ended. The demo stops the server by
+            # name instead; see Demo.stop().
             stdout=subprocess.DEVNULL if quiet else None,
         )
         url = f"http://127.0.0.1:{DEMO_PORT}"
@@ -195,14 +237,19 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--keep", action="store_true", help="keep the scratch dir on exit")
     args = parser.parse_args()
+    # The handler is installed BEFORE the demo starts, not after it is up.
+    # A supervisor that stops the demo with SIGTERM would otherwise kill
+    # this process without a teardown while it was still building the SPA,
+    # seeding the database or waiting for the server -- the whole
+    # webServer.timeout budget -- and the teardown below would never run.
+    # Installing the handler first means the signal always unwinds through
+    # it: `sys.exit` raises SystemExit, which the `except BaseException` in
+    # start_demo() catches and cleans up after, and which the `finally`
+    # below turns into a stopped server.
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     demo = start_demo(keep=args.keep)
     print(f"\n[demo] Runway demo is up: {demo.url}")
     print("[demo] Loopback only, no login. Ctrl-C stops it and deletes all demo data.")
-    # The server runs in its own session, so it outlives this process unless
-    # the teardown below runs. A supervisor that stops the demo with SIGTERM
-    # (Playwright's web server runner does) would otherwise kill this process
-    # without a teardown, and the server would keep holding the port.
-    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     try:
         demo.server.wait()
     except KeyboardInterrupt:

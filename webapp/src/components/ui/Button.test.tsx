@@ -33,4 +33,12 @@ describe('Button', () => {
     render(<Button variant="danger">Delete</Button>);
     expect(screen.getByRole('button', { name: 'Delete' }).className).toContain('bg-critical');
   });
+
+  it('carries the marker the browser-level UX suite measures', () => {
+    // The suite finds the design system's buttons by this marker. If it
+    // went away, the suite would silently measure nothing, so it is pinned
+    // here as well as being used there.
+    render(<Button>Save</Button>);
+    expect(screen.getByRole('button', { name: 'Save' })).toHaveClass('ui-button');
+  });
 });
