@@ -1685,3 +1685,36 @@ def test_prune_keeps_the_slices_of_a_database_that_was_not_discovered(tmp_path):
         assert len(state) == 2
     finally:
         db_path.unlink(missing_ok=True)
+
+
+def test_a_key_is_matched_against_every_database_it_could_belong_to(tmp_path):
+    """One discovered path can be the prefix of another, and a key holds both.
+
+    The marker of ``/a`` is inside the marker of ``/a|b``, so a key of the
+    second database matches the first one as well. Attributing the key to
+    the wrong database would report a live slice as gone and drop its
+    high-water mark -- so the slice has to stay alive as long as *any* of
+    the databases it could belong to still has its row.
+    """
+    db_one = tmp_path / "a"
+    db_two = tmp_path / "a|b"
+    conn = make_hermes_db(str(db_one))
+    conn.close()
+    conn = make_hermes_db(str(db_two))
+    conn.close()
+    state_file = tmp_path / "hermes_watermark.json"
+
+    try:
+        _parse([db_one, db_two], state_file)
+        assert len(_watermark_keys(state_file)) == 4
+
+        # Nothing changed, but the compaction still runs over the idle
+        # slices: the slice of the second database has to survive, because
+        # the key holds the path of both databases.
+        _parse([db_one, db_two], state_file)
+        keys = _watermark_keys(state_file)
+        assert len(keys) == 4
+        assert sum(1 for key in keys if "api-sess-kimi-01" in key) == 2
+    finally:
+        db_one.unlink(missing_ok=True)
+        db_two.unlink(missing_ok=True)

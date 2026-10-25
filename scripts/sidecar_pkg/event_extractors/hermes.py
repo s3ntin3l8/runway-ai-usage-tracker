@@ -400,19 +400,27 @@ def _live_slice_suffixes(conn: sqlite3.Connection, profile_name: str) -> set[str
     return suffixes
 
 
-def _match_discovered_db(key: str, markers: dict[str, str]) -> tuple[str, str] | None:
-    """Find the discovered database a watermark key belongs to.
+def _match_discovered_dbs(key: str, markers: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """Find the discovered databases a watermark key may belong to.
 
-    Returns the resolved path of the database and the slice behind it, or
-    None when the key belongs to no discovered database. The path is matched
-    as a whole, between two separators, so neither a path that is the tail of
-    another path nor a path that holds a ``|`` can be mistaken for it.
+    A key is ``{account}|{resolved_db_path}|{slice}``. The path is searched
+    for as a whole -- a path that holds a "|" is cut short when the key is
+    split into fields, but it is still in the key as a whole -- so the
+    database and the slice behind the key are both known exactly.
+
+    More than one database can match. Two discovered paths can be prefixes
+    of one another (``/a|b`` and ``/a|b|c`` both match a key that holds
+    ``|/a|b|c|``), and the longer path is the one the key was written with
+    -- so the markers are ordered longest first. Even so, a key can hold
+    the path of two databases at once, so every match is returned and the
+    caller decides: a slice that is alive under *any* of them is alive.
     """
-    for resolved, marker in markers.items():
+    matches: list[tuple[str, str]] = []
+    for resolved, marker in markers:
         index = key.find(marker)
         if index != -1:
-            return resolved, key[index + len(marker) :]
-    return None
+            matches.append((resolved, key[index + len(marker) :]))
+    return matches
 
 
 def _prune_stale_watermark_slices(
@@ -481,8 +489,13 @@ def _prune_stale_watermark_slices(
     # A key carries the whole resolved path of its database, so the database
     # behind a key is found by looking for the path itself. That also finds
     # the exact path of a database whose path holds a "|": the split cuts the
-    # path short, but the key still holds it whole.
-    markers = {live: f"|{live}|" for live in live_resolved}
+    # path short, but the key still holds it whole. The markers are ordered
+    # longest first, so a key that holds two databases is matched against
+    # the longer path first.
+    markers = sorted(
+        ((live, f"|{live}|") for live in live_resolved),
+        key=lambda item: (-len(item[0]), item[0]),
+    )
 
     # One stat() per distinct database path, not per key: a host with a large
     # watermark would otherwise make thousands of syscalls every cycle.
@@ -500,14 +513,25 @@ def _prune_stale_watermark_slices(
             file_gone = path_is_gone[db_path] and db_path not in truncated_live
 
         row_gone = False
-        matched = _match_discovered_db(key, markers)
-        if matched is not None:
-            resolved, suffix = matched
-            live = (live_slices or {}).get(resolved)
-            if live is not None and suffix not in live:
-                # The row behind this slice is gone from a database we could
-                # read, so it can never advance again.
-                row_gone = True
+        matches = _match_discovered_dbs(key, markers)
+        if matches:
+            # The slice is alive when *any* of the databases it could belong
+            # to still has its row. Attributing the key to the wrong database
+            # then keeps a live slice instead of dropping its mark, which is
+            # the direction that cannot cost usage.
+            alive = False
+            checkable = False
+            for resolved, suffix in matches:
+                live = (live_slices or {}).get(resolved)
+                if live is None:
+                    # A database we could not list the rows of: it cannot say
+                    # that the row is gone.
+                    continue
+                checkable = True
+                if suffix in live:
+                    alive = True
+                    break
+            row_gone = checkable and not alive
 
         if not (file_gone or row_gone):
             continue

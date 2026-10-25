@@ -73,6 +73,8 @@ The compaction runs even when the host has **no Hermes database left at all** â€
 
 A live database's slices are reclaimed one row at a time: the extractor lists the slices that are still in `session_model_usage` (whose primary key *is* the slice identity) and forgets the mark of the slices whose row is gone. A live session's row can advance, so it is never pruned on age alone.
 
+That reclaim only fires when Hermes deletes the `session_model_usage` row along with the session â€” `session_model_usage.session_id` references `sessions(id)` `ON DELETE CASCADE`, and SQLite only enforces that with `PRAGMA foreign_keys=ON`. If Hermes leaves orphan usage rows behind, the rule reclaims nothing: the rows are still there, so their slices are still alive.
+
 ## Canonical Provider Mapping
 
 Hermes routes requests to multiple upstream LLM providers. The extractor maps Hermes `billing_provider` values onto canonical Runway provider IDs:
