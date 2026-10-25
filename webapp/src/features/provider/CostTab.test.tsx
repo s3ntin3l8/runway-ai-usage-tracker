@@ -202,6 +202,9 @@ describe('CostTab', () => {
     // Spend tile is month-scoped; EOM/burn are not applicable.
     expect(await screen.findByText(/^Cost ·/)).toBeInTheDocument();
     expect((await screen.findAllByText('current month only')).length).toBeGreaterThan(0);
+    // The placeholder keeps the same label as its live-month twin, so the
+    // same tile is not called two things on two screens.
+    expect(screen.getByText('Cost per day (7d)')).toBeInTheDocument();
     // Past month reads the tz-correct month-scoped cumulative bucket.
     await waitFor(() =>
       expect(api.fetchCumulative).toHaveBeenCalledWith(

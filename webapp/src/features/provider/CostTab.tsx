@@ -115,7 +115,7 @@ export function CostTab({
           hint: 'current month only',
         },
         {
-          label: 'Daily cost (7d)',
+          label: `${moneyLabel} per day (7d)`,
           value: '—',
           hint: 'current month only',
         },

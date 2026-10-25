@@ -231,6 +231,9 @@ describe('HomePage', () => {
     renderWithProviders(<HomePage />);
     expect(await screen.findByText('Cost (MTD)')).toBeInTheDocument();
     expect(screen.getByText('Projected cost (EOM)')).toBeInTheDocument();
+    // The same wording as the provider page's cost tiles: the accounts here
+    // may mix billing types, so the aggregate label stays neutral.
+    expect(screen.getByText('Cost per day (7d)')).toBeInTheDocument();
   });
 
   it('scopes the home cumulative query to the current month only', async () => {

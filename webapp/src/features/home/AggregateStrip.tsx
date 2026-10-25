@@ -63,7 +63,9 @@ export function AggregateStrip({
       loading: costLoading,
     },
     {
-      label: 'Daily cost (7d)',
+      // The same wording as the provider page's cost tiles, and neutral for
+      // the same reason: the accounts here may mix billing types.
+      label: 'Cost per day (7d)',
       value: formatCost(cost?.daily_burn_avg_7d ?? null),
       loading: costLoading,
     },
