@@ -147,3 +147,29 @@ def test_top_tools_total_ignores_an_unnamed_tool(session):
 
     assert [t["tool"] for t in body["tools"]] == ["Read"]
     assert body["total"] == 1
+
+
+def test_top_projects_reports_the_total_behind_the_cap(session):
+    now = datetime.now(UTC)
+    _event(session, "e1", now, project="alpha", tokens_input=1000)
+    _event(session, "e2", now, project="beta", tokens_input=100)
+    _event(session, "e3", now, project="gamma", tokens_input=10)
+
+    body = _client().get("/api/v1/usage/top-projects?days=1&limit=2").json()
+
+    assert len(body["projects"]) == 2
+    assert body["total"] == 3
+    assert body["limit"] == 2
+
+
+def test_top_sessions_reports_the_total_behind_the_cap(session):
+    now = datetime.now(UTC)
+    _event(session, "e1", now, session_id="s1", tokens_input=1000)
+    _event(session, "e2", now, session_id="s2", tokens_input=100)
+    _event(session, "e3", now, session_id="s3", tokens_input=10)
+
+    body = _client().get("/api/v1/usage/top-sessions?days=1&limit=2").json()
+
+    assert len(body["sessions"]) == 2
+    assert body["total"] == 3
+    assert body["limit"] == 2

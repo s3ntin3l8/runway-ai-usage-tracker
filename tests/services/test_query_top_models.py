@@ -1,4 +1,4 @@
-"""Tests for query_top_models — cross-provider model ranking."""
+"""Tests for rank_top_models — cross-provider model ranking."""
 
 import os
 import tempfile
@@ -8,7 +8,7 @@ import pytest
 from sqlmodel import Session, SQLModel, create_engine
 
 from app.models.db import UsageEvent
-from app.services.queries.top_models import query_top_models, rank_top_models
+from app.services.queries.top_models import rank_top_models
 
 
 @pytest.fixture
@@ -75,7 +75,7 @@ def test_ranks_by_tokens_descending(db_session):
     _add(db_session, event_id="b", provider_id="gemini", model_id="flash", tokens_input=3000)
     _add(db_session, event_id="c", provider_id="chatgpt", model_id="gpt", tokens_input=2000)
 
-    rows = query_top_models(db_session, since=_SINCE, metric="tokens")
+    rows = rank_top_models(db_session, since=_SINCE, metric="tokens").rows
 
     assert [r["model_id"] for r in rows] == ["flash", "gpt", "opus"]
     assert [r["tokens_total"] for r in rows] == [3000, 2000, 1000]
@@ -85,7 +85,7 @@ def test_ranks_by_cost_descending(db_session):
     _add(db_session, event_id="a", provider_id="anthropic", model_id="opus", cost_usd=5.0)
     _add(db_session, event_id="b", provider_id="gemini", model_id="flash", cost_usd=1.0)
 
-    rows = query_top_models(db_session, since=_SINCE, metric="cost")
+    rows = rank_top_models(db_session, since=_SINCE, metric="cost").rows
 
     assert [r["model_id"] for r in rows] == ["opus", "flash"]
 
@@ -96,7 +96,7 @@ def test_collapses_same_model_across_providers(db_session):
     _add(db_session, event_id="a", provider_id="anthropic", model_id="sonnet", tokens_input=100)
     _add(db_session, event_id="b", provider_id="opencode", model_id="sonnet", tokens_input=400)
 
-    rows = query_top_models(db_session, since=_SINCE, metric="tokens")
+    rows = rank_top_models(db_session, since=_SINCE, metric="tokens").rows
 
     assert len(rows) == 1
     assert rows[0]["model_id"] == "sonnet"
@@ -124,10 +124,10 @@ def test_exclude_cache_changes_sort(db_session):
         tokens_output=2_000,
     )
 
-    incl = query_top_models(db_session, since=_SINCE, metric="tokens", exclude_cache=False)
+    incl = rank_top_models(db_session, since=_SINCE, metric="tokens", exclude_cache=False).rows
     assert incl[0]["model_id"] == "cheap"
 
-    excl = query_top_models(db_session, since=_SINCE, metric="tokens", exclude_cache=True)
+    excl = rank_top_models(db_session, since=_SINCE, metric="tokens", exclude_cache=True).rows
     assert excl[0]["model_id"] == "real"
 
 
@@ -151,7 +151,7 @@ def test_same_day_bounds_include_current_day_and_exclude_until(db_session):
         tokens_input=1000,
     )
 
-    rows = query_top_models(db_session, since=since, until=until)
+    rows = rank_top_models(db_session, since=since, until=until).rows
     assert [row["model_id"] for row in rows] == ["sonnet"]
     assert rows[0]["tokens_total"] == 10
 
@@ -176,7 +176,7 @@ def test_excludes_errors_and_null_models_and_respects_range(db_session):
         tokens_input=999,
     )
 
-    rows = query_top_models(db_session, since=_SINCE, metric="tokens")
+    rows = rank_top_models(db_session, since=_SINCE, metric="tokens").rows
 
     assert len(rows) == 1
     assert rows[0]["model_id"] == "opus"
@@ -193,7 +193,7 @@ def test_limit_caps_rows(db_session):
             tokens_input=i + 1,
         )
 
-    rows = query_top_models(db_session, since=_SINCE, metric="tokens", limit=2)
+    rows = rank_top_models(db_session, since=_SINCE, metric="tokens", limit=2).rows
     assert len(rows) == 2
     assert [r["model_id"] for r in rows] == ["model-4", "model-3"]
 
@@ -259,6 +259,6 @@ def test_total_follows_the_sidecar_filter(db_session):
 def test_the_rows_only_wrapper_still_returns_the_rows(db_session):
     _add(db_session, event_id="a", provider_id="anthropic", model_id="opus", tokens_input=100)
 
-    rows = query_top_models(db_session, since=_SINCE, metric="tokens")
+    rows = rank_top_models(db_session, since=_SINCE, metric="tokens").rows
 
     assert [r["model_id"] for r in rows] == ["opus"]

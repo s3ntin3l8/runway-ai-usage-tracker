@@ -40,11 +40,11 @@ from app.services.queries.snapshots import (
     query_windows,
 )
 from app.services.queries.source_apps import query_source_apps
-from app.services.queries.top_hosts import query_top_hosts, rank_top_hosts
-from app.services.queries.top_models import query_top_models, rank_top_models
-from app.services.queries.top_projects import query_projects, query_top_projects, rank_top_projects
-from app.services.queries.top_sessions import query_top_sessions, rank_top_sessions
-from app.services.queries.top_tools import query_top_tools, rank_top_tools
+from app.services.queries.top_hosts import rank_top_hosts
+from app.services.queries.top_models import rank_top_models
+from app.services.queries.top_projects import query_projects, rank_top_projects
+from app.services.queries.top_sessions import rank_top_sessions
+from app.services.queries.top_tools import rank_top_tools
 from app.services.queries.windows import (
     query_window_aggregation,
     query_window_history,
@@ -70,11 +70,6 @@ __all__ = [
     "query_sessions_paginated",
     "query_snapshots",
     "query_source_apps",
-    "query_top_hosts",
-    "query_top_models",
-    "query_top_projects",
-    "query_top_sessions",
-    "query_top_tools",
     "query_window_aggregation",
     "query_window_detail",
     "query_window_history",

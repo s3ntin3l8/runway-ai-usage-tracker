@@ -1,4 +1,4 @@
-"""Tests for query_top_tools — tool-name ranking via json_each over tools_json."""
+"""Tests for rank_top_tools — tool-name ranking via json_each over tools_json."""
 
 import os
 import tempfile
@@ -8,7 +8,7 @@ import pytest
 from sqlmodel import Session, SQLModel, create_engine
 
 from app.models.db import UsageEvent
-from app.services.queries.top_tools import query_top_tools, rank_top_tools
+from app.services.queries.top_tools import rank_top_tools
 
 
 @pytest.fixture
@@ -49,7 +49,7 @@ def test_counts_tool_invocations_across_events(db_session):
     _add(db_session, event_id="e2", tools_json='["Bash", "Bash"]')  # 2 Bash calls in one msg
     _add(db_session, event_id="e3", tools_json='["Read"]')
 
-    rows = query_top_tools(db_session, since=_SINCE)
+    rows = rank_top_tools(db_session, since=_SINCE).rows
     by_tool = {r["tool"]: r for r in rows}
 
     assert by_tool["Bash"]["calls"] == 3
@@ -65,7 +65,7 @@ def test_ignores_null_and_out_of_range_and_errors(db_session):
     _add(db_session, event_id="old", tools_json='["Write"]', ts=_NOW - timedelta(days=10))
     _add(db_session, event_id="err", tools_json='["Write"]', kind="error")
 
-    rows = query_top_tools(db_session, since=_SINCE)
+    rows = rank_top_tools(db_session, since=_SINCE).rows
     assert len(rows) == 1
     assert rows[0]["tool"] == "Write"
     assert rows[0]["calls"] == 1
@@ -73,7 +73,7 @@ def test_ignores_null_and_out_of_range_and_errors(db_session):
 
 def test_limit_caps_rows(db_session):
     _add(db_session, event_id="e", tools_json='["A", "A", "A", "B", "B", "C"]')
-    rows = query_top_tools(db_session, since=_SINCE, limit=2)
+    rows = rank_top_tools(db_session, since=_SINCE, limit=2).rows
     assert [r["tool"] for r in rows] == ["A", "B"]
 
 
@@ -88,7 +88,7 @@ def test_same_day_bounds_include_current_day_and_exclude_until(db_session):
     )
     _add(db_session, event_id="at-until", tools_json='["Write"]', ts=until)
 
-    rows = query_top_tools(db_session, since=since, until=until)
+    rows = rank_top_tools(db_session, since=since, until=until).rows
     assert rows == [{"tool": "Read", "calls": 1, "msgs": 1}]
 
 
@@ -130,6 +130,22 @@ def test_total_ignores_an_unnamed_tool(db_session):
 
 def test_total_ignores_a_null_tool_name(db_session):
     _add(db_session, event_id="e", tools_json='["Read", null]')
+
+    ranked = rank_top_tools(db_session, since=_SINCE)
+
+    assert [r["tool"] for r in ranked.rows] == ["Read"]
+    assert ranked.total == 1
+
+
+def test_total_ignores_a_tool_name_that_is_not_a_string(db_session):
+    """A JSON false is not a tool name — and it must not inflate the total.
+
+    ``json_each`` hands a JSON false back as the integer 0, which is not
+    equal to '' and so passes a plain inequality. Without the type check it
+    would be counted by the window function and then dropped from the rows,
+    and the total would exceed the rows.
+    """
+    _add(db_session, event_id="e", tools_json='["Read", false]')
 
     ranked = rank_top_tools(db_session, since=_SINCE)
 

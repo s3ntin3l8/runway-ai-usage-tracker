@@ -1,4 +1,4 @@
-"""Tests for query_top_hosts — cross-provider host ranking."""
+"""Tests for rank_top_hosts — cross-provider host ranking."""
 
 import os
 import tempfile
@@ -8,7 +8,7 @@ import pytest
 from sqlmodel import Session, SQLModel, create_engine
 
 from app.models.db import UsageEvent
-from app.services.queries.top_hosts import query_top_hosts, rank_top_hosts
+from app.services.queries.top_hosts import rank_top_hosts
 
 
 @pytest.fixture
@@ -68,7 +68,7 @@ def test_ranks_hosts_by_tokens(db_session):
     _add(db_session, event_id="b", sidecar_id="host-b", tokens_input=400)
     _add(db_session, event_id="c", sidecar_id="host-b", tokens_input=200)
 
-    rows = query_top_hosts(db_session, since=_SINCE, metric="tokens")
+    rows = rank_top_hosts(db_session, since=_SINCE, metric="tokens").rows
 
     assert [r["sidecar_id"] for r in rows] == ["host-b", "host-a"]
     assert rows[0]["tokens_total"] == 600
@@ -78,7 +78,7 @@ def test_excludes_an_empty_sidecar_id(db_session):
     _add(db_session, event_id="a", sidecar_id="host-a", tokens_input=100)
     _add(db_session, event_id="b", sidecar_id="", tokens_input=999)
 
-    rows = query_top_hosts(db_session, since=_SINCE, metric="tokens")
+    rows = rank_top_hosts(db_session, since=_SINCE, metric="tokens").rows
     assert [r["sidecar_id"] for r in rows] == ["host-a"]
 
 
@@ -87,7 +87,7 @@ def test_counts_the_distinct_sessions_on_a_host(db_session):
     _add(db_session, event_id="b", sidecar_id="host-a", session_id="s2")
     _add(db_session, event_id="c", sidecar_id="host-a", session_id="s1")
 
-    row = query_top_hosts(db_session, since=_SINCE, metric="tokens")[0]
+    row = rank_top_hosts(db_session, since=_SINCE, metric="tokens").rows[0]
     assert row["sessions"] == 2
 
 
@@ -95,7 +95,7 @@ def test_collapses_providers_and_reports_them(db_session):
     _add(db_session, event_id="a", provider_id="anthropic", sidecar_id="host-a")
     _add(db_session, event_id="b", provider_id="gemini", sidecar_id="host-a")
 
-    row = query_top_hosts(db_session, since=_SINCE, metric="tokens")[0]
+    row = rank_top_hosts(db_session, since=_SINCE, metric="tokens").rows[0]
     assert sorted(row["providers"]) == ["anthropic", "gemini"]
 
 
@@ -103,7 +103,7 @@ def test_provider_filter_scopes_ranking(db_session):
     _add(db_session, event_id="a", provider_id="anthropic", sidecar_id="host-a", tokens_input=100)
     _add(db_session, event_id="b", provider_id="gemini", sidecar_id="host-b", tokens_input=400)
 
-    rows = query_top_hosts(db_session, since=_SINCE, metric="tokens", provider_id="anthropic")
+    rows = rank_top_hosts(db_session, since=_SINCE, metric="tokens", provider_id="anthropic").rows
     assert [r["sidecar_id"] for r in rows] == ["host-a"]
 
 
@@ -111,7 +111,7 @@ def test_sidecar_filter_scopes_ranking(db_session):
     _add(db_session, event_id="a", sidecar_id="host-a", tokens_input=100)
     _add(db_session, event_id="b", sidecar_id="host-b", tokens_input=400)
 
-    rows = query_top_hosts(db_session, since=_SINCE, metric="tokens", sidecar_id="host-b")
+    rows = rank_top_hosts(db_session, since=_SINCE, metric="tokens", sidecar_id="host-b").rows
     assert [r["sidecar_id"] for r in rows] == ["host-b"]
 
 
@@ -119,9 +119,9 @@ def test_cost_metric_with_exclude_cache(db_session):
     _add(db_session, event_id="cheap", sidecar_id="host-cheap", cost_usd=10.0, cost_cache_read=9.5)
     _add(db_session, event_id="real", sidecar_id="host-real", cost_usd=5.0, cost_cache_read=0.0)
 
-    incl = query_top_hosts(db_session, since=_SINCE, metric="cost", exclude_cache=False)
+    incl = rank_top_hosts(db_session, since=_SINCE, metric="cost", exclude_cache=False).rows
     assert incl[0]["sidecar_id"] == "host-cheap"
-    excl = query_top_hosts(db_session, since=_SINCE, metric="cost", exclude_cache=True)
+    excl = rank_top_hosts(db_session, since=_SINCE, metric="cost", exclude_cache=True).rows
     assert excl[0]["sidecar_id"] == "host-real"
 
 
@@ -144,7 +144,7 @@ def test_same_day_bounds_filter_the_ranking(db_session):
     )
     _add(db_session, event_id="at-until", sidecar_id="host-at-until", ts=until, tokens_input=1000)
 
-    rows = query_top_hosts(db_session, since=since, until=until, metric="tokens")
+    rows = rank_top_hosts(db_session, since=since, until=until, metric="tokens").rows
     assert [r["sidecar_id"] for r in rows] == ["host-inside"]
 
 
@@ -164,7 +164,7 @@ def test_reports_the_first_and_last_event_of_the_host(db_session):
         tokens_input=1,
     )
 
-    row = query_top_hosts(db_session, since=_SINCE, metric="tokens")[0]
+    row = rank_top_hosts(db_session, since=_SINCE, metric="tokens").rows[0]
     assert row["ts_start"] == "2026-05-21T10:00:00+00:00"
     assert row["ts_end"] == "2026-05-21T12:00:00+00:00"
 
@@ -173,7 +173,7 @@ def test_limit_caps_the_ranking(db_session):
     for index in range(5):
         _add(db_session, event_id=f"e{index}", sidecar_id=f"host-{index}", tokens_input=index + 1)
 
-    rows = query_top_hosts(db_session, since=_SINCE, metric="tokens", limit=2)
+    rows = rank_top_hosts(db_session, since=_SINCE, metric="tokens", limit=2).rows
     assert len(rows) == 2
     assert rows[0]["sidecar_id"] == "host-4"
 
@@ -188,7 +188,7 @@ def test_the_message_count_counts_turns(db_session):
             tokens_input=100,
             turn_id="turn_1",
         )
-    rows = query_top_hosts(db_session, since=_SINCE, metric="tokens")
+    rows = rank_top_hosts(db_session, since=_SINCE, metric="tokens").rows
     assert rows[0]["msgs"] == 1
 
 

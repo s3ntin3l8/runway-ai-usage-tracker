@@ -160,34 +160,6 @@ def rank_top_projects(
     return RankedRows(rows=results, total=total)
 
 
-def query_top_projects(
-    session: Session,
-    *,
-    since: datetime,
-    until: datetime | None = None,
-    metric: str = "tokens",
-    exclude_cache: bool = False,
-    provider_id: str | None = None,
-    sidecar_id: str | None = None,
-    limit: int = 15,
-) -> list[dict[str, Any]]:
-    """The rows of the project ranking in ``[since, until)``, capped at ``limit``.
-
-    See ``rank_top_projects`` for the ranking itself; this wrapper keeps the
-    older, rows-only signature for the callers that need nothing else.
-    """
-    return rank_top_projects(
-        session,
-        since=since,
-        until=until,
-        metric=metric,
-        exclude_cache=exclude_cache,
-        provider_id=provider_id,
-        sidecar_id=sidecar_id,
-        limit=limit,
-    ).rows
-
-
 def query_projects(
     session: Session,
     *,

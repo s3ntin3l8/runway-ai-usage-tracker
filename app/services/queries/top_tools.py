@@ -52,11 +52,14 @@ def rank_top_tools(
         JOIN json_each(e.tools_json) j
         WHERE e.kind = 'message'
           AND e.tools_json IS NOT NULL
-          -- An unnamed tool is not a tool. The SQL drops it as well as the
-          -- Python filter below, so the ranked group set and the returned
-          -- rows are the same set and the total counts exactly the tools
-          -- that were ranked. A JSON null value fails this comparison too,
-          -- which covers both.
+          -- An unnamed tool is not a tool, and a tool name that is not a
+          -- string is not a name. This predicate is the ONLY filter: a
+          -- second one in Python would drop rows the count had already
+          -- included, and the total would then exceed the rows. `json_each`
+          -- hands back a JSON false as the integer 0, which is not equal to
+          -- '' and so would pass a plain inequality — hence the type check.
+          -- A JSON null fails both.
+          AND typeof(j.value) = 'text'
           AND j.value != ''
           AND e.ts >= :since
           {until_clause}
@@ -77,36 +80,12 @@ def rank_top_tools(
         params["sidecar_id"] = sidecar_id
 
     rows = session.exec(sql, params=params).all()  # type: ignore[call-overload]
+    # The SQL filter is the only filter, so every row here is a ranked group
+    # and the count below covers exactly these rows.
     results = [
-        {"tool": row.tool, "calls": int(row.calls or 0), "msgs": int(row.msgs or 0)}
-        for row in rows
-        if row.tool
+        {"tool": row.tool, "calls": int(row.calls or 0), "msgs": int(row.msgs or 0)} for row in rows
     ]
     # The count rides on every row of the ranking; an empty ranking had no
     # groups to begin with.
     total = int(rows[0].total_groups) if rows else 0
     return RankedRows(rows=results, total=total)
-
-
-def query_top_tools(
-    session: Session,
-    *,
-    since: datetime,
-    until: datetime | None = None,
-    provider_id: str | None = None,
-    sidecar_id: str | None = None,
-    limit: int = 15,
-) -> list[dict[str, Any]]:
-    """The rows of the tool ranking in ``[since, until)``, capped at ``limit``.
-
-    See ``rank_top_tools`` for the ranking itself; this wrapper keeps the
-    older, rows-only signature for the callers that need nothing else.
-    """
-    return rank_top_tools(
-        session,
-        since=since,
-        until=until,
-        provider_id=provider_id,
-        sidecar_id=sidecar_id,
-        limit=limit,
-    ).rows

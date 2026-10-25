@@ -135,29 +135,3 @@ def rank_top_models(
     # groups to begin with.
     total = int(rows[0].total_groups) if rows else 0
     return RankedRows(rows=results, total=total)
-
-
-def query_top_models(
-    session: Session,
-    *,
-    since: datetime,
-    until: datetime | None = None,
-    metric: str = "tokens",
-    exclude_cache: bool = False,
-    sidecar_id: str | None = None,
-    limit: int = 15,
-) -> list[dict[str, Any]]:
-    """The rows of the model ranking in ``[since, until)``, capped at ``limit``.
-
-    See ``rank_top_models`` for the ranking itself; this wrapper keeps the
-    older, rows-only signature for the callers that need nothing else.
-    """
-    return rank_top_models(
-        session,
-        since=since,
-        until=until,
-        metric=metric,
-        exclude_cache=exclude_cache,
-        sidecar_id=sidecar_id,
-        limit=limit,
-    ).rows
