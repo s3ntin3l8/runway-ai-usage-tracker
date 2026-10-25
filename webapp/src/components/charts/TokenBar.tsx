@@ -19,6 +19,7 @@ import { CACHE_KEYS, SLICES } from './tokenSlices';
 import { segmentColorVar } from './segmentColors';
 import { formatTokens } from '@/lib/format';
 import { cn } from '@/lib/cn';
+import { SegmentLegend } from './SegmentLegend';
 
 export function TokenBar({
   tokens,
@@ -64,14 +65,14 @@ export function TokenBar({
         ))}
       </div>
       {showLegend ? (
-        <div className="flex flex-wrap gap-x-3 gap-y-1">
-          {segments.map((d) => (
-            <span key={d.key} className="flex items-center gap-1 text-[10px] text-fg-subtle">
-              <span className="size-2 rounded-full" style={{ background: d.color }} />
-              {d.label} {formatTokens(d.value)}
-            </span>
-          ))}
-        </div>
+        <SegmentLegend
+          segments={segments.map((d) => ({
+            key: d.key,
+            label: d.label,
+            color: d.color,
+            value: formatTokens(d.value),
+          }))}
+        />
       ) : null}
     </div>
   );

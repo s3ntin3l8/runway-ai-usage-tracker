@@ -50,11 +50,16 @@ function sessionRow(
   const label = s.project || shortSessionId(s.session_id);
 
   if (metric === 'cost') {
+    const segments = costSegments(s, series, excludeCache);
     return {
       label,
-      value: costTotal(s, excludeCache),
+      // The bar is the sum of the segments it draws, so the bar can never
+      // contradict them; the backend's authoritative total is disclosed
+      // beside it when the two differ.
+      value: segments.reduce((sum, seg) => sum + seg.value, 0),
+      reportedValue: costTotal(s, excludeCache),
       sub,
-      segments: costSegments(s, series, excludeCache),
+      segments,
     };
   }
   return {

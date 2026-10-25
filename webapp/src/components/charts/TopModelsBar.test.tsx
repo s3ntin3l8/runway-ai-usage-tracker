@@ -254,4 +254,75 @@ describe('TopModelsBar', () => {
     expect(getByText('Input: 10K')).toBeInTheDocument();
     expect(getByText('Output: 5K')).toBeInTheDocument();
   });
+
+  it('renders through the shared RankBar, legend and tooltip included', () => {
+    render(<TopModelsBar models={[mockModel]} metric="tokens" />, { wrapper });
+    // The legend is RankBar's, not a second copy of it.
+    const legend = captured.option!.legend as { bottom: number; icon: string };
+    expect(legend.icon).toBe('square');
+    expect(legend.bottom).toBe(0);
+    // ...and so is the tooltip: it names the row, the segments, the total
+    // and the providers.
+    const tooltip = captured.option!.tooltip as {
+      formatter: (params: { seriesName: string; value: number; dataIndex: number }[]) => string;
+    };
+    const result = tooltip.formatter([
+      { seriesName: 'Input', value: 10000, dataIndex: 0 },
+      { seriesName: 'Output', value: 5000, dataIndex: 0 },
+    ]);
+    expect(result).toContain('<b>claude-sonnet</b>');
+    expect(result).toContain('Input: 10K');
+    expect(result).toContain('Output: 5K');
+    expect(result).toContain('Total: 15K');
+    expect(result).toContain('via anthropic');
+  });
+
+  it('discloses the backend cost total when it differs from the drawn segments', () => {
+    const model: TopModelEntry = {
+      ...mockModel,
+      // The provider reports its own total; the components add up to less.
+      cost_usd: 0.20,
+      cost_input: 0.10,
+      cost_output: 0.05,
+    };
+    render(<TopModelsBar models={[model]} metric="cost" />, { wrapper });
+    const tooltip = captured.option!.tooltip as {
+      formatter: (params: { seriesName: string; value: number; dataIndex: number }[]) => string;
+    };
+    const result = tooltip.formatter([
+      { seriesName: 'Input', value: 0.10, dataIndex: 0 },
+      { seriesName: 'Output', value: 0.05, dataIndex: 0 },
+    ]);
+    // The bar draws $0.15; the backend says $0.20. Both numbers are shown.
+    expect(result).toContain('Total: $0.15');
+    expect(result).toContain('Reported: $0.20');
+  });
+
+  it('prints only the total when the backend cost total matches the drawn segments', () => {
+    render(<TopModelsBar models={[mockModel]} metric="cost" />, { wrapper });
+    const tooltip = captured.option!.tooltip as {
+      formatter: (params: { seriesName: string; value: number; dataIndex: number }[]) => string;
+    };
+    const result = tooltip.formatter([
+      { seriesName: 'Input', value: 0.10, dataIndex: 0 },
+      { seriesName: 'Output', value: 0.05, dataIndex: 0 },
+    ]);
+    expect(result).toContain('Total: $0.15');
+    expect(result).not.toContain('Reported');
+  });
+
+  it('does not disclose a reported total for the tokens metric', () => {
+    render(<TopModelsBar models={[mockModel]} metric="tokens" />, { wrapper });
+    const tooltip = captured.option!.tooltip as {
+      formatter: (params: { seriesName: string; value: number; dataIndex: number }[]) => string;
+    };
+    const result = tooltip.formatter([{ seriesName: 'Input', value: 10000, dataIndex: 0 }]);
+    expect(result).toContain('Total: 15K');
+    expect(result).not.toContain('Reported');
+  });
+
+  it('keeps the metric-specific caption on the text alternative', () => {
+    const { getByText } = render(<TopModelsBar models={[mockModel]} metric="cost" />, { wrapper });
+    expect(getByText('Top models by cost')).toBeInTheDocument();
+  });
 });

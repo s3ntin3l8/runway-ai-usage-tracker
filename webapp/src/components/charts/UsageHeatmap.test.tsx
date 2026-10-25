@@ -1,4 +1,4 @@
-import { render } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { ThemeProvider } from '@/hooks/useTheme';
 import type { HeatmapCell } from '@/api/types';
@@ -170,5 +170,11 @@ describe('UsageHeatmap', () => {
     installMatchMedia(false);
     render(<UsageHeatmap cells={[]} className="h-52" />, { wrapper });
     expect(captured.className).toBe('h-52');
+  });
+
+  it('says what the colour ramp encodes', () => {
+    // The scale bar showed numbers that said nothing about what they scaled.
+    render(<UsageHeatmap cells={[]} />, { wrapper });
+    expect(screen.getByText(/shade shows token volume/i)).toBeInTheDocument();
   });
 });

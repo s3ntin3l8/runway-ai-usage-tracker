@@ -5,14 +5,31 @@ import { WindowDetailSheet } from './WindowDetailSheet';
 import * as api from '@/api/endpoints';
 
 vi.mock('@/api/endpoints');
+let lastOption: Record<string, unknown> | null = null;
 vi.mock('@/components/charts/EChart', () => ({
-  EChart: () => <div data-testid="echart" />,
+  EChart: ({ option }: { option: Record<string, unknown> }) => {
+    lastOption = option;
+    return <div data-testid="echart" />;
+  },
 }));
-vi.mock('@/components/charts/theme', () => ({
-  useChartTokens: () => ({ series: ['#a', '#b'], accent: '#0af', fgMuted: '#888', axis: '#555' }),
-  baseTooltip: () => ({}),
-  baseAxisStyle: () => ({}),
-}));
+vi.mock('@/components/charts/theme', async () => {
+  // The real cap helpers stay: the test asserts on the cap itself, not on a
+  // copy of it. Only the tokens and the option fragments are stubbed.
+  const actual = await vi.importActual<typeof import('@/components/charts/theme')>(
+    '@/components/charts/theme',
+  );
+  return {
+    ...actual,
+    useChartTokens: () => ({
+      series: ['#a', '#b', '#c', '#d', '#e', '#f'],
+      accent: '#0af',
+      fgMuted: '#888',
+      axis: '#555',
+    }),
+    baseTooltip: () => ({}),
+    baseAxisStyle: () => ({}),
+  };
+});
 
 const row = (o: Partial<HistoryWindowRow> = {}): HistoryWindowRow => ({
   provider_id: 'claude',
@@ -114,5 +131,27 @@ describe('WindowDetailSheet', () => {
     renderWithProviders(<WindowDetailSheet row={row()} onClose={vi.fn()} />);
     await screen.findByText(/Per-model breakdown/);
     expect(screen.getByText('claude-opus')).toBeInTheDocument();
+  });
+
+  it('caps the model lines at the palette size and aggregates the rest', async () => {
+    // Eight models: the palette has six colours, so the last two share one
+    // "Other (2)" line.
+    vi.mocked(api.fetchHistoryWindowDetail).mockResolvedValue({
+      fill_series: [{ ts: '2026-06-02T00:00:00Z', pct_used: 30 }],
+      fill_by_model: Array.from({ length: 8 }, (_, i) => ({
+        model_id: `m${i + 1}`,
+        series: [{ ts: '2026-06-02T00:00:00Z', pct_used: 10 }],
+      })),
+      by_model: [],
+    });
+    renderWithProviders(<WindowDetailSheet row={row()} onClose={vi.fn()} />);
+    await screen.findByTestId('echart');
+    const series = (lastOption as { series: { name: string; data: number[][] }[] }).series;
+    // The total line, six model lines, and one aggregate.
+    expect(series).toHaveLength(8);
+    expect(series.slice(1, 7).map((s) => s.name)).toEqual(['m1', 'm2', 'm3', 'm4', 'm5', 'm6']);
+    expect(series[7].name).toBe('Other (2)');
+    // The aggregate sums the models it stands for, per time point.
+    expect(series[7].data).toEqual([[Date.parse('2026-06-02T00:00:00Z'), 20]]);
   });
 });

@@ -4,7 +4,13 @@
 import { useMemo } from 'react';
 import type { HistoryChartResponse } from '@/api/types';
 import { EChart } from '@/components/charts/EChart';
-import { baseAxisStyle, baseTooltip, useChartTokens } from '@/components/charts/theme';
+import {
+  baseAxisStyle,
+  baseTooltip,
+  otherSeriesLabel,
+  splitChartSeries,
+  useChartTokens,
+} from '@/components/charts/theme';
 import { formatAxisCost, formatCost, formatTokens } from '@/lib/format';
 import { formatLocalDateTime } from '@/lib/tz';
 import type { Metric } from './queries';
@@ -24,16 +30,28 @@ export function HistoryChart({
 }) {
   const t = useChartTokens();
 
+  // The palette has six colours, so the series are capped instead of wrapping
+  // the palette (which gave the seventh series the first series' colour). The
+  // bar mode aggregates the overflow into one "Other" segment; the percent
+  // mode keeps the first six curves and says how many it left out.
+  const percentCap = useMemo(() => splitChartSeries(data.series ?? []), [data]);
+  const barCap = useMemo(() => {
+    const labels = Array.from(
+      new Set((data.bars ?? []).flatMap((b) => b.segments.map((s) => s.label))),
+    );
+    return splitChartSeries(labels);
+  }, [data]);
+
   const option = useMemo(() => {
     if (metric === 'percent') {
-      const series = (data.series ?? []).map((s, i) => ({
+      const series = percentCap.kept.map((s, i) => ({
         name: s.label,
         type: 'line' as const,
         showSymbol: false,
         connectNulls: false,
         data: s.points.map((p) => [Date.parse(p.ts), p.pct_used]),
-        lineStyle: { width: 1.5, color: t.series[i % t.series.length] },
-        itemStyle: { color: t.series[i % t.series.length] },
+        lineStyle: { width: 1.5, color: t.series[i] },
+        itemStyle: { color: t.series[i] },
       }));
       return {
         tooltip: {
@@ -67,25 +85,52 @@ export function HistoryChart({
 
     // tokens / cost: stacked buckets per label
     const bars = data.bars ?? [];
-    const labels = Array.from(new Set(bars.flatMap((b) => b.segments.map((s) => s.label))));
     const categories = bars.map((b) => b.ts);
     const dropCache = excludeCache && (metric === 'tokens' || metric === 'cost');
-    const series = labels.map((label, i) => ({
+    // One segment's value for a bucket, cache-aware: excluding the cache drops
+    // the segment's cache portion, exactly as the drawn segments do.
+    //
+    // A bucket with no such segment is MISSING, not zero. Returning 0 would
+    // draw a zero-height bar and the tooltip would read "$0.00" — which
+    // says the bucket cost nothing rather than that it is not there. `null`
+    // leaves the stack alone and the tooltip says "—".
+    const segmentValue = (
+      label: string,
+      bar: (typeof bars)[number],
+    ): number | null => {
+      const seg = bar.segments.find((s) => s.label === label);
+      if (!seg) return null;
+      return dropCache ? seg.value - (seg.value_cache ?? 0) : seg.value;
+    };
+    const series = barCap.kept.map((label, i) => ({
       name: label,
       type: 'bar' as const,
       stack: 'total',
       barMaxWidth: 18,
-      itemStyle: { color: t.series[i % t.series.length], borderRadius: [0, 0, 0, 0] },
-      data: bars.map((b) => {
-        const seg = b.segments.find((s) => s.label === label);
-        // A bucket with no such segment is MISSING, not zero. Returning 0
-        // would draw a zero-height bar and the tooltip would read "$0.00" —
-        // which says the bucket cost nothing rather than that it is not
-        // there. `null` leaves the stack alone and the tooltip says "—".
-        if (!seg) return null;
-        return dropCache ? seg.value - (seg.value_cache ?? 0) : seg.value;
-      }),
+      itemStyle: { color: t.series[i], borderRadius: [0, 0, 0, 0] },
+      data: bars.map((b) => segmentValue(label, b)),
     }));
+    if (barCap.overflow.length > 0) {
+      // The labels past the palette size share one segment: it sums their
+      // values per bucket, cache exclusion included, and the legend says how
+      // many series it stands for.
+      series.push({
+        name: otherSeriesLabel(barCap.hiddenCount),
+        type: 'bar' as const,
+        stack: 'total',
+        barMaxWidth: 18,
+        // Grey, not a seventh categorical colour: this is the remainder.
+        itemStyle: { color: t.fgMuted, borderRadius: [0, 0, 0, 0] },
+        data: bars.map((b) => {
+          const values = barCap.overflow
+            .map((label) => segmentValue(label, b))
+            .filter((value): value is number => value !== null);
+          // No overflow model in this bucket: the remainder is missing here,
+          // not zero.
+          return values.length === 0 ? null : values.reduce((sum, value) => sum + value, 0);
+        }),
+      });
+    }
     return {
       tooltip: {
         trigger: 'axis' as const,
@@ -131,7 +176,20 @@ export function HistoryChart({
       },
       series,
     };
-  }, [data, metric, t, excludeCache]);
+  }, [data, metric, t, excludeCache, percentCap, barCap]);
 
-  return <EChart option={option} className={className} />;
+  // The percent mode cannot aggregate: a fill curve is a percentage of a
+  // limit, and summing several of them into one curve would draw a shape
+  // that no series has. It caps instead, and says how many series are out of
+  // the picture. The bar mode aggregates, and its legend carries the count.
+  const hiddenSeries = metric === 'percent' ? percentCap.hiddenCount : 0;
+
+  return (
+    <>
+      <EChart option={option} className={className} />
+      {hiddenSeries > 0 ? (
+        <p className="mt-1 text-[11px] text-fg-subtle">+{hiddenSeries} more series not shown</p>
+      ) : null}
+    </>
+  );
 }

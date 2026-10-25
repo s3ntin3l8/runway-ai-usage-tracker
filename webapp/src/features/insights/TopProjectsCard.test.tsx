@@ -6,10 +6,14 @@ import { TopProjectsCard } from './TopProjectsCard';
 import * as api from '@/api/endpoints';
 
 vi.mock('@/api/endpoints');
+// The option is captured as an object as well as serialized: JSON drops the
+// tooltip formatter, and the formatter is where the disclosed totals live.
+const captured: { option?: Record<string, unknown> } = {};
 vi.mock('@/components/charts/EChart', () => ({
-  EChart: ({ option }: { option: Record<string, unknown> }) => (
-    <div data-testid="echart" data-option={JSON.stringify(option)} />
-  ),
+  EChart: ({ option }: { option: Record<string, unknown> }) => {
+    captured.option = option;
+    return <div data-testid="echart" data-option={JSON.stringify(option)} />;
+  },
 }));
 vi.mock('@/components/charts/theme', () => ({
   useChartTokens: () => ({
@@ -175,6 +179,63 @@ describe('TopProjectsCard', () => {
     renderWithProviders(<TopProjectsCard range={{ days: 7 }} />);
     expect(screen.queryByTestId('echart')).not.toBeInTheDocument();
     expect(document.querySelector('.shimmer-bg')).toBeInTheDocument();
+  });
+
+  it('gives a segment the same colour in the token and the cost breakdown', async () => {
+    renderWithProviders(<TopProjectsCard range={{ days: 7 }} />);
+    await waitFor(() => expect(screen.getByTestId('echart')).toBeInTheDocument());
+    const tokenOption = capturedOption();
+    const tokenCacheRead = (
+      tokenOption.series as { name: string; itemStyle?: { color: string } }[]
+    ).find((s) => s.name === 'Cache read');
+
+    const metricGroup = screen.getByRole('group', { name: 'Top projects metric' });
+    await userEvent.click(within(metricGroup).getByRole('radio', { name: 'Cost' }));
+    await waitFor(() => {
+      const costOption = capturedOption();
+      const costCacheRead = (
+        costOption.series as { name: string; itemStyle?: { color: string } }[]
+      ).find((s) => s.name === 'Cache read');
+      expect(costCacheRead?.itemStyle?.color).toBeTruthy();
+      // "Cache read" is the same segment in both breakdowns, so it is the
+      // same colour in both.
+      expect(costCacheRead?.itemStyle?.color).toBe(tokenCacheRead?.itemStyle?.color);
+    });
+  });
+
+  it('discloses the backend cost total when it differs from the drawn segments', async () => {
+    vi.mocked(api.fetchTopProjects).mockResolvedValue(
+      // The provider reports its own total; the components add up to less.
+      makeResponse([{ ...mockProject, cost_usd: 0.20 }], 'cost'),
+    );
+    renderWithProviders(<TopProjectsCard range={{ days: 7 }} />);
+    await waitFor(() => expect(screen.getByTestId('echart')).toBeInTheDocument());
+    const metricGroup = screen.getByRole('group', { name: 'Top projects metric' });
+    await userEvent.click(within(metricGroup).getByRole('radio', { name: 'Cost' }));
+    await waitFor(() => {
+      const tooltip = captured.option!.tooltip as {
+        formatter: (params: { seriesName: string; value: number; dataIndex: number }[]) => string;
+      };
+      const result = tooltip.formatter([{ seriesName: 'Input', value: 0.1, dataIndex: 0 }]);
+      expect(result).toContain('Total: $0.15');
+      expect(result).toContain('Reported: $0.20');
+    });
+  });
+
+  it('prints only the total when the backend cost total matches the drawn segments', async () => {
+    vi.mocked(api.fetchTopProjects).mockResolvedValue(makeResponse([mockProject], 'cost'));
+    renderWithProviders(<TopProjectsCard range={{ days: 7 }} />);
+    await waitFor(() => expect(screen.getByTestId('echart')).toBeInTheDocument());
+    const metricGroup = screen.getByRole('group', { name: 'Top projects metric' });
+    await userEvent.click(within(metricGroup).getByRole('radio', { name: 'Cost' }));
+    await waitFor(() => {
+      const tooltip = captured.option!.tooltip as {
+        formatter: (params: { seriesName: string; value: number; dataIndex: number }[]) => string;
+      };
+      const result = tooltip.formatter([{ seriesName: 'Input', value: 0.1, dataIndex: 0 }]);
+      expect(result).toContain('Total: $0.15');
+      expect(result).not.toContain('Reported');
+    });
   });
 
   it('shows empty state when no data', async () => {

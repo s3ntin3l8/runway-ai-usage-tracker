@@ -1,9 +1,15 @@
 // Drill-down for one quota window: fill-up curve + token breakdown + per-model table.
 
 import { useMemo } from 'react';
-import type { HistoryWindowRow, WindowDetailModelEntry } from '@/api/types';
+import type { ChartSeriesPoint, HistoryWindowRow, WindowDetailModelEntry } from '@/api/types';
 import { EChart } from '@/components/charts/EChart';
-import { baseAxisStyle, baseTooltip, useChartTokens } from '@/components/charts/theme';
+import {
+  baseAxisStyle,
+  baseTooltip,
+  otherSeriesLabel,
+  splitChartSeries,
+  useChartTokens,
+} from '@/components/charts/theme';
 import { ResponsiveDialog } from '@/components/ui/ResponsiveDialog';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/Table';
@@ -37,6 +43,24 @@ export function WindowDetailSheet({
   );
 }
 
+/**
+ * The "Other" line's curve: at every time point it sums the models it
+ * stands for. A model with no reading at a time point contributes nothing
+ * there, and a time point no model reported on is left out of the line.
+ */
+function sumFillSeries(
+  models: { model_id: string; series: ChartSeriesPoint[] }[],
+): [number, number][] {
+  const byTs = new Map<string, number>();
+  for (const m of models) {
+    for (const p of m.series) {
+      if (p.pct_used == null) continue;
+      byTs.set(p.ts, (byTs.get(p.ts) ?? 0) + p.pct_used);
+    }
+  }
+  return Array.from(byTs, ([ts, value]): [number, number] => [Date.parse(ts), value]);
+}
+
 function DetailBody({ row }: { row: HistoryWindowRow }) {
   const detail = useWindowDetail(row);
   const t = useChartTokens();
@@ -44,6 +68,9 @@ function DetailBody({ row }: { row: HistoryWindowRow }) {
   const option = useMemo(() => {
     if (!detail.data) return null;
     const byModel = detail.data.fill_by_model.filter((m) => m.model_id !== '');
+    // The palette has six colours: the model lines past the sixth share one
+    // "Other (N)" line instead of repeating a colour.
+    const { kept, overflow, hiddenCount } = splitChartSeries(byModel);
     const series = [
       {
         name: 'Total',
@@ -54,15 +81,26 @@ function DetailBody({ row }: { row: HistoryWindowRow }) {
         itemStyle: { color: t.accent },
         areaStyle: { color: t.accent, opacity: 0.08 },
       },
-      ...byModel.map((m, i) => ({
+      ...kept.map((m, i) => ({
         name: m.model_id,
         type: 'line' as const,
         showSymbol: false,
         data: m.series.map((p) => [Date.parse(p.ts), p.pct_used]),
-        lineStyle: { width: 1.25, type: 'dashed' as const, color: t.series[i % t.series.length] },
-        itemStyle: { color: t.series[i % t.series.length] },
+        lineStyle: { width: 1.25, type: 'dashed' as const, color: t.series[i] },
+        itemStyle: { color: t.series[i] },
       })),
     ];
+    if (overflow.length > 0) {
+      series.push({
+        name: otherSeriesLabel(hiddenCount),
+        type: 'line' as const,
+        showSymbol: false,
+        data: sumFillSeries(overflow),
+        // Grey, not a seventh categorical colour: this is the remainder.
+        lineStyle: { width: 1.25, type: 'dashed' as const, color: t.fgMuted },
+        itemStyle: { color: t.fgMuted },
+      });
+    }
     return {
       tooltip: {
         trigger: 'axis' as const,

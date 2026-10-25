@@ -19,12 +19,19 @@ vi.mock('@/components/charts/EChart', () => ({
   EChart: () => <div data-testid="echart" />,
 }));
 // useChartTokens reads the theme context; stub the theme bridge so the page
-// renders without a ThemeProvider wrapper.
-vi.mock('@/components/charts/theme', () => ({
-  useChartTokens: () => ({ series: ['#111'], accent: '#0af', fgMuted: '#888', axis: '#555' }),
-  baseTooltip: () => ({}),
-  baseAxisStyle: () => ({}),
-}));
+// renders without a ThemeProvider wrapper. The rest of the module stays real:
+// the chart caps its series with the helpers it exports.
+vi.mock('@/components/charts/theme', async () => {
+  const actual = await vi.importActual<typeof import('@/components/charts/theme')>(
+    '@/components/charts/theme',
+  );
+  return {
+    ...actual,
+    useChartTokens: () => ({ series: ['#111'], accent: '#0af', fgMuted: '#888', axis: '#555' }),
+    baseTooltip: () => ({}),
+    baseAxisStyle: () => ({}),
+  };
+});
 
 const card = (o: Partial<LimitCard> = {}): LimitCard => ({
   service_name: 'Claude',

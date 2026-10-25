@@ -1,6 +1,7 @@
 import { render } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { ThemeProvider } from '@/hooks/useTheme';
+import { formatCost } from '@/lib/format';
 
 const captured: { option?: Record<string, unknown> } = {};
 vi.mock('./EChart', () => ({
@@ -107,15 +108,122 @@ describe('RankBar', () => {
     expect(yAxis.data[1]).toBe('project-a');
   });
 
-  it('label truncation at 10 chars', () => {
+  it('lets ECharts truncate the axis label instead of slicing it in JS', () => {
     const rows: RankRow[] = [
       { label: 'a-very-long-name', value: 10 },
     ];
     render(<RankBar rows={rows} format={format} />, { wrapper });
     const yAxis = captured.option!.yAxis as {
-      axisLabel: { formatter: (v: string) => string };
+      data: string[];
+      axisLabel: {
+        width: number;
+        overflow: string;
+        ellipsis: string;
+        formatter?: (v: string) => string;
+      };
     };
-    expect(yAxis.axisLabel.formatter('a-very-long-name')).toBe('a-very-lon…');
+    // ECharts measures the label and cuts it to the pixel budget itself, so
+    // the label adapts to the chart instead of being cut at a character count.
+    expect(yAxis.axisLabel.overflow).toBe('truncate');
+    expect(yAxis.axisLabel.ellipsis).toBe('…');
+    expect(yAxis.axisLabel.width).toBeGreaterThan(0);
+    // ...and there is no JS slice left that would cut the name mid-word.
+    expect(yAxis.axisLabel.formatter).toBeUndefined();
+    // The label itself reaches the chart (and the tooltip) untruncated.
+    expect(yAxis.data).toEqual(['a-very-long-name']);
+  });
+
+  it('discloses the backend total next to the drawn total when they differ', () => {
+    const rows: RankRow[] = [
+      {
+        label: 'project-a',
+        value: 100,
+        reportedValue: 120,
+        segments: [{ key: 'tokens_input', label: 'Input', color: '#f00', value: 100 }],
+      },
+    ];
+    render(<RankBar rows={rows} format={format} />, { wrapper });
+    const tooltip = captured.option!.tooltip as {
+      formatter: (params: { seriesName: string; value: number; dataIndex: number }[]) => string;
+    };
+    const result = tooltip.formatter([{ seriesName: 'Input', value: 100, dataIndex: 0 }]);
+    // Both numbers are on screen: the drawn segments' sum AND the total the
+    // backend reports.
+    expect(result).toContain('Total: 100');
+    expect(result).toContain('Reported: 120');
+  });
+
+  it('prints only the total when the drawn sum matches the reported total', () => {
+    const rows: RankRow[] = [
+      {
+        label: 'project-a',
+        value: 100,
+        reportedValue: 100,
+        segments: [{ key: 'tokens_input', label: 'Input', color: '#f00', value: 100 }],
+      },
+    ];
+    render(<RankBar rows={rows} format={format} />, { wrapper });
+    const tooltip = captured.option!.tooltip as {
+      formatter: (params: { seriesName: string; value: number; dataIndex: number }[]) => string;
+    };
+    const result = tooltip.formatter([{ seriesName: 'Input', value: 100, dataIndex: 0 }]);
+    expect(result).toContain('Total: 100');
+    expect(result).not.toContain('Reported');
+  });
+
+  it('treats float noise as agreement, not as a disagreement', () => {
+    const rows: RankRow[] = [
+      {
+        label: 'project-a',
+        value: 100,
+        // 0.1 + 0.2 = 0.30000000000000004: the same number, in binary.
+        reportedValue: 100 + 1e-13,
+        segments: [{ key: 'tokens_input', label: 'Input', color: '#f00', value: 100 }],
+      },
+    ];
+    // A formatter that WOULD show the difference, so only the numeric
+    // threshold can hide it.
+    render(<RankBar rows={rows} format={(v) => v.toString()} />, { wrapper });
+    const tooltip = captured.option!.tooltip as {
+      formatter: (params: { seriesName: string; value: number; dataIndex: number }[]) => string;
+    };
+    const result = tooltip.formatter([{ seriesName: 'Input', value: 100, dataIndex: 0 }]);
+    expect(result).not.toContain('Reported');
+  });
+
+  it('hides a difference the formatter renders identically', () => {
+    const rows: RankRow[] = [
+      {
+        label: 'project-a',
+        value: 0.15,
+        // Both render as "$0.15": a fraction of a cent is not a difference
+        // the reader can see, so printing both numbers would only look like
+        // a bug.
+        reportedValue: 0.1504,
+        segments: [{ key: 'cost_input', label: 'Input', color: '#f00', value: 0.15 }],
+      },
+    ];
+    render(<RankBar rows={rows} format={(v) => formatCost(v)} />, { wrapper });
+    const tooltip = captured.option!.tooltip as {
+      formatter: (params: { seriesName: string; value: number; dataIndex: number }[]) => string;
+    };
+    const result = tooltip.formatter([{ seriesName: 'Input', value: 0.15, dataIndex: 0 }]);
+    expect(result).toContain('Total: $0.15');
+    expect(result).not.toContain('Reported');
+  });
+
+  it('carries the disclosed backend total into the text alternative', () => {
+    const rows: RankRow[] = [
+      {
+        label: 'project-a',
+        value: 100,
+        reportedValue: 120,
+        sub: 'via anthropic',
+        segments: [{ key: 'tokens_input', label: 'Input', color: '#f00', value: 100 }],
+      },
+    ];
+    const { getByText } = render(<RankBar rows={rows} format={format} />, { wrapper });
+    expect(getByText(/project-a: 100 \(via anthropic · reported 120\)/)).toBeInTheDocument();
   });
 
   it('tooltip includes sub line when present', () => {
