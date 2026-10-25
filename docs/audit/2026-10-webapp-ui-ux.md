@@ -187,11 +187,11 @@ Tracked as GitHub issues rather than footnotes:
 - [#949 Backend `total` for the rankings](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/949) —
   so the titles can read "Top 12 **of N**"
 - [#950 Mobile and table density](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/950) — overflowing
-  columns, heatmap cells, the settings redirect
+  columns, heatmap cells, the empty settings section list
 - [#951 Chart colour and legend semantics](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/951) — the
   six-colour ceiling, axis truncation, a duplicated rank bar
 - [#952 Terminology and small accessibility gaps](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/952) —
-  deep links, the duplicate provider status, empty column headers, focus rings
+  deep links, the duplicate provider status, focus rings
 - [#953 Playwright UX smoke suite and its CI job](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/953) —
   what axe and the contrast guard cannot catch
 
@@ -202,3 +202,52 @@ The findings themselves:
   "100%"; `HistoryChart` bypassing `formatCost`; a backend `Total:` that can contradict a
   chart's own segments; raw `toLocaleString()` in eight or more places; browser-timezone
   leakage in three dialogs.
+- **Backend `total` for the rankings** — the five top-N rankings are capped, so a card
+  can say "Top 12 hosts" but not "Top 12 of 34". The count is not in the response, and
+  the cap lives in two places: the backend defaults to 15 rows while the frontend asks
+  for 12, so a label built from a frontend constant can drift from what was queried.
+  The response has to carry the untruncated total and the limit applied, and the title
+  has to be derived from them.
+- **Mobile and table density** — a long model id pushes the Sessions column past the
+  viewport because the badge has no `max-w`; the heatmap's cells are about 11px wide at
+  390px because the chart grid and canvas are pinned to a desktop width; one table
+  mixes `1234`, `1,234` and `1.23M` in adjacent columns; the provider tab strip
+  overflows a phone with no scroll affordance; the provider Overview tab stacks about
+  nine panels with no priority signal; and the settings page shows an empty section
+  list on a phone, so there is no way to navigate to a section. The settings page does
+  not redirect below 1024px — the only viewport-conditional redirect fires at 1024px
+  and up, and the section is already in the URL as a nested route, so nothing is
+  dropped. The defect is the layout, not a missing redirect.
+- **Chart colour and legend semantics** — `--chart-1` and `--chart-6` are 1.22:1 similar
+  in the dark theme, and the palette is already exceeded silently: the history charts
+  and the donuts pick colours with a modulo over six, so a seventh series repeats the
+  first. The two themes have different worst pairs by CIELAB ΔE (dark chart-1/chart-6
+  at ΔE 13.9, light chart-1/chart-2 at ΔE 22.7), so one palette cannot be validated
+  once. Axis labels are cut at ten characters mid-word. Two implementations of the
+  same rank bar disagree about what
+  "Total" means — one sums the segments it draws, the other uses the backend's
+  authoritative `cost_usd` — and only one of them discloses the difference. The heatmap
+  ramp is a sequential scale that no legend explains.
+- **Terminology and small accessibility gaps** — the legacy `?period=` deep link works
+  on the provider page but not on History or Insights; the provider status is derived
+  three times from three different windows, so the grid and the rail can disagree about
+  the same provider; a glide-path explanation lives in a `title` attribute on an
+  `aria-hidden` element, so it is hover-only; `aria-label` sits on role-less spans,
+  where it may be ignored; `EmptyState` renders its title as a `<p>`, so it is not
+  navigable; `outline-none` on the focusable tab panel suppresses the global focus
+  ring; the skeletons and the countdown announce nothing, so an async update is silent;
+  the `?tab=` deep link does not scroll the selected tab into view on a phone; and the
+  icon-only dismiss buttons are 22px against a 44px floor.
+- **Playwright UX smoke suite** — the axe guard and the token contrast guard are the
+  two permanent guardrails this audit added, and neither can see what needs a real
+  browser: horizontal overflow at 390px, a control below the touch floor, a focus ring
+  painted outside the viewport, a sticky header covering the content it should sit
+  above. The suite needs its own Playwright config (the existing one pins `testDir` to
+  the security tree), a populated server (the browser test server serves an empty
+  database; the demo instance is the only populated option), and a CI job.
+
+### Resolved since this audit
+
+The chevron-column-header bullet in the terminology backlog was already fixed by the
+audit branch itself — finding P1-28 named the column in both the sessions table and the
+cost table — so it is closed rather than outstanding.
