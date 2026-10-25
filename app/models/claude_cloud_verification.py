@@ -378,3 +378,10 @@ class VerificationReport(_PrivateModel):
 
 class VerificationEmpty(_PrivateModel):
     state: Literal["absent", "cancelled"]
+
+
+class VerificationUnavailable(_PrivateModel):
+    """Allow an admin to cancel an unreadable checkpoint, without decrypting it."""
+
+    state: Literal["unavailable"]
+    job_handle: Handle

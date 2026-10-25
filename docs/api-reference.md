@@ -855,7 +855,7 @@ and retain the consent-generation tombstone.
 ### Resumable Claude cloud verification (operator only)
 
 `POST /api/v1/system/debug/claude-cloud-verification` uses existing admin,
-Host and CSRF protections. Maximum body: 64 KiB, no duplicate keys or unknown
+Host and CSRF protections. Maximum body: 256 KiB, no duplicate keys or unknown
 fields; six actions per minute. GET is inert. This is a separate protocol from
 the existing bounded `/debug/claude-cloud` sample; its v1/v2 behavior is unchanged.
 
@@ -877,7 +877,9 @@ Actions:
   rechecked before returning evidence, without changing an active checkpoint.
   `last_verified_at` is the last
   successful profile check, not a fresh status lookup. No job returns
-  `{"state":"absent"}`.
+  `{"state":"absent"}`. If a checkpoint is unreadable (including an unavailable
+  encryption key), status returns `{"state":"unavailable","job_handle":"…"}`
+  so an admin can explicitly cancel it; status never deletes or replaces it.
 - `{"action":"cancel","job_handle":"…"}` removes the private checkpoint
   between steps and returns `{"state":"cancelled"}`. An active lease returns
   409 rather than claiming cancellation before the bounded step ends.

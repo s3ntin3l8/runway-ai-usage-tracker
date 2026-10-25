@@ -1701,4 +1701,5 @@ export interface ClaudeVerificationReport {
   cloud_contract_verified: false; ready_for_ingestion: false;
   live_acceptance_passed: false; provenance_verified: false;
 }
-export type ClaudeVerificationResponse = ClaudeVerificationReport | { state: 'absent' | 'cancelled' };
+export type ClaudeVerificationResponse = ClaudeVerificationReport | { state: 'absent' | 'cancelled' }
+  | { state: 'unavailable'; job_handle: string };

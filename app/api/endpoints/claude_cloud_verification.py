@@ -21,6 +21,7 @@ from app.models.claude_cloud_verification import (
     VerificationStart,
     VerificationStatus,
     VerificationStep,
+    VerificationUnavailable,
 )
 from app.services.claude_cloud_checkpoints import CheckpointError, CheckpointStore
 from app.services.claude_cloud_probe import ProbeError
@@ -33,7 +34,7 @@ from app.services.claude_cloud_verification import (
 
 
 class VerificationRoute(SanitizedProbeRoute):
-    max_request_bytes = 64 * 1024
+    max_request_bytes = 256 * 1024
 
 
 def checkpoint_store() -> CheckpointStore:
@@ -48,7 +49,8 @@ router = APIRouter(route_class=VerificationRoute)
 
 
 @router.post(
-    "/debug/claude-cloud-verification", response_model=VerificationReport | VerificationEmpty
+    "/debug/claude-cloud-verification",
+    response_model=VerificationReport | VerificationEmpty | VerificationUnavailable,
 )
 @limiter.limit("6/minute")
 async def verification_action(
@@ -70,7 +72,8 @@ async def verification_action(
                 return {"state": "absent"}
             handle = current
         else:
-            assert body.job_handle is not None
+            if body.job_handle is None:
+                raise HTTPException(422, detail="invalid_probe_request")
             handle = body.job_handle
         if isinstance(body, VerificationStep):
             async with httpx.AsyncClient(
@@ -78,7 +81,15 @@ async def verification_action(
             ) as client:
                 state = await advance_verification(handle, store, client)
         else:
-            state = await read_verification(handle, store)
+            try:
+                state = await read_verification(handle, store)
+            except CheckpointError as exc:
+                if isinstance(body, VerificationStatus) and str(exc) in {
+                    "checkpoint_unavailable",
+                    "encryption_required",
+                }:
+                    return VerificationUnavailable(state="unavailable", job_handle=handle)
+                raise
         try:
             return VerificationReport.model_validate(build_verification_report(handle, state))
         except ValueError:
@@ -101,3 +112,5 @@ async def verification_action(
         raise HTTPException(409, detail=category) from None
     except SQLAlchemyError:
         raise HTTPException(503, detail="source_unavailable") from None
+    except ValueError:
+        raise HTTPException(503, detail="invalid_verification_report") from None
