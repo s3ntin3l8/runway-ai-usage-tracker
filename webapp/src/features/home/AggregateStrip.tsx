@@ -1,4 +1,4 @@
-// Aggregate strip: month-to-date usage value, EOM projection, 7-day value, and
+// Aggregate strip: month-to-date cost, EOM projection, 7-day average, and
 // this-month token/message volume. Accounts may mix billing types, so the
 // aggregate label stays neutral.
 
@@ -52,18 +52,18 @@ export function AggregateStrip({
 
   const stats: { label: string; value: string; hint?: string; loading: boolean }[] = [
     {
-      label: 'Usage value (MTD)',
+      label: 'Cost (MTD)',
       value: formatCost(cost?.current_month_to_date ?? null),
       loading: costLoading,
     },
     {
-      label: 'Projected usage value',
+      label: 'Projected cost (EOM)',
       value: formatCost(cost?.projected_eom ?? null),
       hint: cost ? `${cost.days_remaining}d left` : undefined,
       loading: costLoading,
     },
     {
-      label: 'Daily usage value (7d)',
+      label: 'Daily cost (7d)',
       value: formatCost(cost?.daily_burn_avg_7d ?? null),
       loading: costLoading,
     },

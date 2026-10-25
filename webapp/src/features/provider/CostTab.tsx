@@ -62,8 +62,8 @@ export function CostTab({
   const moneyLabel = billingType === 'pay_as_you_go'
     ? 'Cost'
     : billingType === 'unknown'
-      ? 'Usage value'
-      : 'Estimated usage value';
+      ? 'Cost'
+      : 'Estimated cost';
 
   const monthBucket = useMemo<CumulativeBucket | null>(() => {
     const data = cumulative.data;
@@ -100,7 +100,7 @@ export function CostTab({
           value: formatCost(cost.data?.current_month_to_date ?? null),
         },
         {
-          label: billingType === 'pay_as_you_go' ? 'Projected EOM' : 'Projected usage value',
+          label: 'Projected cost (EOM)',
           value: formatCost(cost.data?.projected_eom ?? null),
           hint: cost.data ? `${cost.data.days_remaining}d left` : undefined,
         },
@@ -113,12 +113,12 @@ export function CostTab({
     : [
         { label: `${moneyLabel} · ${scopeLabel}`, value: formatCost(recordedCost(monthBucket)) },
         {
-          label: billingType === 'pay_as_you_go' ? 'Projected EOM' : 'Projected usage value',
+          label: 'Projected cost (EOM)',
           value: '—',
           hint: 'current month only',
         },
         {
-          label: billingType === 'pay_as_you_go' ? 'Daily burn (7d)' : 'Daily usage value (7d)',
+          label: 'Daily cost (7d)',
           value: '—',
           hint: 'current month only',
         },

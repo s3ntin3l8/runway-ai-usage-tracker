@@ -46,18 +46,18 @@ describe('CostTab', () => {
     renderCostTabWithHeaderToggle();
 
     expect(await screen.findByText('Cost (MTD)')).toBeInTheDocument();
-    expect(screen.getByText('Projected EOM')).toBeInTheDocument();
+    expect(screen.getByText('Projected cost (EOM)')).toBeInTheDocument();
     expect(screen.getByText('Cost (lifetime)')).toBeInTheDocument();
     expect(await screen.findByText(/20d left/)).toBeInTheDocument();
   });
 
-  it('labels unknown billing neutrally while preserving the usage value', async () => {
+  it('labels unknown billing neutrally while preserving the cost', async () => {
     renderWithProviders(
       <CostTab providerId="anthropic" accountId="me@example.com" scope={currentPeriod()} />,
     );
 
-    expect(await screen.findByText('Usage value (MTD)')).toBeInTheDocument();
-    expect(screen.getByText('Projected usage value')).toBeInTheDocument();
+    expect(await screen.findByText('Cost (MTD)')).toBeInTheDocument();
+    expect(screen.getByText('Projected cost (EOM)')).toBeInTheDocument();
   });
 
   it('renders the per-model split table with a row', async () => {

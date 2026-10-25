@@ -5,8 +5,8 @@ import type { BillingType } from '@/api/types';
 
 /** The full label of a billing model, as the selects show it. */
 export const BILLING_TYPE_LABELS: Record<BillingType, string> = {
-  unknown: 'Unknown · show usage value',
-  subscription: 'Subscription · show estimated usage value',
+  unknown: 'Unknown · show cost',
+  subscription: 'Subscription · show estimated cost',
   pay_as_you_go: 'Pay as you go · show reported cost when available',
 };
 

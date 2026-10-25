@@ -21,7 +21,7 @@ import { buildSidecarNameMap, useSidecars } from '@/features/fleet/queries';
 import { useExcludeCache } from '@/hooks/useExcludeCache';
 import { formatAxisCost, formatAxisNumber, formatCost, formatTokens } from '@/lib/format';
 import { formatRangeLabel, type DateRangeValue } from '@/lib/timeRange';
-import { type TopMetric, useTopSessions } from './queries';
+import { INSIGHTS_TOP_N, type TopMetric, useTopSessions } from './queries';
 import { costSegments, costTotal, tokenSegments, tokenTotal } from './rankSegments';
 import { CircleAlert } from 'lucide-react';
 
@@ -90,7 +90,7 @@ export function TopSessionsCard({ range }: { range: DateRangeValue }) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Top sessions · {formatRangeLabel(range)}</CardTitle>
+        <CardTitle>Top {INSIGHTS_TOP_N} sessions · {formatRangeLabel(range)}</CardTitle>
         <Tabs value={metric} onValueChange={(v) => setMetric(v as TopMetric)}>
           <TabsList className="border-0" aria-label="Top sessions metric">
             <TabsTrigger value="tokens" className="h-8 px-2.5">

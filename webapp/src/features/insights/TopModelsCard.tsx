@@ -10,7 +10,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/Tabs';
 import { TopModelsBar, type TopMetric } from '@/components/charts/TopModelsBar';
 import { useExcludeCache } from '@/hooks/useExcludeCache';
 import { formatRangeLabel, type DateRangeValue } from '@/lib/timeRange';
-import { useTopModels } from './queries';
+import { INSIGHTS_TOP_N, useTopModels } from './queries';
 import { CircleAlert } from 'lucide-react';
 
 export function TopModelsCard({ range }: { range: DateRangeValue }) {
@@ -22,7 +22,7 @@ export function TopModelsCard({ range }: { range: DateRangeValue }) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Top models · {formatRangeLabel(range)}</CardTitle>
+        <CardTitle>Top {INSIGHTS_TOP_N} models · {formatRangeLabel(range)}</CardTitle>
         <Tabs value={metric} onValueChange={(v) => setMetric(v as TopMetric)}>
           <TabsList className="border-0" aria-label="Top models metric">
             <TabsTrigger value="tokens" className="h-8 px-2.5">

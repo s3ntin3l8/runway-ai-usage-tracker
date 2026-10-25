@@ -57,8 +57,8 @@ export function ProviderKpis({
   const moneyLabel = billingType === 'pay_as_you_go'
     ? 'Spend'
     : billingType === 'unknown'
-      ? 'Usage value'
-      : 'Estimated usage value';
+      ? 'Cost'
+      : 'Estimated cost';
 
   const kind = cardKind(critical);
 
@@ -148,14 +148,14 @@ export function ProviderKpis({
         )}
         {isLiveMonth ? (
           <StatTile
-            label={billingType === 'pay_as_you_go' ? 'Daily burn (7d)' : 'Daily usage value (7d)'}
+            label={'Daily cost (7d)'}
             value={formatCost(cost.data?.daily_burn_avg_7d ?? null)}
             hint={cost.data ? `${cost.data.days_remaining}d left` : undefined}
             loading={cost.isPending}
           />
         ) : (
           projectionPlaceholder(
-            billingType === 'pay_as_you_go' ? 'Daily burn (7d)' : 'Daily usage value (7d)',
+            'Daily cost (7d)',
           )
         )}
         <StatTile
@@ -213,14 +213,14 @@ export function ProviderKpis({
         {hasCost ? (
           isLiveMonth ? (
             <StatTile
-              label={billingType === 'pay_as_you_go' ? 'Daily burn (7d)' : 'Daily usage value (7d)'}
+              label={'Daily cost (7d)'}
               value={formatCost(cost.data?.daily_burn_avg_7d ?? null)}
               hint={cost.data ? `${cost.data.days_remaining}d left` : undefined}
               loading={cost.isPending}
             />
           ) : (
             projectionPlaceholder(
-              billingType === 'pay_as_you_go' ? 'Daily burn (7d)' : 'Daily usage value (7d)',
+              'Daily cost (7d)',
             )
           )
         ) : (
@@ -261,25 +261,25 @@ export function ProviderKpis({
       )}
       {isLiveMonth ? (
         <StatTile
-          label={billingType === 'pay_as_you_go' ? 'Projected EOM' : 'Projected usage value'}
+          label={'Projected cost (EOM)'}
           value={formatCost(cost.data?.projected_eom ?? null)}
           hint={cost.data ? `${cost.data.days_remaining}d left` : undefined}
           loading={cost.isPending}
         />
       ) : (
         projectionPlaceholder(
-          billingType === 'pay_as_you_go' ? 'Projected EOM' : 'Projected usage value',
+          'Projected cost (EOM)',
         )
       )}
       {isLiveMonth ? (
         <StatTile
-          label={billingType === 'pay_as_you_go' ? 'Daily burn (7d)' : 'Daily usage value (7d)'}
+          label={'Daily cost (7d)'}
           value={formatCost(cost.data?.daily_burn_avg_7d ?? null)}
           loading={cost.isPending}
         />
       ) : (
         projectionPlaceholder(
-          billingType === 'pay_as_you_go' ? 'Daily burn (7d)' : 'Daily usage value (7d)',
+          'Daily cost (7d)',
         )
       )}
       <StatTile

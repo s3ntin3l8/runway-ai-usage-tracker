@@ -15,7 +15,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/Tabs';
 import { useExcludeCache } from '@/hooks/useExcludeCache';
 import { formatAxisCost, formatAxisNumber, formatCost, formatTokens } from '@/lib/format';
 import { formatRangeLabel, type DateRangeValue } from '@/lib/timeRange';
-import { type ProjectMetric, useTopProjects } from './queries';
+import { INSIGHTS_TOP_N, type ProjectMetric, useTopProjects } from './queries';
 import { CircleAlert } from 'lucide-react';
 
 const COST_ACCESSORS: Record<string, (p: TopProjectEntry) => number> = {
@@ -101,7 +101,7 @@ const AXIS_FORMAT: Record<ProjectMetric, (v: number) => string> = {
 };
 
 // The shared range value scopes the ranking; `providerId` narrows it to one
-// provider (Activity). `title` overrides the default `Top projects · label`.
+// provider (Activity). `title` overrides the default `Top ${INSIGHTS_TOP_N} projects · label`.
 export function TopProjectsCard({
   range,
   providerId,
@@ -121,7 +121,7 @@ export function TopProjectsCard({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>{title ?? `Top projects · ${formatRangeLabel(range)}`}</CardTitle>
+        <CardTitle>{title ?? `Top ${INSIGHTS_TOP_N} projects · ${formatRangeLabel(range)}`}</CardTitle>
         <Tabs value={metric} onValueChange={(v) => setMetric(v as ProjectMetric)}>
           <TabsList className="border-0" aria-label="Top projects metric">
             <TabsTrigger value="tokens" className="h-8 px-2.5">
