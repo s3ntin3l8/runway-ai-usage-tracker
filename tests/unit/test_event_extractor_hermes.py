@@ -9,7 +9,9 @@ from pathlib import Path
 import pytest
 
 from scripts.sidecar_pkg.event_extractors.hermes import (
+    WATERMARK_PRUNE_IDLE_DAYS,
     _discover_hermes_db_paths,
+    _prune_stale_watermark_slices,
     map_hermes_canonical,
     map_hermes_provider_id,
     parse_hermes_events,
@@ -1053,3 +1055,383 @@ def test_the_default_watermark_path_matches_the_sidecar_config_dir(monkeypatch, 
     )
     monkeypatch.delenv("APPDATA")
     assert_in_step()
+
+
+# ---------------------------------------------------------------------------
+# Watermark Compaction Tests (#926)
+# ---------------------------------------------------------------------------
+
+
+def _set_row_times(db_path: Path, *, last_seen: float) -> None:
+    """Move every usage row's timestamps to ``last_seen``."""
+    conn = sqlite3.connect(str(db_path))
+    conn.execute(
+        "UPDATE session_model_usage SET last_seen = ?, first_seen = ?",
+        (last_seen, last_seen),
+    )
+    conn.commit()
+    conn.close()
+
+
+def _cutoff(seconds: float = 30 * 86400) -> float:
+    """The idle cutoff a prune uses, pinned by the test rather than by the
+    implementation's constant: a test that derives its expectation from
+    ``WATERMARK_PRUNE_IDLE_DAYS`` moves with it and cannot catch a guard that
+    was weakened.
+    """
+    return datetime.now(UTC).timestamp() - seconds
+
+
+def _watermark_keys(state_file: Path) -> list[str]:
+    if not state_file.exists():
+        return []
+    return list(json.loads(state_file.read_text(encoding="utf-8")).keys())
+
+
+def test_prune_drops_the_slices_of_a_vanished_database(tmp_path):
+    """A database that is gone leaves its high-water marks behind for good."""
+    db_path, _ = _make_db(tmp_path)
+    state_file = tmp_path / "hermes_watermark.json"
+
+    try:
+        parse_hermes_events(
+            db_paths=[db_path],
+            account_id="default",
+            since=datetime(2020, 1, 1, tzinfo=UTC),
+            state_file=state_file,
+        )
+        assert len(_watermark_keys(state_file)) == 2
+
+        # The database is deleted: its slices are now dead weight.
+        db_path.unlink()
+        state = json.loads(state_file.read_text(encoding="utf-8"))
+        pruned = _prune_stale_watermark_slices(
+            state, [], account_id="default", idle_cutoff=_cutoff()
+        )
+        assert pruned == 2
+        assert state == {}
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_prune_keeps_a_recently_used_slice_of_a_vanished_database(tmp_path):
+    """The database may only be *temporarily* gone (a backup renamed it aside).
+
+    A session that was active recently keeps its mark, so the sidecar still
+    knows what it already reported when the file comes back.
+    """
+    db_path, _ = _make_db(tmp_path)
+    state_file = tmp_path / "hermes_watermark.json"
+    now = datetime.now(UTC).timestamp()
+
+    try:
+        _set_row_times(db_path, last_seen=now)
+        parse_hermes_events(
+            db_paths=[db_path],
+            account_id="default",
+            since=datetime(2020, 1, 1, tzinfo=UTC),
+            state_file=state_file,
+        )
+        assert len(_watermark_keys(state_file)) == 2
+
+        db_path.unlink()
+        state = json.loads(state_file.read_text(encoding="utf-8"))
+        pruned = _prune_stale_watermark_slices(
+            state, [], account_id="default", idle_cutoff=_cutoff()
+        )
+        assert pruned == 0
+        assert len(state) == 2
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_prune_keeps_the_slices_of_a_live_database(tmp_path):
+    """A database that exists keeps every slice, however old the session is."""
+    db_path, _ = _make_db(tmp_path)
+    state_file = tmp_path / "hermes_watermark.json"
+
+    try:
+        parse_hermes_events(
+            db_paths=[db_path],
+            account_id="default",
+            since=datetime(2020, 1, 1, tzinfo=UTC),
+            state_file=state_file,
+        )
+        state = json.loads(state_file.read_text(encoding="utf-8"))
+        pruned = _prune_stale_watermark_slices(
+            state, [db_path], account_id="default", idle_cutoff=_cutoff()
+        )
+        assert pruned == 0
+        assert len(state) == 2
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_prune_leaves_a_key_it_cannot_parse_alone(tmp_path):
+    """A key we cannot read the path out of is never pruned."""
+    state_file = tmp_path / "hermes_watermark.json"
+    state_file.write_text(
+        json.dumps({"default|not-a-path|default|sess|model|hermes|||": {"last_seen": 0.0}}),
+        encoding="utf-8",
+    )
+
+    state = json.loads(state_file.read_text(encoding="utf-8"))
+    pruned = _prune_stale_watermark_slices(
+        state,
+        [],
+        account_id="default",
+        idle_cutoff=_cutoff(),
+    )
+    assert pruned == 0
+    assert len(state) == 1
+
+
+def test_prune_skips_a_path_that_is_only_the_prefix_of_a_live_path(tmp_path):
+    """A database whose own path contains a ``|`` is cut short by the split.
+
+    The truncated form is not on disk, but it is a prefix of the real path, so
+    pruning it would drop the mark of a database that is right there.
+    """
+    db_path = tmp_path / "pipe|name.db"
+    conn = make_hermes_db(str(db_path))
+    conn.close()
+    state_file = tmp_path / "hermes_watermark.json"
+
+    try:
+        parse_hermes_events(
+            db_paths=[db_path],
+            account_id="default",
+            since=datetime(2020, 1, 1, tzinfo=UTC),
+            state_file=state_file,
+        )
+        keys = _watermark_keys(state_file)
+        assert len(keys) == 2
+        assert any("|" in key.split("|", 2)[1] or "pipe" in key for key in keys)
+
+        # The file is gone, but the discovered path still names it.
+        db_path.unlink()
+        state = json.loads(state_file.read_text(encoding="utf-8"))
+        pruned = _prune_stale_watermark_slices(
+            state, [db_path], account_id="default", idle_cutoff=_cutoff()
+        )
+        assert pruned == 0
+        assert len(state) == 2
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_prune_is_written_out_even_when_the_cycle_emits_nothing(tmp_path):
+    """A cycle that reports nothing can still shrink the file, and it must."""
+    db_path, _ = _make_db(tmp_path)
+    state_file = tmp_path / "hermes_watermark.json"
+
+    try:
+        parse_hermes_events(
+            db_paths=[db_path],
+            account_id="default",
+            since=datetime(2020, 1, 1, tzinfo=UTC),
+            state_file=state_file,
+        )
+        assert len(_watermark_keys(state_file)) == 2
+
+        db_path.unlink()
+        events = parse_hermes_events(
+            db_paths=[],
+            account_id="default",
+            since=datetime(2020, 1, 1, tzinfo=UTC),
+            state_file=state_file,
+        )
+        assert events == []
+        assert _watermark_keys(state_file) == []
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_a_reappearing_database_does_not_double_count(tmp_path):
+    """A database that comes back must report the delta, not its whole life.
+
+    This is the regression test for the idle guard: a prune that dropped the
+    mark of a recently used session would make the sidecar report the
+    session's entire lifetime as new usage, under an event id the server has
+    never seen (the emission counter restarts), and the server would count it
+    twice.
+    """
+    db_path, _ = _make_db(tmp_path)
+    state_file = tmp_path / "hermes_watermark.json"
+    now = datetime.now(UTC).timestamp()
+
+    try:
+        _set_row_times(db_path, last_seen=now)
+        first = parse_hermes_events(
+            db_paths=[db_path],
+            account_id="default",
+            since=datetime(2020, 1, 1, tzinfo=UTC),
+            state_file=state_file,
+        )
+        assert len(first) == 2
+
+        # The file disappears (a backup renamed it aside) and the sidecar
+        # reports nothing while it is gone.
+        db_path.unlink()
+        parse_hermes_events(
+            db_paths=[],
+            account_id="default",
+            since=datetime(2020, 1, 1, tzinfo=UTC),
+            state_file=state_file,
+        )
+        assert len(_watermark_keys(state_file)) == 2
+
+        # It comes back and the session moved on.
+        conn = make_hermes_db(str(db_path))
+        conn.execute(
+            """
+            UPDATE session_model_usage
+            SET input_tokens = input_tokens + 5000,
+                output_tokens = output_tokens + 300,
+                api_call_count = 11,
+                first_seen = ?,
+                last_seen = ?
+            WHERE session_id = 'api-sess-kimi-01'
+            """,
+            (now, now),
+        )
+        conn.commit()
+        conn.close()
+
+        again = parse_hermes_events(
+            db_paths=[db_path],
+            account_id="default",
+            since=datetime(2020, 1, 1, tzinfo=UTC),
+            state_file=state_file,
+        )
+        assert len(again) == 1
+        delta = again[0]
+        assert delta.session_id == "api-sess-kimi-01"
+        # The delta, not the session's whole lifetime (50000 + 5000).
+        assert delta.tokens_input == 5000
+        assert delta.tokens_output == 300
+        # The emission counter continues, so the event id stays one the server
+        # has already seen for this slice.
+        assert delta.event_id.endswith("|c11s2")
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_prune_reads_the_path_of_an_account_id_that_holds_a_pipe(tmp_path):
+    """The account segment is stripped by its exact prefix, not by position.
+
+    An account id may be an opaque string, and one that holds a ``|`` would
+    shift every field after it. Stripping the known prefix keeps the path
+    readable instead of pointing at a fragment of the account id.
+    """
+    db_path, _ = _make_db(tmp_path)
+    state_file = tmp_path / "hermes_watermark.json"
+    account = "operator|tag"
+
+    try:
+        parse_hermes_events(
+            db_paths=[db_path],
+            account_id=account,
+            since=datetime(2020, 1, 1, tzinfo=UTC),
+            state_file=state_file,
+        )
+        keys = _watermark_keys(state_file)
+        assert len(keys) == 2
+        assert all(key.startswith(f"{account}|") for key in keys)
+
+        # The path is read correctly, so the live database keeps its slices.
+        state = json.loads(state_file.read_text(encoding="utf-8"))
+        pruned = _prune_stale_watermark_slices(
+            state, [db_path], account_id=account, idle_cutoff=_cutoff()
+        )
+        assert pruned == 0
+        assert len(state) == 2
+
+        # And once the file is gone, the slices are reclaimed.
+        db_path.unlink()
+        state = json.loads(state_file.read_text(encoding="utf-8"))
+        pruned = _prune_stale_watermark_slices(state, [], account_id=account, idle_cutoff=_cutoff())
+        assert pruned == 2
+        assert state == {}
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_prune_applies_the_documented_idle_window(tmp_path):
+    """The grace window the extractor documents is the one it applies.
+
+    The boundary is checked through the real parse path, so the window the
+    implementation uses is pinned rather than the constant alone.
+    """
+    now = datetime.now(UTC).timestamp()
+    # The literal, not the constant: a test that derives its window from
+    # WATERMARK_PRUNE_IDLE_DAYS moves with it, so dropping the constant to a
+    # day would keep this green while the docs still say 30.
+    assert WATERMARK_PRUNE_IDLE_DAYS == 30
+    window = 30 * 86400
+
+    def _keys_after_prune(idle_seconds: float) -> list[str]:
+        """Write a slice idle for ``idle_seconds``, drop its file, prune."""
+        state_file = tmp_path / f"hermes_watermark_{int(idle_seconds)}.json"
+        db_path, _ = _make_db(tmp_path)
+        try:
+            _set_row_times(db_path, last_seen=now - idle_seconds)
+            parse_hermes_events(
+                db_paths=[db_path],
+                account_id="default",
+                since=datetime(2020, 1, 1, tzinfo=UTC),
+                state_file=state_file,
+            )
+            assert len(_watermark_keys(state_file)) == 2
+            db_path.unlink()
+            parse_hermes_events(
+                db_paths=[],
+                account_id="default",
+                since=datetime(2020, 1, 1, tzinfo=UTC),
+                state_file=state_file,
+            )
+            return _watermark_keys(state_file)
+        finally:
+            db_path.unlink(missing_ok=True)
+
+    # Quiet for less than the window: the mark stays.
+    assert len(_keys_after_prune(window - 3600)) == 2
+    # Quiet for longer than the window: it is reclaimed.
+    assert _keys_after_prune(window + 3600) == []
+
+
+def test_prune_keeps_a_key_whose_timestamp_cannot_be_read(tmp_path):
+    """An unreadable timestamp is kept, and it never fails the collection.
+
+    Every other unreadable thing here is kept rather than guessed; a value
+    that raises while it is read has to be treated the same way, instead of
+    taking the whole Hermes collection down with it.
+    """
+    state_file = tmp_path / "hermes_watermark.json"
+    state_file.write_text(
+        json.dumps(
+            {
+                "default|/tmp/gone-one/state.db|default|sess|model|hermes|||": {
+                    "last_seen": "2026-01-01T00:00:00Z"
+                },
+                "default|/tmp/gone-two/state.db|default|sess|model|hermes|||": {"last_seen": 1.0},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    state = json.loads(state_file.read_text(encoding="utf-8"))
+    pruned = _prune_stale_watermark_slices(state, [], account_id="default", idle_cutoff=_cutoff())
+    # Only the readable, idle one is reclaimed.
+    assert pruned == 1
+    assert len(state) == 1
+
+    # And the same file does not take the collection down.
+    events = parse_hermes_events(
+        db_paths=[],
+        account_id="default",
+        since=datetime(2020, 1, 1, tzinfo=UTC),
+        state_file=state_file,
+    )
+    assert events == []
+    assert len(_watermark_keys(state_file)) == 1

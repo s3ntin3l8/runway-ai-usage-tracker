@@ -280,6 +280,152 @@ def _save_hermes_watermark(path: Path, state: dict[str, Any]) -> None:
         logger.warning("Failed to save Hermes watermark state to %s: %s", path, exc)
 
 
+# A slice's high-water mark is forgotten only after it has been idle this
+# long AND its database file is gone. Both conditions matter:
+#   - "the file is gone" alone would drop the mark of a live database that a
+#     backup tool renamed aside for a second, and Hermes would then report
+#     that session's whole lifetime as new usage.
+#   - "idle for long enough" alone would drop the mark of a live session that
+#     resumes later, with the same result.
+# 30 days is long enough that an active session keeps its mark, and short
+# enough that the watermark does not keep a deleted database's slices forever.
+WATERMARK_PRUNE_IDLE_DAYS = 30
+
+
+def _looks_like_absolute_path(text: str) -> bool:
+    """True when the text could be a database path rather than a key fragment."""
+    if text.startswith("/"):
+        return True
+    # Windows: C:\... or \\server\share
+    if len(text) >= 3 and text[1] == ":" and text[2] in "\\/":
+        return True
+    if text.startswith("\\\\"):
+        return True
+    return False
+
+
+def _state_key_db_path(state_key: str, account_id: str) -> str | None:
+    """Return the database path a watermark key is scoped to, or None.
+
+    The key is ``account_id|db_path|profile|session|model|...``. The account
+    segment is stripped by its exact prefix, which is unambiguous even when
+    the account id itself holds a ``|``. The key of another account falls back
+    to the field position, where a path that does not look absolute is never
+    trusted -- a key we cannot read is a key we must not prune.
+    """
+    prefix = f"{account_id}|"
+    if state_key.startswith(prefix):
+        db_path = state_key[len(prefix) :].split("|", 1)[0]
+        return db_path if _looks_like_absolute_path(db_path) else None
+    parts = state_key.split("|", 2)
+    if len(parts) < 3:
+        return None
+    db_path = parts[1]
+    if not _looks_like_absolute_path(db_path):
+        return None
+    return db_path
+
+
+def _database_path_is_gone(db_path: str) -> bool:
+    """True when the file behind a watermark key's path is really gone.
+
+    ``Path.exists()`` answers False for a path it cannot stat (a permission
+    error, a vanished mount), and "I cannot tell" is not "it is gone": the
+    mark of a database we merely fail to read has to stay.
+    """
+    try:
+        os.stat(db_path)
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    return False
+
+
+def _prune_stale_watermark_slices(
+    watermark_state: dict[str, Any],
+    db_paths: list[Path],
+    *,
+    account_id: str,
+    idle_cutoff: float,
+) -> int:
+    """Forget the high-water marks of a Hermes database that no longer exists.
+
+    The watermark only ever grew. A deleted profile, a test fixture that was
+    unpacked and removed or a folder the user cleaned up left its slices
+    behind forever, and the whole file was rewritten on every cycle that
+    changed anything -- so the bytes written per day grew with a file that
+    never stopped growing. Pruning the slices of a database that is gone
+    reclaims them.
+
+    A slice is forgotten only when **both** hold:
+
+    * its database file no longer exists, and
+    * its ``last_seen`` is older than ``idle_cutoff`` -- the session has been
+      quiet long enough that its row cannot advance unless a writer reappears
+      at a path that was gone.
+
+    The second condition is what keeps this safe. The server deduplicates
+    usage events on the exact ``(provider_id, event_id)`` and keeps the first
+    row, but a re-emitted Hermes event carries a restarted counter
+    (``c<calls>s<emission_seq>``) and therefore a *different* id, so the
+    server cannot recognise it. With no baseline the extractor would report
+    the session's whole lifetime as new usage, and the server would count it
+    twice. Keeping the mark of everything that could still move -- an active
+    session, a database that exists but was not discovered, a key we cannot
+    parse -- is what prevents that.
+
+    Returns the number of forgotten slices.
+    """
+    live_resolved = {str(path.resolve()) for path in db_paths}
+
+    # A database whose own path contains a "|" is cut short when the key is
+    # split, so the truncated form is not on disk even though the database is
+    # right there. Those truncated forms are the ones a key can carry.
+    truncated_live = {live.split("|", 1)[0] for live in live_resolved if "|" in live}
+
+    # One stat() per distinct database path, not per key: a host with a large
+    # watermark would otherwise make thousands of syscalls every cycle.
+    path_is_gone: dict[str, bool] = {}
+
+    pruned: list[str] = []
+    for key, value in watermark_state.items():
+        db_path = _state_key_db_path(key, account_id)
+        if db_path is None:
+            # Not a key shape we wrote: leave it alone.
+            continue
+        if db_path not in path_is_gone:
+            # A database that exists but was not discovered may still be in
+            # use; only its own rows can say so, so it keeps its slices.
+            path_is_gone[db_path] = _database_path_is_gone(db_path)
+        if not path_is_gone[db_path]:
+            continue
+        if db_path in truncated_live:
+            # The real path holds a "|": this key's path was cut short.
+            continue
+        if not isinstance(value, dict):
+            # A corrupt entry: keep it rather than guess what it was.
+            continue
+        try:
+            last_seen = float(value.get("last_seen") or 0.0)
+        except (TypeError, ValueError):
+            # A hand-edited or foreign timestamp: keep the key rather than
+            # guess what it meant -- and never fail the whole collection over
+            # one unreadable entry.
+            continue
+        if last_seen <= 0:
+            # No timestamp: cannot show the slice is quiet, so keep it.
+            continue
+        if last_seen > idle_cutoff:
+            # Recently active: the row can still advance, so the mark stays.
+            continue
+        pruned.append(key)
+
+    for key in pruned:
+        del watermark_state[key]
+    return len(pruned)
+
+
 def parse_hermes_events(
     db_paths: list[Path],
     account_id: str,
@@ -298,9 +444,11 @@ def parse_hermes_events(
     """
     # Note on watermark scoping & bounding: hermes_watermark.json stores token and call
     # high-water marks scoped per account_id and (resolved_db_path, profile, session, model, provider, base_url, mode, task) slice.
-    # Footprint is small (~50-80 bytes per key, <1 MB for 10,000 sessions). Each slice records
-    # 'last_seen', enabling a future TTL-compaction pass (e.g. dropping slices older than
-    # 90 days matching the sidecar's retention window) when necessary.
+    # A key runs to ~450 bytes with the path and the session identity in it, so the file is
+    # megabytes on a host with thousands of sessions -- and it is rewritten in full whenever a
+    # slice changes, so the bytes written per day grew with it. Each slice records 'last_seen',
+    # and the slices of a database that no longer exists are pruned once they have been idle
+    # for WATERMARK_PRUNE_IDLE_DAYS (see _prune_stale_watermark_slices).
     state_path = state_file or _default_watermark_state_path()
     watermark_state = _load_hermes_watermark(state_path)
     state_modified = False
@@ -552,6 +700,20 @@ def parse_hermes_events(
             state_modified = state_modified or bool(state_updates)
         finally:
             conn.close()
+
+    # Forget the slices of a database that is gone. This runs on every cycle,
+    # not only when something changed: a cycle that emits nothing can still
+    # shrink the file, and the shrink has to be written out or the next cycle
+    # would put the pruned slices back.
+    pruned = _prune_stale_watermark_slices(
+        watermark_state,
+        db_paths,
+        account_id=account_id,
+        idle_cutoff=datetime.now(UTC).timestamp() - WATERMARK_PRUNE_IDLE_DAYS * 86400,
+    )
+    if pruned:
+        state_modified = True
+        logger.info("Pruned %d stale Hermes watermark slice(s) from %s", pruned, state_path)
 
     if state_modified:
         _save_hermes_watermark(state_path, watermark_state)

@@ -3720,11 +3720,13 @@ def _make_account_extractor_hermes(parser: Any, state_file: Path | None = None) 
         canonical_hints: dict[str, dict[str, str]] | None = None,
     ) -> list:
         db_paths = _discover_hermes_db_paths()
-        if not db_paths:
-            return []
         since = watermark.last_pushed("hermes", account_id) or (
             datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=bootstrap_days)
         )
+        # Finding no database is not "nothing to do": the slice watermark still
+        # has to be compacted, and the parser is what compacts it (#926). A host
+        # whose last Hermes database is gone is exactly the host whose
+        # watermark is full of dead keys, so the parser runs even with no paths.
         all_evts = parser(
             db_paths,
             account_id=account_id,

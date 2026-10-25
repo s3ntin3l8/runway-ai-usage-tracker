@@ -48,8 +48,28 @@ On each sidecar poll:
   hermes|<profile>|<session_id>|<model>|<task>|c<api_call_count>s<emission_seq>
   ```
 - Stable event IDs ensure that discrete tasks, ongoing sessions, and late cost updates never trigger duplicate-event drops or double-counting in Runway's `EventIngestor`.
-- **Watermark Lifecycle & Bounding:** High-water marks are keyed by `(resolved_db_path, profile, session, model, billing_provider, task)`. Storage overhead is bounded (~50 bytes per key, <1 MB for 10,000 sessions) and recorded with a `last_seen` timestamp to enable TTL compaction if needed.
+- **Watermark Lifecycle & Bounding:** High-water marks are keyed by `(resolved_db_path, profile, session, model, billing_provider, task)`. A key carries the database path and the session identity, so it runs to roughly 450 bytes; the file is megabytes on a host with thousands of sessions, and it is rewritten in full whenever a slice changes. Each slice records a `last_seen` timestamp, which is what lets the compaction below reclaim the slices of a database that is gone.
 - **Entrypoint Propagation:** Sessions preserve their runtime origin in Runway's `entrypoint` field: default API sessions set `entrypoint="hermes"`, while sessions originating from specific platforms set `entrypoint="hermes-<source>"` (e.g. `hermes-discord`, `hermes-cron`, `hermes-webui`).
+
+### Watermark Compaction
+
+The watermark used to only ever grow: a deleted profile, a test fixture that was unpacked and removed, or a folder the user cleaned up left its slices behind forever, and the whole file was rewritten on every cycle that changed anything — so the bytes written per day grew with a file that never stopped growing.
+
+A slice's high-water mark is now forgotten when **both** hold:
+
+- **its database file no longer exists**, and
+- **its `last_seen` is older than 30 days** — the session has been quiet long enough that its row cannot advance unless a writer reappears at a path that was gone.
+
+Both conditions are load-bearing, because the server cannot catch a forgotten mark on its own:
+
+- The server deduplicates usage events on the **exact** `(provider_id, event_id)` and keeps the first row it stored. A re-emitted Hermes event carries a restarted counter (`c<calls>s<emission_seq>`), so its id differs from the original and the server files it as *new* usage.
+- Without a baseline the extractor would report the session's **whole lifetime** as new usage instead of the increment — the server would count that session twice.
+
+So the mark of everything that could still move is kept: an active session (recent `last_seen`), a database that exists but was not discovered, a database that cannot be read (a permission error is not "it is gone"), and any key whose path cannot be read out unambiguously. The one residual case is a session that sat idle for more than 30 days, whose database file was deleted, and which comes back and resumes activity — it is counted once extra.
+
+The compaction runs even when the host has **no Hermes database left at all** — that is exactly the host whose watermark is full of dead keys, so finding nothing to collect is not a reason to skip it.
+
+A live database's stale sessions are **not** pruned: a live session's row can advance, so it cannot be pruned on age alone.
 
 ## Canonical Provider Mapping
 
