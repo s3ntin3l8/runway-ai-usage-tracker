@@ -2,7 +2,7 @@
 // /provider/:providerId?account=<account_id>; account defaults to the
 // provider's first fleet entry.
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Archive, ArchiveRestore, Bug, CircleAlert, Ellipsis, RefreshCw, RotateCcw, SlidersHorizontal } from 'lucide-react';
@@ -16,7 +16,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/Select';
 import { ProviderGlyph } from '@/components/ui/ProviderGlyph';
-import { Skeleton } from '@/components/ui/Skeleton';
+import { Skeleton, SkeletonRegion } from '@/components/ui/Skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/Tabs';
 import { TimeRangePicker } from '@/components/ui/TimeRangePicker';
 import { ExcludeCacheToggle } from '@/components/ui/ExcludeCacheToggle';
@@ -131,6 +131,16 @@ export function ProviderPage() {
   const [rangeValue, setRange] = useRangeParam('period');
   const scope = resolveScope(rangeValue);
   const eventRange = useProviderEventRange(providerId, accountId);
+
+  // A deep link to a tab that is off-screen — the strip scrolls on a phone,
+  // and the last tabs are past the fold — must bring that tab into view,
+  // or the link lands on a page that looks like the wrong tab is selected.
+  useEffect(() => {
+    const list = document.getElementById('provider-tabs');
+    const trigger = list?.querySelector<HTMLElement>('[data-state="active"]');
+    // jsdom has no scrollIntoView, hence the optional call.
+    trigger?.scrollIntoView?.({ block: 'nearest', inline: 'center' });
+  }, [tab]);
   const showSourceFilter =
     entry &&
     (SOURCE_AWARE_TABS.has(tab) || (tab === 'forecast' && cardKind(entry.critical_gauge) === 'tokens'));
@@ -279,8 +289,10 @@ export function ProviderPage() {
 
         {fleet.isPending ? (
           <div className="flex flex-col gap-3">
-            <Skeleton className="h-10 w-full max-w-md" />
-            <Skeleton className="h-64 w-full" />
+            <SkeletonRegion>
+              <Skeleton className="h-10 w-full max-w-md" />
+              <Skeleton className="h-64 w-full" />
+            </SkeletonRegion>
           </div>
         ) : fleet.isError ? (
           // Before the empty branch: a failed request is not a missing
@@ -329,7 +341,7 @@ export function ProviderPage() {
           )
         ) : (
           <Tabs value={tab} onValueChange={(next) => { if (isProviderTab(next)) setTab(next); }}>
-            <TabsList>
+            <TabsList id="provider-tabs">
               <TabsTrigger value="overview">Overview</TabsTrigger>
               <TabsTrigger value="activity">Activity</TabsTrigger>
               <TabsTrigger value="sessions">Sessions</TabsTrigger>

@@ -18,7 +18,9 @@ import { TopToolsCard } from './TopToolsCard';
 import { useGlobalStats } from './queries';
 
 export function InsightsPage() {
-  const [range, setRange] = useRangeParam();
+  // 'period' is the legacy deep-link key. The provider page already
+  // accepts it; honouring it here makes the same link work everywhere.
+  const [range, setRange] = useRangeParam('period');
   const globalStats = useGlobalStats();
 
   return (

@@ -27,8 +27,18 @@ describe('EmptyState', () => {
 
   it('omits description and action when not provided', () => {
     const { container } = render(<EmptyState title="Bare" />);
-    // only the title <p> exists, no extra description/action wrappers
-    expect(container.querySelectorAll('p')).toHaveLength(1);
+    // only the title exists, no extra description/action wrappers
+    expect(container.querySelectorAll('p')).toHaveLength(0);
     expect(container.querySelector('svg')).toBeNull();
+  });
+
+  it('renders the title as a heading so it can be navigated to', () => {
+    render(<EmptyState title="Nothing here" />);
+    expect(screen.getByRole('heading', { name: 'Nothing here' })).toBeInTheDocument();
+  });
+
+  it('honours the heading level', () => {
+    render(<EmptyState title="Nested" headingLevel="h3" />);
+    expect(screen.getByRole('heading', { level: 3, name: 'Nested' })).toBeInTheDocument();
   });
 });

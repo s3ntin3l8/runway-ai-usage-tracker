@@ -108,7 +108,13 @@ export function TabsContent({
 }: React.ComponentProps<typeof TabsPrimitive.Content>) {
   return (
     <TabsPrimitive.Content
-      className={cn('pt-4 outline-none', className)}
+      className={cn(
+        // The panel is focusable (Radix gives it tabIndex 0), and a bare
+        // `outline-none` silenced the global focus ring on it. The repo's
+        // own idiom replaces the outline with a visible ring.
+        'pt-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent',
+        className,
+      )}
       {...props}
     />
   );

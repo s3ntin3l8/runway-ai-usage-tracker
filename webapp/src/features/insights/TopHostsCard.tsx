@@ -14,7 +14,7 @@ import { useChartTokens } from '@/components/charts/theme';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { Skeleton } from '@/components/ui/Skeleton';
+import { Skeleton, SkeletonRegion } from '@/components/ui/Skeleton';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { buildSidecarNameMap, useSidecars } from '@/features/fleet/queries';
 import { useExcludeCache } from '@/hooks/useExcludeCache';
@@ -94,9 +94,12 @@ export function TopHostsCard({ range }: { range: DateRangeValue }) {
       </CardHeader>
       <CardContent className="pt-2">
         {top.isPending ? (
-          <Skeleton className="h-72 w-full" />
+          <SkeletonRegion>
+            <Skeleton className="h-72 w-full" />
+          </SkeletonRegion>
         ) : top.isError ? (
           <EmptyState
+            headingLevel="h3"
             icon={CircleAlert}
             title="Could not load this data"
             description={top.error.message}

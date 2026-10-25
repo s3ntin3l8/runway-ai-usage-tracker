@@ -12,7 +12,13 @@ export function CreditBreakdown({ entries, compact = false }: {
   compact?: boolean;
 }) {
   return (
-    <div className="mt-2 flex flex-col gap-1 text-[11px] text-fg-muted" aria-label="Credit breakdown">
+    <div
+      className="mt-2 flex flex-col gap-1 text-[11px] text-fg-muted"
+      // aria-label only names an element that has a role; on a plain div it
+      // is ignored. A group is what this is: a labelled set of balances.
+      role="group"
+      aria-label="Credit breakdown"
+    >
       {entries.map((entry, i) => (
         <div key={`${entry.kind}-${i}`}>
           <div className="flex flex-wrap justify-between gap-x-2">

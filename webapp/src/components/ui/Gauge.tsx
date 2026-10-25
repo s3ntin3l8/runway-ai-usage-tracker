@@ -39,6 +39,14 @@ export function Gauge({ pct, status, className, size = 'md', glide, label = 'Quo
       aria-valuemax={100}
       aria-valuenow={value ?? undefined}
       aria-valuetext={value === null ? 'unknown' : `${value.toFixed(0)}% used`}
+      // The glide marker is decorative (aria-hidden) and explained only by a
+      // title attribute, so it was hover-only. The description carries the
+      // same explanation to assistive technology.
+      aria-description={
+        showGlide
+          ? 'The marker on the bar is the glide-path target — where usage should be if it is paced evenly across the window.'
+          : undefined
+      }
       className={cn(
         'relative w-full overflow-hidden rounded-full bg-surface-3',
         HEIGHT[size],

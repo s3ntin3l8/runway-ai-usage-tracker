@@ -1,3 +1,10 @@
+  it('honours the legacy ?period= deep link', async () => {
+    // The provider page already accepted ?period=; the same link must work
+    // here, or it lands on the default window.
+    renderWithProviders(<HistoryPage />, { route: '/history?period=2026-03' });
+    expect(await screen.findByText('Tokens (March 2026)')).toBeInTheDocument();
+  });
+
 import { screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type {

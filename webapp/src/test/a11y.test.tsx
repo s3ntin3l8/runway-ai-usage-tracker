@@ -30,6 +30,8 @@ import { Route, Routes } from 'react-router';
 import type { QueryClient } from '@tanstack/react-query';
 import { renderWithProviders } from '@/test/utils';
 import { AppShell } from '@/components/layout/AppShell';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { PageHeader } from '@/components/layout/PageHeader';
 import { ThemeProvider } from '@/hooks/useTheme';
 import { HomePage } from '@/features/home/HomePage';
 import { ProviderPage } from '@/features/provider/ProviderPage';
@@ -428,6 +430,32 @@ describe('accessibility guard (axe)', () => {
 
   it('has no violations on the insights page', async () => {
     const { client } = renderSurface('/insights', <InsightsPage />, '/insights');
+    await waitFor(() => expect(screen.getByRole('main')).toBeInTheDocument());
+    await settle(client);
+    await expectSurfaceRendered();
+    await expectNoViolations();
+  });
+
+  it('has no violations on an empty state', async () => {
+    // No other surface reaches a state with no data — the API mocks are
+    // populated — so the empty state was never scanned. It carries a
+    // heading now, and a heading that skips a level is a violation, so it
+    // has to be in the guard.
+    const { client } = renderSurface(
+      'empty-state',
+      <>
+        {/* A page supplies its own h1 (PageHeader); the shell does not. The
+            empty state's heading level is only meaningful under one, so the
+            surface has to have one — that is what makes the heading-order
+            rule bite here. */}
+        <PageHeader title="Empty state" />
+        <EmptyState
+          title="Nothing to show"
+          description="This surface deliberately renders an empty state, so the guard scans one."
+        />
+      </>,
+      '/empty-state',
+    );
     await waitFor(() => expect(screen.getByRole('main')).toBeInTheDocument());
     await settle(client);
     await expectSurfaceRendered();
