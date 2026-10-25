@@ -33,6 +33,13 @@ def _claim(demo: Path) -> int:
     return instance._claim_demo_dir(demo)
 
 
+class _exited_server:
+    """A server that has already stopped, so `Demo.stop()` has nothing to do."""
+
+    def poll(self) -> int:
+        return 0
+
+
 def test_a_claimed_dir_is_kept(tmp_root: Path) -> None:
     # A demo that is running holds the dir's lock, however long it has been
     # running: the lock, not the dir's age, says it is still there.
@@ -85,3 +92,40 @@ def test_a_dir_that_is_not_ours_is_left_alone(tmp_root: Path) -> None:
     other.mkdir()
     instance.clean_stale_scratch_dirs()
     assert other.exists()
+
+
+@pytest.mark.skipif(
+    getattr(os, "geteuid", lambda: 1)() == 0,
+    reason="root reads a file whatever its permission bits say",
+)
+def test_a_lock_that_cannot_be_read_keeps_the_dir(tmp_root: Path) -> None:
+    # Not being able to read the lock is not evidence that nobody owns the
+    # dir -- it is evidence that we cannot tell. The dir is left alone.
+    demo = _demo_dir(tmp_root, "runway-demo-unreadable")
+    lock_fd = _claim(demo)
+    os.close(lock_fd)
+    os.chmod(demo / LOCK_FILE, 0o000)
+    try:
+        instance.clean_stale_scratch_dirs()
+        assert demo.exists()
+    finally:
+        os.chmod(demo / LOCK_FILE, 0o600)
+
+
+def test_a_kept_demo_leaves_a_marked_dir_and_releases_its_lock(tmp_path: Path) -> None:
+    # The marker has to be in place before the lock is released: a dir with
+    # neither is what the sweep takes.
+    demo_dir = tmp_path / "runway-demo-kept"
+    demo_dir.mkdir()
+    lock_fd = _claim(demo_dir)
+    demo = instance.Demo(
+        demo_dir=demo_dir,
+        url="",
+        server=_exited_server(),
+        keep=True,
+        lock_fd=lock_fd,
+    )
+    demo.stop()
+    assert (demo_dir / KEEP_MARKER).exists()
+    assert demo_dir.exists()
+    assert not instance._dir_is_claimed(demo_dir)

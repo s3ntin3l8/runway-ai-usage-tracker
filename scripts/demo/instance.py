@@ -14,6 +14,7 @@ touches Docker, so a compose deployment on the same host is out of reach.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import os
 import shutil
 import signal
@@ -156,32 +157,40 @@ class Demo:
                 # Already exited on its own; wait() below just reaps it.
                 pass
             self.server.wait()
-        self._release_lock()
         if self.keep:
             # The dir is the operator's now. The marker tells a later demo
             # that this one was kept on purpose, so the sweep does not take
             # it for a leftover: a kept demo's process is gone the moment it
             # exits, and the lock alone would not tell the two apart.
-            try:
-                (self.demo_dir / KEEP_MARKER).write_text("kept")
-            except OSError as e:
-                # The dir is kept whatever we can write into it, and this
-                # runs from a teardown: an error here would replace the
-                # exception already in flight and turn a clean stop into a
-                # traceback.
-                print(f"[demo] could not mark {self.demo_dir} as kept: {e}")
+            _mark_kept(self.demo_dir)
             print(f"[demo] kept {self.demo_dir}")
-            return
-        shutil.rmtree(self.demo_dir, ignore_errors=True)
+        else:
+            shutil.rmtree(self.demo_dir, ignore_errors=True)
+        # The lock is released LAST. Until it is, the sweep sees a dir that
+        # is still claimed, and a dir that has just lost its lock, its
+        # marker and its contents is exactly what the sweep takes.
+        self._release_lock()
 
     def _release_lock(self) -> None:
         if self.lock_fd is None:
             return
-        try:
+        # Releasing the lock is a best-effort courtesy to the next sweep: a
+        # close that fails has already lost the fd, and the process is about
+        # to end anyway, which releases the lock with it.
+        with contextlib.suppress(OSError):
             os.close(self.lock_fd)
-        except OSError:
-            pass
         self.lock_fd = None
+
+
+def _mark_kept(demo_dir: Path) -> None:
+    """Say that the dir is the operator's, so the sweep leaves it alone."""
+    try:
+        (demo_dir / KEEP_MARKER).write_text("kept")
+    except OSError as e:
+        # The dir is kept whatever we can write into it, and this runs from
+        # a teardown: an error here would replace the exception already in
+        # flight and turn a clean stop into a traceback.
+        print(f"[demo] could not mark {demo_dir} as kept: {e}")
 
 
 def _claim_demo_dir(demo_dir: Path) -> int | None:
@@ -214,8 +223,13 @@ def _dir_is_claimed(demo_dir: Path) -> bool:
         return False  # never claimed: the demo died before it could
     try:
         fd = os.open(lock_path, os.O_RDWR)
+    except FileNotFoundError:
+        return False  # the demo removed it: never claimed
     except OSError:
-        return False
+        # The lock cannot be read (no permission, too many open files, a
+        # broken disk). That is not evidence that nobody owns the dir -- it
+        # is evidence that we cannot tell -- so the dir is left alone.
+        return True
     try:
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:
@@ -328,6 +342,11 @@ def start_demo(*, keep: bool = False, quiet: bool = False) -> Demo:
         if server is not None:
             Demo(demo_dir=demo_dir, url="", server=server, keep=keep, lock_fd=lock_fd).stop()
         else:
+            if keep:
+                # The dir is the operator's, and a failed start is exactly
+                # when they want it: mark it kept, or the next sweep takes
+                # it for a leftover.
+                _mark_kept(demo_dir)
             if lock_fd is not None:
                 os.close(lock_fd)
             if not keep:

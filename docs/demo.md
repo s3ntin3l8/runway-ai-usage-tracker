@@ -98,14 +98,19 @@ maintains the period rollups. Past quota windows are closed with
 1. Assert the port is free.
 2. Build the SPA if `webapp/dist` is missing or older than its sources
    (`ensure_spa_built()`).
-3. Create a `mkdtemp` scratch directory and build the isolated environment.
+3. Create a `mkdtemp` scratch directory, lock it, and build the isolated
+   environment. The lock is held for as long as the demo runs, so a later
+   demo can tell a live scratch dir from a leftover one.
 4. Seed the database.
-5. Start the server in its own process group and wait for it to answer HTTP.
+5. Start the server in the demo's own process group and wait for it to answer
+   HTTP.
 
-`Demo.stop()` terminates the whole process group — the server can spawn
-children, and killing only the parent would leave them behind — then deletes
-the scratch directory. Pass `keep=True` to keep it for inspection; the printed
-path is where it landed.
+`Demo.stop()` terminates the server by name — the server shares the demo's
+process group rather than leading one of its own, so a supervisor that
+stops the demo takes the server with it — then deletes the scratch
+directory. Pass `keep=True` to keep it for inspection; the printed path is
+where it landed, and the dir says so itself, so the next demo's sweep leaves
+it alone.
 
 ## Related Files
 
