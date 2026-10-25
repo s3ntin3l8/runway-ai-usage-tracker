@@ -50,15 +50,15 @@ describe('ProviderKpis', () => {
     expect(await screen.findByText('Current')).toBeInTheDocument();
     expect(screen.getByText('Projected at reset')).toBeInTheDocument();
     expect(screen.getByText('Estimated cost (MTD)')).toBeInTheDocument();
-    expect(screen.getByText('Daily cost (7d)')).toBeInTheDocument();
+    expect(screen.getByText('Estimated cost per day (7d)')).toBeInTheDocument();
     expect(screen.getByText(`Tokens · ${scope.label}`)).toBeInTheDocument();
     expect(screen.getByText(`Cache hit · ${scope.label}`)).toBeInTheDocument();
   });
 
-  it('labels pay-as-you-go account values as spend', async () => {
+  it('labels pay-as-you-go account values as reported cost', async () => {
     renderWithProviders(<ProviderKpis entry={fleetEntry({ billing_type: 'pay_as_you_go' })} scope={scope} />);
-    expect(await screen.findByText('Spend (MTD)')).toBeInTheDocument();
-    expect(screen.getByText('Daily cost (7d)')).toBeInTheDocument();
+    expect(await screen.findByText('Cost (MTD)')).toBeInTheDocument();
+    expect(screen.getByText('Cost per day (7d)')).toBeInTheDocument();
   });
 
   it('labels unknown account values neutrally', async () => {

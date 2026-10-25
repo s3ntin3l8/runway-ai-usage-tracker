@@ -14,6 +14,7 @@ import { StatTile } from '@/components/ui/StatTile';
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/Table';
 import { useExcludeCache } from '@/hooks/useExcludeCache';
 import { cn } from '@/lib/cn';
+import { moneyLabel as moneyLabelFor } from '@/lib/billingType';
 import { formatCost, formatTokens } from '@/lib/format';
 import { DetailSection, Stat } from './detailPrimitives';
 import type { TabScope } from './period';
@@ -59,11 +60,7 @@ export function CostTab({
       ? monthCumulative
       : rangeCumulative;
   const scopeLabel = scope.label;
-  const moneyLabel = billingType === 'pay_as_you_go'
-    ? 'Cost'
-    : billingType === 'unknown'
-      ? 'Cost'
-      : 'Estimated cost';
+  const moneyLabel = moneyLabelFor(billingType);
 
   const monthBucket = useMemo<CumulativeBucket | null>(() => {
     const data = cumulative.data;
