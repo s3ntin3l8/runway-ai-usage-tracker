@@ -5,14 +5,32 @@ import { afterEach, beforeEach, vi } from 'vitest';
 
 // English date-label assertions must not depend on the developer's OS locale.
 // Explicit locales still reach the native implementation; product code remains localized.
+// toLocaleString and toLocaleTimeString are pinned for the same reason: the
+// timestamp helpers render through them, so an unpinned call makes a
+// fixed instant assert differently on two machines.
 const nativeLocaleDate = Date.prototype.toLocaleDateString;
-beforeEach(() => {
-  vi.spyOn(Date.prototype, 'toLocaleDateString').mockImplementation(function (this: Date, locales, options) {
+const nativeLocaleTime = Date.prototype.toLocaleTimeString;
+const nativeLocaleString = Date.prototype.toLocaleString;
+
+type LocaleFn = (
+  this: Date,
+  locales?: Intl.LocalesArgument,
+  options?: Intl.DateTimeFormatOptions,
+) => string;
+
+function pinDefaultLocale(native: LocaleFn): LocaleFn {
+  return function (this: Date, locales, options) {
     const locale = locales == null || (Array.isArray(locales) && locales.length === 0)
       ? 'en-US'
       : locales;
-    return nativeLocaleDate.call(this, locale, options);
-  });
+    return native.call(this, locale, options);
+  };
+}
+
+beforeEach(() => {
+  vi.spyOn(Date.prototype, 'toLocaleDateString').mockImplementation(pinDefaultLocale(nativeLocaleDate));
+  vi.spyOn(Date.prototype, 'toLocaleTimeString').mockImplementation(pinDefaultLocale(nativeLocaleTime));
+  vi.spyOn(Date.prototype, 'toLocaleString').mockImplementation(pinDefaultLocale(nativeLocaleString));
 });
 afterEach(() => vi.restoreAllMocks());
 

@@ -15,6 +15,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { cn } from '@/lib/cn';
+import { formatCount } from '@/lib/format';
 import { FixDialog } from './FixDialog';
 import { SampleTable } from './SampleTable';
 
@@ -67,7 +68,7 @@ export function CheckRow({
         <span className="shrink-0 text-[12px] tabular text-fg-subtle">
           {check.total_count === 0
             ? 'clean'
-            : `${check.total_count.toLocaleString()} ${check.total_count === 1 ? 'finding' : 'findings'}`}
+            : `${formatCount(check.total_count)} ${check.total_count === 1 ? 'finding' : 'findings'}`}
         </span>
       </button>
       <p className="pl-6 text-[12px] text-fg-subtle">{check.description}</p>

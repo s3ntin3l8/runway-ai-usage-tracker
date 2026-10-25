@@ -8,13 +8,13 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Skeleton } from '@/components/ui/Skeleton';
-import { formatAxisNumber } from '@/lib/format';
+import { formatAxisNumber, formatCount } from '@/lib/format';
 import { formatRangeLabel, type DateRangeValue } from '@/lib/timeRange';
 import { INSIGHTS_TOP_N, useTopTools } from './queries';
 import { CircleAlert } from 'lucide-react';
 
 function toolRow(t: TopToolEntry): RankRow {
-  return { label: t.tool, value: t.calls, sub: `${t.msgs.toLocaleString()} msgs` };
+  return { label: t.tool, value: t.calls, sub: `${formatCount(t.msgs)} msgs` };
 }
 
 export function TopToolsCard({ range }: { range: DateRangeValue }) {
@@ -41,7 +41,7 @@ export function TopToolsCard({ range }: { range: DateRangeValue }) {
         ) : !hasData ? (
           <p className="py-16 text-center text-xs text-fg-subtle">No tool usage in this range.</p>
         ) : (
-          <RankBar rows={rows} format={(v) => v.toLocaleString()} axisFormat={formatAxisNumber} />
+          <RankBar rows={rows} format={(v) => formatCount(v)} axisFormat={formatAxisNumber} />
         )}
       </CardContent>
     </Card>

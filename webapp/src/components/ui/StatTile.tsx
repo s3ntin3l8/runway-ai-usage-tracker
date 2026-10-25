@@ -20,6 +20,7 @@ export function StatTile({
   value,
   hint,
   loading,
+  error,
   status,
   className,
 }: {
@@ -27,6 +28,10 @@ export function StatTile({
   value: ReactNode;
   hint?: ReactNode;
   loading?: boolean;
+  // When set, the tile's request failed. A failed request is not a zero, so
+  // the tile says so instead of rendering a value the user would read as a
+  // real measurement.
+  error?: string;
   // When set, tints the value by quota severity (critical/warning).
   status?: QuotaStatus;
   className?: string;
@@ -36,6 +41,10 @@ export function StatTile({
       <p className="text-[11px] font-medium text-fg-subtle">{label}</p>
       {loading ? (
         <Skeleton className="mt-1.5 h-6 w-20" />
+      ) : error ? (
+        <p className="mt-1 text-[11px] font-medium leading-4 text-critical" role="status">
+          {error}
+        </p>
       ) : (
         <div className="mt-0.5 flex items-baseline gap-2">
           <span

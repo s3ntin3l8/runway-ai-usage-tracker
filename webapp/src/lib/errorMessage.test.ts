@@ -20,6 +20,15 @@ describe('errorMessage', () => {
     expect(errorMessage({ message: 42 }, 'fallback')).toBe('fallback');
   });
 
+  it('falls back when the message says nothing', () => {
+    // An empty message is no message. A caller that gates an error state on
+    // a truthy string would otherwise fall through to the empty state,
+    // which is the failure this helper exists to prevent.
+    expect(errorMessage(new Error(''), 'fallback')).toBe('fallback');
+    expect(errorMessage({ message: '' }, 'fallback')).toBe('fallback');
+    expect(errorMessage({ message: '   ' }, 'fallback')).toBe('fallback');
+  });
+
   it('answers the same for an error from another realm', () => {
     // The premise, asserted: `instanceof Error` is false for an error
     // created in another realm, which is what a vm test pool sees for a

@@ -116,6 +116,39 @@ describe('HistoryChart', () => {
     expect((lastOption as { series: unknown[] }).series).toHaveLength(1);
   });
 
+  it('renders a missing cost bucket as a dash rather than zero', () => {
+    // The audit finding: a null bucket rendered "$0.00", which reads as a
+    // real measurement of no spend instead of a bucket with no data.
+    const data: HistoryChartResponse = {
+      bars: [
+        {
+          date: '2026-06-10',
+          ts: '2026-06-10T00:00:00Z',
+          segments: [{ provider_id: 'claude', model_id: 'opus', label: 'opus', value: 3.5 }],
+        },
+        {
+          date: '2026-06-11',
+          ts: '2026-06-11T00:00:00Z',
+          segments: [
+            { provider_id: 'claude', model_id: 'sonnet', label: 'sonnet', value: 1.25 },
+          ],
+        },
+      ],
+    };
+    render(<HistoryChart data={data} metric="cost" />);
+    const series = (lastOption as { series: { data: (number | null)[] }[] }).series;
+    // The opus series has no segment in the second bucket. That bucket is
+    // missing, so it must not be drawn as a zero-height bar — the chart has
+    // to produce the null the formatter renders as a dash.
+    expect(series[0].data).toEqual([3.5, null]);
+    const formatter = (
+      lastOption as { tooltip: { valueFormatter: (v: number | null) => string } }
+    ).tooltip.valueFormatter;
+    expect(formatter(null)).toBe('—');
+    expect(formatter(0)).toBe('$0.00');
+    expect(formatter(3.5)).toBe('$3.50');
+  });
+
   it('subtracts value_cache (cache cost) from cost bars when excludeCache is set', () => {
     const data: HistoryChartResponse = {
       bars: [

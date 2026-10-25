@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  APP_LOCALE,
   formatAxisCost,
   formatAxisNumber,
   formatCost,
+  formatCount,
   formatCurrency,
   formatDuration,
   formatNumber,
@@ -33,10 +35,36 @@ describe('formatTokens', () => {
     expect(formatTokens(0)).toBe('0');
     expect(formatTokens(null)).toBe('0');
   });
-  it('uses 0 decimals on K, 2 on M/B', () => {
-    expect(formatTokens(1_500)).toBe('2K');
+  it('uses 1 decimal on K (trailing zeros trimmed), 2 on M/B', () => {
+    expect(formatTokens(1_500)).toBe('1.5K');
+    expect(formatTokens(15_000)).toBe('15K');
     expect(formatTokens(2_440_000)).toBe('2.44M');
     expect(formatTokens(3_100_000_000)).toBe('3.10B');
+  });
+  it('keeps the same granularity as formatNumber', () => {
+    // The audit finding: the same magnitude read as "1K" here and "1.5K"
+    // there, on the same card.
+    expect(formatTokens(1_400)).toBe('1.4K');
+    expect(formatNumber(1_400)).toBe('1.4K');
+  });
+});
+
+describe('formatCount', () => {
+  it('renders an exact count with thousands separators', () => {
+    expect(formatCount(1_500)).toBe('1,500');
+    expect(formatCount(1_234_567)).toBe('1,234,567');
+    expect(formatCount(0)).toBe('0');
+  });
+  it('does not compact into a magnitude', () => {
+    expect(formatCount(1_500)).not.toBe('1.5K');
+  });
+  it('renders a dash for nullish / NaN', () => {
+    expect(formatCount(null)).toBe('—');
+    expect(formatCount(undefined)).toBe('—');
+    expect(formatCount(NaN)).toBe('—');
+  });
+  it('is pinned to the app locale, not the browser locale', () => {
+    expect(APP_LOCALE).toBe('en-US');
   });
 });
 
@@ -95,6 +123,35 @@ describe('formatPct', () => {
   it('honours the digits argument', () => {
     expect(formatPct(42.567)).toBe('43%');
     expect(formatPct(42.567, 1)).toBe('42.6%');
+  });
+  it('never rounds a share up onto 100%', () => {
+    // The audit finding: 99.6% rendered "100%".
+    expect(formatPct(99.6)).toBe('99.6%');
+    expect(formatPct(99.96)).toBe('99.96%');
+    expect(formatPct(99.999)).toBe('99.999%');
+  });
+  it('keeps widening until the value reads below 100%', () => {
+    // The widening has to go as far as the value needs: three extra
+    // decimals were not enough, and a share that rounded onto the ceiling
+    // would claim "100%" for a quota that is not finished.
+    expect(formatPct(99.9999)).toBe('99.9999%');
+    expect(formatPct(99.9999999)).toBe('99.9999999%');
+  });
+  it('bounds a value that no display precision states', () => {
+    // Ten extra decimals is as far as the display goes. Past that the
+    // honest answer is a bound rather than a number: ">99.99%" is nearly
+    // exhausted, where "100%" is finished.
+    expect(formatPct(99.99999999999999)).toBe('>99.99%');
+  });
+  it('never rounds onto 100% under an explicit digits argument either', () => {
+    // The invariant is unconditional — an explicit precision is the floor
+    // the value is rendered at, not a licence to claim 100%.
+    expect(formatPct(99.96, 1)).toBe('99.96%');
+    expect(formatPct(42.567, 1)).toBe('42.6%');
+  });
+  it('still renders a real 100% as 100%', () => {
+    expect(formatPct(100)).toBe('100%');
+    expect(formatPct(0)).toBe('0%');
   });
 });
 

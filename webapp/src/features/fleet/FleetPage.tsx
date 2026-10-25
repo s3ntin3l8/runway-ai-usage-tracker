@@ -7,6 +7,7 @@ import { Link, useLocation, useSearchParams } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowUpCircle,
+  CircleAlert,
   Pause,
   Plus,
   Settings,
@@ -212,6 +213,16 @@ export function FleetPage() {
             <Skeleton className="h-40" />
             <Skeleton className="h-40" />
           </div>
+        ) : sidecars.isError ? (
+          // A failed request is not an empty fleet. Reporting "No sidecars
+          // yet" for a network error tells the user to install something
+          // they already have.
+          <EmptyState
+            icon={CircleAlert}
+            title="Could not load the sidecars"
+            description={sidecars.error.message}
+            action={<Button size="sm" onClick={() => sidecars.refetch()}>Retry</Button>}
+          />
         ) : (sidecars.data?.sidecars.length ?? 0) === 0 ? (
           <>
             <EmptyState

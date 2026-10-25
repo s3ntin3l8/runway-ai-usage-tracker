@@ -210,7 +210,7 @@ describe('OverviewTab', () => {
 
     const { unmount } = renderWithProviders(<OverviewTab entry={tokenEntry} scope={scope} />);
     const cardOff = (await screen.findByText('Token usage · Last 7 days')).closest('.rounded-md') as HTMLElement;
-    expect(await within(cardOff).findByText('2K')).toBeInTheDocument();
+    expect(await within(cardOff).findByText('2.3K')).toBeInTheDocument();
     expect(within(cardOff).getByText(/12 messages/)).toBeInTheDocument();
     unmount();
   });

@@ -7,7 +7,7 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Skeleton } from '@/components/ui/Skeleton';
-import { timeAgo } from '@/lib/format';
+import { formatCount, timeAgo } from '@/lib/format';
 import { CheckRow } from './dataHealth/CheckRow';
 import { useDataHealthReport, useRescanDataHealth } from './dataHealth/queries';
 
@@ -28,7 +28,7 @@ export function DataHealthSection() {
   const summary =
     itemCount === 0
       ? `No findings, all ${checks.length} ${checks.length === 1 ? 'check' : 'checks'} clean`
-      : `${itemCount.toLocaleString()} ${itemCount === 1 ? 'finding' : 'findings'} across ${findingCategories} ${findingCategories === 1 ? 'category' : 'categories'}, ${fixableCount.toLocaleString()} fixable, ${blockedCount} blocked`;
+      : `${formatCount(itemCount)} ${itemCount === 1 ? 'finding' : 'findings'} across ${formatCount(findingCategories)} ${findingCategories === 1 ? 'category' : 'categories'}, ${formatCount(fixableCount)} fixable, ${formatCount(blockedCount)} blocked`;
 
   return (
     <div className="flex max-w-2xl flex-col gap-3">

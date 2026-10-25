@@ -53,6 +53,18 @@ describe('ProviderPage', () => {
     expect(await screen.findByText(/no data for this provider/i)).toBeInTheDocument();
   });
 
+  it('shows an error state, not the empty state, when the request fails', async () => {
+    // The audit finding: a failed request rendered "No data for this
+    // provider", which reads as "this provider has no usage" rather than
+    // "the page could not load".
+    vi.mocked(api.fetchFleetUsage).mockRejectedValue(new Error('boom'));
+    renderPage();
+    expect(await screen.findByText(/could not load this provider/i)).toBeInTheDocument();
+    expect(screen.getByText('boom')).toBeInTheDocument();
+    expect(screen.queryByText(/no data for this provider/i)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument();
+  });
+
   it('says where a merged-away account went instead of "no data"', async () => {
     // The account was merged away: it holds nothing, so it has no fleet
     // entry. The operator followed a link to it — saying where it went beats

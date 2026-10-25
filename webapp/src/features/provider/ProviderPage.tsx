@@ -5,7 +5,7 @@
 import { useMemo, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Archive, ArchiveRestore, Bug, Ellipsis, RefreshCw, RotateCcw, SlidersHorizontal } from 'lucide-react';
+import { ArrowLeft, Archive, ArchiveRestore, Bug, CircleAlert, Ellipsis, RefreshCw, RotateCcw, SlidersHorizontal } from 'lucide-react';
 import { toast } from 'sonner';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { collectProvider, putProviderConfigForAccount, resetProvider } from '@/api/endpoints';
@@ -282,6 +282,16 @@ export function ProviderPage() {
             <Skeleton className="h-10 w-full max-w-md" />
             <Skeleton className="h-64 w-full" />
           </div>
+        ) : fleet.isError ? (
+          // Before the empty branch: a failed request is not a missing
+          // provider, and reporting "no data" for it sends the user looking
+          // for a provider that is there.
+          <EmptyState
+            icon={CircleAlert}
+            title="Could not load this provider"
+            description={fleet.error.message}
+            action={<Button size="sm" onClick={() => fleet.refetch()}>Retry</Button>}
+          />
         ) : !entry ? (
           mergedAway ? (
             <EmptyState
