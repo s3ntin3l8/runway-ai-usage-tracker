@@ -56,8 +56,8 @@ describe('OverallChartCard', () => {
   it('refetches with cost when the metric toggle flips', async () => {
     renderWithProviders(<OverallChartCard range={{ days: 7 }} />);
     await screen.findByTestId('echart');
-    const tabs = screen.getByRole('tablist', { name: 'Overall metric' });
-    await userEvent.click(within(tabs).getByRole('tab', { name: 'Cost' }));
+    const metricGroup = screen.getByRole('group', { name: 'Overall metric' });
+    await userEvent.click(within(metricGroup).getByRole('radio', { name: 'Cost' }));
     expect(api.fetchHistoryChart).toHaveBeenCalledWith(
       expect.objectContaining({ metric: 'cost', group: 'provider' }),
     );

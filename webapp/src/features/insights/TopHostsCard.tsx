@@ -15,7 +15,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Skeleton } from '@/components/ui/Skeleton';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/Tabs';
+import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { buildSidecarNameMap, useSidecars } from '@/features/fleet/queries';
 import { useExcludeCache } from '@/hooks/useExcludeCache';
 import { formatAxisCost, formatAxisNumber, formatCost, formatTokens } from '@/lib/format';
@@ -77,16 +77,15 @@ export function TopHostsCard({ range }: { range: DateRangeValue }) {
     <Card>
       <CardHeader>
         <CardTitle>Top {INSIGHTS_TOP_N} hosts · {formatRangeLabel(range)}</CardTitle>
-        <Tabs value={metric} onValueChange={(v) => setMetric(v as TopMetric)}>
-          <TabsList className="border-0" aria-label="Top hosts metric">
-            <TabsTrigger value="tokens" className="h-8 px-2.5">
-              Tokens
-            </TabsTrigger>
-            <TabsTrigger value="cost" className="h-8 px-2.5">
-              Cost
-            </TabsTrigger>
-          </TabsList>
-        </Tabs>
+        <SegmentedControl
+          value={metric}
+          onChange={(v) => setMetric(v as TopMetric)}
+          label="Top hosts metric"
+          options={[
+            { value: 'tokens', label: 'Tokens' },
+            { value: 'cost', label: 'Cost' },
+          ]}
+        />
       </CardHeader>
       <CardContent className="pt-2">
         {top.isPending ? (

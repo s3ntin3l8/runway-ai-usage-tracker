@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { StatTile } from '@/components/ui/StatTile';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/Tabs';
+import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { HistoryChart } from '@/features/history/HistoryChart';
 import { useHistoryDeltas } from '@/features/history/queries';
 import { useExcludeCache } from '@/hooks/useExcludeCache';
@@ -37,16 +37,15 @@ export function OverallChartCard({ range }: { range: DateRangeValue }) {
     <Card>
       <CardHeader>
         <CardTitle>Overall usage · {rangeLabel}</CardTitle>
-        <Tabs value={metric} onValueChange={(v) => setMetric(v as OverallMetric)}>
-          <TabsList className="border-0" aria-label="Overall metric">
-            <TabsTrigger value="tokens" className="h-8 px-2.5">
-              Tokens
-            </TabsTrigger>
-            <TabsTrigger value="cost" className="h-8 px-2.5">
-              Cost
-            </TabsTrigger>
-          </TabsList>
-        </Tabs>
+        <SegmentedControl
+          value={metric}
+          onChange={(v) => setMetric(v as OverallMetric)}
+          label="Overall metric"
+          options={[
+            { value: 'tokens', label: 'Tokens' },
+            { value: 'cost', label: 'Cost' },
+          ]}
+        />
       </CardHeader>
       <CardContent className="flex flex-col gap-3 pt-2">
         <div className="grid grid-cols-2 gap-3">

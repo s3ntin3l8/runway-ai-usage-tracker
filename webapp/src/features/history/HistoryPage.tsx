@@ -14,7 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Skeleton } from '@/components/ui/Skeleton';
 import { StatTile } from '@/components/ui/StatTile';
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/Table';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/Tabs';
+import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { TimeRangePicker } from '@/components/ui/TimeRangePicker';
 import { useAnomalies, useFleet, useProviderConfigs } from '@/features/home/queries';
 import { useExcludeCache } from '@/hooks/useExcludeCache';
@@ -108,19 +108,16 @@ export function HistoryPage() {
               ))}
             </SelectContent>
           </Select>
-          <Tabs value={metric} onValueChange={(v) => setMetric(v as Metric)}>
-            <TabsList className="border-0" aria-label="Chart metric">
-              <TabsTrigger value="percent" className="h-9 px-2.5">
-                % used
-              </TabsTrigger>
-              <TabsTrigger value="tokens" className="h-9 px-2.5">
-                Tokens
-              </TabsTrigger>
-              <TabsTrigger value="cost" className="h-9 px-2.5">
-                Cost
-              </TabsTrigger>
-            </TabsList>
-          </Tabs>
+          <SegmentedControl
+            value={metric}
+            onChange={(v) => setMetric(v as Metric)}
+            label="Chart metric"
+            options={[
+              { value: 'percent', label: '% used' },
+              { value: 'tokens', label: 'Tokens' },
+              { value: 'cost', label: 'Cost' },
+            ]}
+          />
         </div>
 
         <Card>

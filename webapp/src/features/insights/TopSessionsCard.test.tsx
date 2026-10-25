@@ -117,16 +117,16 @@ describe('TopSessionsCard', () => {
   it('defaults to the tokens metric', async () => {
     renderWithProviders(<TopSessionsCard range={{ days: 7 }} />);
     await waitFor(() => expect(screen.getByTestId('rankbar')).toBeInTheDocument());
-    const tabs = screen.getByRole('tablist', { name: 'Top sessions metric' });
-    expect(within(tabs).getByRole('tab', { name: 'Tokens' })).toHaveAttribute('data-state', 'active');
+    const metricGroup = screen.getByRole('group', { name: 'Top sessions metric' });
+    expect(within(metricGroup).getByRole('radio', { name: 'Tokens' })).toBeChecked();
     expect(api.fetchTopSessions).toHaveBeenCalledWith(expect.objectContaining({ metric: 'tokens' }));
   });
 
   it('switches to the cost metric', async () => {
     renderWithProviders(<TopSessionsCard range={{ days: 7 }} />);
     await waitFor(() => expect(screen.getByTestId('rankbar')).toBeInTheDocument());
-    const tabs = screen.getByRole('tablist', { name: 'Top sessions metric' });
-    await userEvent.click(within(tabs).getByRole('tab', { name: 'Cost' }));
+    const metricGroup = screen.getByRole('group', { name: 'Top sessions metric' });
+    await userEvent.click(within(metricGroup).getByRole('radio', { name: 'Cost' }));
     expect(api.fetchTopSessions).toHaveBeenCalledWith(expect.objectContaining({ metric: 'cost' }));
   });
 
@@ -146,8 +146,8 @@ describe('TopSessionsCard', () => {
     vi.mocked(api.fetchTopSessions).mockResolvedValue(makeResponse([mockSession], 'cost'));
     renderWithProviders(<TopSessionsCard range={{ days: 7 }} />);
     await waitFor(() => expect(screen.getByTestId('rankbar')).toBeInTheDocument());
-    const tabs = screen.getByRole('tablist', { name: 'Top sessions metric' });
-    await userEvent.click(within(tabs).getByRole('tab', { name: 'Cost' }));
+    const metricGroup = screen.getByRole('group', { name: 'Top sessions metric' });
+    await userEvent.click(within(metricGroup).getByRole('radio', { name: 'Cost' }));
     await waitFor(() => expect(Number(firstRow().getAttribute('data-value'))).toBeCloseTo(0.15));
   });
 

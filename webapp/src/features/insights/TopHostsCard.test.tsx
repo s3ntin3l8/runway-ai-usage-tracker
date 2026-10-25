@@ -96,16 +96,16 @@ describe('TopHostsCard', () => {
   it('defaults to the tokens metric', async () => {
     renderWithProviders(<TopHostsCard range={{ days: 7 }} />);
     await waitFor(() => expect(screen.getByTestId('rankbar')).toBeInTheDocument());
-    const tabs = screen.getByRole('tablist', { name: 'Top hosts metric' });
-    expect(within(tabs).getByRole('tab', { name: 'Tokens' })).toHaveAttribute('data-state', 'active');
+    const metricGroup = screen.getByRole('group', { name: 'Top hosts metric' });
+    expect(within(metricGroup).getByRole('radio', { name: 'Tokens' })).toBeChecked();
     expect(api.fetchTopHosts).toHaveBeenCalledWith(expect.objectContaining({ metric: 'tokens' }));
   });
 
   it('switches to the cost metric', async () => {
     renderWithProviders(<TopHostsCard range={{ days: 7 }} />);
     await waitFor(() => expect(screen.getByTestId('rankbar')).toBeInTheDocument());
-    const tabs = screen.getByRole('tablist', { name: 'Top hosts metric' });
-    await userEvent.click(within(tabs).getByRole('tab', { name: 'Cost' }));
+    const metricGroup = screen.getByRole('group', { name: 'Top hosts metric' });
+    await userEvent.click(within(metricGroup).getByRole('radio', { name: 'Cost' }));
     expect(api.fetchTopHosts).toHaveBeenCalledWith(expect.objectContaining({ metric: 'cost' }));
   });
 
@@ -125,8 +125,8 @@ describe('TopHostsCard', () => {
     vi.mocked(api.fetchTopHosts).mockResolvedValue(makeResponse([mockHost], 'cost'));
     renderWithProviders(<TopHostsCard range={{ days: 7 }} />);
     await waitFor(() => expect(screen.getByTestId('rankbar')).toBeInTheDocument());
-    const tabs = screen.getByRole('tablist', { name: 'Top hosts metric' });
-    await userEvent.click(within(tabs).getByRole('tab', { name: 'Cost' }));
+    const metricGroup = screen.getByRole('group', { name: 'Top hosts metric' });
+    await userEvent.click(within(metricGroup).getByRole('radio', { name: 'Cost' }));
     await waitFor(() => expect(Number(firstRow().getAttribute('data-value'))).toBeCloseTo(0.15));
   });
 

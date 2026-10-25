@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Skeleton } from '@/components/ui/Skeleton';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/Tabs';
+import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { TopModelsBar, type TopMetric } from '@/components/charts/TopModelsBar';
 import { useExcludeCache } from '@/hooks/useExcludeCache';
 import { formatRangeLabel, type DateRangeValue } from '@/lib/timeRange';
@@ -23,16 +23,15 @@ export function TopModelsCard({ range }: { range: DateRangeValue }) {
     <Card>
       <CardHeader>
         <CardTitle>Top {INSIGHTS_TOP_N} models · {formatRangeLabel(range)}</CardTitle>
-        <Tabs value={metric} onValueChange={(v) => setMetric(v as TopMetric)}>
-          <TabsList className="border-0" aria-label="Top models metric">
-            <TabsTrigger value="tokens" className="h-8 px-2.5">
-              Tokens
-            </TabsTrigger>
-            <TabsTrigger value="cost" className="h-8 px-2.5">
-              Cost
-            </TabsTrigger>
-          </TabsList>
-        </Tabs>
+        <SegmentedControl
+          value={metric}
+          onChange={(v) => setMetric(v as TopMetric)}
+          label="Top models metric"
+          options={[
+            { value: 'tokens', label: 'Tokens' },
+            { value: 'cost', label: 'Cost' },
+          ]}
+        />
       </CardHeader>
       <CardContent className="pt-2">
         {top.isPending ? (

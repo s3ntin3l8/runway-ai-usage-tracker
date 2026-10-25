@@ -171,8 +171,8 @@ describe('HistoryPage', () => {
     renderWithProviders(<HistoryPage />);
     await screen.findByTestId('echart');
     // Scope to the chart's metric toggle by its aria-label to stay robust.
-    const metricTabs = screen.getByRole('tablist', { name: 'Chart metric' });
-    await userEvent.click(within(metricTabs).getByRole('tab', { name: 'Tokens' }));
+    const metricGroup = screen.getByRole('group', { name: 'Chart metric' });
+    await userEvent.click(within(metricGroup).getByRole('radio', { name: 'Tokens' }));
     expect(api.fetchHistoryChart).toHaveBeenCalledWith(
       expect.objectContaining({ metric: 'tokens' }),
     );
