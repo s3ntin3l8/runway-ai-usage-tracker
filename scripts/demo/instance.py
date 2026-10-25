@@ -50,6 +50,12 @@ KEEP_MARKER = "keep"
 # is held by the process that took it and released when that process dies.
 LOCK_FILE = "lock"
 
+# The lock file is opened without following a symlink (the temp dir is
+# world-writable) and without leaking the descriptor to the server the demo
+# starts. Not every platform has both flags.
+_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
+_CLOEXEC = getattr(os, "O_CLOEXEC", 0)
+
 # How old a scratch dir has to be before the sweep takes one that was never
 # claimed. A demo that dies between making the dir and claiming it leaves a
 # dir nothing can be read from, and a demo that is starting right now has
@@ -204,13 +210,24 @@ def _claim_demo_dir(demo_dir: Path) -> BinaryIO | None:
     """
     if fcntl is None:  # pragma: no cover - Windows
         return None
-    lock_file = open(demo_dir / LOCK_FILE, "a+b")
+    lock_file = _open_lock(demo_dir / LOCK_FILE, os.O_CREAT | os.O_RDWR)
     try:
         fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:
         lock_file.close()
         raise
     return lock_file
+
+
+def _open_lock(path: Path, flags: int) -> BinaryIO:
+    """Open the lock file without following a symlink.
+
+    The lock file lives in the world-writable temp dir, and the sweep opens
+    files in dirs it did not create: a symlink planted there must not lead
+    the open to somewhere else.
+    """
+    fd = os.open(path, flags | _NOFOLLOW | _CLOEXEC, 0o600)
+    return os.fdopen(fd, "r+b")
 
 
 def _dir_is_claimed(demo_dir: Path) -> bool:
@@ -223,7 +240,7 @@ def _dir_is_claimed(demo_dir: Path) -> bool:
         return False
     lock_path = demo_dir / LOCK_FILE
     try:
-        lock_file = open(lock_path, "r+b")
+        lock_file = _open_lock(lock_path, os.O_RDWR)
     except FileNotFoundError:
         return False  # never claimed: the demo died before it could
     except OSError:
@@ -281,35 +298,39 @@ def start_demo(*, keep: bool = False, quiet: bool = False) -> Demo:
 
     clean_stale_scratch_dirs()
     demo_dir = Path(tempfile.mkdtemp(prefix="runway-demo-"))
-    if keep:
-        # The dir is the operator's from the moment it exists, and it says
-        # so: a start that fails later still leaves them the dir they asked
-        # for, and the sweep leaves a marked dir alone.
-        _mark_kept(demo_dir)
-    # The lock is taken before the dir holds anything else. It is what tells
-    # a later demo that this one is still running, so a demo that was killed
-    # with SIGKILL does not leave its scratch dir behind for ever. A demo
-    # that dies between making the dir and locking it leaves a dir nothing
-    # can be read from, and the sweep takes one of those only once it is
-    # old.
-    lock_file = _claim_demo_dir(demo_dir)
-    run_dir = demo_dir / "run"  # server cwd: no .env here
-    for sub in ("home", "tmp", "run", "config"):
-        (demo_dir / sub).mkdir(parents=True, exist_ok=True)
-
-    env = demo_env(
-        demo_dir,
-        {
-            "PYTHONPATH": str(ROOT),
-            "APP_HOST": "127.0.0.1",
-            "APP_PORT": str(DEMO_PORT),
-            # The poller still runs, but its collectors only find the scratch
-            # HOME's empty credential stores, so the seeded cards stay as seeded.
-            "LOG_LEVEL": "WARNING",
-        },
-    )
     server: subprocess.Popen[bytes] | None = None
+    lock_file: BinaryIO | None = None
+    # Everything from here on is inside the try: a failure between making the
+    # dir and starting the server has to leave the dir in a state the sweep
+    # understands, or it leaks the dir and the lock with it.
     try:
+        if keep:
+            # The dir is the operator's from the moment it exists, and it
+            # says so: a start that fails later still leaves them the dir
+            # they asked for, and the sweep leaves a marked dir alone.
+            _mark_kept(demo_dir)
+        # The lock is taken before the dir holds anything else. It is what
+        # tells a later demo that this one is still running, so a demo that
+        # was killed with SIGKILL does not leave its scratch dir behind for
+        # ever. A demo that dies between making the dir and locking it
+        # leaves a dir nothing can be read from, and the sweep takes one of
+        # those only once it is old.
+        lock_file = _claim_demo_dir(demo_dir)
+        run_dir = demo_dir / "run"  # server cwd: no .env here
+        for sub in ("home", "tmp", "run", "config"):
+            (demo_dir / sub).mkdir(parents=True, exist_ok=True)
+
+        env = demo_env(
+            demo_dir,
+            {
+                "PYTHONPATH": str(ROOT),
+                "APP_HOST": "127.0.0.1",
+                "APP_PORT": str(DEMO_PORT),
+                # The poller still runs, but its collectors only find the scratch
+                # HOME's empty credential stores, so the seeded cards stay as seeded.
+                "LOG_LEVEL": "WARNING",
+            },
+        )
         assert_demo_env(env, demo_dir, cwd=run_dir)
         print(f"[demo] scratch dir {demo_dir}")
         print("[demo] seeding demo data...")

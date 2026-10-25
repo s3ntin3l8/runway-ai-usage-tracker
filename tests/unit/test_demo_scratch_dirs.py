@@ -138,17 +138,18 @@ def test_a_kept_demo_leaves_the_dir_and_releases_its_lock(tmp_path: Path) -> Non
 def test_a_failed_start_keeps_the_dir_and_says_so(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # A start that fails before the server is up keeps the dir -- and has to
+    # A start that fails after the dir is made keeps the dir -- and has to
     # say so, or the next sweep takes the one dir an operator wants after a
-    # failure.
+    # failure. The failure is the seeding, which is inside the try the demo
+    # tears down in.
     monkeypatch.setattr(instance.tempfile, "gettempdir", lambda: str(tmp_path))
     monkeypatch.setattr(instance, "assert_ports_free", lambda ports: None)
     monkeypatch.setattr(instance, "ensure_spa_built", lambda: None)
 
-    def no_environment(*args, **kwargs):
-        raise RuntimeError("no environment for you")
+    def no_seed(*args, **kwargs):
+        raise RuntimeError("no seed for you")
 
-    monkeypatch.setattr(instance, "demo_env", no_environment)
+    monkeypatch.setattr(instance.subprocess, "run", no_seed)
 
     with pytest.raises(RuntimeError):
         instance.start_demo(keep=True)
@@ -156,3 +157,25 @@ def test_a_failed_start_keeps_the_dir_and_says_so(
     kept = list(tmp_path.glob("runway-demo-*"))
     assert len(kept) == 1
     assert (kept[0] / KEEP_MARKER).exists()
+    # The teardown released the lock, so the dir is not claimed any more.
+    assert not instance._dir_is_claimed(kept[0])
+
+
+def test_a_failed_start_deletes_the_dir_it_does_not_keep(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The other arm of the same teardown: a start that failed and whose dir
+    # nobody asked to keep leaves nothing behind.
+    monkeypatch.setattr(instance.tempfile, "gettempdir", lambda: str(tmp_path))
+    monkeypatch.setattr(instance, "assert_ports_free", lambda ports: None)
+    monkeypatch.setattr(instance, "ensure_spa_built", lambda: None)
+
+    def no_seed(*args, **kwargs):
+        raise RuntimeError("no seed for you")
+
+    monkeypatch.setattr(instance.subprocess, "run", no_seed)
+
+    with pytest.raises(RuntimeError):
+        instance.start_demo(keep=False)
+
+    assert list(tmp_path.glob("runway-demo-*")) == []
