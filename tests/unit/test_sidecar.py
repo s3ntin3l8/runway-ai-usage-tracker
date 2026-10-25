@@ -3783,7 +3783,7 @@ class TestMiniMaxCodeSchedulingId:
     """
 
     @staticmethod
-    def _collection(monkeypatch, tmp_path, *, providers, tag_hints=None):
+    def _collection(monkeypatch, tmp_path, *, providers, tag_hints=None, parser=None):
         """Run a ``run_collection`` with the MiniMax Code extractor stubbed.
 
         Everything else — the account resolution, the untagged origin and
@@ -3829,7 +3829,7 @@ class TestMiniMaxCodeSchedulingId:
                 )
             ]
 
-        monkeypatch.setattr(mm, "parse_minimax_code_events", _parse)
+        monkeypatch.setattr(mm, "parse_minimax_code_events", parser or _parse)
         result = sidecar.run_collection(
             config={"api_url": "http://x", "api_key": "k"},
             providers=providers,
@@ -3863,12 +3863,13 @@ class TestMiniMaxCodeSchedulingId:
         """Without a hint the events ship under "default" and the operator is
         pointed at ``provider:minimax`` — the origin they can actually tag.
 
-        ``provider:minimax_code`` would be a provider that does not exist.
+        ``provider:minimax_code`` would be a provider that does not exist,
+        and an Untagged entry the operator can never clear.
         """
         _, posted, _ = self._collection(monkeypatch, tmp_path, providers=["minimax_code"])
         assert posted["entries"] == [
             {
-                "provider_id": "minimax_code",
+                "provider_id": "minimax",
                 "credential_origin": "provider:minimax",
                 "reason": "events_untagged",
             }
@@ -3886,6 +3887,31 @@ class TestMiniMaxCodeSchedulingId:
         )
         assert len(parsed) == 1
         assert len(result.events) == 1
+
+    def test_a_failing_store_is_still_tried_by_the_other_id(self, monkeypatch, tmp_path):
+        """A store whose parse raises must stay open for the other id.
+
+        Marking it read before the parse would skip it for the rest of the
+        cycle: no retry, no error count on the second attempt, and the
+        provider would still report the cycle complete.
+        """
+        from scripts.sidecar_pkg.event_extractors import minimax_code as mm
+
+        attempts: list[str] = []
+
+        def _raise(db_path, *, account_id, since, state_file):
+            attempts.append(str(db_path))
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(mm, "parse_minimax_code_events", _raise)
+        result, _, _ = self._collection(
+            monkeypatch,
+            tmp_path,
+            providers=["minimax", "minimax_code"],
+            parser=_raise,
+        )
+        assert len(attempts) == 2
+        assert result.error_count == 2
 
     def test_a_server_that_knows_only_the_provider_still_collects(self, monkeypatch, tmp_path):
         """An older server sends ``minimax`` but not ``minimax_code``.

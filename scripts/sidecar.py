@@ -3794,15 +3794,17 @@ def _make_account_extractor_minimax_code(parser: Any, state_file: Path | None = 
                 db_key = str(db_path)
             if db_key in _MINIMAX_CODE_STORES_READ:
                 continue
-            _MINIMAX_CODE_STORES_READ.add(db_key)
-            events.extend(
-                parser(
-                    db_path,
-                    account_id=account_id,
-                    since=since,
-                    state_file=cursor_file,
-                )
+            parsed = parser(
+                db_path,
+                account_id=account_id,
+                since=since,
+                state_file=cursor_file,
             )
+            # Marked only after the parse returned: a store that raises must
+            # stay open for the other scheduling id, which would otherwise
+            # skip it for the rest of the cycle — no retry, no error count.
+            _MINIMAX_CODE_STORES_READ.add(db_key)
+            events.extend(parsed)
         # Defense-in-depth against overlapping discovery paths: a data dir that
         # was *copied* rather than symlinked holds the same rows under two
         # paths, and the same request would otherwise be pushed twice.
@@ -5998,7 +6000,12 @@ def run_collection(config: dict[str, Any], providers: list[str] | None = None) -
                 elif untagged and post_count > pre_count:
                     blocked_origins_this_cycle.append(
                         {
-                            "provider_id": provider_id,
+                            # The provider whose account is missing — not the
+                            # scheduling id the events were collected under.
+                            # The operator tags a *provider*, and the tag is
+                            # read from that provider's bucket, so an entry
+                            # under the scheduling id could never be cleared.
+                            "provider_id": identity_provider_id,
                             "credential_origin": event_origin,
                             # Events still flow (under 'default'); only the account is
                             # missing. Not "token withheld": no quota collection is lost.
