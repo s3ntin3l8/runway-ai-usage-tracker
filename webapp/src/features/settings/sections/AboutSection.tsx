@@ -146,7 +146,7 @@ function BuildCommit({ sha }: { sha?: string | null }) {
       target="_blank"
       rel="noreferrer"
       title={`Commit ${sha}`}
-      className="font-mono tabular text-accent hover:underline"
+      className="font-mono tabular text-accent-text hover:underline"
     >
       {sha.slice(0, SHORT_SHA_LEN)}
     </a>

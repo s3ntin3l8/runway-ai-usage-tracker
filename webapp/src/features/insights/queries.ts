@@ -13,6 +13,15 @@ import { useExcludeCache } from '@/hooks/useExcludeCache';
 import { useUsageSource } from '@/hooks/useUsageSource';
 
 export type TopMetric = 'tokens' | 'cost';
+
+/**
+ * How many rows the rankings ask for. The backend has no "total" for these
+ * lists (the query is a GROUP BY with a LIMIT), so the card title states the
+ * cap — "Top 12 models" rather than "Top models", which read as a complete
+ * ranking. Keep the two in step: the number is shared by the query and the
+ * label.
+ */
+export const INSIGHTS_TOP_N = 12;
 export type ProjectMetric = 'tokens' | 'cost' | 'sessions';
 export type OverallMetric = 'tokens' | 'cost';
 
@@ -35,7 +44,7 @@ export const useTopModels = (metric: TopMetric, range: DateRangeValue, excludeCa
   return useQuery({
     queryKey: ['usage', 'top-models', metric, params, excludeCache, sidecarId],
     queryFn: () =>
-      fetchTopModels({ metric, ...params, exclude_cache: excludeCache, sidecar_id: sidecarId, limit: 12 }),
+      fetchTopModels({ metric, ...params, exclude_cache: excludeCache, sidecar_id: sidecarId, limit: INSIGHTS_TOP_N }),
     refetchInterval: 120_000,
   });
 };
@@ -68,7 +77,7 @@ export const useTopProjects = (
         metric,
         exclude_cache: excludeCache,
         sidecar_id: sidecarId,
-        limit: 12,
+        limit: INSIGHTS_TOP_N,
         ...params,
         ...(providerId ? { provider_id: providerId } : {}),
       }),
@@ -81,7 +90,7 @@ export const useTopTools = (range: DateRangeValue) => {
   const [sidecarId] = useUsageSource();
   return useQuery({
     queryKey: ['usage', 'top-tools', params, sidecarId],
-    queryFn: () => fetchTopTools({ ...params, sidecar_id: sidecarId, limit: 12 }),
+    queryFn: () => fetchTopTools({ ...params, sidecar_id: sidecarId, limit: INSIGHTS_TOP_N }),
     refetchInterval: 120_000,
   });
 };
@@ -99,7 +108,7 @@ export const useTopSessions = (metric: TopMetric, range: DateRangeValue, exclude
         metric,
         exclude_cache: excludeCache,
         sidecar_id: sidecarId,
-        limit: 12,
+        limit: INSIGHTS_TOP_N,
         ...params,
       }),
     refetchInterval: 120_000,
@@ -119,7 +128,7 @@ export const useTopHosts = (metric: TopMetric, range: DateRangeValue, excludeCac
         metric,
         exclude_cache: excludeCache,
         sidecar_id: sidecarId,
-        limit: 12,
+        limit: INSIGHTS_TOP_N,
         ...params,
       }),
     refetchInterval: 120_000,

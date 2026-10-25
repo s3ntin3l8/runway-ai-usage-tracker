@@ -39,7 +39,7 @@ class LimitCard(BaseModel):
     # ISO 8601 timestamp for hover tooltip with absolute time
     reset_at: str | None = None
     # Data collection mechanism (how)
-    data_source: str = "unknown"  # "oauth", "web_api", "scrape", "logs", "statusline", "api"
+    data_source: str = "unknown"  # "api", "web", "local", "unknown", "error"
     # Credential/Token origin (where)
     input_source: str = "unknown"  # "sidecar", "config", "server"
     # Error categorization

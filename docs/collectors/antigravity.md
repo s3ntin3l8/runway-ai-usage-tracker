@@ -1,5 +1,7 @@
 # Antigravity Collector
 
+**File:** `app/services/collectors/antigravity.py` (server) · `scripts/sidecar.py` (sidecar)
+
 Runway collects Antigravity CLI quota gauges server-side via Google's Cloud Code Assist API, and
 extracts per-message token/cost events sidecar-side from the local conversation SQLite databases.
 
@@ -15,7 +17,7 @@ extracts per-message token/cost events sidecar-side from the local conversation 
 
 ## Quota Collection
 
-**Source:** `POST https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary`
+**Source:** `POST https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary`
 
 **Two-step recipe:**
 1. `POST .../v1internal:loadCodeAssist` with `{"metadata": {"ideType": "ANTIGRAVITY"}}` → get `cloudaicompanionProject` id
@@ -132,7 +134,7 @@ read it on its own: the read goes through the Keychain worker, and the user auth
 the local Sources UI (**Authorize** raises the macOS "Runway wants to access 'gemini' in your
 keychain" prompt; after allowing it, the background read is silent and the grant can be withdrawn
 in Keychain Access). Until then the source is off and nothing is read — see
-[docs/sidecar-source-authorization.md](../sidecar-source-authorization.md).
+[docs/source-consent.md](../source-consent.md).
 
 The origin is `keychain:gemini:antigravity` on every platform that keeps the credential in an OS
 store, so the same Google account is filed under one cache key whichever store it came from. The
@@ -143,7 +145,7 @@ present and a platform-specific mapping would file one account under two keys.
 > **The macOS credential follows the negotiated model.** Like every other Keychain-backed
 > credential it leaves the host only when the user has granted the source locally, authorized
 > the entry, and the device's negotiated scope includes it — see
-> [docs/sidecar-source-authorization.md](../sidecar-source-authorization.md).
+> [docs/source-consent.md](../source-consent.md).
 
 ### Token lifetime & keep-alive
 
@@ -294,14 +296,13 @@ On hosts where agy sessions are intermittent, enable keep-alive (`--keep-alive` 
 | `app/services/collectors/antigravity.py` | Server collector entry point |
 | `app/services/collectors/antigravity_api.py` | `retrieveUserQuotaSummary` API mixin |
 | `app/services/collectors/antigravity_oauth.py` | OAuth token cache-read mixin |
+| `app/services/collectors/base.py` | Collector base class |
+| `app/services/collectors/oauth_base.py` | Shared OAuth token handling |
+| `scripts/sidecar.py` | Sidecar credential rule + event dispatch |
 | `scripts/sidecar_pkg/event_extractors/antigravity.py` | Conversation DB parser |
 | `scripts/sidecar_pkg/agy_version.py` | Installed agy CLI's version (reported with the token) |
-| `scripts/sidecar_pkg/keyring_value.py` | Unwraps the go-keyring envelope the macOS Keychain entry stores |
 | `scripts/sidecar_pkg/agy_keychain.py` | The macOS Keychain entry: catalogued rule, CLI version, and what the keep-alive reads |
-| `scripts/sidecar.py` | Sidecar credential rule + event dispatch |
+| `scripts/sidecar_pkg/keyring_value.py` | Unwraps the go-keyring envelope the macOS Keychain entry stores |
 | `scripts/sidecar_pkg/keep_alive.py` | Optional `--keep-alive` thread (`agy models` renewal) |
 | `scripts/reclassify_antigravity_models.py` | One-shot repair for pre-version-preservation rows |
-| `scripts/backfill_argon_models.py` | One-shot repair for pre-Argon-family rows (rewrites the stored model id and re-prices) |
-| `app/services/maintenance/argon_retag.py` | Shared logic behind the Argon repair script |
-| `scripts/recost_events.py` | Reprice after pricing-seed changes (`--provider antigravity`) |
-| `app/services/pricing_seed.py` | Antigravity pricing rows |
+| `scripts/backfill_argon_models.py` | One-shot repair for pre-Argon-family rows |

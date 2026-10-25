@@ -8,12 +8,15 @@ import { RankBar, type RankRow, type RankSegment } from '@/components/charts/Ran
 import { COST_SEGMENT_KEYS, TOKEN_SEGMENT_KEYS } from '@/components/charts/segmentDefs';
 import { useChartTokens } from '@/components/charts/theme';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
+import { Button } from '@/components/ui/Button';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { Skeleton } from '@/components/ui/Skeleton';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/Tabs';
+import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { useExcludeCache } from '@/hooks/useExcludeCache';
 import { formatAxisCost, formatAxisNumber, formatCost, formatTokens } from '@/lib/format';
 import { formatRangeLabel, type DateRangeValue } from '@/lib/timeRange';
-import { useTopProjects, type ProjectMetric } from './queries';
+import { INSIGHTS_TOP_N, type ProjectMetric, useTopProjects } from './queries';
+import { CircleAlert } from 'lucide-react';
 
 const COST_ACCESSORS: Record<string, (p: TopProjectEntry) => number> = {
   cost_input: (p) => p.cost_input,
@@ -98,7 +101,7 @@ const AXIS_FORMAT: Record<ProjectMetric, (v: number) => string> = {
 };
 
 // The shared range value scopes the ranking; `providerId` narrows it to one
-// provider (Activity). `title` overrides the default `Top projects · label`.
+// provider (Activity). `title` overrides the default `Top ${INSIGHTS_TOP_N} projects · label`.
 export function TopProjectsCard({
   range,
   providerId,
@@ -118,24 +121,28 @@ export function TopProjectsCard({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>{title ?? `Top projects · ${formatRangeLabel(range)}`}</CardTitle>
-        <Tabs value={metric} onValueChange={(v) => setMetric(v as ProjectMetric)}>
-          <TabsList className="border-0" aria-label="Top projects metric">
-            <TabsTrigger value="tokens" className="h-8 px-2.5">
-              Tokens
-            </TabsTrigger>
-            <TabsTrigger value="cost" className="h-8 px-2.5">
-              Cost
-            </TabsTrigger>
-            <TabsTrigger value="sessions" className="h-8 px-2.5">
-              Sessions
-            </TabsTrigger>
-          </TabsList>
-        </Tabs>
+        <CardTitle>{title ?? `Top ${INSIGHTS_TOP_N} projects · ${formatRangeLabel(range)}`}</CardTitle>
+        <SegmentedControl
+          value={metric}
+          onChange={(v) => setMetric(v as ProjectMetric)}
+          label="Top projects metric"
+          options={[
+            { value: 'tokens', label: 'Tokens' },
+            { value: 'cost', label: 'Cost' },
+            { value: 'sessions', label: 'Sessions' },
+          ]}
+        />
       </CardHeader>
       <CardContent className="pt-2">
         {top.isPending ? (
           <Skeleton className="h-72 w-full" />
+        ) : top.isError ? (
+          <EmptyState
+            icon={CircleAlert}
+            title="Could not load this data"
+            description={top.error.message}
+            action={<Button size="sm" onClick={() => top.refetch()}>Retry</Button>}
+          />
         ) : !hasData ? (
           <p className="py-16 text-center text-xs text-fg-subtle">
             No project-attributed usage in this range.

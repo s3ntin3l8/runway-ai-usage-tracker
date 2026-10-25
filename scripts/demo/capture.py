@@ -2,6 +2,7 @@
 
     make screenshots                    # README (dark + light) and PWA manifest set
     make screenshots-landing OUT=<dir>  # landing-page stills + a short loop
+    make screenshots-audit AUDIT=<slug>  # phone + tablet stills for one audit
 
 Boots scripts/demo/instance.py, runs the Playwright driver in
 webapp/scripts/screenshots.mjs against it, and tears the instance down.
@@ -20,8 +21,13 @@ from scripts.demo.instance import ROOT, start_demo
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--profile", choices=("readme", "landing"), default="readme")
+    parser.add_argument("--profile", choices=("readme", "landing", "audit"), default="readme")
     parser.add_argument("--out", help="output directory (landing profile)")
+    parser.add_argument(
+        "--audit-slug",
+        default="",
+        help="slug of the audit the captures belong to (audit profile)",
+    )
     parser.add_argument("--keep", action="store_true", help="keep the scratch dir")
     args = parser.parse_args()
     if args.profile == "landing" and not args.out:
@@ -40,6 +46,10 @@ def main() -> None:
         }
         if args.out:
             extra["SCREENSHOTS_OUT_DIR"] = str(Path(args.out).resolve())
+        if args.audit_slug:
+            # The audit assets are local only (see docs/audit/README.md); the
+            # slug keeps two audits from overwriting each other's captures.
+            extra["SCREENSHOTS_AUDIT_SLUG"] = args.audit_slug
         env = demo_env(demo.demo_dir, extra)
         assert_demo_env(env, demo.demo_dir, cwd=ROOT / "webapp")
         subprocess.run(

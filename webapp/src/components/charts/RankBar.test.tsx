@@ -4,9 +4,23 @@ import { ThemeProvider } from '@/hooks/useTheme';
 
 const captured: { option?: Record<string, unknown> } = {};
 vi.mock('./EChart', () => ({
-  EChart: ({ option }: { option: Record<string, unknown> }) => {
+  // The mock forwards ariaLabel the way the real EChart does, so the tests
+  // can assert that each chart hands its label down.
+  EChart: ({
+    option,
+    ariaLabel,
+  }: {
+    option: Record<string, unknown>;
+    ariaLabel?: string;
+  }) => {
     captured.option = option;
-    return <div data-testid="echart" />;
+    return (
+      <div
+        data-testid="echart"
+        role={ariaLabel ? 'img' : undefined}
+        aria-label={ariaLabel}
+      />
+    );
   },
 }));
 
@@ -123,5 +137,48 @@ describe('RankBar', () => {
     expect(series[0].data).toEqual([]);
     const yAxis = captured.option!.yAxis as { data: string[] };
     expect(yAxis.data).toEqual([]);
+  });
+
+  it('gives the stacked bars a legend naming the segments', () => {
+    document.documentElement.style.setProperty('--fg-muted', '#9a9aa2');
+    render(<RankBar rows={mockRows} format={format} />, { wrapper });
+    const legend = captured.option!.legend as {
+      bottom: number;
+      icon: string;
+      itemWidth: number;
+      textStyle: { color: string };
+    };
+    expect(legend.bottom).toBe(0);
+    expect(legend.icon).toBe('square');
+    // The legend text follows the theme token, so it reads on both themes.
+    expect(legend.textStyle.color).toBe('#9a9aa2');
+    document.documentElement.style.removeProperty('--fg-muted');
+  });
+
+  it('leaves room for the legend under the stacked bars', () => {
+    render(<RankBar rows={mockRows} format={format} />, { wrapper });
+    const grid = captured.option!.grid as { bottom: number };
+    // Two wrapped legend lines (≈48px) must not cover the x-axis labels.
+    expect(grid.bottom).toBeGreaterThanOrEqual(48);
+  });
+
+  it('has no legend for the single-value bars', () => {
+    render(<RankBar rows={[{ label: 'alpha', value: 200 }]} format={format} />, { wrapper });
+    expect(captured.option!.legend).toBeUndefined();
+  });
+
+  it('labels the chart and exposes the row and segment values as text', () => {
+    const { getByTestId, getByText } = render(
+      <RankBar rows={mockRows} format={format} />,
+      { wrapper },
+    );
+    expect(getByTestId('echart')).toHaveAttribute('aria-label', 'Ranking chart');
+    // Rows are listed in the order the chart draws them (largest last); the
+    // row's optional subtitle rides along in parentheses.
+    expect(getByText(/project-b: 50/)).toBeInTheDocument();
+    expect(getByText(/project-a: 100 \(via anthropic\)/)).toBeInTheDocument();
+    // ...with their segment breakdown.
+    expect(getByText('Input: 30')).toBeInTheDocument();
+    expect(getByText('Output: 40')).toBeInTheDocument();
   });
 });

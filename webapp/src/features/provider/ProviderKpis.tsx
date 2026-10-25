@@ -9,6 +9,7 @@
 import { useMemo } from 'react';
 import type { CumulativeBucket, FleetEntry } from '@/api/types';
 import { StatTile } from '@/components/ui/StatTile';
+import { moneyLabel as moneyLabelFor } from '@/lib/billingType';
 import { sumTokens } from '@/lib/cumulative';
 import { formatCost, formatNumber, formatPct, formatTokens } from '@/lib/format';
 import { cardKind, cardPct, cardStatus, findForecast, windowLabel } from '@/lib/quota';
@@ -54,11 +55,7 @@ export function ProviderKpis({
   const cost = useProviderCostForecast(providerId, accountId);
   const forecast = useProviderForecast(providerId, accountId);
   const billingType = entry.billing_type ?? 'unknown';
-  const moneyLabel = billingType === 'pay_as_you_go'
-    ? 'Spend'
-    : billingType === 'unknown'
-      ? 'Usage value'
-      : 'Estimated usage value';
+  const moneyLabel = moneyLabelFor(billingType);
 
   const kind = cardKind(critical);
 
@@ -148,14 +145,14 @@ export function ProviderKpis({
         )}
         {isLiveMonth ? (
           <StatTile
-            label={billingType === 'pay_as_you_go' ? 'Daily burn (7d)' : 'Daily usage value (7d)'}
+            label={`${moneyLabel} per day (7d)`}
             value={formatCost(cost.data?.daily_burn_avg_7d ?? null)}
             hint={cost.data ? `${cost.data.days_remaining}d left` : undefined}
             loading={cost.isPending}
           />
         ) : (
           projectionPlaceholder(
-            billingType === 'pay_as_you_go' ? 'Daily burn (7d)' : 'Daily usage value (7d)',
+            `${moneyLabel} per day (7d)`,
           )
         )}
         <StatTile
@@ -213,14 +210,14 @@ export function ProviderKpis({
         {hasCost ? (
           isLiveMonth ? (
             <StatTile
-              label={billingType === 'pay_as_you_go' ? 'Daily burn (7d)' : 'Daily usage value (7d)'}
+              label={`${moneyLabel} per day (7d)`}
               value={formatCost(cost.data?.daily_burn_avg_7d ?? null)}
               hint={cost.data ? `${cost.data.days_remaining}d left` : undefined}
               loading={cost.isPending}
             />
           ) : (
             projectionPlaceholder(
-              billingType === 'pay_as_you_go' ? 'Daily burn (7d)' : 'Daily usage value (7d)',
+              `${moneyLabel} per day (7d)`,
             )
           )
         ) : (
@@ -261,25 +258,25 @@ export function ProviderKpis({
       )}
       {isLiveMonth ? (
         <StatTile
-          label={billingType === 'pay_as_you_go' ? 'Projected EOM' : 'Projected usage value'}
+          label={'Projected cost (EOM)'}
           value={formatCost(cost.data?.projected_eom ?? null)}
           hint={cost.data ? `${cost.data.days_remaining}d left` : undefined}
           loading={cost.isPending}
         />
       ) : (
         projectionPlaceholder(
-          billingType === 'pay_as_you_go' ? 'Projected EOM' : 'Projected usage value',
+          'Projected cost (EOM)',
         )
       )}
       {isLiveMonth ? (
         <StatTile
-          label={billingType === 'pay_as_you_go' ? 'Daily burn (7d)' : 'Daily usage value (7d)'}
+          label={`${moneyLabel} per day (7d)`}
           value={formatCost(cost.data?.daily_burn_avg_7d ?? null)}
           loading={cost.isPending}
         />
       ) : (
         projectionPlaceholder(
-          billingType === 'pay_as_you_go' ? 'Daily burn (7d)' : 'Daily usage value (7d)',
+          `${moneyLabel} per day (7d)`,
         )
       )}
       <StatTile

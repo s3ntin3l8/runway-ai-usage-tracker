@@ -43,11 +43,11 @@ Upgrading from the previous major version? See the [v3 migration notes](docs/mig
 
 ## Key Features
 
-- **15 Providers, 20+ Data Points**: Monitor Claude, Gemini, GitHub Copilot, OpenRouter, MiniMax, Ollama, and more
-- **3-Tier Fallback**: APIs → Web scraping → Local files. If one fails, the next takes over
+- **16 Providers, 20+ Data Points**: Monitor Claude, Claude Console, Gemini, GitHub Copilot, ChatGPT/Codex, OpenRouter, MiniMax, Ollama, zAI, Kimi, OpenCode, DeepSeek, xAI and Antigravity — see the [provider list](docs/collectors/README.md)
+- **Per-Collector Fallback**: each provider declares its own ordered strategy list; the first that does not error wins (e.g. the official API, then a cookie-based web strategy)
 - **Event-Sourced History**: One immutable row per assistant message in `usage_events` — rollups, windows, and cost are all derived views over the same authoritative log
-- **Smart Caching**: Configurable poll interval (default 15 min; per-provider or global override via Settings) plus a smart-sleep mode that stretches to ~2 hours after 45 min of no quota change
-- **Instant Serving**: `/limits` returns from an in-memory registry — never blocks on collection
+- **Smart Caching**: Configurable poll interval (default 15 min; per-provider or global override via Settings) plus a smart-sleep mode that stretches to ~2 hours after 3 consecutive identical polls (≈30 min at the 15-minute base interval; the interval is per-provider overridable)
+- **Instant Serving**: `/limits` reads the `LatestUsage` table — never blocks on collection
 - **Forecast Trajectories**: Theil-Sen regression on quota snapshots projects exhaustion — surfaced on Fleet Commander gauges, the history chart overlay, and the per-provider detail page
 - **Persistent History**: SQLite-backed usage snapshots with 15-minute background polling, hourly resolution on ≤7-day windows
 - **Provider Detail Page**: A deep-linked per-provider view with Overview, Activity (token trend, composition, heatmap, sessions), Events (per-message stream), Forecast, and Cost tabs
@@ -71,7 +71,7 @@ Upgrading from the previous major version? See the [v3 migration notes](docs/mig
 
 ## Quick Start
 
-- **Python 3.12+** and **Node.js 22.22.2+** with **npm 11.11+** (for the UI build and the frontend test suite) are required. Node 24 ships npm 11.19.
+- **Python 3.12+** and **Node.js 22.22.2+** with **npm 11.11+** (for the UI build and the frontend test suite) are required. The supported Node versions are `^22.22.2 || ^24.15.0 || >=26.0.0` — npm **rejects** Node 23.x and Node 24.0–24.14. Node 24 ships npm 11.19.
 
 ```bash
 # 1. Clone and setup (installs venv, dependencies, and git hooks)
@@ -108,11 +108,19 @@ Runway includes a `Makefile` to automate common tasks. Run `make help` for the f
 | `make format` | Automatically fix linting and formatting issues |
 | `make web` / `make web-dev` | Build the SPA for production (`webapp/dist`) / run the live Vite dev server on :5173 (HMR) |
 | `make web-test` | Run the frontend unit tests (vitest) |
+| `make web-lint` | Lint the frontend (eslint) — required by the pre-commit gate |
 | `make logo` | Regenerate every brand surface (favicon, PWA icons, sidecar tray) from the canonical `assets/logo.svg` — see [Branding](docs/branding.md) |
 | `make demo` | Throwaway demo with synthetic data on 127.0.0.1:3965; nothing from your `.env`, `~/.config/runway` or HOME is read, and Ctrl-C deletes it |
 | `make screenshots` | Regenerate `assets/screenshots/` (dark + light) and the PWA manifest copies from that demo |
 | `make screenshots-landing OUT=…` | 2x stills and a short loop (needs `ffmpeg`) for the project landing page |
 | `make secrets` | Scan for secrets against `.secrets.baseline` |
+| `make secrets-baseline` | Regenerate `.secrets.baseline` after vetting new detections |
+| `make test-unit` | Run only the unit tests |
+| `make test-shard` | Run one pytest shard (see `make shard-weights`) |
+| `make shard-weights` | Report the per-shard test weights |
+| `make install-hooks` | Install the git hook that runs the local checks |
+| `make remove-worktree` | Remove a `.wt/` development worktree |
+| `make sidecar-registry` | Regenerate the sidecar's baked credential registry from `app/core/registry.json` |
 | `make clean` | Remove virtual environments and build artifacts |
 
 The demo's isolation is enforced by `scripts/demo/env.py` (tested in
@@ -126,6 +134,8 @@ The demo's isolation is enforced by `scripts/demo/env.py` (tested in
 The seeder (`scripts/demo/seed_demo.py`) feeds synthetic provider responses
 through the collectors' own parsers and events through `EventIngestor`, then
 fails if Runway's data-health scan finds anything wrong with the result.
+
+See [`docs/demo.md`](docs/demo.md) for the demo instance in full.
 
 ### Docker (Server Runtime)
 
@@ -171,6 +181,7 @@ See [docs/sidecar.md](docs/sidecar.md) for install, uninstall, silent-install an
 | Provider | Collection Method | Cards | Env Var | Docs |
 |----------|------------------|-------|---------|------|
 | **Claude** | OAuth → Web API → Local logs | 2-5 | `CLAUDE_CODE_OAUTH_TOKEN` (opt) | [📖](docs/collectors/claude.md) |
+| **Claude Console** | Web API (platform.claude.com session) | 1 | — (sessionKey cookie) | [📖](docs/collectors/claude.md) |
 | **Gemini** | OAuth API + Local logs | 1-7 | `GEMINI_OAUTH_*` (opt) | [📖](docs/collectors/gemini.md) |
 | **GitHub Copilot** | REST API | 2 | `GITHUB_TOKEN` | [📖](docs/collectors/github.md) |
 | **ChatGPT** | OAuth API → Chrome cookie → Local logs | 1 | `CHATGPT_OAUTH_TOKEN` (opt) | [📖](docs/collectors/chatgpt.md) |
@@ -179,7 +190,7 @@ See [docs/sidecar.md](docs/sidecar.md) for install, uninstall, silent-install an
 | **MiniMax** | REST API (Coding Plan) | 2 | `MINIMAX_API_KEY` | [📖](docs/collectors/minimax.md) |
 | **Ollama** | Web API (Cloud) + Session cookie | 2 | `OLLAMA_SESSION_TOKEN` (opt) | [📖](docs/collectors/ollama.md) |
 | **OpenCode** | Web API → Local DB → Sidecar | 3 | — (Chrome cookie) | [📖](docs/collectors/opencode.md) |
-| **zAI** | REST API (Balance + Quotas) | 1-3 | `ZAI_API_KEY` | [📖 API](docs/collectors/zai_api.md) · [📖 Plan](docs/collectors/zai_plan.md) |
+| **zAI** | REST API (Quota) | 1 | `ZAI_API_KEY` | [📖](docs/collectors/zai.md) |
 | **Kimi API** | REST API (Balance) | 1 | `KIMI_API_KEY` | [📖](docs/collectors/kimi_api.md) |
 | **Kimi Coding** | REST API (IDE Quotas) | 2-4 | `KIMI_CODE_API_KEY` / CLI auto / `KIMI_AUTH_TOKEN` (legacy) | [📖](docs/collectors/kimi_coding.md) |
 | **Kimi K2** | REST API (Credits) | 1 | `KIMI_K2_API_KEY` | [📖](docs/collectors/kimi_k2.md) |
@@ -194,29 +205,37 @@ For Antigravity on a remote host, the sidecar sends the agy OAuth token to the s
 
 Runway is always **server + sidecar(s)**. Two orthogonal axes vary: the server can run as Python (`make dev-all` / `make run`) or in Docker, and you can run one sidecar locally or N sidecars across remote hosts. All cookie, IDE, and local-file detection lives in the sidecar; the server handles API/web collection, aggregation, and the dashboard.
 
-👉 **[Full Deployment Guide](docs/deployment.md)** with the per-provider compatibility matrix and Docker Compose examples
+- **[Architecture and the data model](docs/architecture.md)** — the event-sourced tables, the ingest path, and the service modules.
+- **[Collection logic](docs/collection_logic.md)** — how a collector turns a response into a card.
+- **[Deployment guide](docs/deployment.md)** — the per-provider compatibility matrix and Docker Compose examples.
 
 ## API Reference
 
-All routes are mounted under `/api/v1/`. See **[docs/api-reference.md](docs/api-reference.md)** for the full route inventory (usage, fleet/ingestion, system, auth) and the `LimitCard` response payload schema.
+All routes are mounted under `/api/v1/`. See **[docs/api-reference.md](docs/api-reference.md)** for the full route inventory (usage, fleet/ingestion, system, auth) and the `LimitCard` response payload schema. The **[fleet protocol](docs/fleet-protocol.md)** describes the sidecar↔server protocol in one place.
 
-## Optional Security
+## UI/UX Audit
 
-**`RUNWAY_CONFIG_DIR`** — Override the default platform-specific configuration directory. This controls where Runway stores its database (`runway.db`), external metrics, and OAuth tokens. This is especially useful for Docker deployments or when you need to store configuration in a non-default location.
+The dashboard was audited for accessibility, mobile ergonomics and data honesty. See **[docs/audit/2026-10-webapp-ui-ux.md](docs/audit/2026-10-webapp-ui-ux.md)** for the findings, what was fixed, and the deferred backlog. The audit has two permanent guardrails in the test suite: an axe-core check over the main surfaces and a WCAG contrast check over the theme tokens.
 
-**`ADMIN_API_KEY`** — When set, the dashboard and admin API endpoints are protected. Unset by default (local-first, single-user). Remote access triggers a Login Screen.
+## Configuration
 
-**`DB_ENCRYPTION_KEY`** — Fernet key for encrypting sensitive metadata in SQLite. Unset = plaintext (acceptable for local deployments). Back up this key alongside the database file.
+Runway's environment variables are documented in **[.env.example](.env.example)**, which is the single source of truth for every supported variable, its default and an explanation.
 
-**`TLS_TERMINATED`** — Operator assertion that TLS is terminated upstream (nginx, caddy, cloudflare, kube ingress). **Required** when `APP_HOST` is not localhost — sidecar payloads carry tokens, and HMAC protects integrity but not confidentiality. See [Multi-Host Startup Gates](docs/SECURITY.md#-multi-host-startup-gates).
+The ones that decide whether a deployment works:
 
-**`CORS_ORIGINS`** — Comma-separated allow-list of origins for cross-origin requests. **Required** when `APP_HOST` is not localhost.
+| Variable | Purpose |
+|---|---|
+| `RUNWAY_CONFIG_DIR` | Override the platform-specific configuration directory (database, metrics, OAuth tokens). |
+| `ADMIN_API_KEY` | Protects the dashboard and the admin API. Unset by default (local-first, single-user); remote access then shows a login screen. |
+| `DB_ENCRYPTION_KEY` | Fernet key for sensitive metadata in SQLite. Unset = plaintext (acceptable locally). Back it up with the database. |
+| `TLS_TERMINATED` | Asserts TLS is terminated upstream. **Required** when `APP_HOST` is not localhost. |
+| `CORS_ORIGINS` | Comma-separated origin allow-list. **Required** when `APP_HOST` is not localhost. |
+| `TRUSTED_PROXY_IPS` | Reverse-proxy IPs allowed to assert identity via a forward-auth header. Without it those headers are forgeable and bypass `ADMIN_API_KEY`. |
+| `INGEST_API_KEY` | HMAC secret shared between the server and its sidecars. |
+| `LOG_FORMAT` | `plain` (default) or `json`. |
+| `TZ` | IANA timezone for dashboard display (e.g. `Europe/Berlin`). The browser auto-detects when unset. |
 
-**`TRUSTED_PROXY_IPS`** — Comma-separated list of reverse-proxy source IPs allowed to assert identity via a forward-auth header (`X-Forwarded-User` by default; `FORWARD_AUTH_USER_HEADER` and friends make the header names configurable, e.g. for Authentik). Without an IP allow-list these headers are forgeable and bypass `ADMIN_API_KEY`. See the [Forward-Auth / SSO guide](docs/forward-auth.md).
-
-**`LOG_FORMAT`** — `plain` (default) or `json` for structured logging.
-
-**`TZ`** — IANA timezone for dashboard display (e.g. `Europe/Berlin`). Browser auto-detect is used when unset; the Settings panel can override per user.
+See **[docs/SECURITY.md](docs/SECURITY.md)** for the full trust model and the multi-host startup gates.
 
 ## Network Access
 
@@ -245,4 +264,4 @@ the terms of the GNU Affero General Public License as published by the Free
 Software Foundation, either version 3 of the License, or (at your option) any
 later version (SPDX: `AGPL-3.0-or-later`). See [LICENSE](LICENSE).
 
-*Last updated: 2026-10-23*
+*Last updated: 2026-10-25*

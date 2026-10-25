@@ -5,13 +5,19 @@ const setOption = vi.fn();
 const resize = vi.fn();
 const dispose = vi.fn();
 
+// The component list handed to echarts.use() at import time. vi.hoisted
+// because the mock factory runs before the module body is evaluated.
+const { registered } = vi.hoisted(() => ({ registered: [] as unknown[] }));
+
 // echarts/core touches canvas (absent in jsdom); mock the whole tree-shaken bundle.
 vi.mock('echarts/core', () => ({
   init: (...args: unknown[]) => {
     init(...args);
     return { setOption, resize, dispose, on: vi.fn() };
   },
-  use: vi.fn(),
+  use: (...args: unknown[]) => {
+    registered.push(...args);
+  },
 }));
 vi.mock('echarts/charts', () => ({
   BarChart: {},
@@ -22,6 +28,7 @@ vi.mock('echarts/charts', () => ({
   ScatterChart: {},
 }));
 vi.mock('echarts/components', () => ({
+  AriaComponent: { name: 'AriaComponent' },
   DataZoomComponent: {},
   GridComponent: {},
   LegendComponent: {},
@@ -73,5 +80,27 @@ describe('EChart', () => {
   it('honors notMerge=false', () => {
     render(<EChart option={{ a: 1 }} notMerge={false} />);
     expect(setOption).toHaveBeenLastCalledWith({ a: 1 }, { notMerge: false });
+  });
+
+  it('exposes the chart as an image with the given label', () => {
+    const { container } = render(<EChart option={{}} ariaLabel="Token composition chart" />);
+    const div = container.firstChild as HTMLElement;
+    expect(div).toHaveAttribute('role', 'img');
+    expect(div).toHaveAttribute('aria-label', 'Token composition chart');
+  });
+
+  it('stays an unlabelled container when no label is given', () => {
+    const { container } = render(<EChart option={{}} />);
+    const div = container.firstChild as HTMLElement;
+    expect(div).not.toHaveAttribute('role');
+    expect(div).not.toHaveAttribute('aria-label');
+  });
+
+  it('does not register the ECharts aria component', () => {
+    // The aria component writes its generated description onto the very
+    // element this wrapper manages, which would overwrite the aria-label
+    // above — so it is deliberately left out of the bundle.
+    const names = registered.map((c) => (c as { name?: string }).name);
+    expect(names).not.toContain('AriaComponent');
   });
 });

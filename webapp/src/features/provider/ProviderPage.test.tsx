@@ -27,6 +27,8 @@ vi.mock('./DebugTab', () => ({ DebugTab: () => <div data-testid="debug-tab" /> }
 const renderPage = (route = '/provider/anthropic') =>
   renderWithProviders(
     <Routes>
+      {/* A home route so the Back control has somewhere to land. */}
+      <Route path="/" element={<div data-testid="home-route" />} />
       <Route path="/provider/:providerId" element={<ProviderPage />} />
     </Routes>,
     { route },
@@ -193,6 +195,9 @@ describe('ProviderPage', () => {
 
     await userEvent.click(screen.getByRole('button', { name: /more provider actions/i }));
     await userEvent.click(await screen.findByText('Clear failure state'));
+    // Destructive: it asks first and names what it acts on.
+    expect(api.resetProvider).not.toHaveBeenCalled();
+    await userEvent.click(await screen.findByRole('button', { name: 'Clear failure state' }));
     await waitFor(() =>
       expect(api.resetProvider).toHaveBeenCalledWith('anthropic', 'me@example.com'),
     );
@@ -262,6 +267,7 @@ describe('ProviderPage', () => {
 
     await userEvent.click(screen.getByRole('button', { name: /more provider actions/i }));
     await userEvent.click(await screen.findByText('Clear failure state'));
+    await userEvent.click(await screen.findByRole('button', { name: 'Clear failure state' }));
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Reset failed: nope'));
   });
 
@@ -302,13 +308,28 @@ describe('ProviderPage', () => {
     );
   });
 
-  it('navigates back when the Back button is clicked', async () => {
+  it('falls back to the Overview tab for an unknown ?tab=', async () => {
+    // Radix renders a panel only for a matching value, so an unknown tab
+    // used to leave the page blank: header, empty tab strip, no content and
+    // no way back.
+    vi.mocked(api.fetchFleetUsage).mockResolvedValue(fleetResponse([fleetEntry()]));
+    renderPage('/provider/anthropic?tab=does-not-exist');
+    expect(await screen.findByTestId('overview-tab')).toBeInTheDocument();
+    // The Overview tab is the selected one.
+    expect(screen.getByRole('tab', { name: 'Overview' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+  });
+
+  it('goes to Home when the Back button is clicked', async () => {
+    // Back used to be navigate(-1): on a bookmark, a deep link or a refresh
+    // there is no in-app history entry, and it left the dashboard entirely.
     vi.mocked(api.fetchFleetUsage).mockResolvedValue(fleetResponse([fleetEntry()]));
     renderPage();
     await screen.findByTestId('overview-tab');
 
-    // Just exercising the navigate(-1) handler; no throw is the assertion.
     await userEvent.click(screen.getByRole('button', { name: /back/i }));
-    expect(screen.getByTestId('overview-tab')).toBeInTheDocument();
+    expect(await screen.findByTestId('home-route')).toBeInTheDocument();
   });
 });

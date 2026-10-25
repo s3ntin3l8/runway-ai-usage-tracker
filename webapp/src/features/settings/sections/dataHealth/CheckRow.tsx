@@ -139,7 +139,7 @@ function GroupRow({
               {group.not_fixable_reason ?? 'not fixable'}
             </span>
             {link && (
-              <Link className="shrink-0 whitespace-nowrap text-[11px] font-medium text-accent underline" to={link}>
+              <Link className="shrink-0 whitespace-nowrap text-[11px] font-medium text-accent-text underline" to={link}>
                 Open Fleet
               </Link>
             )}

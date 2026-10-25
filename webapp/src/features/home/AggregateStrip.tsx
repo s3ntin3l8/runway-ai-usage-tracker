@@ -1,16 +1,21 @@
-// Aggregate strip: month-to-date usage value, EOM projection, 7-day value, and
-// this-month token/message volume. Accounts may mix billing types, so the
-// aggregate label stays neutral.
+// Aggregate strip: month-to-date cost, EOM projection, 7-day average, and
+// this-month token/message volume. The accounts here may mix billing types,
+// so the label follows the aggregate: reported money when every account
+// reports it, estimated money as soon as one of them does not.
 
 import type { CostForecastResponse, CumulativeBucket, CumulativeResponse } from '@/api/types';
 import { Card } from '@/components/ui/Card';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { useExcludeCache } from '@/hooks/useExcludeCache';
+import { moneyLabel } from '@/lib/billingType';
 import { formatCost, formatTokens } from '@/lib/format';
 
 interface AggregateStripProps {
   cost: CostForecastResponse | undefined;
   cumulative: CumulativeResponse | undefined;
+  // The billing type of the accounts being aggregated — see
+  // `aggregateBillingType` in HomePage.
+  billingType: string | null | undefined;
   // Split so the three cost-forecast cards don't wait on the (slower)
   // cumulative token/msg query — they resolve independently.
   costLoading: boolean;
@@ -44,26 +49,28 @@ function monthTotals(
 export function AggregateStrip({
   cost,
   cumulative,
+  billingType,
   costLoading,
   tokensLoading,
 }: AggregateStripProps) {
   const { excludeCache } = useExcludeCache();
   const { tokens, msgs } = monthTotals(cumulative, excludeCache);
+  const label = moneyLabel(billingType);
 
   const stats: { label: string; value: string; hint?: string; loading: boolean }[] = [
     {
-      label: 'Usage value (MTD)',
+      label: `${label} (MTD)`,
       value: formatCost(cost?.current_month_to_date ?? null),
       loading: costLoading,
     },
     {
-      label: 'Projected usage value',
+      label: 'Projected cost (EOM)',
       value: formatCost(cost?.projected_eom ?? null),
       hint: cost ? `${cost.days_remaining}d left` : undefined,
       loading: costLoading,
     },
     {
-      label: 'Daily usage value (7d)',
+      label: `${label} per day (7d)`,
       value: formatCost(cost?.daily_burn_avg_7d ?? null),
       loading: costLoading,
     },

@@ -99,6 +99,6 @@ need the equivalent-workload comparison in #618.
 
 Separately, tracing a single 100,000-event window close shows peak Python
 allocations dropping from **425 MiB to 2 MiB**. Traced timings are not used for
-tuning. Raw results are in [server-memory-results.json](server-memory-results.json).
+tuning. Raw results are in [server-memory-results.json](evidence/acceptance/server-memory-results.json).
 The 24-hour deployed-service comparison is tracked in
 [#618](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/618).

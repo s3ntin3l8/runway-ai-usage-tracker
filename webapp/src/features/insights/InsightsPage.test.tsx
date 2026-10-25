@@ -81,15 +81,17 @@ describe('InsightsPage', () => {
 
   it('shows the session and host rankings next to the other insights', async () => {
     renderWithProviders(<InsightsPage />);
-    expect(await screen.findByText(/Top sessions · Last 7 days/)).toBeInTheDocument();
-    expect(screen.getByText(/Top hosts · Last 7 days/)).toBeInTheDocument();
-    // The lifetime strip stays lifetime-scoped.
-    expect(screen.getByText(/Global insights · All time/)).toBeInTheDocument();
+    expect(await screen.findByText(/Top 12 sessions · Last 7 days/)).toBeInTheDocument();
+    expect(screen.getByText(/Top 12 hosts · Last 7 days/)).toBeInTheDocument();
+    // The lifetime strip stays lifetime-scoped, and says so next to the
+    // numbers — the range picker in the header does not apply to it.
+    expect(screen.getByText('Global insights')).toBeInTheDocument();
+    expect(screen.getByText(/all time — not affected by the range filter/i)).toBeInTheDocument();
   });
 
   it('re-scopes the new rankings when the last-24-hours range is picked', async () => {
     renderWithProviders(<InsightsPage />);
-    await screen.findByText(/Top sessions · Last 7 days/);
+    await screen.findByText(/Top 12 sessions · Last 7 days/);
 
     await userEvent.click(screen.getByRole('button', { name: 'Last 7 days' }));
     await userEvent.click(await screen.findByRole('button', { name: 'Last 24 hours' }));
@@ -98,7 +100,15 @@ describe('InsightsPage', () => {
       expect(api.fetchTopSessions).toHaveBeenCalledWith(expect.objectContaining({ days: 1 }));
       expect(api.fetchTopHosts).toHaveBeenCalledWith(expect.objectContaining({ days: 1 }));
     });
-    expect(await screen.findByText(/Top sessions · Last 24 hours/)).toBeInTheDocument();
-    expect(screen.getByText(/Top hosts · Last 24 hours/)).toBeInTheDocument();
+    expect(await screen.findByText(/Top 12 sessions · Last 24 hours/)).toBeInTheDocument();
+    expect(screen.getByText(/Top 12 hosts · Last 24 hours/)).toBeInTheDocument();
+  });
+  it('shows an error with a retry when a ranking request fails', async () => {
+    // A failed request must not read as "there is no data".
+    vi.mocked(api.fetchTopModels).mockRejectedValue(new Error('boom'));
+    renderWithProviders(<InsightsPage />);
+    expect(await screen.findByText(/could not load this data/i)).toBeInTheDocument();
+    expect(screen.getByText('boom')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument();
   });
 });

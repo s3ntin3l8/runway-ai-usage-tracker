@@ -1,6 +1,6 @@
 # OpenCode Collector
 
-**File:** `app/services/collectors/opencode.py`
+**File:** `app/services/collectors/opencode.py` (server) · `scripts/sidecar.py` (sidecar)
 
 OpenCode quota collector with API-key and session-cookie strategies.
 
@@ -338,16 +338,13 @@ rule now extracts both names.
 ## Related Files
 
 | File | Purpose |
-|------|---------|
-| `app/services/collectors/opencode.py` | Main collector |
-| `scripts/sidecar.py` (opencode block, ~:400-440) | Sidecar credential rules |
-| `app/core/registry.json` (`providers.opencode`) | UI labels + sidecar rule mirror |
-| `app/services/collector_manager.py` (`_sync_manual_config_to_cache`) | DB → token-cache bridge for manual UI pastes |
-| `app/api/endpoints/system.py` (`upsert_provider_config_for_account`) | Opencode-specific cookie / API-key parsing |
-| `scripts/sidecar_pkg/identity.py`, `app/services/account_identity.py` | `FINGERPRINTED_ORIGIN_PROVIDERS` + `credential_fingerprint` / keyed-origin helpers (mirrored on both sides) |
-| `scripts/sidecar.py` (`fingerprinted_credential_origin`, `_FINGERPRINT_KEY_FIELDS`) | Sidecar-side key-scoped origin suffixing, incl. xai's refresh-first field order |
-| `app/api/endpoints/fleet.py` (`_fingerprinted_credential_hints`) | Server-side tier-1b hint |
-| `tests/unit/test_opencode_credential_identity.py`, `tests/unit/test_sibling_keyed_origins.py`, `tests/integration/test_fleet_credentials.py` | Identity-source, sibling and isolation coverage |
+|---|---|
+| `app/services/collectors/opencode.py` | Collector entry point |
+| `app/services/collectors/base.py` | Collector base class |
+| `scripts/sidecar.py` | Sidecar credential rules and event dispatch |
+| `scripts/sidecar_pkg/event_extractors/opencode.py` | Local OpenCode usage events |
+| `scripts/sidecar_pkg/opencode_credentials.py` | OpenCode credential discovery |
+| `scripts/reclassify_opencode_providers.py` | One-shot reclassification of events mislabelled before #182 |
 
 ## References
 

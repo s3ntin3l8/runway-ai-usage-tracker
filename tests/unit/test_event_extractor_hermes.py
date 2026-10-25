@@ -5,11 +5,15 @@ import sqlite3
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any, get_args
 
 import pytest
 
+from scripts.sidecar_pkg.event_extractors import hermes as hermes_extractor
 from scripts.sidecar_pkg.event_extractors.hermes import (
+    WATERMARK_PRUNE_IDLE_DAYS,
     _discover_hermes_db_paths,
+    _prune_stale_watermark_slices,
     map_hermes_canonical,
     map_hermes_provider_id,
     parse_hermes_events,
@@ -203,7 +207,7 @@ def test_discover_hermes_db_paths_with_hermes_home_profiles(monkeypatch, tmp_pat
 
 def test_parse_hermes_events_basic(tmp_path):
     db_path, _ = _make_db(tmp_path)
-    state_file = tmp_path / "hermes_watermark.json"
+    state_file = tmp_path / "hermes_watermark.jsonl"
 
     try:
         events = parse_hermes_events(
@@ -249,7 +253,7 @@ def test_parse_hermes_events_basic(tmp_path):
 
 def test_parse_hermes_events_with_canonical_hints(tmp_path):
     db_path, _ = _make_db(tmp_path)
-    state_file = tmp_path / "hermes_watermark.json"
+    state_file = tmp_path / "hermes_watermark.jsonl"
 
     canonical_hints = {
         "minimax": {"provider:minimax": "operator@example.com"},
@@ -285,7 +289,7 @@ def test_unhinted_canonical_provider_holds_back_as_default_even_with_custom_host
     account_id='default' and account_source='default' for operator assignment.
     """
     db_path, _ = _make_db(tmp_path)
-    state_file = tmp_path / "hermes_watermark.json"
+    state_file = tmp_path / "hermes_watermark.jsonl"
 
     try:
         events = parse_hermes_events(
@@ -346,7 +350,7 @@ def test_native_provider_preserves_host_account_id_and_leaves_account_source_non
     file_conn.close()
     conn.close()
 
-    state_file = tmp_path / "hermes_watermark.json"
+    state_file = tmp_path / "hermes_watermark.jsonl"
 
     try:
         events = parse_hermes_events(
@@ -365,7 +369,7 @@ def test_native_provider_preserves_host_account_id_and_leaves_account_source_non
 
 def test_incremental_deltas_watermark(tmp_path):
     db_path, _ = _make_db(tmp_path)
-    state_file = tmp_path / "hermes_watermark.json"
+    state_file = tmp_path / "hermes_watermark.jsonl"
 
     try:
         # First extraction run
@@ -423,7 +427,7 @@ def test_watermark_counters_decrease_resilience(tmp_path):
     high-water mark, only the genuine net-new delta is emitted without double-counting.
     """
     db_path, _ = _make_db(tmp_path)
-    state_file = tmp_path / "hermes_watermark.json"
+    state_file = tmp_path / "hermes_watermark.jsonl"
 
     try:
         # Initial run: Kimi has 50,000 input tokens, 10 calls
@@ -489,7 +493,7 @@ def test_late_cost_correction_emits_distinct_event_id(tmp_path):
     won't be deduped by the server.
     """
     db_path, _ = _make_db(tmp_path)
-    state_file = tmp_path / "hermes_watermark.json"
+    state_file = tmp_path / "hermes_watermark.jsonl"
 
     try:
         # Initial run: MiniMax has 80,000 input, 5 calls, $0.05 cost
@@ -568,7 +572,7 @@ def test_distinct_db_roots_have_independent_watermarks(tmp_path):
     db1.rename(target1)
     db2.rename(target2)
 
-    state_file = tmp_path / "hermes_watermark.json"
+    state_file = tmp_path / "hermes_watermark.jsonl"
 
     events1 = parse_hermes_events(
         [target1], "default", datetime(2020, 1, 1, tzinfo=UTC), state_file=state_file
@@ -582,7 +586,7 @@ def test_distinct_db_roots_have_independent_watermarks(tmp_path):
     assert len(events2) == 2
 
     # And watermark file contains distinct keys for both resolved paths
-    data = json.loads(state_file.read_text(encoding="utf-8"))
+    data = _watermark_entries(state_file)
     resolved_keys = list(data.keys())
     assert any(str(target1.resolve()) in k for k in resolved_keys)
     assert any(str(target2.resolve()) in k for k in resolved_keys)
@@ -629,7 +633,7 @@ def test_missing_both_timestamps_skips_and_warns(tmp_path, caplog):
             db_paths=[db_path],
             account_id="default",
             since=datetime(2020, 1, 1, tzinfo=UTC),
-            state_file=tmp_path / "hermes_watermark.json",
+            state_file=tmp_path / "hermes_watermark.jsonl",
         )
     assert not any(e.session_id == "sess-null-ts" for e in events)
     assert any("has both last_seen and first_seen NULL" in r.message for r in caplog.records)
@@ -641,7 +645,7 @@ def test_watermark_mixed_counter_regression_preserves_high_watermark(tmp_path):
     max(curr_in, prev_in) prevents input_tokens from regressing to the lower value.
     """
     db_path, _ = _make_db(tmp_path)
-    state_file = tmp_path / "hermes_watermark.json"
+    state_file = tmp_path / "hermes_watermark.jsonl"
 
     try:
         # Run 1: baseline Kimi has 50,000 input, 10 calls
@@ -669,7 +673,7 @@ def test_watermark_mixed_counter_regression_preserves_high_watermark(tmp_path):
         assert second_events[0].tokens_input == 0
 
         # Verify that state_file retained 50,000 as high-water mark via max(), NOT 45,000
-        data = json.loads(state_file.read_text(encoding="utf-8"))
+        data = _watermark_entries(state_file)
         kimi_slice = next(v for k, v in data.items() if "kimi-for-coding" in k)
         assert kimi_slice["input_tokens"] == 50000
         assert kimi_slice["api_call_count"] == 11
@@ -739,7 +743,7 @@ def test_hermes_entrypoint_distinguishes_source(tmp_path):
         [db_path],
         "default",
         datetime(2020, 1, 1, tzinfo=UTC),
-        state_file=tmp_path / "hermes_watermark.json",
+        state_file=tmp_path / "hermes_watermark.jsonl",
     )
     discord_ev = next(e for e in events if e.session_id == "sess-discord-01")
     assert discord_ev.entrypoint == "hermes-discord"
@@ -789,7 +793,7 @@ def test_gemini_model_ids_are_normalized_to_pricing_buckets(tmp_path):
         [db_path],
         "default",
         datetime(2020, 1, 1, tzinfo=UTC),
-        state_file=tmp_path / "hermes_watermark.json",
+        state_file=tmp_path / "hermes_watermark.jsonl",
     )
     gem_ev = next(e for e in events if e.session_id == "sess-gem-01")
     assert gem_ev.provider_id == "gemini"
@@ -801,7 +805,7 @@ def test_watermark_state_key_scoped_by_account_id(tmp_path):
     """Watermark state keys are scoped by account_id so multiple accounts
     iterating through scoped_accounts do not advance each other's watermarks."""
     db_path, _ = _make_db(tmp_path)
-    state_file = tmp_path / "hermes_watermark.json"
+    state_file = tmp_path / "hermes_watermark.jsonl"
 
     events1 = parse_hermes_events(
         [db_path], "account1", datetime(2020, 1, 1, tzinfo=UTC), state_file=state_file
@@ -814,10 +818,10 @@ def test_watermark_state_key_scoped_by_account_id(tmp_path):
     )
     assert len(events2) == 2
 
-    data = json.loads(state_file.read_text(encoding="utf-8"))
+    data = _watermark_entries(state_file)
     keys = list(data.keys())
-    assert any(k.startswith("account1|") for k in keys)
-    assert any(k.startswith("account2|") for k in keys)
+    assert any("|account1|" in k for k in keys)
+    assert any("|account2|" in k for k in keys)
 
 
 def test_watermark_state_key_distinguishes_billing_base_url_and_mode(tmp_path):
@@ -842,7 +846,7 @@ def test_watermark_state_key_distinguishes_billing_base_url_and_mode(tmp_path):
     conn.commit()
     conn.close()
 
-    state_file = tmp_path / "hermes_watermark.json"
+    state_file = tmp_path / "hermes_watermark.jsonl"
     try:
         events = parse_hermes_events(
             [db_path], "default", datetime(2020, 1, 1, tzinfo=UTC), state_file=state_file
@@ -850,7 +854,7 @@ def test_watermark_state_key_distinguishes_billing_base_url_and_mode(tmp_path):
         # 2 original rows + 1 new row = 3 events
         assert len(events) == 3
 
-        data = json.loads(state_file.read_text(encoding="utf-8"))
+        data = _watermark_entries(state_file)
         # Both distinct base URLs exist as independent watermark keys
         url1_keys = [k for k in data if "https://api.kimi.com/coding/v1/" in k]
         url2_keys = [k for k in data if "https://api-backup.kimi.com/coding/v1/" in k]
@@ -992,7 +996,7 @@ def test_hermes_parent_session_and_model_heuristics_extraction(tmp_path):
             "fallback@host.com",
             datetime.fromtimestamp(1779000000.0, tz=UTC),
             canonical_hints=canonical_hints,
-            state_file=tmp_path / "hermes_watermark.json",
+            state_file=tmp_path / "hermes_watermark.jsonl",
         )
 
         by_session_task = {(ev.session_id, ev.subagent_type): ev for ev in events}
@@ -1037,7 +1041,7 @@ def test_the_default_watermark_path_matches_the_sidecar_config_dir(monkeypatch, 
 
     def assert_in_step() -> None:
         assert hermes._default_watermark_state_path() == (
-            sidecar.get_sidecar_dir() / "hermes_watermark.json"
+            sidecar.get_sidecar_dir() / "hermes_watermark.jsonl"
         )
 
     monkeypatch.setenv("RUNWAY_CONFIG_DIR", str(tmp_path))
@@ -1049,7 +1053,906 @@ def test_the_default_watermark_path_matches_the_sidecar_config_dir(monkeypatch, 
     monkeypatch.setenv("APPDATA", str(tmp_path / "roaming"))
     assert_in_step()
     assert hermes._default_watermark_state_path() == (
-        tmp_path / "roaming" / "runway" / "sidecar" / "hermes_watermark.json"
+        tmp_path / "roaming" / "runway" / "sidecar" / "hermes_watermark.jsonl"
     )
     monkeypatch.delenv("APPDATA")
     assert_in_step()
+
+
+# ---------------------------------------------------------------------------
+# Watermark Compaction Tests (#926, #958, #959)
+# ---------------------------------------------------------------------------
+
+
+def _set_row_times(db_path: Path, *, last_seen: float) -> None:
+    """Move every usage row's timestamps to ``last_seen``."""
+    conn = sqlite3.connect(str(db_path))
+    conn.execute(
+        "UPDATE session_model_usage SET last_seen = ?, first_seen = ?",
+        (last_seen, last_seen),
+    )
+    conn.commit()
+    conn.close()
+
+
+def _bump_usage(db_path: Path, session_id: str, *, input_tokens: int) -> None:
+    """Add tokens to a session's usage row."""
+    conn = sqlite3.connect(str(db_path))
+    conn.execute(
+        "UPDATE session_model_usage SET input_tokens = input_tokens + ? WHERE session_id = ?",
+        (input_tokens, session_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def _cutoff(seconds: float = 30 * 86400) -> float:
+    """The idle cutoff a prune uses, pinned by the test rather than by the
+    implementation's constant: a test that derives its expectation from
+    ``WATERMARK_PRUNE_IDLE_DAYS`` moves with it and cannot catch a guard that
+    was weakened.
+    """
+    return datetime.now(UTC).timestamp() - seconds
+
+
+def _read_watermark(state_file: Path) -> dict[str, dict[str, dict[str, Any]]]:
+    """Read the watermark log into its nested state."""
+    state, _ = hermes_extractor._load_hermes_watermark(state_file)
+    return state
+
+
+def _watermark_entries(state_file: Path) -> dict[str, dict[str, Any]]:
+    """The watermark as a flat map of "{database}|{account}|{slice}" -> mark."""
+    return {
+        f"{db_path}|{account}|{slice_key}": mark
+        for db_path, accounts in _read_watermark(state_file).items()
+        for account, slices in accounts.items()
+        for slice_key, mark in slices.items()
+    }
+
+
+def _slice_count(state: dict[str, dict[str, dict[str, Any]]]) -> int:
+    """The number of slices in a nested watermark state."""
+    return sum(len(slices) for accounts in state.values() for slices in accounts.values())
+
+
+def _watermark_keys(state_file: Path) -> list[str]:
+    if not state_file.exists():
+        return []
+    return list(_watermark_entries(state_file))
+
+
+def _parse(db_path: Path | list[Path], state_file: Path, account_id: str = "default"):
+    """Collect from ``db_path`` against a watermark file."""
+    paths = db_path if isinstance(db_path, list) else [db_path]
+    return parse_hermes_events(
+        db_paths=paths,
+        account_id=account_id,
+        since=datetime(2020, 1, 1, tzinfo=UTC),
+        state_file=state_file,
+    )
+
+
+def _delete_usage_rows(db_path: Path, session_id: str) -> None:
+    """Delete a session's usage rows, the way a deleted Hermes session does."""
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("DELETE FROM session_model_usage WHERE session_id = ?", (session_id,))
+    conn.commit()
+    conn.close()
+
+
+# ---------------------------------------------------------------------------
+# The prune (#926, #958)
+# ---------------------------------------------------------------------------
+
+
+def test_prune_drops_the_slices_of_a_vanished_database(tmp_path):
+    """A database that is gone leaves its high-water marks behind for good."""
+    db_path, _ = _make_db(tmp_path)
+    state_file = tmp_path / "hermes_watermark.jsonl"
+
+    try:
+        _parse(db_path, state_file)
+        assert len(_watermark_keys(state_file)) == 2
+
+        # The database is deleted: its slices are now dead weight.
+        db_path.unlink()
+        state = _read_watermark(state_file)
+        pruned = _prune_stale_watermark_slices(state, idle_cutoff=_cutoff())
+        assert len(pruned) == 2
+        assert state == {}
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_prune_keeps_a_recently_used_slice_of_a_vanished_database(tmp_path):
+    """The database may only be *temporarily* gone (a backup renamed it aside).
+
+    A session that was active recently keeps its mark, so the sidecar still
+    knows what it already reported when the file comes back.
+    """
+    db_path, _ = _make_db(tmp_path)
+    state_file = tmp_path / "hermes_watermark.jsonl"
+    now = datetime.now(UTC).timestamp()
+
+    try:
+        _set_row_times(db_path, last_seen=now)
+        _parse(db_path, state_file)
+        assert len(_watermark_keys(state_file)) == 2
+
+        db_path.unlink()
+        state = _read_watermark(state_file)
+        pruned = _prune_stale_watermark_slices(state, idle_cutoff=_cutoff())
+        assert pruned == []
+        assert _slice_count(state) == 2
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_prune_keeps_the_slices_of_a_live_database(tmp_path):
+    """A database that exists keeps every slice, however old the session is."""
+    db_path, _ = _make_db(tmp_path)
+    state_file = tmp_path / "hermes_watermark.jsonl"
+
+    try:
+        _parse(db_path, state_file)
+        state = _read_watermark(state_file)
+        pruned = _prune_stale_watermark_slices(state, idle_cutoff=_cutoff())
+        assert pruned == []
+        assert _slice_count(state) == 2
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_prune_keeps_the_slices_of_a_database_whose_path_holds_a_pipe(tmp_path):
+    """A database whose path holds a ``|`` is no longer cut short.
+
+    The path used to be part of every key, and the key was split on the
+    ``|``, so the path of such a database was truncated. The path is now
+    the group the slices live in, so it is stored whole.
+    """
+    db_path = tmp_path / "pipe|name.db"
+    conn = make_hermes_db(str(db_path))
+    conn.close()
+    state_file = tmp_path / "hermes_watermark.jsonl"
+
+    try:
+        _parse(db_path, state_file)
+        assert len(_watermark_keys(state_file)) == 2
+        assert str(db_path.resolve()) in _read_watermark(state_file)
+
+        # The file is gone: the slices are reclaimed.
+        db_path.unlink()
+        state = _read_watermark(state_file)
+        pruned = _prune_stale_watermark_slices(state, idle_cutoff=_cutoff())
+        assert len(pruned) == 2
+        assert state == {}
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_prune_is_written_out_even_when_the_cycle_emits_nothing(tmp_path):
+    """A cycle that reports nothing can still shrink the file, and it must."""
+    db_path, _ = _make_db(tmp_path)
+    state_file = tmp_path / "hermes_watermark.jsonl"
+
+    try:
+        _parse(db_path, state_file)
+        assert len(_watermark_keys(state_file)) == 2
+
+        db_path.unlink()
+        events = _parse(db_path, state_file)
+        assert events == []
+        assert _watermark_keys(state_file) == []
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_a_reappearing_database_does_not_double_count(tmp_path):
+    """A database that comes back must report the delta, not its whole life.
+
+    This is the regression test for the idle guard: a prune that dropped the
+    mark of a recently used session would make the sidecar report the
+    session's entire lifetime as new usage, under an event id the server has
+    never seen (the emission counter restarts), and the server would count it
+    twice.
+    """
+    db_path, _ = _make_db(tmp_path)
+    state_file = tmp_path / "hermes_watermark.jsonl"
+    now = datetime.now(UTC).timestamp()
+
+    try:
+        _set_row_times(db_path, last_seen=now)
+        first = _parse(db_path, state_file)
+        assert len(first) == 2
+
+        # The file disappears (a backup renamed it aside) and the sidecar
+        # reports nothing while it is gone.
+        db_path.unlink()
+        _parse(db_path, state_file)
+        assert len(_watermark_keys(state_file)) == 2
+
+        # It comes back and the session moved on.
+        conn = make_hermes_db(str(db_path))
+        conn.execute(
+            """
+            UPDATE session_model_usage
+            SET input_tokens = input_tokens + 5000,
+                output_tokens = output_tokens + 300,
+                api_call_count = 11,
+                first_seen = ?,
+                last_seen = ?
+            WHERE session_id = 'api-sess-kimi-01'
+            """,
+            (now, now),
+        )
+        conn.commit()
+        conn.close()
+
+        again = _parse(db_path, state_file)
+        assert len(again) == 1
+        delta = again[0]
+        assert delta.session_id == "api-sess-kimi-01"
+        # The delta, not the session's whole lifetime (50000 + 5000).
+        assert delta.tokens_input == 5000
+        assert delta.tokens_output == 300
+        # The emission counter continues, so the event id stays one the server
+        # has already seen for this slice.
+        assert delta.event_id.endswith("|c11s2")
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_prune_keeps_the_marks_of_an_account_id_that_holds_a_pipe(tmp_path):
+    """The account is a level of the state, so it is never split.
+
+    The account id may be an opaque string, and one that holds a ``|`` would
+    shift every field of the old flat key.
+    """
+    db_path, _ = _make_db(tmp_path)
+    state_file = tmp_path / "hermes_watermark.jsonl"
+    account = "operator|tag"
+
+    try:
+        _parse(db_path, state_file, account_id=account)
+        assert len(_watermark_keys(state_file)) == 2
+        assert account in _read_watermark(state_file)[str(db_path.resolve())]
+
+        # The path is read correctly, so the live database keeps its slices.
+        state = _read_watermark(state_file)
+        pruned = _prune_stale_watermark_slices(state, idle_cutoff=_cutoff())
+        assert pruned == []
+        assert _slice_count(state) == 2
+
+        # And once the file is gone, the slices are reclaimed.
+        db_path.unlink()
+        state = _read_watermark(state_file)
+        pruned = _prune_stale_watermark_slices(state, idle_cutoff=_cutoff())
+        assert len(pruned) == 2
+        assert state == {}
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_prune_applies_the_documented_idle_window(tmp_path):
+    """The grace window the extractor documents is the one it applies.
+
+    The boundary is checked through the real parse path, so the window the
+    implementation uses is pinned rather than the constant alone.
+    """
+    now = datetime.now(UTC).timestamp()
+    # The literal, not the constant: a test that derives its window from
+    # WATERMARK_PRUNE_IDLE_DAYS moves with it, so dropping the constant to a
+    # day would keep this green while the docs still say 30.
+    assert WATERMARK_PRUNE_IDLE_DAYS == 30
+    window = 30 * 86400
+
+    def _keys_after_prune(idle_seconds: float) -> list[str]:
+        """Write a slice idle for ``idle_seconds``, drop its file, prune."""
+        state_file = tmp_path / f"hermes_watermark_{int(idle_seconds)}.jsonl"
+        db_path, _ = _make_db(tmp_path)
+        try:
+            _set_row_times(db_path, last_seen=now - idle_seconds)
+            _parse(db_path, state_file)
+            assert len(_watermark_keys(state_file)) == 2
+            db_path.unlink()
+            _parse(db_path, state_file)
+            return _watermark_keys(state_file)
+        finally:
+            db_path.unlink(missing_ok=True)
+
+    # Quiet for less than the window: the mark stays.
+    assert len(_keys_after_prune(window - 3600)) == 2
+    # Quiet for longer than the window: it is reclaimed.
+    assert _keys_after_prune(window + 3600) == []
+
+
+def test_prune_keeps_a_mark_whose_timestamp_cannot_be_read(tmp_path):
+    """An unreadable timestamp is kept, and it never fails the collection.
+
+    Every other unreadable thing here is kept rather than guessed; a value
+    that raises while it is read has to be treated the same way, instead of
+    taking the whole Hermes collection down with it.
+    """
+    state_file = tmp_path / "hermes_watermark.jsonl"
+    state_file.write_text(
+        json.dumps(
+            {
+                "db": "/tmp/gone-one/state.db",
+                "accounts": {
+                    "default": {
+                        "default|sess|model|hermes|||": {"last_seen": "2026-01-01T00:00:00Z"}
+                    },
+                    "other": {"default|sess|model|hermes|||": {"last_seen": 1.0}},
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    state = _read_watermark(state_file)
+    pruned = _prune_stale_watermark_slices(state, idle_cutoff=_cutoff())
+    # Only the readable, idle one is reclaimed.
+    assert len(pruned) == 1
+    assert len(state) == 1
+
+    # And the same file does not take the collection down.
+    events = _parse([], state_file)
+    assert events == []
+    assert len(_watermark_keys(state_file)) == 1
+
+
+# ---------------------------------------------------------------------------
+# The row check: a live database's deleted rows (#958)
+# ---------------------------------------------------------------------------
+
+
+def test_a_deleted_row_of_a_live_database_is_reclaimed(tmp_path):
+    """A session Hermes deleted leaves a tombstone behind in the watermark.
+
+    The database is still there, so the file is not gone -- but the row of the
+    deleted session is, and a row that is gone can never advance again. Its
+    high-water mark is dead weight, and the watermark of a long-lived install
+    grows with every session that ever ran unless it is reclaimed.
+    """
+    db_path, _ = _make_db(tmp_path)
+    state_file = tmp_path / "hermes_watermark.jsonl"
+
+    try:
+        _parse(db_path, state_file)
+        assert len(_watermark_keys(state_file)) == 2
+
+        # Hermes drops one of the sessions.
+        _delete_usage_rows(db_path, "api-sess-kimi-01")
+
+        _parse(db_path, state_file)
+        keys = _watermark_keys(state_file)
+        assert len(keys) == 1
+        assert all("api-sess-kimi-01" not in key for key in keys)
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_a_recently_used_row_that_is_gone_keeps_its_mark(tmp_path):
+    """A session that was active recently keeps its mark.
+
+    Its row is gone, so it can never advance -- but a session can come back
+    (Hermes re-creates the row of a session it still holds, with the counters
+    it kept). Dropping the mark of a session that was quiet for less than the
+    idle window would make the sidecar report that session's whole lifetime
+    as new usage.
+    """
+    db_path, _ = _make_db(tmp_path)
+    state_file = tmp_path / "hermes_watermark.jsonl"
+    now = datetime.now(UTC).timestamp()
+
+    try:
+        _set_row_times(db_path, last_seen=now)
+        _parse(db_path, state_file)
+        assert len(_watermark_keys(state_file)) == 2
+
+        _delete_usage_rows(db_path, "api-sess-kimi-01")
+
+        _parse(db_path, state_file)
+        assert len(_watermark_keys(state_file)) == 2
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_a_row_that_comes_back_is_not_counted_twice(tmp_path):
+    """A session whose row comes back reports its delta, not its whole life.
+
+    This is the regression test for the idle guard of the row check: the row
+    is dropped by Hermes and comes back with the counters it had. The mark of
+    a session that was quiet for less than the idle window has to survive, or
+    the sidecar reports the session's entire lifetime as new usage under an
+    event id the server has never seen (the emission counter restarts) and the
+    server counts it twice.
+    """
+    db_path, _ = _make_db(tmp_path)
+    state_file = tmp_path / "hermes_watermark.jsonl"
+    now = datetime.now(UTC).timestamp()
+
+    try:
+        _set_row_times(db_path, last_seen=now)
+        first = _parse(db_path, state_file)
+        assert len(first) == 2
+
+        # The session is dropped from Hermes.
+        _delete_usage_rows(db_path, "api-sess-kimi-01")
+        _parse(db_path, state_file)
+        assert len(_watermark_keys(state_file)) == 2
+
+        # It comes back and moves on.
+        conn = sqlite3.connect(str(db_path))
+        conn.execute(
+            """
+            INSERT INTO session_model_usage (
+                session_id, model, billing_provider, billing_base_url, billing_mode,
+                task, api_call_count, input_tokens, output_tokens, cache_read_tokens,
+                cache_write_tokens, reasoning_tokens, estimated_cost_usd, actual_cost_usd,
+                first_seen, last_seen
+            ) VALUES (
+                'api-sess-kimi-01', 'kimi-for-coding', 'kimi-coding',
+                'https://api.kimi.com/coding/v1/', '', '', 11, 55000, 2300, 200000,
+                0, 500, 0.0, 0.0, 1780000000.0, ?
+            )
+            """,
+            (now,),
+        )
+        conn.commit()
+        conn.close()
+
+        again = _parse(db_path, state_file)
+        assert len(again) == 1
+        delta = again[0]
+        assert delta.session_id == "api-sess-kimi-01"
+        # The delta, not the session's whole lifetime (50000 + 5000).
+        assert delta.tokens_input == 5000
+        assert delta.tokens_output == 300
+        # The emission counter continues, so the event id stays one the server
+        # has already seen for this slice.
+        assert delta.event_id.endswith("|c11s2")
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_the_rows_of_two_databases_are_told_apart(tmp_path):
+    """Two databases can hold the same session id, and each keeps its own.
+
+    The live rows of one database say nothing about the other, so a session
+    that is dropped from one of them must not make the other one's slice look
+    gone (or alive).
+    """
+    db_one, _ = _make_db(tmp_path)
+    db_two, _ = _make_db(tmp_path)
+    state_file = tmp_path / "hermes_watermark.jsonl"
+
+    try:
+        _parse([db_one, db_two], state_file)
+        assert len(_watermark_keys(state_file)) == 4
+
+        # The session is dropped from the first database only.
+        _delete_usage_rows(db_one, "api-sess-kimi-01")
+
+        _parse([db_one, db_two], state_file)
+        keys = _watermark_keys(state_file)
+        assert len(keys) == 3
+        # The slice of the second database survives: its own row is still there.
+        survivors = [key for key in keys if "api-sess-kimi-01" in key]
+        assert len(survivors) == 1
+        assert str(db_two.resolve()) in survivors[0]
+    finally:
+        db_one.unlink(missing_ok=True)
+        db_two.unlink(missing_ok=True)
+
+
+def test_a_database_whose_rows_cannot_be_listed_keeps_its_slices(monkeypatch, tmp_path):
+    """A database we could not read keeps every slice.
+
+    "I cannot tell" is not "the row is gone": the mark of a session we merely
+    failed to look up has to stay, or the next cycle would report its whole
+    lifetime as new usage.
+    """
+    monkeypatch.setattr(hermes_extractor, "_live_slice_suffixes", lambda conn, profile_name: None)
+    db_path, _ = _make_db(tmp_path)
+    state_file = tmp_path / "hermes_watermark.jsonl"
+
+    try:
+        _parse(db_path, state_file)
+        assert len(_watermark_keys(state_file)) == 2
+
+        _delete_usage_rows(db_path, "api-sess-kimi-01")
+
+        _parse(db_path, state_file)
+        assert len(_watermark_keys(state_file)) == 2
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_the_live_slices_of_an_unreadable_database_cannot_be_told(tmp_path):
+    """A database whose rows cannot be listed answers "I cannot tell".
+
+    The answer has to be None rather than an empty set: an empty set says
+    "every row is gone", which would have the prune reclaim the marks of the
+    sessions that are still there.
+    """
+    db_path = tmp_path / "no_usage_table.db"
+    conn = sqlite3.connect(str(db_path))
+    try:
+        assert hermes_extractor._live_slice_suffixes(conn, "default") is None
+    finally:
+        conn.close()
+
+
+def test_prune_reclaims_only_the_row_that_is_gone(tmp_path):
+    """The rule itself: of two slices, the one without a row is reclaimed."""
+    db_path, _ = _make_db(tmp_path)
+    state_file = tmp_path / "hermes_watermark.jsonl"
+
+    try:
+        _parse(db_path, state_file)
+        state = _read_watermark(state_file)
+        live = {
+            "default|api-sess-minimax-02|MiniMax-M3|minimax-oauth"
+            "|https://api.minimax.io/anthropic||background_review"
+        }
+        pruned = _prune_stale_watermark_slices(
+            state,
+            idle_cutoff=_cutoff(),
+            live_slices={str(db_path.resolve()): live},
+        )
+        assert len(pruned) == 1
+        assert _slice_count(state) == 1
+        assert all("api-sess-minimax-02" in key for key in state[str(db_path.resolve())]["default"])
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_prune_keeps_the_slices_of_a_database_that_was_not_discovered(tmp_path):
+    """A database that exists but was not discovered keeps every slice.
+
+    Only its own rows can say whether its sessions are still alive, and a
+    database the collector did not open is not one it can ask.
+    """
+    db_path, _ = _make_db(tmp_path)
+    state_file = tmp_path / "hermes_watermark.jsonl"
+
+    try:
+        _parse(db_path, state_file)
+        state = _read_watermark(state_file)
+        pruned = _prune_stale_watermark_slices(state, idle_cutoff=_cutoff())
+        assert pruned == []
+        assert _slice_count(state) == 2
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+# ---------------------------------------------------------------------------
+# The watermark log (#959)
+# ---------------------------------------------------------------------------
+
+
+def test_the_database_path_is_stored_once_per_database(tmp_path):
+    """The path is the group the slices live in, not part of every slice.
+
+    It used to be repeated in every key of the flat file, which is where most
+    of the bytes of a large watermark went.
+    """
+    db_path, _ = _make_db(tmp_path)
+    state_file = tmp_path / "hermes_watermark.jsonl"
+
+    try:
+        _parse(db_path, state_file)
+        content = state_file.read_text(encoding="utf-8")
+        assert content.count(str(db_path.resolve())) == 1
+        # Both slices are still there.
+        assert len(_watermark_keys(state_file)) == 2
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_a_cycle_writes_only_the_slices_that_changed(tmp_path):
+    """The log grows by what changed, not by the whole state.
+
+    The old format rewrote the whole file on every cycle, so the bytes
+    written per day grew with the file.
+    """
+    db_path, _ = _make_db(tmp_path)
+    state_file = tmp_path / "hermes_watermark.jsonl"
+
+    try:
+        _parse(db_path, state_file)
+        size = state_file.stat().st_size
+
+        # A cycle that has nothing new to report writes nothing at all.
+        _parse(db_path, state_file)
+        assert state_file.stat().st_size == size
+
+        # A cycle that changes one slice appends one line with that slice.
+        _bump_usage(db_path, "api-sess-kimi-01", input_tokens=5000)
+        _parse(db_path, state_file)
+        lines = state_file.read_text(encoding="utf-8").splitlines()
+        assert len(lines) == 2
+        appended = json.loads(lines[-1])
+        slices = appended["accounts"]["default"]
+        assert len(slices) == 1
+        assert any("api-sess-kimi-01" in key for key in slices)
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_the_log_is_compacted_when_it_grows_past_the_state(monkeypatch, tmp_path):
+    """The log cannot grow without bound.
+
+    Every cycle appends a line; once the log holds more lines than the state
+    it carries, the state is the cheaper file to write, so the log is folded
+    back into it -- with every mark still in it.
+    """
+    monkeypatch.setattr(hermes_extractor, "WATERMARK_COMPACT_MIN_LINES", 1)
+    db_one, _ = _make_db(tmp_path)
+    db_two, _ = _make_db(tmp_path)
+    state_file = tmp_path / "hermes_watermark.jsonl"
+
+    try:
+        _parse([db_one, db_two], state_file)
+        cycles = 4
+        for _ in range(cycles):
+            _bump_usage(db_one, "api-sess-kimi-01", input_tokens=5000)
+            reported = _parse([db_one, db_two], state_file)
+            # Only the session that moved is reported. A mark that the
+            # compaction lost would be reported again from a lost baseline,
+            # and the session's whole lifetime with it.
+            assert len(reported) == 1
+            assert reported[0].session_id == "api-sess-kimi-01"
+
+        lines = state_file.read_text(encoding="utf-8").splitlines()
+        # The log was folded back into one line per database, so it holds
+        # fewer lines than the cycles appended.
+        assert len(lines) < cycles
+        # And every mark is still in it -- both databases.
+        assert len(_watermark_keys(state_file)) == 4
+        marks = _watermark_entries(state_file)
+        kimi = next(mark for key, mark in marks.items() if "api-sess-kimi-01" in key)
+        assert kimi["input_tokens"] == 50000 + cycles * 5000
+    finally:
+        db_one.unlink(missing_ok=True)
+        db_two.unlink(missing_ok=True)
+
+
+def test_a_forgotten_slice_is_written_to_the_log(tmp_path):
+    """The log says a slice is gone, so the next cycle does not put it back."""
+    db_path, _ = _make_db(tmp_path)
+    state_file = tmp_path / "hermes_watermark.jsonl"
+
+    try:
+        _parse(db_path, state_file)
+        db_path.unlink()
+        _parse(db_path, state_file)
+
+        lines = state_file.read_text(encoding="utf-8").splitlines()
+        forgotten = json.loads(lines[-1])["accounts"]["default"]
+        assert forgotten
+        assert all(mark is None for mark in forgotten.values())
+        assert _watermark_keys(state_file) == []
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_a_damaged_line_in_the_log_is_ignored(tmp_path):
+    """A crash during the write can leave a torn last line.
+
+    The log is a cache: skipping the line beats refusing to read the file,
+    which would lose every mark in it.
+    """
+    state_file = tmp_path / "hermes_watermark.jsonl"
+    state_file.write_text(
+        json.dumps({"db": "/db", "accounts": {"default": {"s": {"input_tokens": 1}}}})
+        + "\n"
+        + '{"db": "/db", "accounts": {"default": {"t": {"input_to'
+        + "\n"
+        + json.dumps({"db": "/db", "accounts": {"default": {"u": {"input_tokens": 3}}}})
+        + "\n",
+        encoding="utf-8",
+    )
+
+    state = _read_watermark(state_file)
+    assert list(state) == ["/db"]
+    assert state["/db"]["default"]["s"]["input_tokens"] == 1
+    # The lines after the damaged one are still read.
+    assert state["/db"]["default"]["u"]["input_tokens"] == 3
+
+
+def test_the_legacy_watermark_is_migrated_without_losing_a_mark(tmp_path):
+    """The flat legacy file is read once and written in the new format.
+
+    A mark is the difference between what the sidecar already reported and
+    what it would report next: a mark that is lost is a session whose whole
+    lifetime is reported a second time.
+    """
+    legacy = tmp_path / "hermes_watermark.json"
+    # A database that exists, so the marks are not reclaimed right away.
+    db = str(tmp_path)
+    legacy.write_text(
+        json.dumps(
+            {
+                f"default|{db}|default|sess-1|model-1|prov-1||mode-1|task-1": {
+                    "input_tokens": 100,
+                    "emission_seq": 3,
+                    "last_seen": 1780000000.0,
+                },
+                f"other@host|{db}|default|sess-2|model-2|prov-2||mode-2|task-2": {
+                    "input_tokens": 200,
+                    "emission_seq": 1,
+                    "last_seen": 1780000000.0,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    state_file = tmp_path / "hermes_watermark.jsonl"
+
+    _parse([], state_file)
+
+    state = _read_watermark(state_file)
+    accounts = state[db]
+    assert (
+        accounts["default"]["default|sess-1|model-1|prov-1||mode-1|task-1"]["input_tokens"] == 100
+    )
+    assert (
+        accounts["other@host"]["default|sess-2|model-2|prov-2||mode-2|task-2"]["input_tokens"]
+        == 200
+    )
+    # The legacy file is kept, so a reverted sidecar still finds it.
+    assert legacy.exists()
+
+
+def test_the_migration_reads_the_account_of_an_account_id_that_holds_a_pipe(tmp_path):
+    """An account id that holds a ``|`` does not shift the fields.
+
+    The account is an opaque string, and one that holds a ``|`` would shift
+    every field behind it if the key were split on the ``|``.
+    """
+    legacy = tmp_path / "hermes_watermark.json"
+    # A database that exists, so the marks are not reclaimed right away.
+    db = str(tmp_path)
+    legacy.write_text(
+        json.dumps(
+            {
+                f"op|tag|{db}|default|sess|model|prov||mode|task": {
+                    "input_tokens": 100,
+                    "emission_seq": 3,
+                    "last_seen": 1780000000.0,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    state_file = tmp_path / "hermes_watermark.jsonl"
+
+    _parse([], state_file)
+
+    state = _read_watermark(state_file)
+    accounts = state[db]
+    assert "op|tag" in accounts
+    assert accounts["op|tag"]["default|sess|model|prov||mode|task"]["input_tokens"] == 100
+
+
+def test_the_migration_drops_a_key_it_cannot_read(tmp_path):
+    """A key without a database path is not the mark of any slice.
+
+    It cannot be matched to a row, so it protects nothing -- and the legacy
+    file keeps it.
+    """
+    legacy = tmp_path / "hermes_watermark.json"
+    # A database that exists, so the marks are not reclaimed right away.
+    db = str(tmp_path)
+    legacy.write_text(
+        json.dumps(
+            {
+                "default|not-a-path|default|sess|model|hermes|||": {"last_seen": 1.0},
+                f"default|{db}|default|sess|model|hermes|||": {"last_seen": 2.0},
+            }
+        ),
+        encoding="utf-8",
+    )
+    state_file = tmp_path / "hermes_watermark.jsonl"
+
+    _parse([], state_file)
+
+    state = _read_watermark(state_file)
+    assert list(state) == [db]
+    assert legacy.exists()
+
+
+def test_the_migration_matches_the_longest_discovered_path_first(tmp_path):
+    """A path that is a prefix of another one must not win the match.
+
+    The discovered databases are matched against the key as whole strings.
+    "/data/a|b" is a prefix of "/data/a|b|c", and the shorter one matches
+    the longer key as well -- the mark would be filed under a database that
+    does not exist, be reclaimed as a dead slice, and the session's whole
+    lifetime would be reported a second time.
+    """
+    short_db = tmp_path / "a|b"
+    long_db = tmp_path / "a|b|c"
+    short_db.mkdir()
+    long_db.mkdir()
+    legacy = tmp_path / "hermes_watermark.json"
+    legacy.write_text(
+        json.dumps(
+            {
+                f"default|{long_db.resolve()}|default|sess|model|prov||mode|task": {
+                    "input_tokens": 100,
+                    "emission_seq": 3,
+                    "last_seen": datetime.now(UTC).timestamp(),
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    state_file = tmp_path / "hermes_watermark.jsonl"
+
+    _parse([short_db, long_db], state_file)
+
+    state = _read_watermark(state_file)
+    assert list(state) == [str(long_db.resolve())]
+    assert (
+        state[str(long_db.resolve())]["default"]["default|sess|model|prov||mode|task"][
+            "input_tokens"
+        ]
+        == 100
+    )
+
+
+def test_a_deleted_watermark_log_is_not_refilled_with_the_legacy_baseline(tmp_path):
+    """Deleting the log re-scans; it does not restore the legacy baseline.
+
+    The legacy file stays on disk (a reverted sidecar still finds it), so
+    without a marker that records the one-time read, the migration would
+    run again whenever the log was deleted and the documented re-scan would
+    silently do nothing on every upgraded install.
+    """
+    legacy = tmp_path / "hermes_watermark.json"
+    db = str(tmp_path)
+    legacy.write_text(
+        json.dumps(
+            {
+                f"default|{db}|default|sess|model|prov||mode|task": {
+                    "input_tokens": 100,
+                    "emission_seq": 3,
+                    "last_seen": datetime.now(UTC).timestamp(),
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    state_file = tmp_path / "hermes_watermark.jsonl"
+
+    _parse([], state_file)
+
+    # The first run migrated the legacy file and recorded that it did.
+    assert _read_watermark(state_file)[db]["default"]
+    marker = tmp_path / "hermes_watermark.json.migrated"
+    assert marker.exists()
+    # The legacy file is still there, for a sidecar that is reverted.
+    assert legacy.exists()
+
+    # A deleted log leaves an empty state: the re-scan starts from zero.
+    state_file.unlink()
+    _parse([], state_file)
+
+    assert _read_watermark(state_file) == {}
+
+
+def test_the_watermark_changes_alias_types_the_slice_level():
+    """The alias names the slice level, so a mark can be ``None``.
+
+    ``dict[Any | None]`` is a one-argument alias: it evaluates, but it
+    types nothing, and mypy does not check ``scripts/``.
+    """
+    assert get_args(hermes_extractor.WatermarkChanges) == (
+        str,
+        dict[str, dict[str, Any | None]],
+    )

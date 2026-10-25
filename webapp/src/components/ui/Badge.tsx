@@ -12,7 +12,7 @@ const badgeVariants = cva(
         ok: 'bg-ok-muted text-ok',
         unlimited: 'bg-unlimited-muted text-unlimited',
         unknown: 'bg-unknown-muted text-unknown',
-        accent: 'bg-accent-muted text-accent',
+        accent: 'bg-accent-muted text-accent-text',
         outline: 'border border-edge-strong text-fg-muted',
       },
     },

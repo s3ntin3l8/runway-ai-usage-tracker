@@ -25,8 +25,8 @@ Authentik core/outpost `2026.8.3`; Traefik `v3.7.1`; Python `3.12.15`, uvicorn
 TLS 1.3 with a verified Let's Encrypt certificate. Exact UTC timestamps and TLS
 details are in [results.json](results.json).
 
-The reference deployment is `https://runway.dev-01.in.s3ntin3l8.de/`, and the test
-application used `https://runway-603.dev-01.in.s3ntin3l8.de`. The test container
+The reference deployment is `https://runway.test.local/`, and the test
+application used `https://runway-603.test.local`. The test container
 used a new `runway-603-data` volume with `/data/runway.db`, generated synthetic
 admin/ingest/encryption keys and one synthetic provider credential. Production
 Runway's config/database and fleet identities were never mounted in it.
@@ -57,7 +57,7 @@ authentication, ingestion or replay logic.
   `APP_HOST=0.0.0.0`, the exact `CORS_ORIGINS`/`PUBLIC_URL` and
   `TLS_TERMINATED=1` were configured. Synthetic secrets are omitted from evidence.
 - Recovery used a **test-only** `/validation-break-glass` prefix mapped only to
-  the dashboard-layout endpoint, restricted to operator source `192.168.2.152`.
+  the dashboard-layout endpoint, restricted to operator source `192.0.2.10`.
   Identity headers were stripped; Runway still required the admin key. Other
   private routes retained SSO. This extra route was not added to production.
 - Real browser username/password logins established independent SSO sessions.

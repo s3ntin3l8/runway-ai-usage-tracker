@@ -10,7 +10,7 @@ import { Gauge } from '@/components/ui/Gauge';
 import { ProviderGlyph } from '@/components/ui/ProviderGlyph';
 import { formatCurrency, formatPct } from '@/lib/format';
 import { maskAccountId } from '@/lib/accountDisplay';
-import { cardHeroLabel, cardHeroText, cardKind, cardPct, cardTooltip, windowLabel } from '@/lib/quota';
+import { cardHeroLabel, cardHeroText, cardKind, cardPct, cardTooltip, quotaUsedLabel, windowLabel } from '@/lib/quota';
 import { forecastLabel, type RiskItem } from './risk';
 
 interface AtRiskRailProps {
@@ -31,8 +31,23 @@ export function AtRiskRail({ items, providerNames }: AtRiskRailProps) {
   }
 
   return (
-    <section aria-label="At-risk providers" className="flex flex-col gap-2">
-      <h2 className="text-xs font-semibold tracking-wide text-fg-subtle uppercase">At risk</h2>
+    <section aria-label="Providers needing attention" className="flex flex-col gap-2">
+      {/*
+        The section used to be called "At risk", but the rail mixes two
+        signals: how much of the quota is used NOW (the percentage and its
+        bar, coloured by usage) and how soon the limit is hit (the badge).
+        A provider at 61% whose forecast says it hits the limit in three days
+        is not "at risk" today — it is on the watch list. The heading now says
+        what the cards actually show, and the subtitle says why they are
+        here, so a green bar next to an amber badge no longer contradicts
+        the section it sits in.
+      */}
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+        <h2 className="text-xs font-semibold tracking-wide text-fg-subtle uppercase">
+          Needs attention
+        </h2>
+        <p className="text-[11px] text-fg-subtle">At or heading towards their limit</p>
+      </div>
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         {items.map((item) => (
           <AtRiskCard key={item.key} item={item} providerNames={providerNames} />
@@ -101,7 +116,13 @@ function AtRiskCard({ item, providerNames }: { item: RiskItem; providerNames: Ma
         </span>
       </div>
       {kind === 'spend' ? null : (
-        <Gauge pct={cardPct(gauge)} status={status} size="lg" className="mt-2" />
+        <Gauge
+          pct={cardPct(gauge)}
+          status={status}
+          size="lg"
+          className="mt-2"
+          label={quotaUsedLabel(gauge)}
+        />
       )}
       <div className="mt-2 flex items-center justify-between">
         <Countdown until={gauge.reset_at} />

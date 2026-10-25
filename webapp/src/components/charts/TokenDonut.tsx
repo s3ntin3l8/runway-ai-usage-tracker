@@ -5,6 +5,8 @@ import { useMemo, useState } from 'react';
 import type { CumulativeModelBucket } from '@/api/types';
 import { formatTokens } from '@/lib/format';
 import { EChart } from './EChart';
+import { AccessibleSummary } from './accessibleSummary';
+import { segmentPaletteIndex } from './segmentColors';
 import { baseTooltip, useChartTokens } from './theme';
 import { CACHE_KEYS, SLICES } from './tokenSlices';
 
@@ -25,14 +27,24 @@ export function TokenDonut({
   const t = useChartTokens();
   // Track legend deselection so the center total reflects only visible slices.
   const [selected, setSelected] = useState<Record<string, boolean>>({});
+  // The slices are built once and shared by the chart and its text
+  // alternative, so the two can never disagree about the data.
+  const slices = useMemo(
+    () =>
+      SLICES.filter(({ key }) => !excludeCache || !CACHE_KEYS.has(key))
+        .map(({ key, label }) => ({
+          name: label,
+          value: (bucket[key] as number | undefined) ?? 0,
+          // Colour by segment key, not by position: the slice list shrinks
+          // when cache is excluded and when a slice has no value, so a
+          // positional palette would renumber the colours under the user.
+          itemStyle: { color: t.series[segmentPaletteIndex(key)] },
+        }))
+        .filter((d) => d.value > 0),
+    [bucket, t, excludeCache],
+  );
   const option = useMemo(() => {
-    const data = SLICES.filter(({ key }) => !excludeCache || !CACHE_KEYS.has(key))
-      .map(({ key, label }) => ({
-        name: label,
-        value: (bucket[key] as number | undefined) ?? 0,
-      }))
-      .filter((d) => d.value > 0);
-    const total = data
+    const total = slices
       .filter((d) => selected[d.name] !== false)
       .reduce((sum, d) => sum + d.value, 0);
     return {
@@ -67,21 +79,31 @@ export function TokenDonut({
             fontFamily: t.monoFamily,
           },
           emphasis: { label: { show: true } },
-          data,
+          data: slices,
         },
       ],
     };
-  }, [bucket, t, excludeCache, selected]);
+  }, [slices, t, selected]);
 
   return (
-    <EChart
-      option={option}
-      className={className ?? 'h-56'}
-      onReady={(chart) =>
-        chart.on('legendselectchanged', (e) =>
-          setSelected((e as { selected: Record<string, boolean> }).selected),
-        )
-      }
-    />
+    <>
+      <EChart
+        option={option}
+        className={className ?? 'h-56'}
+        ariaLabel="Token composition chart"
+        onReady={(chart) =>
+          chart.on('legendselectchanged', (e) =>
+            setSelected((e as { selected: Record<string, boolean> }).selected),
+          )
+        }
+      />
+      {/* The slice values live only in the canvas and the hover tooltip, so
+          they need a text alternative. The legend toggles a slice off the
+          chart but not out of the data, so every slice stays listed here. */}
+      <AccessibleSummary
+        caption="Token composition"
+        entries={slices.map((s) => ({ label: s.name, value: formatTokens(s.value) }))}
+      />
+    </>
   );
 }

@@ -48,7 +48,7 @@ The Ollama collector supports the following authentication methods:
 
 1.  **Browser Cookie**: Extracted from your local browser by the sidecar.
     *   **Method**: Log in to `https://ollama.com/settings` in your browser (Chrome/Safari/Firefox/Edge). Runway will automatically pick up the session cookie.
-    *   **Details**: See [Primary: Ollama Plan & Settings Page](#primary-ollama-plan--settings-page).
+    *   **Details**: See [Primary: Ollama Cloud API](#primary-ollama-cloud-api).
 
 2.  **Session Token (OLLAMA_SESSION_TOKEN)**:
     *   **Method**: If running headless, set the session token as `OLLAMA_SESSION_TOKEN` on the server.
@@ -56,7 +56,11 @@ The Ollama collector supports the following authentication methods:
 
 ## Data Source
 
-### Primary: Ollama Plan & Settings Page
+### Primary: Ollama Cloud API
+**Endpoint:** `GET https://ollama.com/api/balance`
+**Auth:** an Ollama API key
+
+### Fallback: Ollama Plan & Settings Page
 **Endpoint:** `https://ollama.com/settings`
 **Auth:** Browser `__Secure-session` (or `session`) cookie — a bare value or a full `Cookie` header is accepted
 **Details:** The collector fetches the HTML, reads each `data-usage-track` meter's `aria-label` (e.g. `Free usage 0% used`) for percentage used, and the nearby `data-time` for reset timestamps; legacy labeled usage blocks (`Session usage` / `Weekly usage`) remain supported as a fallback. Plan tier (Free/Pro/Max) is read from the `Included usage` (legacy: `Cloud Usage`) heading badge. Cookie sources are checked in order: account settings → sidecar push → server `OLLAMA_SESSION_TOKEN`.
@@ -66,10 +70,10 @@ The Ollama collector supports the following authentication methods:
 ```python
 # Example output format (similar to other collectors)
 {
-    "service": "Ollama (Session Usage)",
+    "service_name": "Ollama",
     "icon": "🦙",
     "remaining": "70%",
-    "unit": "capacity",
+    "unit": "remaining",
     "reset": "in 1h 30m",
     "health": "good",
     "pace": "Stable",
@@ -208,9 +212,11 @@ If the cookie doesn't appear in the "Application" tab, use the **Network** tab:
 ## Related Files
 
 | File | Purpose |
-|------|---------|
-| `app/services/collectors/ollama.py` | Main collector |
-| `app/core/browser_cookies.py` | Browser cookie extraction logic |
+|---|---|
+| `app/services/collectors/ollama.py` | Collector entry point — `api` balance strategy, `web` fallback |
+| `app/services/collectors/base.py` | Collector base class |
+| `scripts/sidecar.py` | Sidecar credential rules and event dispatch |
+| `scripts/sidecar_pkg/cookie_scan.py` | Cross-platform browser cookie store discovery |
 
 ## References
 

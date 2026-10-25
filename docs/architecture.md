@@ -58,7 +58,7 @@ live in `app/models/db.py`.
 | `latest_usage_contributions` | Per-source last-good card payload behind a merged `latest_usage` row. One producer's complete report can't retire another producer's card — see [collection logic](collection_logic.md#current-card-reconciliation). |
 | `quota_snapshots` | Append-only time-series of `pct_used`/`reset_at` observations. Written on every `upsert_latest_usage` call when `pct_used` is non-null. Backs the `%` history chart and the Theil-Sen forecast. |
 | `provider_pricing` | Time-versioned per-(provider, model) prices used by `app/services/cost_calculator.py` so historical cost stays stable across price changes. |
-| `provider_configs` | Per-provider user config — API keys, session cookies (Fernet-encrypted), account labels, poll intervals, per-strategy enable toggles. Unique on `(provider_id, account_id)`. |
+| `provider_configs` | Per-provider user config — account labels, poll intervals, per-strategy enable toggles, and **three** Fernet-encrypted secret columns: `api_key_encrypted`, `session_cookie_encrypted`, `oai_sc_cookie_encrypted`. Unique on `(provider_id, account_id)`. |
 | `credential_sources` | One row per credential *source* — a secret found in one place: a sidecar's file/env/cookie (`sidecar_id` set), a key pasted in Settings → Providers (`config:`), or an env var on the server host, or Runway's own `github_oauth.json` (`server:`, no origin; the server reads no other credential file, and a startup sweep drops `server:*:file:*` rows left by older builds). Holds the operator's `enabled`/`priority` failover order — a bundle whose access token has already expired is attempted after every live one, so priority orders usable credentials rather than dead ones; a source whose last attempt was rejected (`auth_failed`) rests between retries on the 15 min → 6 h doubling schedule (`next_retry_at`; once the rest is over it is simply tried in its normal place, reset by a success or by a changed secret at ingest), except that the last credential standing is always tried; `consecutive_failures`/`failing_since` track the current failure streak, and a streak of three or more `unavailable` attempts lasting over an hour makes the source read `failing` unless a sibling has collected since — the credential's non-secret expiry/token types, `health` (reported as `untried` until a first collection attempt is recorded — a registered but never-used credential must not read as working), and collection provenance (`last_attempt_at`, `last_success_at`, `last_error`) stamped by the failover loop, and the `verified_subject` last seen behind a cookie source (account-switch detection) — the "active source" for an account is the one with the latest success. Backs `GET /system/credentials`. Unique on `(provider_id, account_id, source_id)`, so an account rename has to carry these rows with it (`config_rekey` does; rows an older build stranded are removed by `orphan_credential_sources`). |
 | `provider_account_labels` | Operator display-name override for a discovered `(provider, account)`. |
 | `credential_tags` | Operator mapping from a host-side credential origin (`path:...`/`env:...`, never the value) to a server account, optionally scoped to one sidecar or deployment-wide. Unresolved origins sit in `pending_credential_tags` until tagged in the Fleet UI. Origins are fingerprinted per credential, so a CLI re-login re-keys them; when the base location is unchanged and exactly one account was ever tagged there, the manifest carries that binding to the new origin (`set_by=rotation`) instead of reopening a pending row and withholding the token (#474). `target_provider_id` (nullable) marks a tag whose account belongs to a related provider (Gemini usage assigned to an Antigravity account): the ingestor re-homes matching events to that provider, so they land on the `(antigravity, account)` series. |
@@ -69,14 +69,23 @@ live in `app/models/db.py`.
 | `webhook_credential_alerts` | Dedup/re-arm state for credential-health alerts (`app/services/credential_alerts.py`): one row per `(webhook_id, provider_id, account_id)` bad episode, with a `healthy_since` hysteresis timestamp so a single healthy Token Health observation doesn't immediately re-arm. |
 | `system_config` | Single-row global config — browser preference, default poll interval, dashboard layout JSON, user timezone. |
 | `audit_log` | Append-only record of admin mutations (sidecar pause/resume/delete/patch, etc.). Diagnostic, not legal-grade. |
+| `sidecar_devices` | Enrolled sidecar identities — a random per-device HMAC secret, encrypted. Hostnames are labels, not identity. |
+| `sidecar_request_receipts` | Claimed ingest signatures, so a replayed payload is rejected. |
+| `sidecar_source_states` | Per-device, per-source consent state — enabled, generation, revocation. |
+| `sidecar_source_contributions` | What each source contributed, so one source's withdrawal cannot retire another's card. |
+| `sidecar_source_commands` | Durable, idempotent commands for one source, with ordered generations. |
+| `sidecar_source_revision` | The capability revision a source is bound to. A newer catalog needs renewed consent. |
+| `provider_account_merges` | Merge and unmerge journal for account identities. |
 | `sidecar_pairing_codes` | One-time, short-lived (`PAIRING_CODE_TTL_SECONDS`) sidecar pairing codes, stored as SHA-256 only. Minted by admins (`POST /fleet/pairing-codes`, a `runway-sidecar://pair` deep link), redeemed once by a new sidecar (`POST /fleet/pair` → `api_url` + ingest key). See `app/services/pairing.py`, [SECURITY](SECURITY.md). |
 
 **Ingest path:** Sidecar batches up to 1000 events per push to
 `POST /api/v1/fleet/ingest` (HMAC-signed, rate-limited to 600/min per source
 IP). Server runs `EventIngestor`, which deduplicates by
 `(provider_id, event_id)` (re-attributing same-sidecar account changes),
-computes cost via `cost_calculator`, updates rollups, and triggers
-`window_closer._maybe_close_previous_window` on quota-window boundaries.
+resolves cost through `app/services/maintenance/event_cost.py::resolve_event_cost`
+and updates the rollups. The quota-window boundary is closed by
+`accumulator.upsert_latest_usage`, which triggers
+`window_closer._maybe_close_previous_window` — not by the ingestor itself.
 
 **Read / mutating paths:** the endpoint catalog lives in the
 [API reference](api-reference.md). Non-obvious semantics worth knowing here:
@@ -90,14 +99,18 @@ computes cost via `cost_calculator`, updates rollups, and triggers
   `provider_id`/`account_id`/`sidecar_id`.
 - `history/chart` takes `group=provider` for a cross-provider stack;
   `sessions/paginated` adds server-side sort + `project` filter; snapshot
-  bucketing runs SQL-side via the `ix_quota_snapshots_series_ts` covering
-  index.
+  bucketing runs SQL-side via the `ix_quota_snapshots_series_ts` index.
+  That index is **not** covering — it holds the key columns only, so a bucketed
+  query still reads the table.
 - Forecasts: `/usage/forecast` (Theil-Sen regression on `quota_snapshots`,
   anchor-at-now) and `/usage/cost-forecast` (MTD + 7-day burn to EOM).
 - Mutating endpoints (`usage/reset`, `usage/collect`, fleet pause/resume/
   update, pairing codes, `/system/{cleanup,wake,force-collect,check-updates}`,
   and the webhook/provider-config/app-config/dashboard-layout CRUD) go through
-  `require_admin_key` and append to `audit_log`.
+  `require_admin_key`.
+  **Not all of them write an `audit_log` row.** `usage/reset`, `usage/collect`,
+  `/system/cleanup`, `/system/wake`, `/system/force-collect`, the webhook CRUD and
+  `PUT /system/app-config` do not; the fleet and provider-config mutations do.
 
 **Admin auth:** the dashboard logs in via `POST /api/v1/auth/session`
 (validates `ADMIN_API_KEY`, sets an HttpOnly `SameSite=Strict` session
@@ -129,17 +142,27 @@ See [SECURITY](SECURITY.md).
 
 **Data Health / repair logic:** all data-repair logic (retagging events,
 rekeying a `provider_configs` row, merging gauge series, recosting, rebuilding
-rollups/windows) lives in `app/services/maintenance/` — a `plan_*`/`apply_*`
-pair per repair, each `apply_*` chunked (`_chunked_sql.py`'s id-cursor
-`chunked_update`/`chunked_delete`) so it never holds SQLite's writer lock for
-one giant transaction. `app/services/data_health/checks/` only decides *when*
-to offer a repair (read-only `detect()`) and exposes it through
+rollups/windows) lives in `app/services/maintenance/`.
+
+The shape is **not** uniform. Most repairs expose a `plan_*`/`apply_*` pair,
+but only **6 of the 18** modules use the shared chunked helpers
+(`_chunked_sql.py`'s id-cursor `chunked_update`/`chunked_delete`), so a large
+repair does not hold SQLite's writer lock for one giant transaction.
+`account_merge` exposes `plan_merge_gauge_series` but the apply side is
+`merge_gauge_series`, and `event_cost`, `legacy_providers`, `rollups` and
+`windows` have **no** plan/apply pair at all.
+
+`app/services/data_health/checks/` decides *when* to offer a repair. Each check
+owns its own `detect()` **and its own repair** — 15 of the 18 import the shared
+helpers from `maintenance/`, while `alert_channels`, `orphan_credential_tags`
+and `pending_events` implement theirs in place. The checks are exposed through
 `/api/v1/system/data-health/*` (`app/services/data_health/jobs.py`'s
-single-flight job registry) and the Settings → Data health page. Host-run
-scripts (`scripts/recost_events.py`, `scripts/assign_default_events.py`,
-`scripts/merge_gemini_default_account.py`) are thin wrappers over the same
-functions, so an operator running one from the CLI and the in-app fixer can
-never drift apart. See [data-health](data-health.md).
+single-flight job registry) and the Settings → Data health page.
+
+Host-run scripts are **not** all thin wrappers. `scripts/recost_events.py` is;
+`scripts/assign_default_events.py` and `scripts/merge_gemini_default_account.py`
+are standalone. See [data-health](data-health.md) and
+[maintenance scripts](maintenance-scripts.md).
 
 ## Collectors
 
@@ -292,7 +315,7 @@ account's credential (it is the operator's record of what a machine reports),
 while **Token Health** does not (it lists what is live — nothing is collectable
 with a retired account's credential, and nothing to refresh).
 
-### A merged account takes its credential with it
+## A merged account takes its credential with it
 
 `POST /api/v1/system/provider-account-merge/apply` merges one account into
 another: its usage history, quota cards, credential-source rows and operator
@@ -467,6 +490,13 @@ that data between the `INJECTED REGISTRY` markers in `scripts/sidecar.py`.
 - **`api`** — official API / OAuth endpoints.
 - **`web`** — unofficial / cookie-based / scraped web endpoints.
 - **`local`** — local log files / CLI statuslines / fast-path caches.
+- **`error`** — the card reports a failure instead of a quota.
+- **`lsp`** — a legacy value the ingest rule still recognises as the one
+  exception to the sidecar-enrichment-only rule, but which **no shipped
+  collector emits**.
+
+The canonical list, and what each value means, is in
+[statistics.md](statistics.md#data-source-data_source).
 
 **`input_source` (origin of credentials):**
 - **`config`** — entered via the Runway Dashboard UI (stored in DB).
@@ -480,226 +510,89 @@ enrichment → single card per
 bucket model, the per-collector strategy map, and `_merge_enrichment`
 semantics.
 
-## CI/CD
+## Service modules
 
-Workflows live in `.github/workflows/`.
+The service layer is larger than the table map above suggests. These are the
+subsystems a reader would otherwise have to find by grepping.
 
-- **`ci-cd.yml`** — on push/PR to `main`:
-  - **`test-python`** — reusable `s3ntin3l8/.github` `ci-python.yml`:
-    `lint` (ruff check + format) and `type-and-test` (mypy, detect-secrets
-    against `.secrets.baseline`, pip-audit, pytest with Codecov). This repo
-    passes `strict-checks: true`, so mypy and pip-audit are hard gates here
-    rather than advisory findings, and `test-parallel: '4'` runs the suite in
-    four workers (`--dist loadfile`, so every test module stays in one
-    worker). `detect-secrets-scope: changed` scans only the files the push
-    touched. Coverage floor 85% (the suite covers 91.6%).
-  - **`test-frontend`** — reusable `ci-node.yml` against `webapp/` with
-    strict checks: typecheck, Vite build, vitest coverage. Floor 85%. It
-    passes `detect-secrets: false`: the Python job above already scans the
-    repository, and doing it twice cost ~50s per run for the same answer.
-  - **`windows`** — ruff, mypy and pip-audit on a native Windows runner.
-  - **`windows/specific`** — the test modules whose subject is the Windows
-    platform (native socket and handle semantics, installer packaging,
-    console code pages), marked with the `windows` marker and selected by
-    `scripts/dev_checks.py test-windows`.
-  - **`installer-check`** — compiles the Windows NSIS installer with a
-    placeholder exe on every PR, so a broken `.nsi` or missing installer
-    asset fails here, not at release time.
-  - **`image-changed` + **`build-docker`** — on push only: GHCR image via the
-    shared `docker-publish.yml` with `push-edge: true` → the `:edge` tag.
-    `image-changed` compares the push against the Dockerfile's `COPY` sources
-    (the Dockerfile, `requirements.txt`, `app/`, `webapp/`) and skips the
-    rebuild when the image's *contents* cannot have changed; if the base
-    commit cannot be resolved it rebuilds.
-    Because the Dockerfile bakes the commit in as `RUNWAY_BUILD_SHA`, a
-    rebuilt image is never byte-identical to its predecessor, so a skipped
-    rebuild leaves `:edge` serving the previous commit's image and that
-    image's SHA. The SHA still names the exact build that is running — it is
-    the SHA of the *build*, not of `main` — but it is no longer `main`'s tip.
-    The checked-out commit is passed as the `BUILD_SHA` build arg and baked
-    in as `RUNWAY_BUILD_SHA`, so the running server reports the exact build
-    it is in Settings → About — every `:edge` image ships the same version
-    string, so the SHA is what tells two of them apart. The Dockerfile has
-    to declare `ARG BUILD_SHA` in its **final** stage (a builder-stage ARG
-    never reaches the running image); the build fails loudly if it doesn't.
-  - Every job above except the two `test-*` ones and `image-changed` is
-    advisory: none of them is a required status check.
-  - Required checks on `main`: `test-python / lint`,
-    `test-python / type-and-test`, `test-frontend / lint-and-test`,
-    `dependency-review / dependency-review`, and CodeQL. They are **not**
-    required to be up to date with `main` — see *The merge queue is not
-    available here* below.
-- **The merge queue is not available here.** The merge queue is documented as
-    available on public repositories owned by *organizations* (and GitHub
-    Enterprise Cloud), not on personal accounts, and this repository is owned
-    by a personal account — GitHub's ruleset API rejects the `merge_queue`
-    rule with *"Invalid rule 'merge_queue'"*.
+### Read views — `app/services/queries/`
 
-    What does the job instead is `required_status_checks.strict = false`: a
-    pull request no longer has to be up to date with `main` to merge, so it
-    does not need a rebase — and a rebase is what used to re-trigger the
-    pull-request workflows. Seven workflows here listen for `pull_request`
-    (`ci-cd`, `codeql`, `dependency-review`, `hermes`, `image-security`,
-    `image-security-arm64`, `security-validation`), and six of them re-run on
-    a rebase; `hermes.yml` opts out with `types: [opened, ready_for_review]`.
-    Measured: `fix/cookie-store-classification`, several commits behind
-    `main`, reports `CLEAN` and merges without a rebase.
+The read layer was split out of what used to be a single 1979-line
+`event_query.py`. Each module is one read view:
 
-    The safety that the up-to-date rule was standing in for is covered
-    elsewhere, in two layers. The required checks run again on the push to
-    `main` — `ci-cd.yml` and `codeql.yml` both have a `push` trigger — so a
-    merge that breaks the integration is caught on `main`: the difference
-    from the up-to-date rule is *when* (after the merge, not before) and
-    *who* (whoever picks up a red `main`, not the author whose pull request
-    was bounced back). `dependency-review` is the exception: it is a
-    pull-request-only check, so it does not re-run on `main` — it has nothing
-    to say about a merge that changes no dependency. And the release pull
-    request is regenerated on every `main` push, so it always builds current
-    `main`: a broken `main` makes its checks red, and the maintainer's
-    approval — which the release pull request deliberately requires — is the
-    gate. No release is cut from a broken `main`. The `:edge` image is gated the same way:
-    `build-docker` needs `test-python`, `test-frontend` and
-    `dependency-audit` to pass on `main`.
+| Module | View |
+|---|---|
+| `anomaly.py` | anomalous usage readings |
+| `cumulative.py` | cumulative per-model / per-project series |
+| `events.py` | the raw event feed |
+| `forecast.py` | forecast series |
+| `global_stats.py` | cross-provider totals |
+| `heatmap.py` | the activity heatmap |
+| `history.py` | the historical chart |
+| `sessions.py` | session rows |
+| `snapshots.py` | quota snapshot series |
+| `source_apps.py` | which client app spent the quota |
+| `top_hosts.py`, `top_models.py`, `top_projects.py`, `top_sessions.py`, `top_tools.py` | the rankings |
 
-    Moving the repositories to an organization would enable the queue, but
-    that is not only a settings change: the workflows that produce the
-    required checks would need a `merge_group` trigger, and the advisory jobs
-    would need to skip that event so the queue does not wait on the Windows
-    runner. Neither is in place, because neither could be exercised here —
-    an untested conditional path in CI is worse than no path at all.
-- **`windows-native-suite.yml`** — the whole pytest suite on a native Windows
-    runner, in four parallel shards, on `main` pushes and nightly. It used to
-    run on every pull request, where it cost ~11 runner-minutes — the largest
-    advisory cost in the repository — for coverage a Windows runner is not
-    the only way to get. `scripts/pytest_shard.py` owns the split: it keeps
-    whole test modules together (so the fixed-port helpers and
-    `tests/conftest.py`'s import-time setup stay in one process) and balances
-    them by measured runtime, recorded per platform in
-    `tests/shard_durations.linux.json` and `tests/shard_durations.windows.json`
-    -- a module that is slow on Linux is not necessarily slow on Windows. A
-    shard runs the whole suite with the other shards' modules deselected by
-    node id prefix, so pytest's own `collect_ignore` still decides what is
-    collectible. Re-measure with `make shard-weights`; the Windows table is
-    measured on a Windows runner by the workflow's manual `record-weights`
-    job, because the durations are platform-specific. The frontend is not
-    part of this job — `test-frontend / lint-and-test` already covers it on
-    Linux.
-- **`frozen-verifier.yml`** — the packaging smoke test: the sidecar is built
-    with PyInstaller on each platform and the frozen binary is verified
-    against a signed fixture. It used to run on every pull request, in four
-    parallel jobs, which made it the largest advisory cost in the repository
-    (7.6 runner-minutes per pull request, and the macOS leg is billed at ten
-    times a Linux minute). On a pull request it verified the *standard signed
-    fixture*; the release half of the job — the one that answers "does the
-    packaged binary match the release" — only ever ran on a manual dispatch
-    with a release tag, because that is what `capture-release` produces. It
-    now runs on pushes to `main` and nightly, and the release path is
-    unchanged: dispatch this workflow with a release tag. The nightly is the
-    canary for toolchain drift — PyInstaller is pinned, so a new release of
-    it only lands when the pin moves — but it can break the packaging when
-    it does, and a push run cannot catch that, because it ran before the
-    release did.
-- **`security-validation.yml`** — the trust-boundary and recovery tests, in
-    three jobs that share no state: the browser boundaries, which run in the
-    digest-pinned Playwright image so the runner's apt mirror cannot spend
-    the budget before the checks run ([#876](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/876));
-    the real reverse-proxy boundaries, which need the Python set and Docker
-    but no browser and carry the immutable-reference check; and the native
-    Windows swap, rollback and recovery regressions. The packaging half of the
-    old workflow lives in `frozen-verifier.yml`.
-- **`image-security.yml` / `image-security-arm64.yml`** — the candidate
-    image is built and scanned for known vulnerabilities. The amd64 leg runs
-    on every pull request; the arm64 leg is a native build on an ARM runner
-    and lives in its own workflow, filtered to the paths that can change the
-    image. The daily `published` job audits the arm64 image that actually
-    ships.
-- **`release-please.yml`** — on push to `main`: opens/merges the release PR
-  from Conventional Commits (see *Releases*). When it cuts a release it also
-  runs `docker-publish.yml` with `push-release: true` (stable → `:latest` +
-  version tags; beta → `:beta` + version tag, selected by `release-channel`)
-  and calls `sidecar-build.yml` via `build-sidecar`/`publish-sidecar` —
-  for stable and beta releases alike.
-- **`sidecar-build.yml`** — reusable (`workflow_call`) sidecar matrix. It
-  builds the release artifacts; the other two places that build with
-  PyInstaller are `frozen-verifier.yml`, which smoke-tests the frozen binary,
-  and the CI audit job, which installs it to audit it. Per release label
-  (`vX.Y.Z`, `vX.Y.Z-beta.N`,
-  or `edge`) it
-  builds the macOS **`.dmg`** (ad-hoc signed `.app`, `create-dmg`) and
-  Windows **NSIS `-setup.exe`** (`installer/windows/runway-sidecar.nsi`)
-  installers, plus the `.zip`/`.tar.gz` self-update payloads for all four
-  targets. Its `attest` job then writes `SHA256SUMS.txt` and Sigstore
-  keyless `.sigstore.json` bundles. Every asset name comes from
-  `scripts/sidecar_pkg/asset_names.py` (the updater's source of truth), and
-  `tests/unit/test_sidecar_release_contract.py` pins it all together.
-  `sidecar-release.yml` is a manual wrapper (`workflow_dispatch`; empty
-  `tag` = build-only artifacts, handy for testing installers from a branch).
-- **`sidecar-edge.yml`** — on push to `main` touching sidecar/installer
-  code *or the shared `app/` modules the sidecar bundles*; calls
-  `sidecar-build.yml` with `label: edge` (version stamped
-  `<base>+edge.<sha>`) and publishes to the always-overwritten `edge`
-  prerelease — the sidecar analog of the Docker `:edge` tag. A flaky
-  non-Linux runner doesn't block the rest (`allow-partial`). The sidecar
-  binary bundles `app/` code (`app.services.model_normalization` decides
-  the cost bucket every collected event is billed under), so a change to
-  those modules has to rebuild the sidecar too;
-  `tests/unit/test_sidecar_edge_app_paths.py` computes the bundled `app/`
-  import closure — from every spec's entry point and declared hiddenimports,
-  following relative imports, and counting the package `__init__.py` files
-  the bundle carries — and fails when the workflow's `paths:` filter stops
-  covering it.
-- **`hermes.yml`** — automated PR review. Auto-reviews exactly once per PR
-  (`opened` when non-draft, or `ready_for_review`); on-demand re-reviews via
-  a `@s3ntin3l8-hermes Review` comment. Deliberately no `synchronize`
-  trigger — re-reviewing every push would be an unbounded review loop.
-  Auto-review excludes `mullion/task-*` and release-please PRs; dependabot PRs
-  are reviewed too, once the Dependabot secrets are mirrored.
-- **`claude.yml`** — `@claude` mentions on issues/PRs route to the shared
-  reusable Claude Code workflow.
-- Also `codeql.yml`, `dependency-review.yml`, `cleanup-ghcr.yml`.
-  Dependabot updates actions, pip, and npm weekly. `.secrets.baseline` is
-  tracked in git — CI's detect-secrets gate needs it.
+### Repairs and health
 
-## Releases
+| Module | Purpose |
+|---|---|
+| `app/services/maintenance/` | The repair implementations. 18 modules; see the note on plan/apply above. |
+| `app/services/data_health/` | 18 read-only checks, a dependency-ordered registry (`blocked_by` gating) and a single-flight job registry. |
+| `app/services/source_controls.py` | The durable device/source consent model — per-device consent state, revocation and encrypted credential contributions. It is the authorisation backbone of the sidecar credential path, and the model behind the six `sidecar_source_*` tables. |
+| `app/services/account_merges.py` | Merge and unmerge execution, and the merge journal. |
 
-Releases are managed by **Release Please**
-(`.github/workflows/release-please.yml`):
+### Collection
 
-- Uses Conventional Commits to determine version bumps: `feat:` → minor,
-  `fix:` → patch, `feat!:` → major, `chore:`/`docs:`/`test:` → no release.
-- On qualifying commits to `main`, Release Please opens a PR updating
-  `CHANGELOG.md` and `package.json`.
-- Merging that PR creates the GitHub Release and tag automatically — which is
-  what triggers the release-channel image and sidecar builds above (stable →
-  `:latest`, beta prerelease → `:beta`).
-- To force a version jump (e.g. v1.0.0): tag manually, push the tag, create
-  the GitHub Release by hand — Release Please picks up from there.
+| Module | Purpose |
+|---|---|
+| `app/services/smart_collector.py` | The per-provider cache, the 429 backoff, and the staleness ceiling that decides when a card is stale. |
+| `app/services/collector_manager.py` | The collector registry and the per-provider TTL table. |
+| `app/services/poller.py` | The background poll loop, and `reconcile_latest_usage_snapshot` on a completed collection. |
+| `app/services/token_auto_refresher.py` | Background OAuth auto-refresh (`TOKEN_AUTO_REFRESH_THRESHOLD_SECONDS`). |
+| `app/services/refresh_policy.py` | "Who may refresh this login" — the rules shared by the token cache and the refresher. |
+| `app/services/token_cache.py` | The server-side token cache. 30-minute TTL by default. |
+| `app/services/token_health.py` | Expiry parsing and the status classification the credential alerts consume. |
+| `app/services/token_refresher.py` | The explicit refresh path. |
 
-The release PR's own CI is held for approval, and the merge is always
-somebody's. Release Please pushes the release branch with the workflow's own
-`GITHUB_TOKEN`, and GitHub holds `pull_request` runs from a push like that,
-so the release PR sits at `BLOCKED` with its required checks stuck at pending.
-There is no auto-merge on this repository (`allow_auto_merge` is off).
-Approving the held runs lets the required contexts report so the PR can be
-merged normally; merging it with administrator privileges — `enforce_admins`
-is off on `main` — skips the held runs entirely and leaves them unstarted.
+### Events and identity
 
-Approval is not free, though. The release PR carries six workflows — `CI/CD`
-and `CodeQL`, which also run on the push to `main`, and `Security Validation`,
-`Image Security`, `Image Security (arm64)` and `Dependency Review`, which run
-on a pull request but not on the push. What they re-check is the release
-commit: a version bump and a changelog on top of commits that were each
-tested on the pull request they came in through. One measured batch cost 20.8
-runner-minutes and about an hour of wall clock — its last job waited 43
-minutes for a hosted runner before starting. The administrator merge skips
-those six runs and that hour; `CI/CD` and `CodeQL` still run on `main`
-afterwards, as they do after any merge. What it gives up is the four
-pull-request-only workflows' look at the release commit: they have no push
-equivalent, so a release merged that way never reaches them.
+| Module | Purpose |
+|---|---|
+| `app/services/event_ingestor.py` | The ingest path: dedup by `(provider_id, event_id)`, cost resolution, rollup updates. |
+| `app/services/event_identity_migration.py` | `migrate_to_provider_event_identity` — retagging rows onto the provider-scoped event identity. |
+| `app/services/identity_lookup.py` | Resolving the account behind a credential. |
+| `app/services/accumulator.py` | The live card view: merge, ownership, staleness. |
+| `app/services/period_rollups.py` | The rollup aggregation. |
+| `app/services/project_label.py` | The host-independent project derivation. |
+| `app/services/account_canonicalization.py`, `account_identity.py` | Canonical provider ids and account identity. |
+| `app/services/forecast.py` | Theil-Sen median regression over `quota_snapshots`. |
+| `app/services/cost_calculator.py` | The pricing rules behind `provider_pricing`. |
 
-The prerelease settings in `release-please-config.json` are temporary for
-the 3.0.0 beta cycle (`prerelease: true`, `prerelease-type: beta.1`). Before
-merging a stable release, follow
-[issue #408](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/408)
-to remove prerelease mode and promote 3.0.0; otherwise future Release Please
-releases will also be beta versions.
+### Alerting and fleet
+
+| Module | Purpose |
+|---|---|
+| `app/services/webhooks.py` | The Discord/Slack threshold alerts. |
+| `app/services/credential_alerts.py` | Credential-health alerts, and the re-arm hysteresis (`healthy_since`). |
+| `app/services/blocked_collection.py`, `blocked_sources.py` | Which unmapped credential is silently stopping a provider's collection. |
+| `app/services/fleet_registry.py` | The fleet registry. |
+| `app/services/sidecar_devices.py`, `sidecar_version_checker.py`, `sidecar_downloads.py` | Device identity, the GitHub Releases version check, and the download plumbing. |
+| `app/services/release_metadata.py` | The release metadata the version check consumes. |
+| `app/services/probe_mode.py`, `source_probe.py`, `source_outcome.py` | The operator-triggered probes and their outcomes. |
+
+### Claude verification cluster
+
+`app/services/claude_cloud_probe.py`, `claude_oauth_usage.py`,
+`claude_oauth_verification.py` and `claude_verification.py` implement the
+operator-triggered server diagnostic for the Claude cloud accounting path.
+See [evidence](evidence/README.md) for the acceptance records.
+
+## CI/CD and releases
+
+The workflows, the gates they enforce and the release choreography live in
+[ci-cd.md](ci-cd.md).
+
+- [ci-cd.md — CI/CD](ci-cd.md)
+- [ci-cd.md — Releases](ci-cd.md#releases)

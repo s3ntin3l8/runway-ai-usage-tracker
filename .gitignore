@@ -48,6 +48,8 @@ frontend/css/styles.css
 !.vscode/settings.json
 !.vscode/launch.json
 .idea/
+# Mullion dev-server dock configuration — local IDE state.
+.crs/
 
 # --- PROJECT STATE & DATABASE ---
 *.db
@@ -93,6 +95,8 @@ app/brain/
 # --- SUPERPOWERS ---
 .superpowers/
 docs/superpowers/
+# Defensive: a superpowers folder at the repository root is scratch too.
+superpowers/
 
 # --- PYINSTALLER ---
 # No trailing slash, so a symlinked output tree is ignored too - see the
@@ -107,6 +111,12 @@ docs/sidecar_implementation.md
 .worktrees
 artifacts/
 *.py,cover
+
+# --- AUDIT ASSETS ---
+# Audit reports are committed under docs/audit/; their screenshot evidence
+# stays local. It is regenerable (make screenshots-audit) and it is not worth
+# the permanent history weight — see docs/audit/README.md.
+docs/audit/assets/
 
 # Developer worktrees (one worktree per branch under .wt/ — see AGENTS.md)
 .wt/

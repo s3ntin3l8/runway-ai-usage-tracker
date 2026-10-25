@@ -1,13 +1,13 @@
 # ChatGPT Collector
 
-**File:** `app/services/collectors/chatgpt.py` (server-side: `web` strategy on `wham/usage`)
+**File:** `app/services/collectors/chatgpt.py` (server) · `scripts/sidecar.py` (sidecar)
 **Sidecar:** `scripts/sidecar.py` + `sidecar_app/` (local-source strategies: Codex CLI RPC, session logs)
 
 ChatGPT Codex quota collector with an `api` (executed against the web endpoint with an OAuth bearer or cookie) tier and a `local` enrichment tier that runs inside the sidecar. The server itself does not shell out to `codex` or scan `~/.codex/sessions/`.
 
 ## Overview
 
-- **Collection Strategy**: api (Web API / Cookie) → local (CLI RPC / Logs, via sidecar)
+- **Collection Strategy**: `web` (Web API / Cookie) server-side; local CLI RPC / Logs come from the sidecar
 - **Cards**: 1-2 cards per `rate_limit` window Codex reports — a `session` (5h) card from `primary_window`, plus a `weekly` card from `secondary_window` when the plan reports one (Plus/Pro). Free/Go plans that report only `primary_window` still get a single card.
 - **Authentication**: `CHATGPT_OAUTH_TOKEN` (api), `~/.codex/auth.json` (sidecar-discovered), or Chrome cookies (web).
 
@@ -17,23 +17,23 @@ The ChatGPT collector supports multiple authentication and data collection metho
 
 1.  **OAuth Token / Session Cookie**:
     *   **Method**: Log in to [chatgpt.com](https://chatgpt.com) in Chrome for automatic extraction, OR manually paste the `__Secure-next-auth.session-token` into the **Runway Settings** UI.
-    *   **Details**: See [Primary: ChatGPT wham/usage API](#primary-chatgpt-whamusage-api) and [Troubleshooting: "No logs/auth" error](#no-logsauth-error).
+    *   **Details**: See [Tier 1: web (Web API / Cookie)](#tier-1-web-web-api--cookie) and [Troubleshooting: "No logs/auth" error](#no-logsauth-error).
 
 2.  **Codex CLI Cache (`~/.codex/auth.json`)**:
     *   **Method**: Log in using the `codex` CLI (`codex auth login`) and run the sidecar on that machine: the sidecar discovers `~/.codex/auth.json` and pushes the token. The server never reads that file from its own host.
-    *   **Details**: See [Primary: ChatGPT wham/usage API](#primary-chatgpt-whamusage-api) and [Troubleshooting: "No logs/auth" error](#no-logsauth-error).
+    *   **Details**: See [Tier 1: web (Web API / Cookie)](#tier-1-web-web-api--cookie) and [Troubleshooting: "No logs/auth" error](#no-logsauth-error).
 
 3.  **Codex CLI RPC**:
     *   **Method**: Install the `@openai/codex` CLI and ensure it's in your PATH. Runway will execute `codex -s read-only` to get quota data.
-    *   **Details**: See [Secondary: Codex CLI RPC](#secondary-codex-cli-rpc) below.
+    *   **Details**: See [Tier 2: local (CLI RPC / Logs)](#tier-2-local-cli-rpc--logs--sidecar-only) below.
 
 4.  **Local Session Cache**:
     *   **Method**: If the Codex CLI is used, it generates session log files. Runway can read these as a last resort.
-    *   **Details**: See [Tertiary: Local Session Cache](#tertiary-local-session-cache) below.
+    *   **Details**: See [Tier 2: local (CLI RPC / Logs)](#tier-2-local-cli-rpc--logs--sidecar-only) below.
 
 ## Data Sources
 
-### Tier 1: api (Web API / Cookie)
+### Tier 1: web (Web API / Cookie)
 **Endpoint:** `chatgpt.com/backend-api/wham/usage`
 **Auth:** Bearer token (OAuth) or Session Cookie (Web).
 **Behavior:** Primary method for both official tokens and browser-based sessions.
@@ -124,7 +124,7 @@ The Codex access token lives ten days and the refresh token rotates on every ref
 3. Or log in to chatgpt.com in Chrome — session cookie is extracted automatically.
 
 ### API Error (401/403 on accounts endpoint)
-**Expected:** The `accounts/check` endpoint may return 403 depending on account type — this is non-fatal and usage data is still collected from `wham/usage`.
+**Expected:** the collector reads usage from `wham/usage`. A 403 from the provider is non-fatal — the card reports the error and the next cycle retries.
 
 ### API Error (401) on wham/usage
 **Fix:** Token expired - re-authenticate with Codex CLI or set a fresh `CHATGPT_OAUTH_TOKEN`.
@@ -132,9 +132,15 @@ The Codex access token lives ten days and the refresh token rotates on every ref
 ## Related Files
 
 | File | Purpose |
-|------|---------|
-| `app/services/collectors/chatgpt.py` | Main collector |
-| `scripts/sidecar.py` | Sidecar implementation |
+|---|---|
+| `app/services/collectors/chatgpt.py` | Collector entry point — the `web` strategy |
+| `app/services/collectors/chatgpt_oauth.py` | Codex OAuth token handling |
+| `app/services/collectors/chatgpt_web.py` | ChatGPT web session strategy |
+| `app/services/collectors/base.py` | Collector base class |
+| `scripts/sidecar.py` | Sidecar credential rules and event dispatch |
+| `scripts/sidecar_pkg/event_extractors/chatgpt.py` | Local Codex CLI usage events |
+| `scripts/sidecar_pkg/codex_renewer.py` | Codex keep-alive renewer |
+| `scripts/sidecar_pkg/cookie_scan.py` | Cross-platform browser cookie store discovery |
 
 ## References
 
@@ -153,5 +159,3 @@ If automatic browser extraction is not working (e.g., in Docker or headless envi
 - **Field in Runway**: **Session Cookie (Session Token)**
 - **Token Source**: Browser DevTools -> Application -> Cookies -> `https://chatgpt.com` -> `__Secure-next-auth.session-token`.
 - **Note**: This is a fallback method. Runway will attempt to exchange this for a Bearer token.
-
-*Last updated: 2026-09-09*

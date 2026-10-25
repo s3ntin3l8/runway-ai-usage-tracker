@@ -28,9 +28,14 @@ export function PageHeader({
       className={cn(
         // The optional position lets pages keep the shared header structure
         // while opting out of pinning when embedded in a scroll region.
+        // min-h-14, not h-14: the box is border-box, so a fixed height would
+        // SUBTRACT the safe-area inset instead of adding to it — on a notched
+        // iPhone in standalone PWA mode (inset ~47px) the title and the action
+        // row would overflow the 56px band and collide with the page. A
+        // minimum lets the band grow to fit the inset plus its content.
         // pt-[env(safe-area-inset-top)] covers the notch in standalone iOS.
         cn(
-          'flex h-14 items-center justify-between gap-3 border-b border-edge bg-canvas/90 px-4 pt-[env(safe-area-inset-top)] backdrop-blur-sm lg:px-8',
+          'flex min-h-14 items-center justify-between gap-3 border-b border-edge bg-canvas/90 px-4 pt-[env(safe-area-inset-top)] backdrop-blur-sm lg:px-8',
           sticky && 'sticky top-0 z-20',
         ),
         className,

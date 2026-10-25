@@ -1,4 +1,11 @@
-# Migrating to v3.0.0
+# Upgrading to Runway 3.x
+
+> **Scope.** This document describes the upgrade from a **2.x** database to the
+> **3.x** schema. The current release is `3.0.0-beta.14`; the 3.x line is still
+> in beta, so a beta-to-beta upgrade may also apply schema migrations that are
+> **not** listed here — see [Known gaps in this note](#known-gaps-in-this-note)
+> below. Every pre-v3 database in the field is still live and still needs this
+> upgrade path, so nothing here is historical.
 
 ## Before you upgrade
 
@@ -127,7 +134,7 @@ aren't hitting `127.0.0.1`) — account ids, tag hints, and credential tokens
 are withheld. Sidecars built for this release sign every request and are
 unaffected; a third-party integration reading this endpoint directly for
 account-level detail will need to add the signature (see
-`verify_config_signature` in `app/api/endpoints/fleet.py`) or run against a
+`verify_config_signature` in `app/core/security.py`) or run against a
 loopback bind.
 
 ## Stable-channel sidecar self-update
@@ -234,3 +241,28 @@ for the whole installation, across browsers and server restarts.
 The notice records only removals observed by this version. Fresh installations
 and installations whose old sources were already removed receive no inferred
 notice.
+
+---
+
+## Known gaps in this note
+
+The 3.x line is still in beta, so migrations have landed **after** this note
+was first written. They all run automatically at startup — none of them needs a
+manual step — but they are not described above, so a reader upgrading from one
+beta to another has nothing to go on.
+
+| Migration | What it does | When it matters |
+|---|---|---|
+| `usage_windows_series_identity_v1` | Adds the `provider_id` / `account_id` / `model_id` columns that make a `usage_windows` row uniquely identifiable, so the same closed window cannot be recorded twice under two accounts. Applied through the `runway_schema_migrations` ledger, so it runs exactly once. | Upgrading a database that already has closed windows from before the series identity existed. |
+| `_migrate_webhook_uniqueness` | Enforces `(provider_id, account_id, url)` uniqueness on `webhook_configs`. Pre-#274 rows all have `account_id = NULL`; SQLite treats NULLs as distinct, so they are left alone and duplicates of the "all accounts" form are rejected by the API layer instead. | Upgrading a database with webhook rows created before the `account_id` column existed. |
+| `_migrate_credential_tag_scoping` | Rebuilds `credential_tags` for per-sidecar scoping (#319). SQLite cannot drop a table constraint in place, so the table is rebuilt with a nullable `sidecar_id` and two partial unique indexes. Existing rows are copied with `sidecar_id = NULL` — deployment-wide, matching their pre-migration semantics. | Upgrading a database whose credential tags predate per-sidecar scoping. |
+| `migrate_to_provider_event_identity` | Collapses cross-account duplicate `usage_events` and creates the unique index that makes `(provider_id, event_id)` the identity. Returns the number of duplicate rows removed, and rebuilds the rollups of every affected `(provider_id, account_id)` pair. | The same job as [First boot after upgrading](#first-boot-after-upgrading), but idempotent — it is a no-op once the unique index exists. |
+
+**Sources**
+
+- `app/core/db.py` — `usage_windows_series_identity_v1` (:472),
+  `_migrate_webhook_uniqueness` (:645), `_migrate_credential_tag_scoping` (:693)
+- `app/services/event_identity_migration.py` — `migrate_to_provider_event_identity` (:85)
+
+After any of these, open **Settings → Data health** and run a scan. The scan
+reports what the migration left behind and offers the repairs.

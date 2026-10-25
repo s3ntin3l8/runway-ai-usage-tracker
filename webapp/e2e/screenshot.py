@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Screenshot helper for visual QA of the v2 webapp during development.
+"""Screenshot helper for visual QA of the v3 webapp during development.
 
 Usage: python3 e2e/screenshot.py [route] [outfile-prefix]
 Takes desktop (1440), tablet (768) and mobile (390) shots of the given route

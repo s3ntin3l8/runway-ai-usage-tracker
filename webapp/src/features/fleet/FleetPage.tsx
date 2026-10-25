@@ -485,7 +485,7 @@ function SidecarCard({
             <span className="text-fg-subtle">Credentials & account identities</span>
             <Link
               to={`/settings/credentials?view=machine#machine-${encodeURIComponent(sidecar.sidecar_id)}`}
-              className="font-medium text-accent hover:underline"
+              className="font-medium text-accent-text hover:underline"
             >
               View
             </Link>

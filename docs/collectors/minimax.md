@@ -1,6 +1,6 @@
 # MiniMax Collector
 
-**File:** `app/services/collectors/minimax.py`
+**File:** `app/services/collectors/minimax.py` (server) · `scripts/sidecar.py` (sidecar)
 
 MiniMax coding-plan quota collector.
 
@@ -605,26 +605,15 @@ ledger is a local file the runtime writes.
 ## Related Files
 
 | File | Purpose |
-|------|---------|
-| `app/services/collectors/minimax.py` | Main collector |
-| `app/services/pricing_seed.py` | Notional API pricing for Coding-Plan usage |
-| `scripts/sidecar_pkg/event_extractors/opencode.py` | Folds OpenCode-driven MiniMax traffic into this provider |
-| `scripts/sidecar_pkg/event_extractors/minimax_code.py` | Reads the MiniMax Code runtime ledger and pushes its requests as events |
-| `scripts/sidecar_registry_overlay.json` | The sidecar-only `minimax_code` client-app entry (the ledger's scheduling id) |
-| `app/api/endpoints/fleet.py` | Schedules the sidecar-only event providers (`hermes`, `minimax_code`) |
-| `scripts/sidecar_pkg/minimax_code_probe.py` | The read-only `--probe-minimax-code` host check |
-| `scripts/link_minimax_background_sessions.py` | Files the background-task rows collected before the parent link under their parent |
-| `app/services/maintenance/minimax_background_sessions.py` | The repair's plan/apply pair (no runtime-store access of its own) |
-| `tests/unit/test_event_extractor_minimax_code.py` | Extractor coverage (join, model fallbacks, id cursor, drift) |
-| `tests/unit/test_sidecar.py` | Scheduling-id coverage (the account hint carry-over, one read per cycle) |
-| `tests/unit/test_maintenance_minimax_background_sessions.py` | Repair coverage (moves, never inserts, idempotent) |
-| `tests/unit/test_minimax_code_probe.py` | Probe coverage (store found/missing, schema drift, cursor left alone) |
-| `tests/integration/test_minimax_code_events_ingest.py` | End-to-end: runtime ledger → fleet ingest → priced MiniMax events |
+|---|---|
+| `app/services/collectors/minimax.py` | Collector entry point |
+| `app/services/collectors/base.py` | Collector base class |
+| `scripts/sidecar.py` | Sidecar credential rules and event dispatch |
+| `scripts/sidecar_pkg/event_extractors/minimax_code.py` | MiniMax Code local runtime store reader |
+| `scripts/sidecar_pkg/minimax_code_probe.py` | Read-only probe of the MiniMax Code store |
 
 ## References
 
 - **MiniMax (international):** https://www.minimax.io
 - **MiniMax (China):** https://www.minimaxi.com
 - **API Documentation:** https://api.minimax.io/document/main (or https://api.minimaxi.com/document/main for the China platform)
-
-*Last updated: 2026-10-25*

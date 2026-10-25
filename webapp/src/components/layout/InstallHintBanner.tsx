@@ -24,7 +24,7 @@ export function InstallHintBanner() {
   };
 
   return (
-    <div className="flex items-center gap-3 border-b border-edge bg-accent-muted px-4 py-2 text-[13px] text-accent lg:px-8">
+    <div className="flex items-center gap-3 border-b border-edge bg-accent-muted px-4 py-2 text-[13px] text-accent-text lg:px-8">
       <Share className="size-4 shrink-0" aria-hidden />
       <p className="min-w-0 flex-1">
         Install Runway: tap <span className="font-semibold">Share</span> then{' '}

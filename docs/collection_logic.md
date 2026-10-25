@@ -42,11 +42,28 @@ Reconciliation only changes the live card view; `quota_snapshots` and
 
 ## Strategy Types
 
-| Type | Description |
-|------|-------------|
-| **quota** | Provides usage/limit data: percentages, currency limits, tier info |
-| **mixed** | Provides both quota and enrichment data in one response |
-| **enrichment** | Provides token breakdown, session counts, model usage details |
+There are exactly **two** buckets, and a strategy is in one of them or the
+other. The bucket is not declared as a type — it is derived from the strategy's
+options: a strategy whose options carry `{"enrich": True}` is an **enrichment**
+strategy, and everything else is a **primary** strategy.
+
+| Bucket | How it is declared | What it does |
+|---|---|---|
+| **primary** | anything without `{"enrich": True}` | Produces the card. The **first** primary strategy that succeeds wins; the rest are not run. |
+| **enrichment** | `{"enrich": True}` in the strategy's options | Runs **after** a primary strategy has succeeded, and merges extra fields into the primary card. It never acts as a fallback for missing quota data. |
+
+There is no third bucket. A strategy cannot return quota and enrichment
+separately in one response — there is no `mixed` strategy type, and no code
+path anywhere in `app/services/collectors/` that would produce one.
+
+The only options key any collector may pass is `enrich`. See
+`app/services/collectors/base.py:138-140`.
+
+> **No shipped collector declares an enrichment strategy.** The mechanism is
+> implemented in the base class, but every collector in the registry uses only
+> primary strategies. The per-message token breakdowns and session counts that
+> reach the dashboard arrive as **sidecar usage events**, not as a server-side
+> enrichment strategy.
 
 Enrichment events also carry **project context** — the working directory (`cwd`), `git_branch`, and the tool names invoked in the message (`tool_names`). The server derives `project` (the basename of `cwd`) in `EventIngestor` and indexes it, which is what powers the Sessions project column and the Top Projects / Top Tools rankings. The derivation is **host-independent**: a client's working directory is a path on *that* machine (`D:\Projects\repo` on Windows, `/home/u/repo` on macOS/Linux), and the server runs on Linux, so the label is the last path segment of either separator form rather than whatever the server's `os.path` would split on.
 
@@ -60,25 +77,36 @@ Rows written **before** the column existed are backfilled with `provider_id`, wh
 
 The "Runs in" column shows where the strategy executes. The server-side collectors only do `api` / `web`; everything that needs filesystem, CLI, or LSP access lives in the sidecar and reaches the server through `/api/v1/fleet/ingest`.
 
-| Collector | Strategy | Type | Runs in |
-|-----------|----------|------|---------|
-| **Anthropic** | oauth | quota | server |
-| Anthropic | web | quota | server |
-| Anthropic | cli | mixed | sidecar |
-| Anthropic | statusline | mixed | sidecar |
-| Anthropic | local (logs) | enrichment | sidecar |
-| **ChatGPT** | web | quota | server |
-| ChatGPT | cli | mixed | sidecar |
-| ChatGPT | local (logs) | enrichment | sidecar |
-| **Gemini** | api | quota | server |
-| Gemini | local (session logs) | enrichment | sidecar |
-| **OpenCode** | api / web | quota | server |
-| OpenCode | local (SQLite events) | enrichment | sidecar |
-| **Antigravity** | api (Code Assist cloud) | quota | server |
-| Antigravity | local (LSP probe — legacy enrichment) | enrichment | sidecar |
-| **MiniMax** | api (coding plan) | quota | server |
-| MiniMax | api (open platform — MiniMax Code app login) | quota | server |
-| MiniMax | local (SQLite runtime ledger — MiniMax Code) | enrichment | sidecar |
+| Collector | Strategy | Bucket | Runs in |
+|-----------|----------|--------|---------|
+| **Anthropic** | oauth | primary | server |
+| Anthropic | web | primary | server |
+| **Anthropic Console** | web | primary | server |
+| **Antigravity** | api | primary | server |
+| **ChatGPT** | web | primary | server |
+| **DeepSeek** | — | primary | server |
+| **Gemini** | api | primary | server |
+| **GitHub** | — | primary | server |
+| **Kimi API** | — | primary | server |
+| **Kimi Coding** | api, web | primary | server |
+| **Kimi K2** | — | primary | server |
+| **MiniMax** | — | primary | server |
+| **Ollama** | api, web | primary | server |
+| **OpenCode** | api, web | primary | server |
+| **OpenRouter** | — | primary | server |
+| **xAI** | api | primary | server |
+| **zAI** | — | primary | server |
+
+A dash means the collector does not declare a `STRATEGIES` dict; it implements
+the abstract `_primary_strategy` / `_fallback_strategies` path instead. The
+order within a `STRATEGIES` dict is the **declaration order**, and that is the
+order the primary strategies are tried in — first success wins.
+
+The sidecar is not a strategy and does not appear in this table. It is a
+separate producer: it reads local sources (transcripts, CLI caches, browser
+cookie stores) and pushes **usage events** to `/api/v1/fleet/ingest`. It never
+runs inside a collector and never competes with a server strategy for the same
+card.
 
 The two MiniMax strategies need different credentials: the platform API secret
 (`sk-…`) and the MiniMax Code app's OAuth token (`mmoat_…`). Each host accepts
@@ -130,54 +158,93 @@ Two consequences worth keeping in mind:
 
 ## Collection Pipeline
 
+`BaseCollector.collect()` has **two** phases, not four.
+
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                     collect(provider)                       │
-├─────────────────────────────────────────────────────────────┤
-│  Phase 1: QUOTA                                            │
-│  ├── Run all quota strategies in priority order            │
-│  │   Priority: api → sidecar → web                         │
-│  └── Take first successful (or best available if         │
-│      rate limited)                                         │
-├─────────────────────────────────────────────────────────────┤
-│  Phase 2: MIXED EXTRACTION                                 │
-│  ├── Run all mixed strategies (cli, statusline, etc.)     │
-│  └── Extract quota portion + enrichment portion           │
-│      separately                                           │
-├─────────────────────────────────────────────────────────────┤
-│  Phase 3: ENRICHMENT                                       │
-│  ├── Run all enrichment strategies (local)                │
-│  └── Merge any enrichment extracted from mixed strategies │
-├─────────────────────────────────────────────────────────────┤
-│  Phase 4: MERGE                                            │
-│  └── Combine: quota (best source) + enrichment (all)      │
-│      → Single card per provider                            │
-└─────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                    collect(provider)                          │
+├──────────────────────────────────────────────────────────────┤
+│  Phase 1: PRIMARY                                            │
+│  ├── Partition the strategies into primary and enrichment   │
+│  │   (by the presence of {"enrich": True} in their options) │
+│  ├── Run the primary strategies in declaration order        │
+│  ├── The FIRST one that does not return an error card wins  │
+│  ├── If every primary strategy errored, the best error      │
+│  │   card wins (highest priority error_type), else the      │
+│  │   collector's own error handler runs                     │
+│  └── Capture the primary result's metadata so enrichment can │
+│      align its window boundaries (reset_at vs fixed cutoffs) │
+├──────────────────────────────────────────────────────────────┤
+│  Phase 2: ENRICHMENT                                         │
+│  ├── Run the enrichment strategies, in declaration order     │
+│  ├── Merge each successful enrichment into the primary card  │
+│  │   via _enrich_results()                                   │
+│  └── An enrichment strategy that fails is skipped — it never │
+│      discards the primary result                            │
+└──────────────────────────────────────────────────────────────┘
 ```
+
+Enrichment only runs when a primary strategy has already succeeded. It is
+never a fallback: if the primary strategies all failed, the enrichment
+strategies are not run at all.
+
+### Rate limiting
+
+There is no cross-source priority ladder and no generic "fall back to the web
+strategy when the API is rate limited" rule. Rate limiting is handled
+**per collector**, in `SmartCollector`:
+
+- a `429` marks the provider as rate-limited and the backoff state is
+  recorded;
+- while that backoff is active, the collector is skipped rather than
+  retried.
+
+A strategy failing for any other reason is simply "the next primary strategy
+is tried".
 
 ## Conflict Resolution
 
-### Quota Data
-- **Priority**: API > sidecar > web (unless rate limited)
-- If API fails due to rate limiting, fall back to web
-- Sidecar is treated as high-priority (remote but authoritative)
+### Primary data
 
-### Enrichment Data
-- Token counts: take maximum value from all sources
-- Session counts: take maximum
-- Model usage: merge dictionaries, sum values for same models
+The first primary strategy that does not return an error card wins. There is
+no comparison between strategies, no quality ranking, and no cross-source
+priority. "Sidecar" is not a strategy and never competes with a server
+strategy — the sidecar's contribution is reconciled separately, by
+`accumulator.py`, and the freshest healthy sidecar owns a slot when no fresh
+server contribution exists.
 
-### Mixed Strategies
-- Must return `{"quota": LimitCard, "enrichment": dict}`
-- Quota portion enters Phase 1 pool
-- Enrichment portion enters Phase 3 pool
+### Enrichment data
+
+`_enrich_results()` matches an enrichment dict to a primary card by
+`(service_name, variant, window_type, model_id)`, with graceful fallback to
+less specific keys — a card is also looked up by `(variant, window_type,
+model_id)`, then `(window_type, model_id)`, then `(model_id)`. An enrichment
+dict with `model_id=None` acts as an aggregate fallback for any primary card.
+
+When a match is found, the enrichment **overwrites** these three fields on the
+card:
+
+| Field | What happens |
+|---|---|
+| `token_usage` | replaced by the enrichment value |
+| `by_model` | replaced by the enrichment value |
+| `msgs` | replaced by the enrichment value |
+
+Nothing is maximised and nothing is summed. `pct_used` is then re-derived from
+the primary card's own `used_value` / `limit_value`, so the enrichment can
+never change the quota percentage — only the token and message breakdown.
 
 ## Implementation Notes
 
-- STRATEGIES dict gets `type` field in options dict
-- BaseCollector `collect()` method refactored to use phases
-- Mixed strategies refactored to split output
-- `_merge_enrichment()` method handles conflict resolution
+- The strategy options dict carries exactly one key: `enrich`. There is no
+  `type` field.
+- `BaseCollector.collect()` (`app/services/collectors/base.py:283`) partitions
+  the strategies, runs the primary ones until one succeeds, then runs the
+  enrichment ones.
+- `_enrich_results()` (`app/services/collectors/base.py:401`) does the merge.
+  There is no `_merge_enrichment()` method anywhere in the codebase.
+- A strategy returns a **list** of card dicts, or a list containing a single
+  error card. There is no `{"quota": ..., "enrichment": ...}` shape.
 
 ## Expiry units
 

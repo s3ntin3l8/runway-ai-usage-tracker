@@ -11,7 +11,7 @@ import {
 function Harness({ onValueChange }: { onValueChange?: (v: string) => void }) {
   return (
     <Select defaultValue="day" onValueChange={onValueChange}>
-      <SelectTrigger aria-label="Window">
+      <SelectTrigger label="Window">
         <SelectValue />
       </SelectTrigger>
       <SelectContent>

@@ -2,13 +2,28 @@ import { render } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { ThemeProvider } from '@/hooks/useTheme';
 import type { CumulativeModelBucket } from '@/api/types';
+import { formatCost } from '@/lib/format';
 
 // Capture the option built by the chart instead of rendering real ECharts.
 const captured: { option?: Record<string, unknown> } = {};
 vi.mock('./EChart', () => ({
-  EChart: ({ option }: { option: Record<string, unknown> }) => {
+  // The mock forwards ariaLabel the way the real EChart does, so the tests
+  // can assert that each chart hands its label down.
+  EChart: ({
+    option,
+    ariaLabel,
+  }: {
+    option: Record<string, unknown>;
+    ariaLabel?: string;
+  }) => {
     captured.option = option;
-    return <div data-testid="echart" />;
+    return (
+      <div
+        data-testid="echart"
+        role={ariaLabel ? 'img' : undefined}
+        aria-label={ariaLabel}
+      />
+    );
   },
 }));
 
@@ -54,6 +69,17 @@ describe('CostDonut', () => {
       { name: 'opus', value: 3 },
       { name: 'sonnet', value: 3 },
     ]);
+  });
+
+  it('labels the chart and exposes every cost as text', () => {
+    const data: Record<string, CumulativeModelBucket> = {
+      big: { cost_usd: 12 },
+      small: { cost_usd: 1.5 },
+    };
+    const { getByTestId, getByText } = render(<CostDonut data={data} />, { wrapper });
+    expect(getByTestId('echart')).toHaveAttribute('aria-label', 'Cost by model chart');
+    expect(getByText(`big: ${formatCost(12)}`)).toBeInTheDocument();
+    expect(getByText(`small: ${formatCost(1.5)}`)).toBeInTheDocument();
   });
 });
 

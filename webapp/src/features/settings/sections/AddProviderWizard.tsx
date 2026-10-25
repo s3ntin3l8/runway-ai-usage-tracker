@@ -203,7 +203,7 @@ function Stepper({
               className={cn(
                 'flex items-center gap-1 rounded-sm px-2 py-1',
                 active
-                  ? 'bg-accent-muted text-accent'
+                  ? 'bg-accent-muted text-accent-text'
                   : complete
                     ? 'cursor-pointer text-fg hover:bg-surface-2'
                     : 'cursor-default',
