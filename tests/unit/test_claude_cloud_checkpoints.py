@@ -5,18 +5,19 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 from cryptography.fernet import Fernet
-from sqlmodel import SQLModel, create_engine
+from sqlmodel import create_engine
 
 from app.core.encryption import EncryptionService
 
 
 def setup_store(tmp_path, *, now=None):
     from app.models.claude_cloud_verification import VerificationState
+    from app.models.db import ClaudeCloudVerification
     from app.services.claude_cloud_checkpoints import CheckpointStore
 
     path = tmp_path / "checkpoint.db"
     engine = create_engine(f"sqlite:///{path}")
-    SQLModel.metadata.create_all(engine)
+    ClaudeCloudVerification.metadata.create_all(engine)
     engine.dispose()
     key = Fernet.generate_key().decode()
     crypto = EncryptionService(key)

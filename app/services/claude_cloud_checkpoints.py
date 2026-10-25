@@ -18,7 +18,6 @@ from urllib.parse import quote
 
 from app.core.encryption import EncryptionService
 from app.models.claude_cloud_verification import CheckpointEnvelope, VerificationState
-from app.models.db import ClaudeCloudVerification  # noqa: F401 — register additive table
 
 MAX_PLAINTEXT = 16 * 1024 * 1024
 LEASE_SECONDS = 45

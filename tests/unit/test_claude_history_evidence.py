@@ -97,3 +97,4 @@ def test_runtime_image_includes_standalone_report_validator():
     # Report validation imports this stdlib-only module in the production image.
     dockerfile = Path("Dockerfile").read_text()
     assert "COPY scripts/verify_claude_cloud.py ./scripts/" in dockerfile
+    assert "!scripts/verify_claude_cloud.py" in Path(".dockerignore").read_text()

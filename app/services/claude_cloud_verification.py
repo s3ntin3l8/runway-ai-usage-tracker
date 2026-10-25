@@ -89,6 +89,7 @@ async def read_verification(handle: str, store: CheckpointStore) -> Verification
         if _source_digest(bytes.fromhex(state.job_key), source) == state.source_digest:
             return state
     except (probe.ProbeError, SQLAlchemyError):
+        # Authority is unavailable: suppress the projection below, without writing a lease.
         pass
     return state.model_copy(
         update={"phase": "stopped", "outcome": "source_changed", "usage_records": []}

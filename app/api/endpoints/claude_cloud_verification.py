@@ -79,7 +79,11 @@ async def verification_action(
                 state = await advance_verification(handle, store, client)
         else:
             state = await read_verification(handle, store)
-        return build_verification_report(handle, state)
+        try:
+            return VerificationReport.model_validate(build_verification_report(handle, state))
+        except ValueError:
+            # Framework response errors can log input values. Fail with a fixed category.
+            raise HTTPException(503, detail="invalid_verification_report") from None
     except CheckpointError as exc:
         category = str(exc)
         if category in {"busy", "job_exists"}:

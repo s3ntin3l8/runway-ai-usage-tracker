@@ -251,7 +251,7 @@ async def test_cancelled_inflight_step_is_not_automatically_replayed(source_envi
     await asyncio.wait_for(entered.wait(), timeout=5)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
-        await task
+        await asyncio.wait_for(task, timeout=5)
     assert store.snapshot(handle).in_flight
     result = await advance(handle, store, upstream)
     assert result.outcome == "interrupted" and len(calls) == 1

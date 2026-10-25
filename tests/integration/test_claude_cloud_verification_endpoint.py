@@ -177,3 +177,20 @@ def test_large_local_fixture_fits_new_limit_without_changing_old_endpoint(client
     assert response.status_code == 409 and response.json() == {"detail": "job_exists"}
     start.assert_awaited_once()
     advance.assert_not_awaited()
+
+
+def test_invalid_service_output_is_a_fixed_error_without_logging_values(
+    client, monkeypatch, caplog
+):
+    from types import SimpleNamespace
+
+    http, endpoint, _ = client
+    monkeypatch.setattr(endpoint, "checkpoint_store", lambda: SimpleNamespace())
+    monkeypatch.setattr(endpoint, "read_verification", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        endpoint, "build_verification_report", lambda *args: {"unexpected": "private-fixture"}
+    )
+    response = http.post(PATH, json={"action": "status", "job_handle": HANDLE}, headers=AUTH)
+    assert response.status_code == 503
+    assert response.json() == {"detail": "invalid_verification_report"}
+    assert "private-fixture" not in response.text + caplog.text
