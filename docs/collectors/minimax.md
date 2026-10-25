@@ -191,6 +191,40 @@ showing up as a quota gauge.
 The extractor lives in `scripts/sidecar_pkg/event_extractors/minimax_code.py` and pushes one
 event per **API request** under `provider_id="minimax"` with `source_app="minimax_code"`.
 
+### Scheduling: a client app, not an account
+
+The ledger is collected under the **scheduling id `minimax_code`**, not under `minimax`.
+
+The two are different things. The `minimax` *provider* is an account: it has a quota card, a
+provider config row and an API key. The MiniMax Code runtime is a **client app**: its ledger
+exists on every host that ran it, whether or not that host has a MiniMax account. Sharing one id
+tied the ledger's collection to the account, so a host with neither a provider config row nor a
+quota card only saw its MiniMax Code usage on full cycles — roughly once a day — instead of on
+every poll cycle (#928).
+
+`minimax_code` is a **scheduling id only**. It is never a provider: the server has no provider
+row, card or credential for it, and it is never listed as one. What it changes:
+
+| | Before | After |
+|---|---|---|
+| Scheduling id | `minimax` | `minimax_code` |
+| When the ledger is read | only when the host has a MiniMax account | every poll cycle |
+| `provider_id` on the events | `minimax` | `minimax` (unchanged) |
+| Account the events land on | the operator's MiniMax account | the operator's MiniMax account (unchanged) |
+
+The events keep `provider_id="minimax"`, so the server files them under the MiniMax provider
+exactly as before, and the account hint and the taggable origin stay the **provider's**
+(`provider:minimax`) — not the scheduling id's. Without that, the events would fall back to
+`"default"` and land in "Unassigned usage" the moment the ledger moved to its own id.
+
+A host that has a MiniMax account is scheduled for both ids (`minimax` for the quota card,
+`minimax_code` for the ledger). Both dispatch the same extractor, so the sidecar reads each
+store **once per cycle** — whichever id reaches it first collects the rows.
+
+A sidecar that is newer than its server still collects the ledger: the server sends
+`minimax_code` from the version that knows it, and an older server that sends only `minimax`
+keeps working because the ledger is still reachable under that id.
+
 ### The app login's expiry unit
 
 The desktop app's own login (`~/.minimax/auth/*/*/mcode-public/auth.json`) is read by the
@@ -576,10 +610,13 @@ ledger is a local file the runtime writes.
 | `app/services/pricing_seed.py` | Notional API pricing for Coding-Plan usage |
 | `scripts/sidecar_pkg/event_extractors/opencode.py` | Folds OpenCode-driven MiniMax traffic into this provider |
 | `scripts/sidecar_pkg/event_extractors/minimax_code.py` | Reads the MiniMax Code runtime ledger and pushes its requests as events |
+| `scripts/sidecar_registry_overlay.json` | The sidecar-only `minimax_code` client-app entry (the ledger's scheduling id) |
+| `app/api/endpoints/fleet.py` | Schedules the sidecar-only event providers (`hermes`, `minimax_code`) |
 | `scripts/sidecar_pkg/minimax_code_probe.py` | The read-only `--probe-minimax-code` host check |
 | `scripts/link_minimax_background_sessions.py` | Files the background-task rows collected before the parent link under their parent |
 | `app/services/maintenance/minimax_background_sessions.py` | The repair's plan/apply pair (no runtime-store access of its own) |
 | `tests/unit/test_event_extractor_minimax_code.py` | Extractor coverage (join, model fallbacks, id cursor, drift) |
+| `tests/unit/test_sidecar.py` | Scheduling-id coverage (the account hint carry-over, one read per cycle) |
 | `tests/unit/test_maintenance_minimax_background_sessions.py` | Repair coverage (moves, never inserts, idempotent) |
 | `tests/unit/test_minimax_code_probe.py` | Probe coverage (store found/missing, schema drift, cursor left alone) |
 | `tests/integration/test_minimax_code_events_ingest.py` | End-to-end: runtime ledger → fleet ingest → priced MiniMax events |
@@ -590,4 +627,4 @@ ledger is a local file the runtime writes.
 - **MiniMax (China):** https://www.minimaxi.com
 - **API Documentation:** https://api.minimax.io/document/main (or https://api.minimaxi.com/document/main for the China platform)
 
-*Last updated: 2026-10-24*
+*Last updated: 2026-10-25*

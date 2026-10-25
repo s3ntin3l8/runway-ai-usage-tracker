@@ -3,6 +3,7 @@ from sqlmodel.pool import StaticPool
 
 from app.core.db import SQLITE_CONNECT_ARGS, configure_sqlite_engine
 from app.models.db import (
+    CredentialSource,
     CredentialTag,
     PendingUsageEvent,
     ProviderConfig,
@@ -654,3 +655,158 @@ def test_parked_redirect_does_not_rehome_events_onto_the_archived_account():
     events = s.exec(select(UsageEvent)).all()
     assert [event.account_id for event in events] != ["retired@example.com"]
     assert all(event.provider_id != "antigravity" for event in events)
+
+
+class TestNativeIdentityResolution:
+    """An identity-less event is resolved from the host's own native identity.
+
+    A Hermes event names the provider it was billed to, never the account:
+    the sidecar only learns that Hermes called MiniMax, not which MiniMax
+    account paid. The event therefore arrives with ``account_source="default"``
+    and was held for the operator to assign by hand.
+
+    The host's native collector for that provider *does* know — it reported
+    the credential, and the server filed it under the account the credential
+    resolved to. That row is the machine's own answer (#931).
+    """
+
+    @staticmethod
+    def _source(s, *, provider_id="minimax", account_id, sidecar_id="host-a", source_id=None):
+        s.add(
+            CredentialSource(
+                provider_id=provider_id,
+                account_id=account_id,
+                source_id=source_id or f"sidecar:{sidecar_id}:{provider_id}",
+                source_type="sidecar",
+                source_label="test",
+                credential_origin=f"file:~/{provider_id}/auth.json",
+                sidecar_id=sidecar_id,
+            )
+        )
+        s.commit()
+
+    @staticmethod
+    def _push(event_id="hermes|1", **kw):
+        return _make_push(
+            event_id=event_id,
+            provider_id="minimax",
+            account_id="default",
+            account_source="default",
+            **kw,
+        )
+
+    def test_the_hosts_own_identity_resolves_the_event(self):
+        s = _seeded_session()
+        self._source(s, account_id="me@example.com")
+        result = EventIngestor(s).ingest([self._push()], sidecar_id="host-a")
+        assert result.events_inserted == 1
+        assert s.exec(select(PendingUsageEvent)).all() == []
+        row = s.exec(select(UsageEvent)).one()
+        assert row.account_id == "me@example.com"
+        assert row.attribution_source == "local"
+
+    def test_no_native_identity_holds_the_event_back(self):
+        s = _seeded_session()
+        EventIngestor(s).ingest([self._push()], sidecar_id="host-a")
+        assert s.exec(select(UsageEvent)).all() == []
+        assert s.exec(select(PendingUsageEvent)).one().event_id == "hermes|1"
+
+    def test_the_default_sentinel_is_not_an_identity(self):
+        """A credential whose identity was never resolved says nothing."""
+        s = _seeded_session()
+        self._source(s, account_id="default")
+        EventIngestor(s).ingest([self._push()], sidecar_id="host-a")
+        assert s.exec(select(UsageEvent)).all() == []
+        assert len(s.exec(select(PendingUsageEvent)).all()) == 1
+
+    def test_a_pending_identity_slot_is_not_an_account(self):
+        """A credential still being verified is filed under a stable slot.
+
+        For Anthropic that slot is the source id — a placeholder, not an
+        account. It must never be stamped on.
+        """
+        s = _seeded_session()
+        self._source(
+            s,
+            provider_id="anthropic",
+            account_id="sidecar:host-a:file:~/.claude/.credentials.json",
+            source_id="sidecar:host-a:file:~/.claude/.credentials.json",
+        )
+        push = _make_push(
+            event_id="hermes|2",
+            provider_id="anthropic",
+            account_id="default",
+            account_source="default",
+        )
+        EventIngestor(s).ingest([push], sidecar_id="host-a")
+        assert s.exec(select(UsageEvent)).all() == []
+        assert len(s.exec(select(PendingUsageEvent)).all()) == 1
+
+    def test_two_accounts_on_the_host_hold_the_event_back(self):
+        """Ambiguity is the operator's to resolve, not the server's."""
+        s = _seeded_session()
+        self._source(s, account_id="one@example.com", source_id="sidecar:host-a:a")
+        self._source(s, account_id="two@example.com", source_id="sidecar:host-a:b")
+        EventIngestor(s).ingest([self._push()], sidecar_id="host-a")
+        assert s.exec(select(UsageEvent)).all() == []
+        assert len(s.exec(select(PendingUsageEvent)).all()) == 1
+
+    def test_another_hosts_identity_does_not_reach_this_one(self):
+        """The identity is scoped to the host that reported it (#319)."""
+        s = _seeded_session()
+        self._source(s, account_id="other@example.com", sidecar_id="host-b")
+        EventIngestor(s).ingest([self._push()], sidecar_id="host-a")
+        assert s.exec(select(UsageEvent)).all() == []
+        assert len(s.exec(select(PendingUsageEvent)).all()) == 1
+
+    def test_an_operator_tag_wins_over_the_native_identity(self):
+        s = _seeded_session()
+        self._source(s, account_id="native@example.com")
+        s.add(
+            CredentialTag(
+                provider_id="minimax",
+                credential_origin="provider:minimax",
+                account_id="tagged@example.com",
+                sidecar_id="host-a",
+                set_by="operator",
+            )
+        )
+        s.commit()
+        EventIngestor(s).ingest([self._push()], sidecar_id="host-a")
+        row = s.exec(select(UsageEvent)).one()
+        assert row.account_id == "tagged@example.com"
+        assert row.attribution_source == "tag"
+
+    def test_an_archived_account_holds_the_event_back(self):
+        """A retired account takes no new usage, resolved or not."""
+        s = _seeded_session()
+        self._source(s, account_id="gone@example.com")
+        s.add(
+            ProviderConfig(
+                provider_id="minimax",
+                account_id="gone@example.com",
+                archived=True,
+            )
+        )
+        s.commit()
+        EventIngestor(s).ingest([self._push()], sidecar_id="host-a")
+        assert s.exec(select(UsageEvent)).all() == []
+        assert len(s.exec(select(PendingUsageEvent)).all()) == 1
+
+    def test_an_event_that_resolves_later_leaves_no_pending_copy(self):
+        """A held-back event can resolve on a later push.
+
+        Its pending copy is then stale: the "Unassigned usage" card would
+        keep listing an event that is already counted.
+        """
+        s = _seeded_session()
+        push = self._push(event_id="hermes|late")
+        EventIngestor(s).ingest([push], sidecar_id="host-a")
+        assert len(s.exec(select(PendingUsageEvent)).all()) == 1
+
+        # The host's native identity now answers for the provider.
+        self._source(s, account_id="me@example.com")
+        EventIngestor(s).ingest([push], sidecar_id="host-a")
+
+        assert s.exec(select(PendingUsageEvent)).all() == []
+        assert s.exec(select(UsageEvent)).one().account_id == "me@example.com"

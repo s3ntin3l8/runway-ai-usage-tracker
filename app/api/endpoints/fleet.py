@@ -18,7 +18,7 @@ from app.core.security import (
     validate_ingest_auth,
     verify_config_signature,
 )
-from app.core.source_apps import HERMES
+from app.core.source_apps import HERMES, MINIMAX_CODE
 from app.core.utils import scrub_log
 from app.models._datetime import iso_utc
 from app.models.db import (
@@ -76,7 +76,14 @@ logger = logging.getLogger(__name__)
 # Scheduling-only: added to poll_providers so the extractor runs on every poll
 # cycle, never listed as a provider. Kept in step with the sidecar overlay's
 # `add_providers` by tests/unit/test_sidecar_only_event_providers.py.
-SIDECAR_ONLY_EVENT_PROVIDERS: frozenset[str] = frozenset({HERMES})
+#
+# ``minimax_code`` is the MiniMax Code runtime ledger: a client app whose
+# usage lives in a local SQLite ledger, not an account. It gets its own id so
+# its collection does not depend on the host having a MiniMax *account* — a
+# provider config row or a quota card (#928). Its events carry
+# ``provider_id="minimax"`` and are attributed to the operator's MiniMax
+# account, so it is a scheduling id only and never a provider here.
+SIDECAR_ONLY_EVENT_PROVIDERS: frozenset[str] = frozenset({HERMES, MINIMAX_CODE})
 
 router = APIRouter()
 

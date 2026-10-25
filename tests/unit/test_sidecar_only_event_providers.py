@@ -30,3 +30,16 @@ def test_constant_matches_event_providers_missing_from_registry():
 
 def test_constant_ids_are_plain_ids():
     assert all(re.fullmatch(r"[a-z0-9_-]+", p) for p in SIDECAR_ONLY_EVENT_PROVIDERS)
+
+
+def test_minimax_code_is_scheduled_as_a_client_app():
+    """The MiniMax Code runtime ledger is scheduled under its own id.
+
+    Its events belong to the ``minimax`` *provider*, so the scheduling id
+    must not be a provider the server knows — and the ledger must not be
+    tied to the host having a MiniMax account (#928).
+    """
+    assert "minimax_code" in SIDECAR_ONLY_EVENT_PROVIDERS
+    assert "minimax_code" not in _registry_ids()
+    # The provider the events are filed under is untouched by the split.
+    assert "minimax" in _registry_ids()

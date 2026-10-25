@@ -72,7 +72,7 @@ def test_ingest_heartbeat_returns_poll_providers(client, session):
     resp = client.post("/api/v1/fleet/ingest", content=body, headers=headers)
     assert resp.status_code == 200
     data = resp.json()
-    assert set(data["poll_providers"]) == {"anthropic", "github", "hermes"}
+    assert set(data["poll_providers"]) == {"anthropic", "github", "hermes", "minimax_code"}
     assert data["sidecar_update_channel"] == "stable"
 
     session.add(SystemConfig(sidecar_update_channel="beta"))
@@ -106,7 +106,7 @@ def test_ingest_heartbeat_returns_poll_providers(client, session):
     resp = client.post("/api/v1/fleet/ingest", content=body, headers=headers)
     assert resp.status_code == 200
     data = resp.json()
-    assert set(data["poll_providers"]) == {"anthropic", "github", "hermes"}
+    assert set(data["poll_providers"]) == {"anthropic", "github", "hermes", "minimax_code"}
     assert data["trigger"] is True
 
 
@@ -624,3 +624,71 @@ def test_directory_trigger_waits_while_collection_is_paused(client, session):
     row.collection_enabled = True
     session.commit()
     assert _heartbeat(client).json()["trigger"] is True
+
+
+def _signed_ingest_payload(key: str, payload: dict) -> tuple[bytes, dict]:
+    ts = signing_timestamp()
+    body_bytes = json.dumps(payload, separators=(",", ":")).encode()
+    sig = hmac.new(key.encode(), ts.encode() + body_bytes, hashlib.sha256).hexdigest()
+    return body_bytes, {"X-Signature": sig, "X-Timestamp": ts}
+
+
+def test_minimax_code_is_scheduled_without_a_minimax_account(client, session):
+    """The MiniMax Code ledger must not need a MiniMax *account*.
+
+    The runtime ledger exists on every host that ran the client, while the
+    ``minimax`` provider only exists once the host has a provider config row
+    or a quota card. Tying the ledger's collection to that account meant a
+    host with neither only saw its usage on full cycles (#928).
+    """
+    from app.core.config import settings
+
+    settings.INGEST_API_KEY = "test-key"
+    payload = {
+        "provider": "sidecar-test",
+        "sidecar_id": "test-sidecar",
+        "metrics": [],
+        "deltas": [],
+    }
+    body, headers = _signed_ingest_payload("test-key", payload)
+
+    resp = client.post("/api/v1/fleet/ingest", content=body, headers=headers)
+    assert resp.status_code == 200
+    poll_providers = resp.json()["poll_providers"]
+
+    # No MiniMax account on this host: no provider config row, no card.
+    assert not session.exec(
+        select(ProviderConfig).where(ProviderConfig.provider_id == "minimax")
+    ).all()
+    assert not session.exec(select(LatestUsage).where(LatestUsage.provider_id == "minimax")).all()
+    # The ledger is still collected every cycle.
+    assert "minimax_code" in poll_providers
+    # …and the quota provider is not: there is no account to poll for.
+    assert "minimax" not in poll_providers
+
+
+def test_a_paused_sidecar_is_not_scheduled_minimax_code(client, session):
+    """A paused sidecar receives no poll instructions at all.
+
+    ``minimax_code`` is scheduled unconditionally for every other sidecar,
+    so the pause has to keep it out too.
+    """
+    from app.core.config import settings
+    from app.models.db import SidecarRegistry
+
+    settings.INGEST_API_KEY = "test-key"
+    session.add(
+        SidecarRegistry(sidecar_id="test-sidecar", collection_enabled=False),
+    )
+    session.commit()
+
+    payload = {
+        "provider": "sidecar-test",
+        "sidecar_id": "test-sidecar",
+        "metrics": [],
+        "deltas": [],
+    }
+    body, headers = _signed_ingest_payload("test-key", payload)
+    resp = client.post("/api/v1/fleet/ingest", content=body, headers=headers)
+    assert resp.status_code == 200
+    assert resp.json()["poll_providers"] == []

@@ -213,6 +213,26 @@
           }
         ]
       }
+    },
+    "minimax_code": {
+      "reason": "MiniMax Code is a client app, not a provider account: the sidecar reads its usage out of the local runtime ledger and the server must not list it as a provider. Its events belong to the `minimax` provider (the runtime's auth bundle is that provider's credential), so the scheduling id deliberately differs from the provider id. The rule is keyless and points at the runtime's small config file, never at the ledger -- that SQLite file is hundreds of megabytes and is read by the extractor, not by the credential scan.",
+      "provider": {
+        "name": "MiniMax Code",
+        "icon": "🛠️",
+        "rules": [
+          {
+            "type": "file",
+            "format": "yaml",
+            "keyless_ok": true,
+            "paths": [
+              "~/.minimax/config.yaml",
+              "~/.minimax-*/config.yaml",
+              "~/.mavis/config.yaml",
+              "~/.mavis-*/config.yaml"
+            ]
+          }
+        ]
+      }
     }
   },
   "notes": [

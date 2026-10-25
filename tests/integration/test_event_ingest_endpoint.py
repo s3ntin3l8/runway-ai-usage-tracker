@@ -11,7 +11,7 @@ from sqlmodel.pool import StaticPool
 
 from app.core.db import get_session
 from app.main import app
-from app.models.db import SidecarRegistry, UsageEvent
+from app.models.db import CredentialSource, PendingUsageEvent, SidecarRegistry, UsageEvent
 from app.services.pricing_seed import seed_pricing_table
 from scripts.sidecar_pkg.transport import signing_timestamp
 from tests.fixtures.test_client import TestClient
@@ -178,3 +178,61 @@ def test_handler_failure_consumes_signature_and_fresh_retry_is_accepted(session,
     assert client.post("/api/v1/fleet/ingest", content=body, headers=headers).status_code == 409
     body, headers = _signed({"invalid": "payload"})
     assert client.post("/api/v1/fleet/ingest", content=body, headers=headers).status_code == 400
+
+
+def test_a_hermes_event_is_resolved_from_the_hosts_own_native_identity(session):
+    """A Hermes event names the provider, never the account.
+
+    The host's native collector for that provider *does* know the account —
+    it reported the credential, and Runway filed it under the account the
+    credential resolved to. That answer is used so the event does not sit in
+    "Unassigned usage" until the operator tags it by hand (#931).
+    """
+    session.add(
+        CredentialSource(
+            provider_id="anthropic",
+            account_id="me@example.com",
+            source_id="sidecar:dev-01:file:~/.claude/.credentials.json",
+            source_type="sidecar",
+            source_label="credentials.json",
+            credential_origin="file:~/.claude/.credentials.json",
+            sidecar_id="dev-01",
+        )
+    )
+    session.commit()
+
+    payload = {
+        "provider": "anthropic-sidecar",
+        "sidecar_id": "dev-01",
+        "metrics": [],
+        "events": [
+            {
+                "provider_id": "anthropic",
+                "account_id": "default",
+                "account_source": "default",
+                "event_id": "hermes|profile|session|sonnet|task|c1s1",
+                "ts": "2026-10-24T10:00:00+00:00",
+                "model_id": "sonnet",
+                "tokens_input": 100,
+                "tokens_output": 50,
+            },
+        ],
+    }
+
+    with (
+        patch("app.core.config.settings") as mock_settings,
+        patch("app.api.endpoints.fleet.token_cache") as mock_tc,
+    ):
+        mock_settings.INGEST_API_KEY = TEST_KEY
+        mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
+        mock_tc.store = AsyncMock()
+        client = TestClient(app)
+
+        body, headers = _signed(payload)
+        r = client.post("/api/v1/fleet/ingest", content=body, headers=headers)
+
+    assert r.status_code == 200, r.text
+    assert session.exec(select(PendingUsageEvent)).all() == []
+    row = session.exec(select(UsageEvent)).one()
+    assert row.account_id == "me@example.com"
+    assert row.attribution_source == "local"
