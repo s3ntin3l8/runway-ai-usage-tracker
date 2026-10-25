@@ -1459,6 +1459,7 @@ export type ClaudeCloudProbeReport = ClaudeCloudProbeFields & (
   | { format_version: 2; structure: CloudStructure; observations: CloudUsageObservation<'event' | 'data' | 'content' | 'payload'>[] }
 );
 
+/** Independent, unverified envelope audit; never combine locations into consumption. */
 interface CloudUsageObservation<L extends string> {
   location: L;
   report: Record<string, unknown>;

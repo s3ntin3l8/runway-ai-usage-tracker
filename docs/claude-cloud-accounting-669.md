@@ -109,7 +109,7 @@ Request fields:
 | `organization_id` | Optional UUID assertion, checked against the authenticated profile and any configured organization binding. |
 | `session_id` | Optional safe session ID that must appear in the sampled list page. |
 | `max_history_pages` | Literal integer 1–3; defaults to 2. |
-| `report_version` | Strict integer 1 or 2; defaults to the unchanged v1 report. V2 adds allowlisted structural counters only. |
+| `report_version` | Strict integer 1 or 2; defaults to the unchanged v1 report. V2 adds allowlisted structural counters and a separate object-valued `payload` usage audit. |
 
 The service reads the selected source from the running application's cache. It
 never combines bundles or falls back to another source or a merged credential.
