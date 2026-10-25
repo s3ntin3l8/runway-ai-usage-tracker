@@ -4,6 +4,7 @@
 
 import { useMemo } from 'react';
 import { EChart } from './EChart';
+import { AccessibleSummary } from './accessibleSummary';
 import { baseAxisStyle, baseTooltip, useChartTokens } from './theme';
 
 export interface RankSegment {
@@ -36,10 +37,16 @@ export function RankBar({
   const t = useChartTokens();
   const hasStacked = rows.some((r) => r.segments && r.segments.length > 0);
 
+  // ECharts category axis draws bottom-up; sort ascending so the largest
+  // lands at the top via the natural order. Hoisted out of the option
+  // builder so the text alternative lists the rows in the order the chart
+  // draws them.
+  const sorted = useMemo(
+    () => [...rows].filter((r) => r.value > 0).sort((a, b) => a.value - b.value),
+    [rows],
+  );
+
   const option = useMemo(() => {
-    // ECharts category axis draws bottom-up; sort ascending so the largest
-    // lands at the top via the natural order.
-    const sorted = [...rows].filter((r) => r.value > 0).sort((a, b) => a.value - b.value);
     const categoryData = sorted.map((r) => r.label);
     const tickFormat = axisFormat ?? format;
     const axisStyle = baseAxisStyle(t);
@@ -118,7 +125,20 @@ export function RankBar({
     }));
 
     return {
-      grid: { left: 8, right: 16, top: 8, bottom: 8, containLabel: true },
+      // The legend needs its own strip of grid: the stacked bars have no
+      // visible segment names, so without it "is the green block Output or
+      // Cache read?" is unanswerable — and on touch there is no hover
+      // tooltip to fall back on. The strip is tall enough for the legend to
+      // wrap to two lines on a narrow card without covering the x-axis
+      // labels (one line ≈ 24px, two ≈ 48px).
+      grid: { left: 8, right: 16, top: 8, bottom: 48, containLabel: true },
+      legend: {
+        bottom: 0,
+        icon: 'square',
+        itemWidth: 8,
+        itemHeight: 8,
+        textStyle: { color: t.fgMuted, fontSize: 11, fontFamily: t.fontFamily },
+      },
       tooltip: {
         ...baseTooltip(t),
         trigger: 'axis',
@@ -158,7 +178,24 @@ export function RankBar({
       },
       series,
     };
-  }, [rows, format, axisFormat, t, hasStacked]);
+  }, [sorted, format, axisFormat, t, hasStacked]);
 
-  return <EChart option={option} className={className ?? 'h-72'} />;
+  return (
+    <>
+      <EChart option={option} className={className ?? 'h-72'} ariaLabel="Ranking chart" />
+      {/* The bar lengths and their segment split live only in the canvas and
+          the hover tooltip, so they need a text alternative. */}
+      <AccessibleSummary
+        caption="Ranking"
+        entries={sorted.map((r) => ({
+          label: r.label,
+          value: format(r.value),
+          note: r.sub,
+          details: r.segments
+            ?.filter((s) => s.value > 0)
+            .map((s) => ({ label: s.label, value: format(s.value) })),
+        }))}
+      />
+    </>
+  );
 }

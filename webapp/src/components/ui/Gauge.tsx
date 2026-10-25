@@ -18,19 +18,23 @@ interface GaugeProps {
   // Optional glide-path marker (0–100): where usage *should* be if paced evenly
   // across the window. Rendered as a pronounced full-height tick.
   glide?: number | null;
+  // What the meter measures. `role="meter"` requires an accessible name: a
+  // bare "42%" tells a screen-reader user nothing about what is at 42%.
+  label?: string;
 }
 
 const HEIGHT = { sm: 'h-1', md: 'h-1.5', lg: 'h-2', xl: 'h-3' } as const;
 
 // Linear quota bar. Values over 100% clamp visually but keep their label
 // semantics (over-quota stays a full critical bar).
-export function Gauge({ pct, status, className, size = 'md', glide }: GaugeProps) {
+export function Gauge({ pct, status, className, size = 'md', glide, label = 'Quota used' }: GaugeProps) {
   const value = pct === null || pct === undefined || Number.isNaN(pct) ? null : pct;
   const width = value === null ? 0 : Math.min(100, Math.max(0, value));
   const showGlide = glide != null && !Number.isNaN(glide) && glide > 0 && glide < 100;
   return (
     <div
       role="meter"
+      aria-label={label}
       aria-valuemin={0}
       aria-valuemax={100}
       aria-valuenow={value ?? undefined}

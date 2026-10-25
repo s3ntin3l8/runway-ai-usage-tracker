@@ -5,9 +5,23 @@ import type { TopModelEntry } from '@/api/types';
 
 const captured: { option?: Record<string, unknown> } = {};
 vi.mock('./EChart', () => ({
-  EChart: ({ option }: { option: Record<string, unknown> }) => {
+  // The mock forwards ariaLabel the way the real EChart does, so the tests
+  // can assert that each chart hands its label down.
+  EChart: ({
+    option,
+    ariaLabel,
+  }: {
+    option: Record<string, unknown>;
+    ariaLabel?: string;
+  }) => {
     captured.option = option;
-    return <div data-testid="echart" />;
+    return (
+      <div
+        data-testid="echart"
+        role={ariaLabel ? 'img' : undefined}
+        aria-label={ariaLabel}
+      />
+    );
   },
 }));
 
@@ -203,5 +217,41 @@ describe('TopModelsBar', () => {
     // which appears first visually at the top. The first entry in data is the
     // smallest (bottom), last is largest (top).
     expect(categoryData[categoryData.length - 1]).toBe('large');
+  });
+
+  it('gives the stacked bars a legend naming the segments', () => {
+    document.documentElement.style.setProperty('--fg-muted', '#9a9aa2');
+    render(<TopModelsBar models={[mockModel]} metric="tokens" />, { wrapper });
+    const legend = captured.option!.legend as {
+      bottom: number;
+      icon: string;
+      textStyle: { color: string };
+    };
+    expect(legend.bottom).toBe(0);
+    expect(legend.icon).toBe('square');
+    // The legend text follows the theme token, so it reads on both themes.
+    expect(legend.textStyle.color).toBe('#9a9aa2');
+    document.documentElement.style.removeProperty('--fg-muted');
+  });
+
+  it('drops the cache segments from the legend when excludeCache is set', () => {
+    render(<TopModelsBar models={[mockModel]} metric="tokens" excludeCache />, { wrapper });
+    const series = captured.option!.series as { name: string }[];
+    // The legend follows the series that are actually drawn.
+    expect(series.map((s) => s.name)).not.toContain('Cache read');
+    const grid = captured.option!.grid as { bottom: number };
+    // Two wrapped legend lines (≈48px) must not cover the x-axis labels.
+    expect(grid.bottom).toBeGreaterThanOrEqual(48);
+  });
+
+  it('labels the chart and exposes the model and segment values as text', () => {
+    const { getByTestId, getByText } = render(
+      <TopModelsBar models={[mockModel]} metric="tokens" />,
+      { wrapper },
+    );
+    expect(getByTestId('echart')).toHaveAttribute('aria-label', 'Top models chart');
+    expect(getByText(/claude-sonnet: 15K \(via anthropic\)/)).toBeInTheDocument();
+    expect(getByText('Input: 10K')).toBeInTheDocument();
+    expect(getByText('Output: 5K')).toBeInTheDocument();
   });
 });

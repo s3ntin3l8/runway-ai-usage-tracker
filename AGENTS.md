@@ -123,6 +123,12 @@ semantics), [`CONTRIBUTING.md`](CONTRIBUTING.md) (contributor workflow),
   editing a baselined file moves that number: re-run `make secrets-baseline`
   in the same change or the CI gate fails — and the baseline conflicts on the
   next rebase.
+- `make screenshots-audit AUDIT=<slug>` — phone and tablet captures of every page for
+  one audit, into `docs/audit/assets/<slug>/`. The assets are **local only**
+  (gitignored); the audit *report* is the committed artifact. Reports live in
+  `docs/audit/` under the name `YYYY-MM-<scope>-<topic>.md`, and
+  [`docs/audit/README.md`](docs/audit/README.md) is the convention — read it
+  before writing one.
 - `scripts/action_pins.json` — the recorded revision of every external CI
   action. A workflow pin that is well-formed but wrong fails the job at action
   resolution, before any step in it runs, so the pin is checked against this

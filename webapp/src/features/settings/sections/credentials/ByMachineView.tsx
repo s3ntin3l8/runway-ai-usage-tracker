@@ -52,7 +52,7 @@ export function ByMachineView({ inventory }: { inventory: CredentialInventory })
                     <ul className="mt-1 space-y-1">{paths?.map(path => <li key={path} className="break-all font-mono">{path}</li>)}</ul>
                   </div>
                 ))}
-                <Link className="mt-2 inline-block text-accent underline" to={`/fleet?settings=${encodeURIComponent(m.machine_id)}`}>Configure login directories</Link>
+                <Link className="mt-2 inline-block text-accent-text underline" to={`/fleet?settings=${encodeURIComponent(m.machine_id)}`}>Configure login directories</Link>
               </details>
             ) : (
               <p className="mt-2 text-[12px] text-fg-subtle">Login directories are not reported by this sidecar yet.</p>

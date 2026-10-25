@@ -3,6 +3,8 @@ import type { LimitCard } from '@/api/types';
 import {
   cardHeroLabel,
   cardKind,
+  cardName,
+  quotaUsedLabel,
   cardPct,
   cardStale,
   cardStatus,
@@ -475,5 +477,40 @@ describe('reasonMentionsKeepAlive', () => {
     expect(reasonMentionsKeepAlive(null)).toBe(false);
     expect(reasonMentionsKeepAlive(undefined)).toBe(false);
     expect(reasonMentionsKeepAlive('')).toBe(false);
+  });
+});
+
+describe('cardName', () => {
+  it('prefers the service name', () => {
+    expect(cardName(card({ service_name: 'Claude', model_id: 'claude-opus' }))).toBe('Claude');
+  });
+
+  it('falls back to the model id when the service name is missing', () => {
+    // The backend can leave service_name out, and the rest of the quota code
+    // falls back the same way.
+    expect(
+      cardName({ ...card({ service_name: '' }), model_id: 'claude-opus' } as LimitCard),
+    ).toBe('claude-opus');
+  });
+
+  it('is empty for a card that carries neither', () => {
+    expect(cardName({ ...card({ service_name: '' }) } as LimitCard)).toBe('');
+  });
+});
+
+describe('quotaUsedLabel', () => {
+  it('names the service and the meter', () => {
+    expect(quotaUsedLabel(card({ service_name: 'Claude' }))).toBe('Claude quota used');
+  });
+
+  it('falls back to the model id', () => {
+    expect(
+      quotaUsedLabel({ ...card({ service_name: '' }), model_id: 'claude-opus' } as LimitCard),
+    ).toBe('claude-opus quota used');
+  });
+
+  it('does not repeat the word for a nameless card', () => {
+    // "Quota quota used" is what a name built from a "Quota" fallback reads.
+    expect(quotaUsedLabel({ ...card({ service_name: '' }) } as LimitCard)).toBe('Quota used');
   });
 });

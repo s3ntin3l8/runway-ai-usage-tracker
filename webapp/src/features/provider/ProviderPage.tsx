@@ -2,15 +2,16 @@
 // /provider/:providerId?account=<account_id>; account defaults to the
 // provider's first fleet entry.
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Archive, ArchiveRestore, Ellipsis, RefreshCw, RotateCcw, SlidersHorizontal } from 'lucide-react';
+import { ArrowLeft, Archive, ArchiveRestore, Bug, Ellipsis, RefreshCw, RotateCcw, SlidersHorizontal } from 'lucide-react';
 import { toast } from 'sonner';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { collectProvider, putProviderConfigForAccount, resetProvider } from '@/api/endpoints';
 import type { BlockedSource } from '@/api/types';
 import { Button } from '@/components/ui/Button';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/Select';
@@ -51,6 +52,25 @@ const blockedSourceDescription = (source: BlockedSource): string => {
   return `${store} could not be read${detail}.${remedy}`;
 };
 
+// The tabs this page offers. A `?tab=` outside this list — a stale link, a
+// hand-edited URL — used to leave the page blank: Radix renders a panel only
+// for a matching value, so the header and the tab strip showed with no
+// content, no selected tab and no way back.
+const PROVIDER_TABS = [
+  'overview',
+  'activity',
+  'sessions',
+  'events',
+  'forecast',
+  'cost',
+  'debug',
+] as const;
+type ProviderTab = (typeof PROVIDER_TABS)[number];
+
+function isProviderTab(value: string | null | undefined): value is ProviderTab {
+  return value != null && (PROVIDER_TABS as readonly string[]).includes(value);
+}
+
 export function ProviderPage() {
   const { providerId = '' } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -58,8 +78,12 @@ export function ProviderPage() {
   const queryClient = useQueryClient();
   const fleet = useFleet();
   const providerConfigs = useProviderConfigs();
-  const tab = searchParams.get('tab') ?? 'overview';
-  const setTab = (next: string) => {
+  // Archive and reset are destructive: they ask first, naming the provider.
+  const [confirmArchive, setConfirmArchive] = useState(false);
+  const [confirmReset, setConfirmReset] = useState(false);
+  const rawTab = searchParams.get('tab');
+  const tab: ProviderTab = isProviderTab(rawTab) ? rawTab : 'overview';
+  const setTab = (next: ProviderTab) => {
     setSearchParams(
       (prev) => {
         const p = new URLSearchParams(prev);
@@ -140,12 +164,21 @@ export function ProviderPage() {
     ?? false;
 
   const archive = useMutation({
-    mutationFn: () => putProviderConfigForAccount(providerId, accountId, { archived: !isArchived }),
-    onSuccess: () => {
-      toast.success(isArchived ? 'Provider restored' : 'Provider archived');
+    // The target state travels with the mutation instead of being read from
+    // `isArchived` inside the callback: the toast's Undo has to send the
+    // provider back to the state it was in, and a captured `isArchived` would
+    // be stale by then.
+    mutationFn: (archived: boolean) =>
+      putProviderConfigForAccount(providerId, accountId, { archived }),
+    onSuccess: (_data, archived) => {
       queryClient.invalidateQueries({ queryKey: ['system', 'provider-configs'] });
       queryClient.invalidateQueries({ queryKey: ['usage'] });
-      if (!isArchived) navigate('/', { replace: true });
+      toast.success(archived ? 'Provider restored' : 'Provider archived', {
+        action: {
+          label: 'Undo',
+          onClick: () => archive.mutate(!archived),
+        },
+      });
     },
     onError: (err) => toast.error(err.message),
   });
@@ -183,7 +216,7 @@ export function ProviderPage() {
                   return p;
                 }, { replace: true })}
               >
-                <SelectTrigger className="max-w-44" aria-label="Provider account">
+                <SelectTrigger className="max-w-44" label="Provider account">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -212,12 +245,18 @@ export function ProviderPage() {
               </DropdownMenu.Trigger>
               <DropdownMenu.Portal>
                 <DropdownMenu.Content align="end" sideOffset={6} className="z-50 min-w-48 rounded-lg border border-edge bg-overlay p-1 shadow-md">
-                  <DropdownMenu.Item onSelect={() => reset.mutate()} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-[13px] outline-none hover:bg-surface-2">
+                  <DropdownMenu.Item onSelect={() => setConfirmReset(true)} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-[13px] outline-none hover:bg-surface-2">
                     <RotateCcw className="size-3.5" aria-hidden /> Clear failure state
                   </DropdownMenu.Item>
-                  <DropdownMenu.Item onSelect={() => archive.mutate()} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-[13px] outline-none hover:bg-surface-2">
+                  <DropdownMenu.Item onSelect={() => setConfirmArchive(true)} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-[13px] outline-none hover:bg-surface-2">
                     {isArchived ? <ArchiveRestore className="size-3.5" aria-hidden /> : <Archive className="size-3.5" aria-hidden />}
                     {isArchived ? 'Restore provider' : 'Archive provider'}
+                  </DropdownMenu.Item>
+                  {/* The debug pane is a diagnostic surface, not a daily
+                      destination — it stays out of the tab strip until it is
+                      opened deliberately. */}
+                  <DropdownMenu.Item onSelect={() => setTab('debug')} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-[13px] outline-none hover:bg-surface-2">
+                    <Bug className="size-3.5" aria-hidden /> Debug
                   </DropdownMenu.Item>
                 </DropdownMenu.Content>
               </DropdownMenu.Portal>
@@ -228,9 +267,12 @@ export function ProviderPage() {
         <Button
           variant="ghost"
           size="sm"
-          onClick={() => navigate(-1)}
+          // Goes Home, not back in history: on a bookmark, a deep link or a
+          // refresh there is no in-app entry to go back to, and navigate(-1)
+          // then leaves the dashboard entirely.
+          onClick={() => navigate('/')}
           className="-ml-2 mb-3"
-          aria-label="Back"
+          aria-label="Back to Home"
         >
           <ArrowLeft className="size-3.5" aria-hidden /> Back
         </Button>
@@ -276,7 +318,7 @@ export function ProviderPage() {
             />
           )
         ) : (
-          <Tabs value={tab} onValueChange={setTab}>
+          <Tabs value={tab} onValueChange={(next) => { if (isProviderTab(next)) setTab(next); }}>
             <TabsList>
               <TabsTrigger value="overview">Overview</TabsTrigger>
               <TabsTrigger value="activity">Activity</TabsTrigger>
@@ -284,7 +326,11 @@ export function ProviderPage() {
               <TabsTrigger value="events">Events</TabsTrigger>
               <TabsTrigger value="forecast">Forecast</TabsTrigger>
               <TabsTrigger value="cost">Cost</TabsTrigger>
-              <TabsTrigger value="debug">Debug</TabsTrigger>
+              {/* Debug is a diagnostic surface (a raw upstream capture), not a
+                  daily destination — it stays out of the strip until it is
+                  opened deliberately, and then it shows so the user can click
+                  back out. */}
+              {tab === 'debug' ? <TabsTrigger value="debug">Debug</TabsTrigger> : null}
             </TabsList>
             <TabsContent value="overview">
               <OverviewTab entry={entry} scope={scope} />
@@ -334,6 +380,34 @@ export function ProviderPage() {
           </Tabs>
         )}
       </div>
+      <ConfirmDialog
+        open={confirmArchive}
+        onOpenChange={setConfirmArchive}
+        title={isArchived ? `Restore ${name}?` : `Archive ${name}?`}
+        description={
+          isArchived
+            ? `${name} reports again on the dashboard and its usage is collected as before.`
+            : `${name} stops reporting on the dashboard. Its usage history is kept, and you can restore it from Settings → Providers.`
+        }
+        confirmLabel={isArchived ? 'Restore' : 'Archive'}
+        pending={archive.isPending}
+        onConfirm={() => {
+          setConfirmArchive(false);
+          archive.mutate(!isArchived);
+        }}
+      />
+      <ConfirmDialog
+        open={confirmReset}
+        onOpenChange={setConfirmReset}
+        title="Clear the failure state?"
+        description={`The next collection for ${name} starts from scratch. Usage that was already recorded is not changed.`}
+        confirmLabel="Clear failure state"
+        pending={reset.isPending}
+        onConfirm={() => {
+          setConfirmReset(false);
+          reset.mutate();
+        }}
+      />
     </>
   );
 }
@@ -351,7 +425,7 @@ function ProviderFilters({ showSource, showCache }: { showSource: boolean; showC
     <Popover
       align="start"
       className="w-72 space-y-4"
-      trigger={<Button variant="secondary" size="sm" className="shrink-0"><SlidersHorizontal className="size-3.5" aria-hidden /> Filters{activeCount ? <span className="ml-1 rounded-full bg-accent/15 px-1.5 text-[10px] text-accent">{activeCount}</span> : null}</Button>}
+      trigger={<Button variant="secondary" size="sm" className="shrink-0"><SlidersHorizontal className="size-3.5" aria-hidden /> Filters{activeCount ? <span className="ml-1 rounded-full bg-accent/15 px-1.5 text-[10px] text-accent-text">{activeCount}</span> : null}</Button>}
     >
       <div className="space-y-1">
         <h3 className="text-[12px] font-medium">Provider filters</h3>

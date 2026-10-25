@@ -3,12 +3,15 @@
 
 import { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
+import { Button } from '@/components/ui/Button';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { Skeleton } from '@/components/ui/Skeleton';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/Tabs';
+import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { TopModelsBar, type TopMetric } from '@/components/charts/TopModelsBar';
 import { useExcludeCache } from '@/hooks/useExcludeCache';
 import { formatRangeLabel, type DateRangeValue } from '@/lib/timeRange';
-import { useTopModels } from './queries';
+import { INSIGHTS_TOP_N, useTopModels } from './queries';
+import { CircleAlert } from 'lucide-react';
 
 export function TopModelsCard({ range }: { range: DateRangeValue }) {
   const { excludeCache } = useExcludeCache();
@@ -19,21 +22,27 @@ export function TopModelsCard({ range }: { range: DateRangeValue }) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Top models · {formatRangeLabel(range)}</CardTitle>
-        <Tabs value={metric} onValueChange={(v) => setMetric(v as TopMetric)}>
-          <TabsList className="border-0" aria-label="Top models metric">
-            <TabsTrigger value="tokens" className="h-8 px-2.5">
-              Tokens
-            </TabsTrigger>
-            <TabsTrigger value="cost" className="h-8 px-2.5">
-              Cost
-            </TabsTrigger>
-          </TabsList>
-        </Tabs>
+        <CardTitle>Top {INSIGHTS_TOP_N} models · {formatRangeLabel(range)}</CardTitle>
+        <SegmentedControl
+          value={metric}
+          onChange={(v) => setMetric(v as TopMetric)}
+          label="Top models metric"
+          options={[
+            { value: 'tokens', label: 'Tokens' },
+            { value: 'cost', label: 'Cost' },
+          ]}
+        />
       </CardHeader>
       <CardContent className="pt-2">
         {top.isPending ? (
           <Skeleton className="h-72 w-full" />
+        ) : top.isError ? (
+          <EmptyState
+            icon={CircleAlert}
+            title="Could not load this data"
+            description={top.error.message}
+            action={<Button size="sm" onClick={() => top.refetch()}>Retry</Button>}
+          />
         ) : !hasData ? (
           <p className="py-16 text-center text-xs text-fg-subtle">No model usage in this range.</p>
         ) : (

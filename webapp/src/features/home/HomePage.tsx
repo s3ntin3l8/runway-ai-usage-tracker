@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useNavigate } from 'react-router';
 import { Archive, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { putDashboardLayout } from '@/api/endpoints';
@@ -11,6 +12,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { Inbox } from 'lucide-react';
 import { useForceCollect } from '@/hooks/useForceCollect';
 import { timeAgo } from '@/lib/format';
+import { useSidecars } from '@/features/fleet/queries';
 import { useDataHealthReport } from '@/features/settings/sections/dataHealth/queries';
 import { AggregateStrip } from './AggregateStrip';
 import { ArchivedSection } from './ArchivedSection';
@@ -32,6 +34,7 @@ import { applyLayoutOrder, atRiskItems, buildRiskItems } from './risk';
 
 export function HomePage() {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const fleet = useFleet();
   const forecast = useForecast();
   const cost = useCostForecast();
@@ -43,6 +46,7 @@ export function HomePage() {
   // the tighter default poll.
   const dataHealth = useDataHealthReport(300_000);
   const providerConfigs = useProviderConfigs();
+  const sidecars = useSidecars();
   const layout = useDashboardLayout();
   const [showArchived, setShowArchived] = useState(false);
 
@@ -51,6 +55,46 @@ export function HomePage() {
     for (const p of providerConfigs.data?.providers ?? []) map.set(p.provider_id, p.name);
     return map;
   }, [providerConfigs.data]);
+
+  // How many providers are actually set up. The settings list also contains
+  // every provider the app knows about — most of them never configured — so
+  // "the list is not empty" says nothing. An account counts as set up when it
+  // carries a credential and is neither archived nor merged away.
+  const configuredProviders = useMemo(() => {
+    const providers = providerConfigs.data?.providers ?? [];
+    return providers.filter((p) =>
+      (p.accounts ?? []).some(
+        (a) => !a.archived && !a.merged_into && (a.api_key_set || a.session_cookie_set),
+      ),
+    ).length;
+  }, [providerConfigs.data]);
+
+  // The billing type of the money the aggregate strip sums up. The accounts
+  // here may mix billing types, so the aggregate takes the *least* certain
+  // label of the set: reported money only while every account reports it,
+  // estimated money as soon as one of them does not.
+  //
+  // An empty set of credential-bearing accounts does not mean "nothing was
+  // reported": usage can be auto-discovered from a sidecar, and then the
+  // numbers were never a bill the provider sent. "Unknown" is the wrong word
+  // for that — it means "we cannot tell", and the honest label for money we
+  // cannot vouch for is the estimated one.
+  const aggregateBillingType = useMemo(() => {
+    const accounts = (providerConfigs.data?.providers ?? []).flatMap((p) => p.accounts ?? []);
+    const live = accounts.filter(
+      (a) => !a.archived && !a.merged_into && (a.api_key_set || a.session_cookie_set),
+    );
+    if (live.length === 0) return 'subscription';
+    return live.every((a) => a.billing_type === 'pay_as_you_go')
+      ? 'pay_as_you_go'
+      : 'subscription';
+  }, [providerConfigs.data]);
+
+  // Machines that are already paired. A paired sidecar with no provider
+  // account yet is a different situation from a fresh install, and the zero
+  // state has to say so: telling someone to "connect a sidecar" they have
+  // already connected sends them down a step they finished.
+  const sidecarCount = sidecars.data?.sidecars?.length ?? 0;
 
   const items = useMemo(
     () => buildRiskItems(fleet.data?.fleet ?? [], forecast.data?.forecasts ?? []),
@@ -137,10 +181,13 @@ export function HomePage() {
             }
           />
         ) : items.length === 0 ? (
-          <EmptyState
-            icon={Inbox}
-            title="No providers reporting yet"
-            description="Configure a provider in Settings or connect a sidecar to start tracking usage."
+          <HomeZeroState
+            configuredProviders={configuredProviders}
+            sidecarCount={sidecarCount}
+            collecting={collect.isPending}
+            onCollect={() => collect.mutate()}
+            onAddProvider={() => navigate('/settings/providers')}
+            onOpenFleet={() => navigate('/fleet')}
           />
         ) : (
           <>
@@ -148,6 +195,7 @@ export function HomePage() {
             <AggregateStrip
               cost={cost.data}
               cumulative={cumulative.data}
+              billingType={aggregateBillingType}
               costLoading={cost.isPending}
               tokensLoading={cumulative.isPending}
             />
@@ -162,6 +210,88 @@ export function HomePage() {
         <MergedSection />
       </div>
     </>
+  );
+}
+
+/**
+ * The zero state, in the three shapes it can take.
+ *
+ * A provider set up but silent is a different problem from a machine that
+ * is paired but has no provider account yet, and both differ from a fresh
+ * install. Each one names the step that is actually missing, so nobody is
+ * told to connect a sidecar they already connected.
+ */
+function HomeZeroState({
+  configuredProviders,
+  sidecarCount,
+  collecting,
+  onCollect,
+  onAddProvider,
+  onOpenFleet,
+}: {
+  configuredProviders: number;
+  sidecarCount: number;
+  collecting: boolean;
+  onCollect: () => void;
+  onAddProvider: () => void;
+  onOpenFleet: () => void;
+}) {
+  if (configuredProviders > 0) {
+    return (
+      <EmptyState
+        icon={Inbox}
+        title="Nothing reported yet"
+        description={`${configuredProviders} provider${configuredProviders === 1 ? ' is' : 's are'} set up, but nothing has reported usage yet. Collect now, or check the sidecar.`}
+        action={
+          <>
+            <Button size="sm" onClick={onCollect} loading={collecting}>
+              Collect now
+            </Button>
+            <Button size="sm" variant="ghost" onClick={onAddProvider} className="ml-2">
+              Provider settings
+            </Button>
+          </>
+        }
+      />
+    );
+  }
+
+  if (sidecarCount > 0) {
+    return (
+      <EmptyState
+        icon={Inbox}
+        title="Sidecar connected, no provider yet"
+        description={`${sidecarCount} machine${sidecarCount === 1 ? ' is' : 's are'} connected, but no provider account is set up yet. Add a provider to start tracking usage.`}
+        action={
+          <>
+            <Button size="sm" onClick={onAddProvider}>
+              Add a provider
+            </Button>
+            <Button size="sm" variant="ghost" onClick={onOpenFleet} className="ml-2">
+              Manage sidecars
+            </Button>
+          </>
+        }
+      />
+    );
+  }
+
+  return (
+    <EmptyState
+      icon={Inbox}
+      title="No providers set up yet"
+      description="Add a provider or connect a sidecar to start tracking usage."
+      action={
+        <>
+          <Button size="sm" onClick={onAddProvider}>
+            Add a provider
+          </Button>
+          <Button size="sm" variant="ghost" onClick={onOpenFleet} className="ml-2">
+            Connect a sidecar
+          </Button>
+        </>
+      }
+    />
   );
 }
 

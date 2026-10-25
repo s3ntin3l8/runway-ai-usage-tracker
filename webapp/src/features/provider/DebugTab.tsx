@@ -108,7 +108,7 @@ function CollectionContextPane({
               />
             ))
           )}
-          <Link to="/settings/credentials" className="mt-2 inline-block text-[11px] text-accent hover:underline">
+          <Link to="/settings/credentials" className="mt-2 inline-block text-[11px] text-accent-text hover:underline">
             Full credential inventory
           </Link>
         </section>

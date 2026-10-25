@@ -38,7 +38,7 @@ export function KitPage() {
         description="Design-system gallery (dev only)"
         actions={
           <Select value={pref} onValueChange={(v) => setPref(v as typeof pref)}>
-            <SelectTrigger className="w-28">
+            <SelectTrigger className="w-28" label="Theme">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>

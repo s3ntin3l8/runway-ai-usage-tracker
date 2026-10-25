@@ -82,9 +82,9 @@ describe('TopProjectsCard', () => {
   it('default metric is tokens', async () => {
     renderWithProviders(<TopProjectsCard range={{ days: 7 }} />);
     await waitFor(() => expect(screen.getByTestId('echart')).toBeInTheDocument());
-    const tabs = screen.getByRole('tablist', { name: 'Top projects metric' });
-    const tokensTab = within(tabs).getByRole('tab', { name: 'Tokens' });
-    expect(tokensTab).toHaveAttribute('data-state', 'active');
+    const metricGroup = screen.getByRole('group', { name: 'Top projects metric' });
+    const tokensOption = within(metricGroup).getByRole('radio', { name: 'Tokens' });
+    expect(tokensOption).toBeChecked();
     expect(api.fetchTopProjects).toHaveBeenCalledWith(
       expect.objectContaining({ metric: 'tokens' }),
     );
@@ -94,8 +94,8 @@ describe('TopProjectsCard', () => {
     renderWithProviders(<TopProjectsCard range={{ days: 7 }} />);
     await waitFor(() => expect(screen.getByTestId('echart')).toBeInTheDocument());
     vi.mocked(api.fetchTopProjects).mockResolvedValue(makeResponse([mockProject], 'cost'));
-    const tabs = screen.getByRole('tablist', { name: 'Top projects metric' });
-    await userEvent.click(within(tabs).getByRole('tab', { name: 'Cost' }));
+    const metricGroup = screen.getByRole('group', { name: 'Top projects metric' });
+    await userEvent.click(within(metricGroup).getByRole('radio', { name: 'Cost' }));
     expect(api.fetchTopProjects).toHaveBeenCalledWith(
       expect.objectContaining({ metric: 'cost' }),
     );
@@ -112,8 +112,8 @@ describe('TopProjectsCard', () => {
     vi.mocked(api.fetchTopProjects).mockResolvedValue(makeResponse([mockProject], 'cost'));
     renderWithProviders(<TopProjectsCard range={{ days: 7 }} />);
     await waitFor(() => expect(screen.getByTestId('echart')).toBeInTheDocument());
-    const tabs = screen.getByRole('tablist', { name: 'Top projects metric' });
-    await userEvent.click(within(tabs).getByRole('tab', { name: 'Cost' }));
+    const metricGroup = screen.getByRole('group', { name: 'Top projects metric' });
+    await userEvent.click(within(metricGroup).getByRole('radio', { name: 'Cost' }));
     await waitFor(() => expect(stackedSeriesTotal(capturedOption())).toBeCloseTo(0.15));
   });
 
@@ -121,8 +121,8 @@ describe('TopProjectsCard', () => {
     vi.mocked(api.fetchTopProjects).mockResolvedValue(makeResponse([mockProject], 'sessions'));
     renderWithProviders(<TopProjectsCard range={{ days: 7 }} />);
     await waitFor(() => expect(screen.getByTestId('echart')).toBeInTheDocument());
-    const tabs = screen.getByRole('tablist', { name: 'Top projects metric' });
-    await userEvent.click(within(tabs).getByRole('tab', { name: 'Sessions' }));
+    const metricGroup = screen.getByRole('group', { name: 'Top projects metric' });
+    await userEvent.click(within(metricGroup).getByRole('radio', { name: 'Sessions' }));
     await waitFor(() => {
       const option = capturedOption();
       const series = option.series as Array<{ data: number[] }>;
@@ -156,8 +156,8 @@ describe('TopProjectsCard', () => {
     localStorage.setItem('runway_exclude_cache', '1');
     renderWithProviders(<TopProjectsCard range={{ days: 7 }} />);
     await waitFor(() => expect(screen.getByTestId('echart')).toBeInTheDocument());
-    const tabs = screen.getByRole('tablist', { name: 'Top projects metric' });
-    await userEvent.click(within(tabs).getByRole('tab', { name: 'Cost' }));
+    const metricGroup = screen.getByRole('group', { name: 'Top projects metric' });
+    await userEvent.click(within(metricGroup).getByRole('radio', { name: 'Cost' }));
     await waitFor(() => {
       const option = capturedOption();
       const series = option.series as Array<{ name: string; data: number[] }>;

@@ -5,6 +5,7 @@ import { useMemo } from 'react';
 import type { HeatmapCell } from '@/api/types';
 import { formatTokens } from '@/lib/format';
 import { EChart } from './EChart';
+import { AccessibleSummary } from './accessibleSummary';
 import { baseTooltip, useChartTokens } from './theme';
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -79,5 +80,18 @@ export function UsageHeatmap({ cells, className }: { cells: HeatmapCell[]; class
     };
   }, [cells, t]);
 
-  return <EChart option={option} className={className ?? 'h-80'} />;
+  return (
+    <>
+      <EChart option={option} className={className ?? 'h-80'} ariaLabel="Activity by hour chart" />
+      {/* The heatmap is pure pixels — the colour ramp says "how busy", not
+          "how many" — so every cell needs its count spelled out as text. */}
+      <AccessibleSummary
+        caption="Token usage by day of week and hour"
+        entries={cells.map((c) => ({
+          label: `${DAYS[c.dow]} ${String(c.hour).padStart(2, '0')}:00`,
+          value: formatTokens(c.tokens),
+        }))}
+      />
+    </>
+  );
 }

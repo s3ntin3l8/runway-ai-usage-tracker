@@ -1,4 +1,6 @@
-import { NAV_ITEMS } from './nav';
+import { NAV_ITEMS, isNavItemActive } from './nav';
+
+const item = (to: string) => NAV_ITEMS.find((i) => i.to === to)!;
 
 describe('NAV_ITEMS', () => {
   it('exposes the primary destinations with unique targets', () => {
@@ -22,5 +24,26 @@ describe('NAV_ITEMS', () => {
       expect(item.icon).toBeTruthy();
       expect(['function', 'object']).toContain(typeof item.icon);
     }
+  });
+});
+
+describe('isNavItemActive', () => {
+  it('keeps Home active on the provider drill-down', () => {
+    const home = item('/');
+    expect(isNavItemActive(home, '/')).toBe(true);
+    expect(isNavItemActive(home, '/provider/anthropic')).toBe(true);
+  });
+
+  it('does not light an end-matched item up for anything else', () => {
+    const home = item('/');
+    expect(isNavItemActive(home, '/insights')).toBe(false);
+    expect(isNavItemActive(home, '/settings/providers')).toBe(false);
+  });
+
+  it('keeps a parent active for its descendants', () => {
+    const settings = item('/settings');
+    expect(isNavItemActive(settings, '/settings')).toBe(true);
+    expect(isNavItemActive(settings, '/settings/providers')).toBe(true);
+    expect(isNavItemActive(settings, '/fleet')).toBe(false);
   });
 });

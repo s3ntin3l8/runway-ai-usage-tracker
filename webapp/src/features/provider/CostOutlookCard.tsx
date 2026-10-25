@@ -60,6 +60,7 @@ export function CostOutlookCard({
                   : 0,
               )}
               className="mt-2"
+              label="Month budget used"
             />
             <p className="mt-2 text-[11px] text-fg-subtle">
               {formatCost(cost.data.daily_burn_avg_7d)}/day average over the last 7 days.

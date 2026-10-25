@@ -12,14 +12,17 @@ import type { TopHostEntry } from '@/api/types';
 import { RankBar, type RankRow } from '@/components/charts/RankBar';
 import { useChartTokens } from '@/components/charts/theme';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
+import { Button } from '@/components/ui/Button';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { Skeleton } from '@/components/ui/Skeleton';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/Tabs';
+import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { buildSidecarNameMap, useSidecars } from '@/features/fleet/queries';
 import { useExcludeCache } from '@/hooks/useExcludeCache';
 import { formatAxisCost, formatAxisNumber, formatCost, formatTokens } from '@/lib/format';
 import { formatRangeLabel, type DateRangeValue } from '@/lib/timeRange';
-import { useTopHosts, type TopMetric } from './queries';
+import { INSIGHTS_TOP_N, type TopMetric, useTopHosts } from './queries';
 import { costSegments, costTotal, tokenSegments, tokenTotal } from './rankSegments';
+import { CircleAlert } from 'lucide-react';
 
 function hostRow(
   h: TopHostEntry,
@@ -73,21 +76,27 @@ export function TopHostsCard({ range }: { range: DateRangeValue }) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Top hosts · {formatRangeLabel(range)}</CardTitle>
-        <Tabs value={metric} onValueChange={(v) => setMetric(v as TopMetric)}>
-          <TabsList className="border-0" aria-label="Top hosts metric">
-            <TabsTrigger value="tokens" className="h-8 px-2.5">
-              Tokens
-            </TabsTrigger>
-            <TabsTrigger value="cost" className="h-8 px-2.5">
-              Cost
-            </TabsTrigger>
-          </TabsList>
-        </Tabs>
+        <CardTitle>Top {INSIGHTS_TOP_N} hosts · {formatRangeLabel(range)}</CardTitle>
+        <SegmentedControl
+          value={metric}
+          onChange={(v) => setMetric(v as TopMetric)}
+          label="Top hosts metric"
+          options={[
+            { value: 'tokens', label: 'Tokens' },
+            { value: 'cost', label: 'Cost' },
+          ]}
+        />
       </CardHeader>
       <CardContent className="pt-2">
         {top.isPending ? (
           <Skeleton className="h-72 w-full" />
+        ) : top.isError ? (
+          <EmptyState
+            icon={CircleAlert}
+            title="Could not load this data"
+            description={top.error.message}
+            action={<Button size="sm" onClick={() => top.refetch()}>Retry</Button>}
+          />
         ) : !hasData ? (
           <p className="py-16 text-center text-xs text-fg-subtle">No host-attributed usage in this range.</p>
         ) : (

@@ -156,7 +156,7 @@ function WebhookRow({
             >
               <SelectTrigger
                 className="h-6 max-w-44 px-2 text-xs font-normal"
-                aria-label="Alert account scope"
+                label="Alert account scope"
                 disabled={changeScope.isPending}
               >
                 <SelectValue />
@@ -281,7 +281,7 @@ function CreateWebhookForm({ onSaved }: { onSaved: () => void }) {
         <div className="flex flex-col gap-1.5">
           <Label>Provider</Label>
           <Select value={providerId} onValueChange={onProviderChange}>
-            <SelectTrigger>
+            <SelectTrigger label="Webhook provider">
               <SelectValue placeholder="Select…" />
             </SelectTrigger>
             <SelectContent>
@@ -309,7 +309,7 @@ function CreateWebhookForm({ onSaved }: { onSaved: () => void }) {
       <div className="flex flex-col gap-1.5">
         <Label>Account</Label>
         <Select value={accountId} onValueChange={setAccountId}>
-          <SelectTrigger>
+          <SelectTrigger label="Webhook account">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -335,7 +335,7 @@ function CreateWebhookForm({ onSaved }: { onSaved: () => void }) {
       <div className="flex flex-col gap-1.5">
         <Label>Channel</Label>
         <Select value={channel} onValueChange={(v) => setChannel(v as 'discord' | 'slack')}>
-          <SelectTrigger>
+          <SelectTrigger label="Webhook channel">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>

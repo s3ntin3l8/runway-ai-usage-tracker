@@ -55,10 +55,11 @@ describe('SessionsTable', () => {
       />,
     );
     const row = screen.getByText('aaaaaaaa').closest('tr')!;
-    expect(row).toHaveAttribute('aria-expanded', 'false');
+    const toggle = within(row).getByRole('button', { name: /expand details for session aaaaaaaa/i });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
 
     await userEvent.click(row);
-    expect(row).toHaveAttribute('aria-expanded', 'true');
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
     expect(screen.getByText('Token breakdown')).toBeInTheDocument();
     expect(screen.getByText('By model')).toBeInTheDocument();
     expect(screen.getByText('Explore')).toBeInTheDocument();
@@ -127,6 +128,60 @@ describe('SessionsTable', () => {
     );
     await userEvent.click(screen.getByText('cccccccc').closest('tr')!);
     expect(screen.getByText(/main session only/i)).toBeInTheDocument();
+  });
+});
+
+describe('SessionsTable expand control', () => {
+  it('exposes the expander as a focusable button that owns the expanded state', () => {
+    renderWithProviders(<SessionsTable sessions={[session({ session_id: 'aaaaaaaa1111' })]} />);
+    const row = screen.getByText('aaaaaaaa').closest('tr')!;
+    const toggle = within(row).getByRole('button', {
+      name: /expand details for session aaaaaaaa/i,
+    });
+
+    expect(toggle.tagName).toBe('BUTTON');
+    expect(toggle).toHaveAttribute('type', 'button');
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    // The state belongs to the control, not to the (unfocusable) row.
+    expect(row).not.toHaveAttribute('aria-expanded');
+    // The global :focus-visible ring must stay visible on the control.
+    expect(toggle.className).not.toMatch(/outline-none/);
+  });
+
+  it('reaches the expander with Tab and toggles it with Enter and Space', async () => {
+    renderWithProviders(<SessionsTable sessions={[session({ session_id: 'aaaaaaaa1111' })]} />);
+    const toggle = screen.getByRole('button', {
+      name: /expand details for session aaaaaaaa/i,
+    });
+
+    await userEvent.tab();
+    expect(toggle).toHaveFocus();
+
+    await userEvent.keyboard('{Enter}');
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText('Token breakdown')).toBeInTheDocument();
+
+    await userEvent.keyboard(' ');
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByText('Token breakdown')).not.toBeInTheDocument();
+  });
+
+  it('toggles once when the expander itself is clicked', async () => {
+    renderWithProviders(<SessionsTable sessions={[session({ session_id: 'aaaaaaaa1111' })]} />);
+    const toggle = screen.getByRole('button', {
+      name: /expand details for session aaaaaaaa/i,
+    });
+
+    await userEvent.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText('Token breakdown')).toBeInTheDocument();
+    // aria-controls points at the detail cell the click revealed.
+    const controlled = document.getElementById(toggle.getAttribute('aria-controls') ?? '');
+    expect(controlled).toHaveTextContent('Token breakdown');
+
+    await userEvent.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByText('Token breakdown')).not.toBeInTheDocument();
   });
 });
 

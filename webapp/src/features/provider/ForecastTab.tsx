@@ -138,7 +138,7 @@ export function ForecastTab({
               value={selected ? forecastKey(selected) : ''}
               onValueChange={setSelectedKey}
             >
-              <SelectTrigger className="h-8 max-w-56">
+              <SelectTrigger className="h-8 max-w-56" label="Forecast series">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>

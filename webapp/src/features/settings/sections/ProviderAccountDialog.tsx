@@ -260,7 +260,7 @@ function ProviderAccountForm({
           ))}
         </select>
         <HelperText>
-          Estimated usage value uses configured API rates. Reported cost comes from the provider log.
+          Estimated cost uses configured API rates. Reported cost comes from the provider log.
         </HelperText>
       </div>
 
@@ -494,7 +494,7 @@ function CredentialSourcesEditor({
       <legend className="px-1 text-xs font-medium text-fg-muted">Credential sources</legend>
       <p className="text-[11px] text-fg-subtle">
         Enabled sources are tried in order. Secrets are never shown here.{' '}
-        <Link to="/settings/credentials" className="text-accent hover:underline">
+        <Link to="/settings/credentials" className="text-accent-text hover:underline">
           See every credential
         </Link>
       </p>

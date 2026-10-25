@@ -2,16 +2,19 @@
 // the window archive (open + closed), and anomaly diagnostics.
 
 import { useEffect, useMemo, useState } from 'react';
+import { CircleAlert } from 'lucide-react';
 import type { HistoryWindowRow } from '@/api/types';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Badge } from '@/components/ui/Badge';
+import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { ExcludeCacheToggle } from '@/components/ui/ExcludeCacheToggle';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { StatTile } from '@/components/ui/StatTile';
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/Table';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/Tabs';
+import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { TimeRangePicker } from '@/components/ui/TimeRangePicker';
 import { useAnomalies, useFleet, useProviderConfigs } from '@/features/home/queries';
 import { useExcludeCache } from '@/hooks/useExcludeCache';
@@ -94,7 +97,7 @@ export function HistoryPage() {
       <div className="flex flex-col gap-4 p-4 lg:p-8">
         <div className="flex flex-wrap items-center gap-2">
           <Select value={selected?.key ?? ''} onValueChange={setAccountKey}>
-            <SelectTrigger className="w-full max-w-72 sm:w-auto">
+            <SelectTrigger className="w-full max-w-72 sm:w-auto" label="Account">
               <SelectValue placeholder="Select account" />
             </SelectTrigger>
             <SelectContent>
@@ -105,25 +108,34 @@ export function HistoryPage() {
               ))}
             </SelectContent>
           </Select>
-          <Tabs value={metric} onValueChange={(v) => setMetric(v as Metric)}>
-            <TabsList className="border-0" aria-label="Chart metric">
-              <TabsTrigger value="percent" className="h-9 px-2.5">
-                % used
-              </TabsTrigger>
-              <TabsTrigger value="tokens" className="h-9 px-2.5">
-                Tokens
-              </TabsTrigger>
-              <TabsTrigger value="cost" className="h-9 px-2.5">
-                Cost
-              </TabsTrigger>
-            </TabsList>
-          </Tabs>
+          <SegmentedControl
+            value={metric}
+            onChange={(v) => setMetric(v as Metric)}
+            label="Chart metric"
+            options={[
+              { value: 'percent', label: '% used' },
+              { value: 'tokens', label: 'Tokens' },
+              { value: 'cost', label: 'Cost' },
+            ]}
+          />
         </div>
 
         <Card>
           <CardContent className="pt-4">
             {chart.isPending || fleet.isPending ? (
               <Skeleton className="h-72 w-full" />
+            ) : chart.isError ? (
+              // A failed request must not read as an empty result.
+              <EmptyState
+                icon={CircleAlert}
+                title="Could not load this data"
+                description={chart.error.message}
+                action={
+                  <Button size="sm" onClick={() => chart.refetch()}>
+                    Retry
+                  </Button>
+                }
+              />
             ) : !hasChartData ? (
               <p className="py-16 text-center text-xs text-fg-subtle">
                 No data points in this range.
@@ -174,6 +186,19 @@ export function HistoryPage() {
             <CardContent>
               <Skeleton className="h-32 w-full" />
             </CardContent>
+          ) : windows.isError ? (
+            <CardContent>
+              <EmptyState
+                icon={CircleAlert}
+                title="Could not load the quota windows"
+                description={windows.error.message}
+                action={
+                  <Button size="sm" onClick={() => windows.refetch()}>
+                    Retry
+                  </Button>
+                }
+              />
+            </CardContent>
           ) : (windows.data?.windows.length ?? 0) === 0 ? (
             <CardContent>
               <p className="py-6 text-center text-xs text-fg-subtle">No windows in this range.</p>
@@ -199,13 +224,31 @@ export function HistoryPage() {
                     className="cursor-pointer hover:bg-surface-2"
                   >
                     <TD className="font-mono text-xs whitespace-nowrap tabular">
-                      {w.window_start ? (
-                        <>
-                          {formatLocalDate(w.window_start)} – {formatLocalDate(w.window_end)}
-                        </>
-                      ) : (
-                        '—'
-                      )}
+                      {/* A <tr> can't take focus, so a click-only row left
+                          keyboard and screen-reader users unable to open the
+                          window detail at all. The window name holds the real
+                          control — a native <button>, so Enter and Space work
+                          without hand-rolled key handling. The row keeps its
+                          own onClick for mouse users; the button stops the
+                          click from bubbling so one click opens one sheet. */}
+                      <button
+                        type="button"
+                        aria-haspopup="dialog"
+                        aria-label={`Open details for the ${w.service_name ?? w.provider_id} window`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setDetailRow(w);
+                        }}
+                        className="cursor-pointer rounded-sm text-left hover:underline focus-visible:underline"
+                      >
+                        {w.window_start ? (
+                          <>
+                            {formatLocalDate(w.window_start)} – {formatLocalDate(w.window_end)}
+                          </>
+                        ) : (
+                          '—'
+                        )}
+                      </button>
                       {w.is_open ? (
                         <Badge variant="accent" className="ml-2">
                           open

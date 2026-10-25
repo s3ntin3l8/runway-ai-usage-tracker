@@ -100,6 +100,7 @@ function primeDefaults() {
   vi.mocked(api.fetchProviderConfigs).mockResolvedValue({
     providers: [{ provider_id: 'claude', name: 'Claude' } as never],
   });
+  vi.mocked(api.fetchSidecars).mockResolvedValue({ sidecars: [] } as never);
   vi.mocked(api.getDashboardLayout).mockResolvedValue({
     provider_order: [],
     card_orders: {},
@@ -122,7 +123,43 @@ describe('HomePage', () => {
   it('shows the empty state when no providers report', async () => {
     vi.mocked(api.fetchFleetUsage).mockResolvedValue(fleetResponse([]));
     renderWithProviders(<HomePage />);
-    expect(await screen.findByText(/no providers reporting yet/i)).toBeInTheDocument();
+    // Nothing is set up yet: the state offers the two ways out.
+    expect(await screen.findByText(/no providers set up yet/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /add a provider/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /connect a sidecar/i })).toBeInTheDocument();
+  });
+
+  it('does not offer to connect a sidecar that is already paired', async () => {
+    vi.mocked(api.fetchFleetUsage).mockResolvedValue(fleetResponse([]));
+    vi.mocked(api.fetchSidecars).mockResolvedValue({
+      sidecars: [{ sidecar_id: 'laptop', hostname: 'workstation' }],
+    } as never);
+    renderWithProviders(<HomePage />);
+    expect(await screen.findByText(/sidecar connected, no provider yet/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /add a provider/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /manage sidecars/i })).toBeInTheDocument();
+    // The step they already finished is not offered again.
+    expect(screen.queryByRole('button', { name: /connect a sidecar/i })).not.toBeInTheDocument();
+  });
+
+  it('tells a configured provider apart from an unconfigured setup', async () => {
+    vi.mocked(api.fetchFleetUsage).mockResolvedValue(fleetResponse([]));
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({
+      providers: [
+        {
+          provider_id: 'claude',
+          name: 'Claude',
+          accounts: [
+            { account_id: 'default', api_key_set: true, session_cookie_set: false },
+          ],
+        },
+      ],
+    } as never);
+    renderWithProviders(<HomePage />);
+    expect(await screen.findByText(/nothing reported yet/i)).toBeInTheDocument();
+    // The header carries its own "Collect now"; the empty state adds one.
+    expect(screen.getAllByRole('button', { name: /collect now/i }).length).toBeGreaterThan(0);
+    expect(screen.queryByRole('button', { name: /add a provider/i })).not.toBeInTheDocument();
   });
 
   it('shows an error state when the fleet query fails', async () => {
@@ -140,12 +177,14 @@ describe('HomePage', () => {
     expect(screen.getByText('Providers')).toBeInTheDocument();
   });
 
-  it('shows the at-risk rail when a provider is critical', async () => {
+  it('shows the needs-attention rail when a provider is critical', async () => {
     vi.mocked(api.fetchFleetUsage).mockResolvedValue(
       fleetResponse([fleetEntry({ critical_gauge: card({ pct_used: 96 }) })]),
     );
     renderWithProviders(<HomePage />);
-    expect(await screen.findByText('At risk')).toBeInTheDocument();
+    expect(await screen.findByText('Needs attention')).toBeInTheDocument();
+    // The rail says why the provider is there.
+    expect(screen.getByText(/at or heading towards their limit/i)).toBeInTheDocument();
   });
 
   it('renders the all-clear rail when nothing is hot', async () => {
@@ -190,8 +229,68 @@ describe('HomePage', () => {
   it('shows the aggregate spend strip', async () => {
     vi.mocked(api.fetchFleetUsage).mockResolvedValue(fleetResponse([fleetEntry()]));
     renderWithProviders(<HomePage />);
-    expect(await screen.findByText('Usage value (MTD)')).toBeInTheDocument();
-    expect(screen.getByText('Projected usage value')).toBeInTheDocument();
+    // No credential-bearing account, so the money is not a bill anyone
+    // reported — the aggregate says so.
+    expect(await screen.findByText('Estimated cost (MTD)')).toBeInTheDocument();
+    expect(screen.getByText('Projected cost (EOM)')).toBeInTheDocument();
+    // The same wording as the provider page's cost tiles.
+    expect(screen.getByText('Estimated cost per day (7d)')).toBeInTheDocument();
+  });
+
+  it('labels the aggregate as estimated when an account has no reported bill', async () => {
+    vi.mocked(api.fetchFleetUsage).mockResolvedValue(fleetResponse([fleetEntry()]));
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({
+      providers: [
+        {
+          provider_id: 'claude',
+          name: 'Claude',
+          accounts: [
+            {
+              account_id: 'default',
+              api_key_set: true,
+              session_cookie_set: false,
+              billing_type: 'subscription',
+            },
+          ],
+        },
+      ],
+    } as never);
+    renderWithProviders(<HomePage />);
+    // A subscription reports no bill, so the money is our estimate — and the
+    // aggregate takes the least certain label of the accounts it sums.
+    expect(await screen.findByText('Estimated cost (MTD)')).toBeInTheDocument();
+    expect(screen.getByText('Estimated cost per day (7d)')).toBeInTheDocument();
+  });
+
+  it('labels the aggregate as estimated when no account carries a credential', async () => {
+    // Usage can be auto-discovered from a sidecar, so an empty account list
+    // does not mean the provider sent a bill.
+    vi.mocked(api.fetchFleetUsage).mockResolvedValue(fleetResponse([fleetEntry()]));
+    renderWithProviders(<HomePage />);
+    expect(await screen.findByText('Estimated cost (MTD)')).toBeInTheDocument();
+  });
+
+  it('labels the aggregate as reported cost when every account reports it', async () => {
+    vi.mocked(api.fetchFleetUsage).mockResolvedValue(fleetResponse([fleetEntry()]));
+    vi.mocked(api.fetchProviderConfigs).mockResolvedValue({
+      providers: [
+        {
+          provider_id: 'claude',
+          name: 'Claude',
+          accounts: [
+            {
+              account_id: 'default',
+              api_key_set: true,
+              session_cookie_set: false,
+              billing_type: 'pay_as_you_go',
+            },
+          ],
+        },
+      ],
+    } as never);
+    renderWithProviders(<HomePage />);
+    expect(await screen.findByText('Cost (MTD)')).toBeInTheDocument();
+    expect(screen.getByText('Cost per day (7d)')).toBeInTheDocument();
   });
 
   it('scopes the home cumulative query to the current month only', async () => {
@@ -210,7 +309,7 @@ describe('HomePage', () => {
     ).toBeInTheDocument();
 
     // Usage value resolved: no skeleton left in that card.
-    const spendCard = screen.getByText('Usage value (MTD)').parentElement;
+    const spendCard = screen.getByText('Estimated cost (MTD)').parentElement;
     expect(spendCard?.querySelector('.animate-shimmer')).not.toBeInTheDocument();
 
     // Tokens this month stays in skeleton state since cumulative never resolves.

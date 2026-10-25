@@ -25,10 +25,21 @@ export function SelectLabel({
 export function SelectTrigger({
   className,
   children,
+  label,
   ...props
-}: React.ComponentProps<typeof SelectPrimitive.Trigger>) {
+}: React.ComponentProps<typeof SelectPrimitive.Trigger> & {
+  /**
+   * The trigger's accessible name.
+   *
+   * A combobox takes its name from the author, not from its content: the
+   * selected value rendered inside the trigger is NOT announced as the
+   * control's name, so without this the trigger is an unnamed combo box.
+   */
+  label: string;
+}) {
   return (
     <SelectPrimitive.Trigger
+      aria-label={label}
       className={cn(
         'flex h-9 cursor-pointer items-center justify-between gap-2 rounded-sm border border-edge bg-surface-2 px-3 text-[13px] text-fg outline-none transition-colors duration-150',
         'hover:bg-surface-3 focus:border-accent disabled:opacity-50 [&>span]:truncate',
@@ -82,7 +93,7 @@ export function SelectItem({
     >
       <SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>
       <SelectPrimitive.ItemIndicator>
-        <Check className="size-3.5 text-accent" aria-hidden />
+        <Check className="size-3.5 text-accent-text" aria-hidden />
       </SelectPrimitive.ItemIndicator>
     </SelectPrimitive.Item>
   );

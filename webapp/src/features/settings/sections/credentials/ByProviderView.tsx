@@ -102,7 +102,9 @@ function AccountBlock({
       </div>
       {from.via ? (
         <Tooltip content={`Collection path: ${from.via}`}>
-          <p className="mt-0.5 text-[11px] text-fg-muted">{from.text}</p>
+          {/* A span, not a <p>: the tooltip's focusable host is a phrasing
+              element, and a block element inside it is invalid nesting. */}
+          <span className="mt-0.5 block text-[11px] text-fg-muted">{from.text}</span>
         </Tooltip>
       ) : (
         <p className="mt-0.5 text-[11px] text-fg-muted">{from.text}</p>

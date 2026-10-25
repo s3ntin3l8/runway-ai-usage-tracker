@@ -9,7 +9,7 @@ MYPY := $(VENV)/bin/mypy
 # Source .env (if present) into the recipe shell, exporting every var.
 LOAD_ENV := set -a; [ -f .env ] && . ./.env; set +a
 
-.PHONY: help install install-hooks remove-worktree demo screenshots screenshots-landing dev dev-all run run-all sidecar sidecar-registry sidecar-app sidecar-dmg sidecar-installer test test-unit test-shard test-cov shard-weights lint format web web-dev web-lint web-test logo secrets secrets-baseline clean
+.PHONY: help install install-hooks remove-worktree demo screenshots screenshots-landing screenshots-audit dev dev-all run run-all sidecar sidecar-registry sidecar-app sidecar-dmg sidecar-installer test test-unit test-shard test-cov shard-weights lint format web web-dev web-lint web-test logo secrets secrets-baseline clean
 
 help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
@@ -31,6 +31,9 @@ screenshots: ## Regenerate README (dark + light) and PWA manifest screenshots fr
 
 screenshots-landing: ## Landing-page stills + loop into OUT (default ./landing-shots); loop needs ffmpeg
 	$(PYTHON) -m scripts.demo.capture --profile landing --out "$(or $(OUT),landing-shots)"
+
+screenshots-audit: ## Phone + tablet stills of every page into docs/audit/assets/$(AUDIT) (local only; gitignored)
+	$(PYTHON) -m scripts.demo.capture --profile audit --audit-slug "$(or $(AUDIT),audit)"
 
 dev: ## Run development server (hot reload). Data → ./data (gitignored) unless RUNWAY_CONFIG_DIR is set.
 	$(LOAD_ENV); \

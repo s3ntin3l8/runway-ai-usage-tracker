@@ -3,16 +3,18 @@
 // are forward-looking, so they only apply to the current month — a selected
 // past month falls back to that month's recorded spend.
 
-import { useMemo, useState } from 'react';
+import { useId, useMemo, useState } from 'react';
 import { ChevronRight } from 'lucide-react';
 import type { CumulativeBucket, CumulativeModelBucket } from '@/api/types';
 import { CostDonut, modelCost } from '@/components/charts/CostDonut';
+import { buttonVariants } from '@/components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { StatTile } from '@/components/ui/StatTile';
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/Table';
 import { useExcludeCache } from '@/hooks/useExcludeCache';
 import { cn } from '@/lib/cn';
+import { moneyLabel as moneyLabelFor } from '@/lib/billingType';
 import { formatCost, formatTokens } from '@/lib/format';
 import { DetailSection, Stat } from './detailPrimitives';
 import type { TabScope } from './period';
@@ -58,11 +60,7 @@ export function CostTab({
       ? monthCumulative
       : rangeCumulative;
   const scopeLabel = scope.label;
-  const moneyLabel = billingType === 'pay_as_you_go'
-    ? 'Cost'
-    : billingType === 'unknown'
-      ? 'Usage value'
-      : 'Estimated usage value';
+  const moneyLabel = moneyLabelFor(billingType);
 
   const monthBucket = useMemo<CumulativeBucket | null>(() => {
     const data = cumulative.data;
@@ -99,7 +97,7 @@ export function CostTab({
           value: formatCost(cost.data?.current_month_to_date ?? null),
         },
         {
-          label: billingType === 'pay_as_you_go' ? 'Projected EOM' : 'Projected usage value',
+          label: 'Projected cost (EOM)',
           value: formatCost(cost.data?.projected_eom ?? null),
           hint: cost.data ? `${cost.data.days_remaining}d left` : undefined,
         },
@@ -112,12 +110,12 @@ export function CostTab({
     : [
         { label: `${moneyLabel} · ${scopeLabel}`, value: formatCost(recordedCost(monthBucket)) },
         {
-          label: billingType === 'pay_as_you_go' ? 'Projected EOM' : 'Projected usage value',
+          label: 'Projected cost (EOM)',
           value: '—',
           hint: 'current month only',
         },
         {
-          label: billingType === 'pay_as_you_go' ? 'Daily burn (7d)' : 'Daily usage value (7d)',
+          label: `${moneyLabel} per day (7d)`,
           value: '—',
           hint: 'current month only',
         },
@@ -216,7 +214,12 @@ function SplitTable({
             <Table>
               <THead>
                 <TR>
-                  <TH className="w-8" />
+                  <TH className="w-8">
+                    {/* The chevron column carries no data, but an unnamed
+                        column header is still a header — name it for what it
+                        does. */}
+                    <span className="sr-only">Details</span>
+                  </TH>
                   <TH>{nameHeader}</TH>
                   <TH className="text-right">Messages</TH>
                   <TH className="text-right">Input</TH>
@@ -272,17 +275,44 @@ function SplitRow({
   valueLabel: string;
 }) {
   const [open, setOpen] = useState(false);
+  // The expand control owns the open state, so the state lives on the button
+  // (aria-expanded) and points at the detail row it reveals.
+  const detailId = useId();
   return (
     <>
       <TR
         className="cursor-pointer hover:bg-surface-2/50"
         onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
       >
         <TD className="w-8 pr-0 text-fg-subtle">
-          <ChevronRight
-            className={cn('size-4 transition-transform duration-150', open && 'rotate-90')}
-          />
+          {/* A <tr> can't take focus, so a click-only row left keyboard and
+              screen-reader users unable to open the breakdown at all. The
+              chevron therefore holds the real control — a native <button>, so
+              Enter and Space work without hand-rolled key handling. The row
+              keeps its own onClick for mouse users; the button stops the click
+              from bubbling so one click still toggles exactly once. */}
+          <button
+            type="button"
+            aria-expanded={open}
+            aria-label={`${open ? 'Collapse' : 'Expand'} ${valueLabel} breakdown for ${name}`}
+            aria-controls={open ? detailId : undefined}
+            onClick={(e) => {
+              e.stopPropagation();
+              setOpen((v) => !v);
+            }}
+            className={cn(
+              buttonVariants({ variant: 'ghost', size: 'icon-sm' }),
+              // The 32px icon target overhangs the cell padding on both sides,
+              // so the chevron column keeps its original width and the icon
+              // stays exactly where it was.
+              '-ml-2 -mr-2 text-fg-subtle hover:bg-transparent',
+            )}
+          >
+            <ChevronRight
+              className={cn('size-4 transition-transform duration-150', open && 'rotate-90')}
+              aria-hidden
+            />
+          </button>
         </TD>
         <TD className="font-medium">{name}</TD>
         <TD className="text-right font-mono tabular">{b.msgs ?? 0}</TD>
@@ -307,7 +337,7 @@ function SplitRow({
       </TR>
       {open ? (
         <TR className="hover:bg-transparent">
-          <TD colSpan={colSpan} className="p-0">
+          <TD id={detailId} colSpan={colSpan} className="p-0">
             <div className="bg-surface-2/40 px-4 py-4">
               <DetailSection title={`${valueLabel} breakdown`}>
                 <div className="grid grid-cols-3 gap-3 sm:grid-cols-5">

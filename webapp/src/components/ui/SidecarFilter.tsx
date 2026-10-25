@@ -22,7 +22,7 @@ export function SidecarFilter() {
 
   return (
     <Select value={sidecarId ?? ALL} onValueChange={(value) => setSidecarId(value === ALL ? undefined : value)}>
-      <SelectTrigger className="w-32 sm:w-40" aria-label="Usage source">
+      <SelectTrigger className="w-32 sm:w-40" label="Usage source">
         <SelectValue />
       </SelectTrigger>
       <SelectContent>

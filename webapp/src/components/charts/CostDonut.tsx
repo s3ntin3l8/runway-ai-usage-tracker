@@ -5,6 +5,7 @@ import { useMemo, useState } from 'react';
 import type { CumulativeModelBucket } from '@/api/types';
 import { formatCost } from '@/lib/format';
 import { EChart } from './EChart';
+import { AccessibleSummary } from './accessibleSummary';
 import { baseTooltip, useChartTokens } from './theme';
 
 // Cost for one bucket. Excluding cache uses the token-priced non-cache
@@ -28,11 +29,16 @@ export function CostDonut({
   const t = useChartTokens();
   // Track legend deselection so the center total reflects only visible slices.
   const [selected, setSelected] = useState<Record<string, boolean>>({});
+  // Built once and shared by the chart and its text alternative.
+  const slices = useMemo(
+    () =>
+      Object.entries(data)
+        .map(([name, b]) => ({ name, value: modelCost(b, excludeCache) }))
+        .filter((d) => d.value > 0)
+        .sort((a, b) => b.value - a.value),
+    [data, excludeCache],
+  );
   const option = useMemo(() => {
-    const slices = Object.entries(data)
-      .map(([name, b]) => ({ name, value: modelCost(b, excludeCache) }))
-      .filter((d) => d.value > 0)
-      .sort((a, b) => b.value - a.value);
     const total = slices
       .filter((d) => selected[d.name] !== false)
       .reduce((sum, d) => sum + d.value, 0);
@@ -72,17 +78,26 @@ export function CostDonut({
         },
       ],
     };
-  }, [data, t, selected, excludeCache]);
+  }, [slices, t, selected]);
 
   return (
-    <EChart
-      option={option}
-      className={className ?? 'h-56'}
-      onReady={(chart) =>
-        chart.on('legendselectchanged', (e) =>
-          setSelected((e as { selected: Record<string, boolean> }).selected),
-        )
-      }
-    />
+    <>
+      <EChart
+        option={option}
+        className={className ?? 'h-56'}
+        ariaLabel="Cost by model chart"
+        onReady={(chart) =>
+          chart.on('legendselectchanged', (e) =>
+            setSelected((e as { selected: Record<string, boolean> }).selected),
+          )
+        }
+      />
+      {/* The legend names the entries, but each cost exists only in the
+          canvas and the hover tooltip. */}
+      <AccessibleSummary
+        caption="Cost by model"
+        entries={slices.map((s) => ({ label: s.name, value: formatCost(s.value) }))}
+      />
+    </>
   );
 }

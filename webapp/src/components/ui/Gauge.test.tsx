@@ -13,6 +13,17 @@ describe('Gauge', () => {
     expect(meter).toHaveAttribute('aria-valuetext', '42% used');
   });
 
+  it('names what the meter measures', () => {
+    // A bare "42%" tells a screen-reader user nothing about what is at 42%.
+    render(<Gauge pct={42} status="ok" label="Claude quota used" />);
+    expect(screen.getByRole('meter', { name: 'Claude quota used' })).toBeInTheDocument();
+  });
+
+  it('falls back to a generic name when the caller gives none', () => {
+    render(<Gauge pct={42} status="ok" />);
+    expect(screen.getByRole('meter', { name: 'Quota used' })).toBeInTheDocument();
+  });
+
   it('renders unknown aria text and zero width when pct is null', () => {
     const { container } = render(<Gauge pct={null} status="unknown" />);
     const meter = screen.getByRole('meter');

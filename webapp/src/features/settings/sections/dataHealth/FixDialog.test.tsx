@@ -280,7 +280,7 @@ describe('FixDialog', () => {
     expect(onOpenChange).not.toHaveBeenCalled();
 
     await userEvent.click(screen.getByRole('button', { name: /retry status/i }));
-    await userEvent.click(await screen.findByRole('button', { name: /close/i }));
+    await userEvent.click(await screen.findByRole('button', { name: /^done$/i }));
     expect(onOpenChange).toHaveBeenCalledWith(false);
     expect(api.fetchDataHealthJob).toHaveBeenCalledTimes(3);
   });

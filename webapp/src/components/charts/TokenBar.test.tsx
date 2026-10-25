@@ -7,6 +7,11 @@ function segments(container: HTMLElement) {
   return Array.from(container.querySelectorAll<HTMLElement>('[title]'));
 }
 
+function colorOf(container: HTMLElement, label: string): string | undefined {
+  return segments(container).find((s) => s.getAttribute('title')?.startsWith(`${label}:`))
+    ?.style.background;
+}
+
 describe('TokenBar', () => {
   it('sizes segments proportionally to their values', () => {
     const { container } = render(
@@ -49,5 +54,34 @@ describe('TokenBar', () => {
     );
     expect(getByText(/Input/)).toBeInTheDocument();
     expect(queryByText(/Output/)).toBeNull();
+  });
+
+  it('colours a segment by its key, not by its position in the bar', () => {
+    const tokens = {
+      tokens_input: 100,
+      tokens_output: 200,
+      tokens_cache_read: 300,
+      tokens_cache_create: 400,
+      tokens_reasoning: 500,
+    };
+    const { container: withCache } = render(<TokenBar tokens={tokens} />);
+    const { container: withoutCache } = render(<TokenBar tokens={tokens} excludeCache />);
+
+    // The slot belongs to the segment, so excluding cache must not renumber
+    // the colours of the segments that remain.
+    expect(colorOf(withCache, 'Reasoning')).toBe('var(--chart-3)');
+    expect(colorOf(withoutCache, 'Reasoning')).toBe('var(--chart-3)');
+    expect(colorOf(withCache, 'Cache read')).toBe('var(--chart-4)');
+    expect(colorOf(withCache, 'Input')).toBe('var(--chart-1)');
+  });
+
+  it('names the bar for assistive tech', () => {
+    const { getByRole } = render(
+      <TokenBar tokens={{ tokens_input: 1000, tokens_output: 2000 }} />,
+    );
+    expect(getByRole('img')).toHaveAttribute(
+      'aria-label',
+      'Token composition: Input 1K, Output 2K',
+    );
   });
 });

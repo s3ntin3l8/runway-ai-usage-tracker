@@ -17,11 +17,20 @@ import { chromium } from '@playwright/test';
  *  - landing: dark 2x desktop and 3x phone stills for the s3ntin3l8.de landing
  *    page, plus a short loop stepping through a provider's detail tabs
  *    (webm + mp4 + jpg poster; needs ffmpeg). Written to SCREENSHOTS_OUT_DIR.
+ *  - audit: phone and tablet viewports of every page, dark and light, written
+ *    to docs/audit/assets/<slug>/ (gitignored — the audit *report* is the
+ *    committed artifact, the captures stay local). The README profile is
+ *    desktop-only, so the mobile layouts had no visual record at all; these
+ *    are the reference images for a UI/UX audit. Nothing outside the audit
+ *    assets folder is touched.
  */
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const README_DIR = path.join(ROOT, 'assets/screenshots');
 const MANIFEST_DIR = path.join(ROOT, 'webapp/public/screenshots');
+// The audit assets are local only (see docs/audit/README.md). The slug names
+// the audit the captures belong to, so two audits never overwrite each other.
+const AUDIT_DIR = path.join(ROOT, 'docs/audit/assets', process.env.SCREENSHOTS_AUDIT_SLUG ?? 'audit');
 const WEB_URL = process.env.SCREENSHOTS_WEB_URL ?? 'http://127.0.0.1:3965';
 const PROFILE = process.env.SCREENSHOTS_PROFILE ?? 'readme';
 const PROVIDER = process.env.SCREENSHOTS_PROVIDER ?? 'anthropic';
@@ -159,11 +168,34 @@ async function captureLanding(browser) {
   await recordLoop(browser, outDir);
 }
 
-if (!['readme', 'landing'].includes(PROFILE))
-  throw new Error(`unknown SCREENSHOTS_PROFILE "${PROFILE}" (readme | landing)`);
+async function captureAudit(browser) {
+  // Viewport-sized, not full-page: a fixed bottom nav is captured at its
+  // viewport position, so a full-page shot would not show whether the last
+  // row of content clears it.
+  const viewports = [
+    { name: 'mobile', viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true },
+    { name: 'tablet', viewport: { width: 768, height: 1024 }, deviceScaleFactor: 2 },
+  ];
+  for (const theme of ['dark', 'light']) {
+    for (const { name, ...options } of viewports) {
+      const context = await newContext(browser, theme, options);
+      const page = await context.newPage();
+      for (const spec of PAGES) {
+        await open(page, spec);
+        const suffix = theme === 'light' ? '-light' : '';
+        await shot(page, AUDIT_DIR, `${spec.name}-${name}${suffix}.png`, false);
+      }
+      await context.close();
+    }
+  }
+}
+
+if (!['readme', 'landing', 'audit'].includes(PROFILE))
+  throw new Error(`unknown SCREENSHOTS_PROFILE "${PROFILE}" (readme | landing | audit)`);
 const browser = await chromium.launch();
 try {
   if (PROFILE === 'landing') await captureLanding(browser);
+  else if (PROFILE === 'audit') await captureAudit(browser);
   else await captureReadme(browser);
 } finally {
   await browser.close();

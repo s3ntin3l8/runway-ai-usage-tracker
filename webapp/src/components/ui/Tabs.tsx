@@ -28,7 +28,9 @@ export function TabsTrigger({
   return (
     <TabsPrimitive.Trigger
       className={cn(
-        'relative -mb-px flex h-10 min-w-fit cursor-pointer items-center gap-1.5 border-b-2 border-transparent px-3 text-[13px] font-medium text-fg-muted transition-colors duration-150',
+        // 44px on phones (the 7-tab provider strip is a touch target), the
+        // compact 40px from lg up.
+        'relative -mb-px flex h-11 min-w-fit cursor-pointer items-center gap-1.5 border-b-2 border-transparent px-3 text-[13px] font-medium text-fg-muted transition-colors duration-150 lg:h-10',
         'hover:text-fg data-[state=active]:border-accent data-[state=active]:text-fg',
         className,
       )}

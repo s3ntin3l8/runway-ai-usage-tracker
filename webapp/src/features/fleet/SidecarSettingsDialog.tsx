@@ -229,7 +229,7 @@ function KeepAliveSection({
           A Runway override is in charge of this sidecar.{' '}
           <button
             type="button"
-            className="font-medium text-accent hover:underline disabled:opacity-50"
+            className="font-medium text-accent-text hover:underline disabled:opacity-50"
             disabled={busy}
             onClick={() => clearKeepAlive.mutate()}
           >
@@ -248,7 +248,7 @@ function KeepAliveSection({
               {sidecar.update_available ? (
                 <button
                   type="button"
-                  className="font-medium text-accent hover:underline"
+                  className="font-medium text-accent-text hover:underline"
                   onClick={onUpdate}
                 >
                   Update it
@@ -279,7 +279,7 @@ function KeepAliveSection({
                         })
                       }
                     >
-                      <SelectTrigger aria-label={`${label} keep-alive`} className="h-8 w-44">
+                      <SelectTrigger label={`${label} keep-alive`} className="h-8 w-44">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -365,7 +365,7 @@ function UpdatesSection({
                 save.mutate({ auto_update: v === 'default' ? null : v === 'on' })
               }
             >
-              <SelectTrigger aria-label="Auto-update" className="h-8 w-44">
+              <SelectTrigger label="Auto-update" className="h-8 w-44">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -387,7 +387,7 @@ function UpdatesSection({
               save.mutate({ update_channel: v === 'default' ? null : (v as SidecarChannel) })
             }
           >
-            <SelectTrigger aria-label="Update channel" className="h-8 w-44">
+            <SelectTrigger label="Update channel" className="h-8 w-44">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -481,7 +481,7 @@ function LoggingSection({
           {sidecar.update_available ? (
             <button
               type="button"
-              className="font-medium text-accent hover:underline"
+              className="font-medium text-accent-text hover:underline"
               onClick={onUpdate}
             >
               Update it
@@ -502,7 +502,7 @@ function LoggingSection({
               disabled={save.isPending}
               onValueChange={(v) => save.mutate(v === 'default' ? null : (v as SidecarLogLevel))}
             >
-              <SelectTrigger aria-label="Log level" className="h-8 w-44">
+              <SelectTrigger label="Log level" className="h-8 w-44">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -525,7 +525,7 @@ function LoggingSection({
               Debug logging is verbose and stays on until you reset it.{' '}
               <button
                 type="button"
-                className="font-medium text-accent hover:underline disabled:opacity-50"
+                className="font-medium text-accent-text hover:underline disabled:opacity-50"
                 disabled={save.isPending}
                 onClick={() => save.mutate(null)}
               >
@@ -573,7 +573,7 @@ function LoginDirectoriesSection({ sidecar, online, onUpdate }: {
       {!report ? (
         <p className="mt-2 text-[11px] text-fg-muted">
           This sidecar does not report login directories yet. Update it to a newer build to configure them.
-          {sidecar.update_available ? <button type="button" className="ml-1 text-accent underline" onClick={onUpdate}>Update it</button> : null}
+          {sidecar.update_available ? <button type="button" className="ml-1 text-accent-text underline" onClick={onUpdate}>Update it</button> : null}
         </p>
       ) : (
         <form className="mt-3 flex flex-col gap-2" onSubmit={e => { e.preventDefault(); save.mutate(false); }}>

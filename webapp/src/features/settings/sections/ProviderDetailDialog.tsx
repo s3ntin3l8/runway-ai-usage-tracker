@@ -530,7 +530,7 @@ function AccountInitial({ account }: { account: ProviderAccount }) {
   return (
     <div
       aria-hidden
-      className="flex size-7 shrink-0 items-center justify-center rounded-sm bg-accent-muted text-[11px] font-semibold text-accent"
+      className="flex size-7 shrink-0 items-center justify-center rounded-sm bg-accent-muted text-[11px] font-semibold text-accent-text"
     >
       {ch}
     </div>

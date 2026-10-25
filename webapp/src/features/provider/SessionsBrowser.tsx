@@ -83,7 +83,7 @@ export function SessionsBrowser({
         <div className="flex items-center gap-3">
           {projectOptions.length > 0 ? (
             <Select value={project} onValueChange={setProject}>
-              <SelectTrigger className="h-8 w-44">
+              <SelectTrigger className="h-8 w-44" label="Project filter">
                 <SelectValue placeholder="All projects" />
               </SelectTrigger>
               <SelectContent>
