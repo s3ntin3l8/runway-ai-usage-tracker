@@ -8,9 +8,12 @@ from pathlib import Path
 
 import pytest
 
+from scripts.sidecar_pkg.event_extractors import hermes as hermes_extractor
 from scripts.sidecar_pkg.event_extractors.hermes import (
     WATERMARK_PRUNE_IDLE_DAYS,
+    _database_markers,
     _discover_hermes_db_paths,
+    _match_discovered_dbs,
     _prune_stale_watermark_slices,
     map_hermes_canonical,
     map_hermes_provider_id,
@@ -1435,3 +1438,343 @@ def test_prune_keeps_a_key_whose_timestamp_cannot_be_read(tmp_path):
     )
     assert events == []
     assert len(_watermark_keys(state_file)) == 1
+
+
+# ---------------------------------------------------------------------------
+# Watermark Compaction Tests: a live database's deleted rows (#958)
+# ---------------------------------------------------------------------------
+
+
+def _delete_usage_rows(db_path: Path, session_id: str) -> None:
+    """Delete a session's usage rows, the way a deleted Hermes session does."""
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("DELETE FROM session_model_usage WHERE session_id = ?", (session_id,))
+    conn.commit()
+    conn.close()
+
+
+def _parse(db_path: Path | list[Path], state_file: Path, account_id: str = "default"):
+    """Collect from ``db_path`` against a watermark file."""
+    paths = db_path if isinstance(db_path, list) else [db_path]
+    return parse_hermes_events(
+        db_paths=paths,
+        account_id=account_id,
+        since=datetime(2020, 1, 1, tzinfo=UTC),
+        state_file=state_file,
+    )
+
+
+def test_a_deleted_row_of_a_live_database_is_reclaimed(tmp_path):
+    """A session Hermes deleted leaves a tombstone behind in the watermark.
+
+    The database is still there, so the file is not gone -- but the row of the
+    deleted session is, and a row that is gone can never advance again. Its
+    high-water mark is dead weight, and the watermark of a long-lived install
+    grows with every session that ever ran unless it is reclaimed.
+    """
+    db_path, _ = _make_db(tmp_path)
+    state_file = tmp_path / "hermes_watermark.json"
+
+    try:
+        _parse(db_path, state_file)
+        assert len(_watermark_keys(state_file)) == 2
+
+        # Hermes drops one of the sessions.
+        _delete_usage_rows(db_path, "api-sess-kimi-01")
+
+        _parse(db_path, state_file)
+        keys = _watermark_keys(state_file)
+        assert len(keys) == 1
+        assert all("api-sess-kimi-01" not in key for key in keys)
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_a_recently_used_row_that_is_gone_keeps_its_mark(tmp_path):
+    """A session that was active recently keeps its mark.
+
+    Its row is gone, so it can never advance -- but a session can come back
+    (Hermes re-creates the row of a session it still holds, with the counters
+    it kept). Dropping the mark of a session that was quiet for less than the
+    idle window would make the sidecar report that session's whole lifetime
+    as new usage.
+    """
+    db_path, _ = _make_db(tmp_path)
+    state_file = tmp_path / "hermes_watermark.json"
+    now = datetime.now(UTC).timestamp()
+
+    try:
+        _set_row_times(db_path, last_seen=now)
+        _parse(db_path, state_file)
+        assert len(_watermark_keys(state_file)) == 2
+
+        _delete_usage_rows(db_path, "api-sess-kimi-01")
+
+        _parse(db_path, state_file)
+        assert len(_watermark_keys(state_file)) == 2
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_a_row_that_comes_back_is_not_counted_twice(tmp_path):
+    """A session whose row comes back reports its delta, not its whole life.
+
+    This is the regression test for the idle guard of the row check: the row
+    is dropped by Hermes and comes back with the counters it had. The mark of
+    a session that was quiet for less than the idle window has to survive, or
+    the sidecar reports the session's entire lifetime as new usage under an
+    event id the server has never seen (the emission counter restarts) and the
+    server counts it twice.
+    """
+    db_path, _ = _make_db(tmp_path)
+    state_file = tmp_path / "hermes_watermark.json"
+    now = datetime.now(UTC).timestamp()
+
+    try:
+        _set_row_times(db_path, last_seen=now)
+        first = _parse(db_path, state_file)
+        assert len(first) == 2
+
+        # The session is dropped from Hermes.
+        _delete_usage_rows(db_path, "api-sess-kimi-01")
+        _parse(db_path, state_file)
+        assert len(_watermark_keys(state_file)) == 2
+
+        # It comes back and moves on.
+        conn = sqlite3.connect(str(db_path))
+        conn.execute(
+            """
+            INSERT INTO session_model_usage (
+                session_id, model, billing_provider, billing_base_url, billing_mode,
+                task, api_call_count, input_tokens, output_tokens, cache_read_tokens,
+                cache_write_tokens, reasoning_tokens, estimated_cost_usd, actual_cost_usd,
+                first_seen, last_seen
+            ) VALUES (
+                'api-sess-kimi-01', 'kimi-for-coding', 'kimi-coding',
+                'https://api.kimi.com/coding/v1/', '', '', 11, 55000, 2300, 200000,
+                0, 500, 0.0, 0.0, 1780000000.0, ?
+            )
+            """,
+            (now,),
+        )
+        conn.commit()
+        conn.close()
+
+        again = _parse(db_path, state_file)
+        assert len(again) == 1
+        delta = again[0]
+        assert delta.session_id == "api-sess-kimi-01"
+        # The delta, not the session's whole lifetime (50000 + 5000).
+        assert delta.tokens_input == 5000
+        assert delta.tokens_output == 300
+        # The emission counter continues, so the event id stays one the server
+        # has already seen for this slice.
+        assert delta.event_id.endswith("|c11s2")
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_the_rows_of_two_databases_are_told_apart(tmp_path):
+    """Two databases can hold the same session id, and each keeps its own.
+
+    The live rows of one database say nothing about the other, so a session
+    that is dropped from one of them must not make the other one's slice look
+    gone (or alive).
+    """
+    db_one, _ = _make_db(tmp_path)
+    db_two, _ = _make_db(tmp_path)
+    state_file = tmp_path / "hermes_watermark.json"
+
+    try:
+        _parse([db_one, db_two], state_file)
+        assert len(_watermark_keys(state_file)) == 4
+
+        # The session is dropped from the first database only.
+        _delete_usage_rows(db_one, "api-sess-kimi-01")
+
+        _parse([db_one, db_two], state_file)
+        keys = _watermark_keys(state_file)
+        assert len(keys) == 3
+        # The slice of the second database survives: its own row is still there.
+        survivors = [key for key in keys if "api-sess-kimi-01" in key]
+        assert len(survivors) == 1
+        assert str(db_two.resolve()) in survivors[0]
+    finally:
+        db_one.unlink(missing_ok=True)
+        db_two.unlink(missing_ok=True)
+
+
+def test_a_database_whose_rows_cannot_be_listed_keeps_its_slices(monkeypatch, tmp_path):
+    """A database we could not read keeps every slice.
+
+    "I cannot tell" is not "the row is gone": the mark of a session we merely
+    failed to look up has to stay, or the next cycle would report its whole
+    lifetime as new usage.
+    """
+    monkeypatch.setattr(hermes_extractor, "_live_slice_suffixes", lambda conn, profile_name: None)
+    db_path, _ = _make_db(tmp_path)
+    state_file = tmp_path / "hermes_watermark.json"
+
+    try:
+        _parse(db_path, state_file)
+        assert len(_watermark_keys(state_file)) == 2
+
+        _delete_usage_rows(db_path, "api-sess-kimi-01")
+
+        _parse(db_path, state_file)
+        assert len(_watermark_keys(state_file)) == 2
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_the_live_slices_of_an_unreadable_database_cannot_be_told(tmp_path):
+    """A database whose rows cannot be listed answers "I cannot tell".
+
+    The answer has to be None rather than an empty set: an empty set says
+    "every row is gone", which would have the prune reclaim the marks of the
+    sessions that are still there.
+    """
+    db_path = tmp_path / "no_usage_table.db"
+    conn = sqlite3.connect(str(db_path))
+    try:
+        assert hermes_extractor._live_slice_suffixes(conn, "default") is None
+    finally:
+        conn.close()
+
+
+def test_prune_reclaims_only_the_row_that_is_gone(tmp_path):
+    """The rule itself: of two slices, the one without a row is reclaimed."""
+    db_path, _ = _make_db(tmp_path)
+    state_file = tmp_path / "hermes_watermark.json"
+
+    try:
+        _parse(db_path, state_file)
+        state = json.loads(state_file.read_text(encoding="utf-8"))
+        live = {
+            "default|api-sess-minimax-02|MiniMax-M3|minimax-oauth"
+            "|https://api.minimax.io/anthropic||background_review"
+        }
+        pruned = _prune_stale_watermark_slices(
+            state,
+            [db_path],
+            account_id="default",
+            idle_cutoff=_cutoff(),
+            live_slices={str(db_path.resolve()): live},
+        )
+        assert pruned == 1
+        assert len(state) == 1
+        assert all("api-sess-minimax-02" in key for key in state)
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_prune_keeps_the_slices_of_a_database_that_was_not_discovered(tmp_path):
+    """A database that exists but was not discovered keeps every slice.
+
+    Only its own rows can say whether its sessions are still alive, and a
+    database the collector did not open is not one it can ask.
+    """
+    db_path, _ = _make_db(tmp_path)
+    state_file = tmp_path / "hermes_watermark.json"
+
+    try:
+        _parse(db_path, state_file)
+        state = json.loads(state_file.read_text(encoding="utf-8"))
+        pruned = _prune_stale_watermark_slices(
+            state, [], account_id="default", idle_cutoff=_cutoff()
+        )
+        assert pruned == 0
+        assert len(state) == 2
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_a_key_is_matched_against_every_database_it_could_belong_to(tmp_path):
+    """One discovered path can be the prefix of another, and a key holds both.
+
+    The marker of ``/a`` is inside the marker of ``/a|b``, so a key of the
+    second database matches the first one as well. Attributing the key to
+    the wrong database would report a live slice as gone and drop its
+    high-water mark -- so the slice has to stay alive as long as *any* of
+    the databases it could belong to still has its row.
+    """
+    db_one = tmp_path / "a"
+    db_two = tmp_path / "a|b"
+    conn = make_hermes_db(str(db_one))
+    conn.close()
+    conn = make_hermes_db(str(db_two))
+    conn.close()
+    state_file = tmp_path / "hermes_watermark.json"
+
+    try:
+        _parse([db_one, db_two], state_file)
+        assert len(_watermark_keys(state_file)) == 4
+
+        # Nothing changed, but the compaction still runs over the idle
+        # slices: the slice of the second database has to survive, because
+        # the key holds the path of both databases.
+        _parse([db_one, db_two], state_file)
+        keys = _watermark_keys(state_file)
+        assert len(keys) == 4
+        assert sum(1 for key in keys if "api-sess-kimi-01" in key) == 2
+    finally:
+        db_one.unlink(missing_ok=True)
+        db_two.unlink(missing_ok=True)
+
+
+def test_the_databases_a_key_could_belong_to_are_matched_longest_first():
+    """Every database a key could belong to is returned, longest path first.
+
+    The order is part of the contract: the longer path is the one the key
+    was written with, and the caller relies on the first match being it.
+    Pinned here rather than through the prune, so the assertion does not
+    depend on the iteration order of a set.
+    """
+    markers = _database_markers(["/a", "/a|b"])
+    matches = _match_discovered_dbs("default|/a|b|default|sess|model|hermes|||", markers)
+    assert matches == [
+        ("/a|b", "default|sess|model|hermes|||"),
+        ("/a", "b|default|sess|model|hermes|||"),
+    ]
+
+
+def test_a_key_of_a_database_whose_rows_could_not_be_listed_is_kept(monkeypatch, tmp_path):
+    """A key that could belong to two databases needs both of them listed.
+
+    One discovered path can be the prefix of another, so a key of a database
+    whose rows could not be listed also matches a database that was listed.
+    The unlisted database cannot say that its row is gone, so the slice
+    stays -- the reclaim of the other database must not reach it.
+    """
+    db_listed = tmp_path / "a"
+    db_unlisted = tmp_path / "a|b"
+    conn = make_hermes_db(str(db_listed))
+    conn.close()
+    conn = make_hermes_db(str(db_unlisted))
+    conn.close()
+    state_file = tmp_path / "hermes_watermark.json"
+    original = hermes_extractor._live_slice_suffixes
+
+    def _only_the_listed_database(conn, profile_name):
+        row = conn.execute("PRAGMA database_list").fetchone()
+        # The two paths are compared resolved: SQLite reports the path it was
+        # given, and a resolved compare says the same thing whatever the
+        # platform does with its temporary directory.
+        if row is not None and Path(row[2]).resolve() == db_unlisted.resolve():
+            return None
+        return original(conn, profile_name)
+
+    try:
+        _parse([db_listed, db_unlisted], state_file)
+        assert len(_watermark_keys(state_file)) == 4
+
+        # The rows of the second database cannot be listed any more.
+        monkeypatch.setattr(hermes_extractor, "_live_slice_suffixes", _only_the_listed_database)
+        _parse([db_listed, db_unlisted], state_file)
+
+        keys = _watermark_keys(state_file)
+        assert len(keys) == 4
+        assert sum(1 for key in keys if "api-sess-kimi-01" in key) == 2
+    finally:
+        db_listed.unlink(missing_ok=True)
+        db_unlisted.unlink(missing_ok=True)
