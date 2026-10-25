@@ -500,7 +500,7 @@ def _history_decision(value: Any) -> dict[str, Any]:
 
 
 def evaluate(value: Any) -> dict[str, Any]:
-    """Accept only the version-1 allowlist; supplied provenance is never authenticated."""
+    """Validate sample/history envelopes; supplied provenance is never authenticated."""
     _keys(
         value, {"format_version", "source_commit", "image", "observed_at", "deployment", "report"}
     )

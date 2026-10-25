@@ -18,6 +18,7 @@ Everything about Runway that is not the code itself. Start here.
 | Document | What it is |
 |---|---|
 | [architecture.md](architecture.md) | The event-sourced data model, the ingest path, the service modules and the collectors. |
+| [claude-complete-history-verification-956.md](claude-complete-history-verification-956.md) | Bounded operator cloud-history verification and remaining Claude acceptance gates. |
 | [api-reference.md](api-reference.md) | Every `/api/v1` route, its auth scheme, and the `LimitCard` schema. |
 | [collection_logic.md](collection_logic.md) | How a collector turns a response into a card — strategies, enrichment, and card reconciliation. |
 | [statistics.md](statistics.md) | The `data_source` / `input_source` taxonomy. **The source of truth for those values.** |
