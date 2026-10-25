@@ -981,3 +981,15 @@ class SidecarPairingCode(SQLModel, table=True):  # type: ignore[call-arg]
     created_by: str | None = None
     used_at: UTCDateTime | None = None
     used_by_hostname: str | None = None
+
+
+class ClaudeCloudVerification(SQLModel, table=True):  # type: ignore[call-arg]
+    """Single operator-owned encrypted verification checkpoint; no credentials."""
+
+    __tablename__ = "claude_cloud_verification"
+    id: int = Field(default=1, primary_key=True)
+    job_handle: str
+    revision: int = 0
+    state_encrypted: str
+    lease_owner: str | None = None
+    lease_expires: float = 0
