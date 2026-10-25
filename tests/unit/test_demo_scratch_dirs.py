@@ -14,6 +14,15 @@ import pytest
 from scripts.demo import instance
 from scripts.demo.instance import KEEP_MARKER, LOCK_FILE, STALE_AFTER_SECONDS
 
+# The lock is POSIX-only: scripts/demo/instance.py guards the fcntl import,
+# and so is the demo itself -- its interpreter is .venv/bin/python, which is
+# not a Windows path. A platform without a lock cannot own a scratch dir, so
+# the tests about the lock have no subject there.
+requires_lock = pytest.mark.skipif(
+    instance.fcntl is None,
+    reason="the demo's scratch-dir lock is POSIX-only",
+)
+
 
 @pytest.fixture
 def tmp_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
@@ -40,6 +49,7 @@ class _exited_server:
         return 0
 
 
+@requires_lock
 def test_a_claimed_dir_is_kept(tmp_root: Path) -> None:
     # A demo that is running holds the dir's lock, however long it has been
     # running: the lock, not the dir's age, says it is still there.
@@ -54,6 +64,7 @@ def test_a_claimed_dir_is_kept(tmp_root: Path) -> None:
         lock_file.close()
 
 
+@requires_lock
 def test_a_dir_whose_owner_is_gone_is_removed(tmp_root: Path) -> None:
     # The demo was killed: its lock was released with it, and the dir is
     # left behind.
@@ -64,6 +75,7 @@ def test_a_dir_whose_owner_is_gone_is_removed(tmp_root: Path) -> None:
     assert not demo.exists()
 
 
+@requires_lock
 def test_a_kept_dir_is_kept_even_though_nothing_holds_it(tmp_root: Path) -> None:
     # `--keep` is the operator's decision: the dir outlives the process, and
     # the operator says so itself.
@@ -98,6 +110,7 @@ def test_a_dir_that_is_not_ours_is_left_alone(tmp_root: Path) -> None:
     getattr(os, "geteuid", lambda: 1)() == 0,
     reason="root reads a file whatever its permission bits say",
 )
+@requires_lock
 def test_a_lock_that_cannot_be_read_keeps_the_dir(tmp_root: Path) -> None:
     # Not being able to read the lock is not evidence that nobody owns the
     # dir -- it is evidence that we cannot tell. The dir is left alone.
@@ -112,6 +125,7 @@ def test_a_lock_that_cannot_be_read_keeps_the_dir(tmp_root: Path) -> None:
         os.chmod(demo / LOCK_FILE, 0o600)
 
 
+@requires_lock
 def test_a_kept_demo_leaves_the_dir_and_releases_its_lock(tmp_path: Path) -> None:
     # A kept demo leaves its dir for the operator and lets go of the lock:
     # the marker that keeps the sweep off the dir was written when the dir
@@ -179,3 +193,17 @@ def test_a_failed_start_deletes_the_dir_it_does_not_keep(
         instance.start_demo(keep=False)
 
     assert list(tmp_path.glob("runway-demo-*")) == []
+
+
+@pytest.mark.skipif(
+    instance.fcntl is not None,
+    reason="this platform has a lock",
+)
+def test_a_platform_without_a_lock_cannot_own_a_dir(tmp_path: Path) -> None:
+    # The other side of the same contract, on the platform that has no lock:
+    # nothing can claim a dir there, and so nothing can be holding one. The
+    # sweep reads that as "nobody owns it", which is right -- the demo cannot
+    # run on such a platform, so there is no live demo to protect.
+    demo = _demo_dir(tmp_path, "runway-demo-nolock")
+    assert instance._claim_demo_dir(demo) is None
+    assert instance._dir_is_claimed(demo) is False
