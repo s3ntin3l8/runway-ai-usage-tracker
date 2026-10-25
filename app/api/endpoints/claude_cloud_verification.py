@@ -81,9 +81,11 @@ async def verification_action(
             if probe._gate.locked():
                 raise CheckpointError("busy")
             async with probe._gate:
-                await asyncio.to_thread(store.archive, body.job_handle, body.revision)
+                archived_revision = await asyncio.to_thread(
+                    store.archive, body.job_handle, body.revision
+                )
             return VerificationArchiveReport(
-                state="archived", job_handle=body.job_handle, revision=body.revision
+                state="archived", job_handle=body.job_handle, revision=archived_revision
             )
         if isinstance(body, VerificationCancel):
             await asyncio.to_thread(store.cancel, body.job_handle)

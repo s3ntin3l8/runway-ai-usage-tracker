@@ -16,7 +16,7 @@ def test_preview_and_archive_use_only_exact_local_checkpoint(client, monkeypatch
     calls = []
     store = SimpleNamespace(
         archive_preview=lambda handle: {"state": "terminal", "job_handle": handle, "revision": 7},
-        archive=lambda handle, revision: calls.append((handle, revision)),
+        archive=lambda handle, revision: (calls.append((handle, revision)), 7)[1],
     )
     monkeypatch.setattr(endpoint, "checkpoint_store", lambda: store)
     read = AsyncMock(side_effect=AssertionError("unexpected_source_access"))

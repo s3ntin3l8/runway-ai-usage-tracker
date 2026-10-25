@@ -24,6 +24,7 @@ LEASE_SECONDS = 45
 
 
 MAX_ARCHIVES = 64
+MAX_ARCHIVED_BYTES = 64 * 1024 * 1024
 
 
 class CheckpointError(ValueError):
@@ -165,7 +166,7 @@ class CheckpointStore:
         return state
 
     def archived_snapshot(self, handle: str) -> VerificationState:
-        """Local recovery only; never project historical usage without source authority."""
+        """Internal operator recovery verification; never export historical usage through the API."""
         return self._decode_archive(self._archived_row(handle))
 
     def archive_preview(self, handle: str) -> dict[str, str | int]:
@@ -190,11 +191,11 @@ class CheckpointStore:
                 "revision": row["revision"],
             }
 
-    def archive(self, handle: str, revision: int) -> None:
+    def archive(self, handle: str, revision: int) -> int:
         """Verify an unchanged encrypted terminal copy before atomically releasing its slot."""
         self._require_encryption()
         if type(revision) is not int or revision < 0:
-            raise CheckpointError("checkpoint_changed")
+            raise CheckpointError("invalid_revision")
         with self._connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
             archived = connection.execute(
@@ -204,7 +205,7 @@ class CheckpointStore:
                 self._decode_archive(archived)
                 if archived["revision"] != revision:
                     raise CheckpointError("checkpoint_changed")
-                return  # Idempotent; never touch a newer current job.
+                return archived["revision"]  # Idempotent; never touch a newer current job.
             row = connection.execute(
                 "SELECT * FROM claude_cloud_verification WHERE id=1 AND job_handle=?", (handle,)
             ).fetchone()
@@ -220,7 +221,14 @@ class CheckpointStore:
             count = connection.execute(
                 "SELECT count(*) FROM claude_cloud_verification_archives"
             ).fetchone()[0]
-            if count >= MAX_ARCHIVES:
+            used_bytes = connection.execute(
+                "SELECT COALESCE(SUM(LENGTH(CAST(state_encrypted AS BLOB))),0) "
+                "FROM claude_cloud_verification_archives"
+            ).fetchone()[0]
+            if (
+                count >= MAX_ARCHIVES
+                or used_bytes + len(row["state_encrypted"]) > MAX_ARCHIVED_BYTES
+            ):
                 raise CheckpointError("archive_limit")
             connection.execute(
                 "INSERT INTO claude_cloud_verification_archives "
@@ -244,6 +252,7 @@ class CheckpointStore:
             if changed != 1:
                 raise CheckpointError("checkpoint_changed")
             connection.commit()
+            return saved["revision"]
 
     def snapshot(self, handle: str) -> VerificationState:
         return self._decode(self._row(handle))

@@ -31,7 +31,8 @@ def test_archive_preserves_exact_ciphertext_and_survives_restart(tmp_path):
         "job_handle": handle,
         "revision": 0,
     }
-    store.archive(handle, 0)
+    assert store.archive(handle, 0) == 0
+    assert store.archive(handle, 0) == 0
     assert store.current_handle() is None
     restarted = CheckpointStore(path, crypto, clock=lambda: clock[0])
     assert restarted.archived_snapshot(handle) == state
@@ -322,3 +323,28 @@ def test_wrong_table_nonterminal_ciphertext_cannot_be_acknowledged_as_archived(t
         with pytest.raises(CheckpointError, match="^checkpoint_unavailable$"):
             operation()
     assert store.current_handle() == handle and store.snapshot(handle) == state
+
+
+@pytest.mark.parametrize("revision", [True, -1, "0"])
+def test_invalid_local_revision_is_distinct_from_a_stale_checkpoint(tmp_path, revision):
+    store, state, _, _, _, handle = terminal(tmp_path)
+    with pytest.raises(CheckpointError, match="^invalid_revision$"):
+        store.archive(handle, revision)
+    assert store.snapshot(handle) == state
+
+
+def test_archive_byte_limit_leaves_original_and_prior_history_intact(tmp_path, monkeypatch):
+    from app.services import claude_cloud_checkpoints as checkpoints
+
+    store, state, path, _, _, handle = terminal(tmp_path)
+    store.archive(handle, 0)
+    current = store.create(state)
+    with sqlite3.connect(path) as db:
+        used = db.execute(
+            "SELECT SUM(LENGTH(CAST(state_encrypted AS BLOB))) FROM claude_cloud_verification_archives"
+        ).fetchone()[0]
+    monkeypatch.setattr(checkpoints, "MAX_ARCHIVED_BYTES", used)
+    with pytest.raises(CheckpointError, match="^archive_limit$"):
+        store.archive(current, 0)
+    assert store.current_handle() == current and store.snapshot(current) == state
+    assert store.archived_snapshot(handle) == state
