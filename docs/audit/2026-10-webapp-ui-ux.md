@@ -187,11 +187,11 @@ Tracked as GitHub issues rather than footnotes:
 - [#949 Backend `total` for the rankings](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/949) —
   so the titles can read "Top 12 **of N**"
 - [#950 Mobile and table density](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/950) — overflowing
-  columns, heatmap cells, the settings redirect
+  columns, heatmap cells, the empty settings section list
 - [#951 Chart colour and legend semantics](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/951) — the
   six-colour ceiling, axis truncation, a duplicated rank bar
 - [#952 Terminology and small accessibility gaps](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/952) —
-  deep links, the duplicate provider status, empty column headers, focus rings
+  deep links, the duplicate provider status, focus rings
 - [#953 Playwright UX smoke suite and its CI job](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/953) —
   what axe and the contrast guard cannot catch
 
@@ -213,13 +213,18 @@ The findings themselves:
   390px because the chart grid and canvas are pinned to a desktop width; one table
   mixes `1234`, `1,234` and `1.23M` in adjacent columns; the provider tab strip
   overflows a phone with no scroll affordance; the provider Overview tab stacks about
-  nine panels with no priority signal.
+  nine panels with no priority signal; and the settings page shows an empty section
+  list on a phone, so there is no way to navigate to a section. The settings page does
+  not redirect below 1024px — the only viewport-conditional redirect fires at 1024px
+  and up, and the section is already in the URL as a nested route, so nothing is
+  dropped. The defect is the layout, not a missing redirect.
 - **Chart colour and legend semantics** — `--chart-1` and `--chart-6` are 1.22:1 similar
   in the dark theme, and the palette is already exceeded silently: the history charts
   and the donuts pick colours with a modulo over six, so a seventh series repeats the
-  first. The two themes have different worst pairs (dark chart-1/chart-6, light
-  chart-1/chart-2), so one palette cannot be validated once. Axis labels are cut at ten
-  characters mid-word. Two implementations of the same rank bar disagree about what
+  first. The two themes have different worst pairs by CIELAB ΔE (dark chart-1/chart-6
+  at ΔE 13.9, light chart-1/chart-2 at ΔE 22.7), so one palette cannot be validated
+  once. Axis labels are cut at ten characters mid-word. Two implementations of the
+  same rank bar disagree about what
   "Total" means — one sums the segments it draws, the other uses the backend's
   authoritative `cost_usd` — and only one of them discloses the difference. The heatmap
   ramp is a sequential scale that no legend explains.
@@ -232,7 +237,7 @@ The findings themselves:
   navigable; `outline-none` on the focusable tab panel suppresses the global focus
   ring; the skeletons and the countdown announce nothing, so an async update is silent;
   the `?tab=` deep link does not scroll the selected tab into view on a phone; and the
-  icon-only dismiss buttons are 24px against a 44px floor.
+  icon-only dismiss buttons are 22px against a 44px floor.
 - **Playwright UX smoke suite** — the axe guard and the token contrast guard are the
   two permanent guardrails this audit added, and neither can see what needs a real
   browser: horizontal overflow at 390px, a control below the touch floor, a focus ring
