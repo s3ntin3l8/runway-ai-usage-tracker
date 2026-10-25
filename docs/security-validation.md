@@ -61,6 +61,27 @@ starts wherever the browser matrix starts it. And the steps of a container job
 run as **root**, which Firefox refuses to do with a home owned by somebody else,
 so the steps that start the browsers point `HOME` at root's home.
 
+### UX suite
+
+The browser-level guard for what jsdom cannot see. The axe guard and the
+contrast check run in jsdom, so neither can catch a page that scrolls sideways
+on a phone, a control that is present but too small to hit, a focus ring
+painted outside the viewport, or the fixed bottom nav sitting on top of the
+content it should sit above.
+
+`npm --prefix webapp run test:ux` runs Chromium against the demo instance —
+the security suite's own server boots an empty database, and a layout
+assertion against an empty app proves nothing: the column that overflows only
+overflows once there are rows in it. Each route waits for the seeded data to
+be on screen before it is measured, and a rule that matched nothing at all
+fails rather than passes quietly.
+
+It runs in CI on every pull request that touches the webapp, the demo's own
+scripts, the test dependencies or the workflow itself, in the same pinned
+Playwright image as the browser matrix and with the same linker registration.
+Chromium only: this suite is about layout, and the browser matrix already
+covers the three browsers.
+
 ### npm cache
 
 The browser matrix installs the webapp dependency tree with

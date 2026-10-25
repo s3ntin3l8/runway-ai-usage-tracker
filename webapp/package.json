@@ -13,7 +13,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "test:security": "playwright test"
+    "test:security": "playwright test",
+    "test:ux": "playwright test --config=playwright.ux.config.ts"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

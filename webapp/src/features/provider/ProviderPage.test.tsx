@@ -187,23 +187,18 @@ describe('ProviderPage', () => {
     expect(await screen.findByTestId('events-tab')).toBeInTheDocument();
   });
 
-  it('scrolls the deep-linked tab into view once the tab strip exists', async () => {
+  it('selects the deep-linked tab once the strip exists', async () => {
     // The strip only renders once the provider's entry has loaded, and the
-    // tab comes from the URL, so it never changes again on a cold load. An
-    // effect that only watched the tab would have run once, against a strip
-    // that was not there yet, and the link would land on a page that looks
-    // like the wrong tab is selected.
-    const scrollIntoView = vi.fn();
-    const original = Element.prototype.scrollIntoView;
-    Element.prototype.scrollIntoView = scrollIntoView;
-    try {
-      vi.mocked(api.fetchFleetUsage).mockResolvedValue(fleetResponse([fleetEntry()]));
-      renderPage('/provider/anthropic?tab=cost');
-      await screen.findByTestId('cost-tab');
-      await waitFor(() => expect(scrollIntoView).toHaveBeenCalled());
-    } finally {
-      Element.prototype.scrollIntoView = original;
-    }
+    // tab comes from the URL, so the selection can only be checked after the
+    // data is in. Bringing the tab into view is the strip's job: it knows how
+    // wide its own content is (`TabsList` reveals the selected tab).
+    vi.mocked(api.fetchFleetUsage).mockResolvedValue(fleetResponse([fleetEntry()]));
+    renderPage('/provider/anthropic?tab=cost');
+    await screen.findByTestId('cost-tab');
+    expect(screen.getByRole('tab', { name: 'Cost' })).toHaveAttribute(
+      'data-state',
+      'active',
+    );
   });
 
   it('triggers collection and toasts on success', async () => {

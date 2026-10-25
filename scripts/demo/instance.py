@@ -14,6 +14,7 @@ touches Docker, so a compose deployment on the same host is out of reach.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import os
 import shutil
 import signal
@@ -24,12 +25,42 @@ import time
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
+from typing import BinaryIO
+
+try:  # POSIX only; the demo itself is POSIX-only (it signals its own group).
+    import fcntl
+except ImportError:  # pragma: no cover - Windows
+    fcntl = None  # type: ignore[assignment]
 
 from scripts.demo.env import assert_demo_env, assert_ports_free, demo_env
 
 ROOT = Path(__file__).resolve().parents[2]
 PYTHON = ROOT / ".venv" / "bin" / "python"
 DEMO_PORT = int(os.environ.get("DEMO_PORT", "3965"))
+
+# The marker a demo leaves in its scratch dir when it was told to keep it.
+KEEP_MARKER = "keep"
+
+# The lock a running demo holds on its scratch dir.
+#
+# The lock, not the pid, is what says a demo is still there. A pid cannot:
+# pids are reused, so the pid of a demo that died last week can belong to an
+# unrelated process today, and a pid that is alive can also belong to a demo
+# that has been running for days -- neither is evidence of anything. A lock
+# is held by the process that took it and released when that process dies.
+LOCK_FILE = "lock"
+
+# The lock file is opened without following a symlink (the temp dir is
+# world-writable) and without leaking the descriptor to the server the demo
+# starts. Not every platform has both flags.
+_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
+_CLOEXEC = getattr(os, "O_CLOEXEC", 0)
+
+# How old a scratch dir has to be before the sweep takes one that was never
+# claimed. A demo that dies between making the dir and claiming it leaves a
+# dir nothing can be read from, and a demo that is starting right now has
+# just made its dir.
+STALE_AFTER_SECONDS = 24 * 60 * 60
 
 
 def _wait_for_http(url: str, timeout: float = 60.0) -> None:
@@ -112,50 +143,194 @@ class Demo:
     url: str
     server: subprocess.Popen[bytes]
     keep: bool
+    # The open lock on the scratch dir. It is held for as long as the demo
+    # runs, so a later demo can tell that this one is still there.
+    lock_file: BinaryIO | None = None
 
     def stop(self) -> None:
         if self.server.poll() is None:
-            # Own session (start_new_session) so the whole group goes. The
-            # server can exit between poll() and killpg (e.g. it lost a port
-            # race); a ProcessLookupError then must not mask the real error.
+            # The server is stopped by name, because it shares the demo's
+            # process group rather than leading one of its own (see
+            # start_demo). It can exit between poll() and terminate() (e.g.
+            # it lost a port race); a ProcessLookupError then must not mask
+            # the real error.
             try:
-                os.killpg(self.server.pid, signal.SIGTERM)
+                self.server.terminate()
                 try:
                     self.server.wait(timeout=10)
                 except subprocess.TimeoutExpired:
-                    os.killpg(self.server.pid, signal.SIGKILL)
+                    self.server.kill()
             except ProcessLookupError:
                 # Already exited on its own; wait() below just reaps it.
                 pass
             self.server.wait()
         if self.keep:
+            # The dir is the operator's now, and it said so when it was
+            # made: the sweep does not take a marked dir for a leftover.
             print(f"[demo] kept {self.demo_dir}")
+        else:
+            shutil.rmtree(self.demo_dir, ignore_errors=True)
+        # The lock is released LAST. Until it is, the sweep sees a dir that
+        # is still claimed, and a dir that has just lost its lock, its
+        # marker and its contents is exactly what the sweep takes.
+        self._release_lock()
+
+    def _release_lock(self) -> None:
+        if self.lock_file is None:
             return
-        shutil.rmtree(self.demo_dir, ignore_errors=True)
+        # Releasing the lock is a best-effort courtesy to the next sweep: a
+        # close that fails has already lost the file, and the process is
+        # about to end anyway, which releases the lock with it.
+        with contextlib.suppress(OSError):
+            self.lock_file.close()
+        self.lock_file = None
+
+
+def _mark_kept(demo_dir: Path) -> None:
+    """Say that the dir is the operator's, so the sweep leaves it alone."""
+    try:
+        (demo_dir / KEEP_MARKER).write_text("kept")
+    except OSError as e:
+        # The dir is kept whatever we can write into it, and this runs from
+        # a teardown: an error here would replace the exception already in
+        # flight and turn a clean stop into a traceback.
+        print(f"[demo] could not mark {demo_dir} as kept: {e}")
+
+
+def _claim_demo_dir(demo_dir: Path) -> BinaryIO | None:
+    """Lock the scratch dir for as long as this process lives.
+
+    The lock is what a later demo reads: it can take the lock only when
+    this demo is gone.
+
+    The lock is handed back as the open file rather than as a descriptor:
+    closing a file object twice is a no-op, so the demo can close it when
+    it stops and the caller can close it again without closing something
+    else that took the number in the meantime.
+    """
+    if fcntl is None:  # pragma: no cover - Windows
+        return None
+    lock_file = _open_lock(demo_dir / LOCK_FILE, os.O_CREAT | os.O_RDWR)
+    try:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        lock_file.close()
+        raise
+    return lock_file
+
+
+def _open_lock(path: Path, flags: int) -> BinaryIO:
+    """Open the lock file without following a symlink.
+
+    The lock file lives in the world-writable temp dir, and the sweep opens
+    files in dirs it did not create: a symlink planted there must not lead
+    the open to somewhere else.
+    """
+    fd = os.open(path, flags | _NOFOLLOW | _CLOEXEC, 0o600)
+    return os.fdopen(fd, "r+b")
+
+
+def _dir_is_claimed(demo_dir: Path) -> bool:
+    """True when a demo still holds the scratch dir.
+
+    A demo that died released its lock, and so did one that was killed with
+    SIGKILL: the lock belongs to the process, not to the file.
+    """
+    if fcntl is None:  # pragma: no cover - Windows
+        return False
+    lock_path = demo_dir / LOCK_FILE
+    try:
+        lock_file = _open_lock(lock_path, os.O_RDWR)
+    except FileNotFoundError:
+        return False  # never claimed: the demo died before it could
+    except OSError:
+        # The lock cannot be read (no permission, too many open files, a
+        # broken disk). That is not evidence that nobody owns the dir -- it
+        # is evidence that we cannot tell -- so the dir is left alone.
+        return True
+    try:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        return True  # held: a live demo owns this dir
+    finally:
+        lock_file.close()
+    return False
+
+
+def _age_of(path: Path) -> float:
+    """Seconds since the path was last changed."""
+    try:
+        return time.time() - path.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
+def clean_stale_scratch_dirs() -> None:
+    """Remove the scratch dirs of demos that are no longer running.
+
+    A demo that is stopped with SIGKILL cannot clean up after itself, and
+    that is how a supervisor stops it: Playwright's web server runner kills
+    the whole process group with SIGKILL. The demo's lock tells a live demo
+    from a dead one, so a scratch dir left behind by a killed demo does not
+    pile up in the temp directory.
+
+    Two things the sweep leaves alone:
+
+    - A dir that was kept on purpose (`--keep`) is the operator's, not ours
+      to delete. It says so itself.
+    - A dir that was never claimed is a demo that died between making the
+      dir and locking it, or a demo that is starting right now. Only an old
+      one is swept.
+    """
+    for candidate in Path(tempfile.gettempdir()).glob("runway-demo-*"):
+        if (candidate / KEEP_MARKER).exists():
+            continue  # a kept demo is deliberate
+        if _dir_is_claimed(candidate):
+            continue  # a live demo owns it
+        if not (candidate / LOCK_FILE).exists() and _age_of(candidate) < STALE_AFTER_SECONDS:
+            continue  # never claimed, and too young to be a leftover
+        shutil.rmtree(candidate, ignore_errors=True)
 
 
 def start_demo(*, keep: bool = False, quiet: bool = False) -> Demo:
     assert_ports_free([DEMO_PORT])
     ensure_spa_built()
 
+    clean_stale_scratch_dirs()
     demo_dir = Path(tempfile.mkdtemp(prefix="runway-demo-"))
-    run_dir = demo_dir / "run"  # server cwd: no .env here
-    for sub in ("home", "tmp", "run", "config"):
-        (demo_dir / sub).mkdir(parents=True, exist_ok=True)
-
-    env = demo_env(
-        demo_dir,
-        {
-            "PYTHONPATH": str(ROOT),
-            "APP_HOST": "127.0.0.1",
-            "APP_PORT": str(DEMO_PORT),
-            # The poller still runs, but its collectors only find the scratch
-            # HOME's empty credential stores, so the seeded cards stay as seeded.
-            "LOG_LEVEL": "WARNING",
-        },
-    )
     server: subprocess.Popen[bytes] | None = None
+    lock_file: BinaryIO | None = None
+    # Everything from here on is inside the try: a failure between making the
+    # dir and starting the server has to leave the dir in a state the sweep
+    # understands, or it leaks the dir and the lock with it.
     try:
+        if keep:
+            # The dir is the operator's from the moment it exists, and it
+            # says so: a start that fails later still leaves them the dir
+            # they asked for, and the sweep leaves a marked dir alone.
+            _mark_kept(demo_dir)
+        # The lock is taken before the dir holds anything else. It is what
+        # tells a later demo that this one is still running, so a demo that
+        # was killed with SIGKILL does not leave its scratch dir behind for
+        # ever. A demo that dies between making the dir and locking it
+        # leaves a dir nothing can be read from, and the sweep takes one of
+        # those only once it is old.
+        lock_file = _claim_demo_dir(demo_dir)
+        run_dir = demo_dir / "run"  # server cwd: no .env here
+        for sub in ("home", "tmp", "run", "config"):
+            (demo_dir / sub).mkdir(parents=True, exist_ok=True)
+
+        env = demo_env(
+            demo_dir,
+            {
+                "PYTHONPATH": str(ROOT),
+                "APP_HOST": "127.0.0.1",
+                "APP_PORT": str(DEMO_PORT),
+                # The poller still runs, but its collectors only find the scratch
+                # HOME's empty credential stores, so the seeded cards stay as seeded.
+                "LOG_LEVEL": "WARNING",
+            },
+        )
         assert_demo_env(env, demo_dir, cwd=run_dir)
         print(f"[demo] scratch dir {demo_dir}")
         print("[demo] seeding demo data...")
@@ -177,17 +352,27 @@ def start_demo(*, keep: bool = False, quiet: bool = False) -> Demo:
             ],
             cwd=run_dir,
             env=env,
-            start_new_session=True,
+            # The server stays in the demo's own process group on purpose.
+            # A supervisor that stops the demo -- Playwright's web server
+            # runner kills the whole group with SIGKILL -- then takes the
+            # server with it. A server in a session of its own outlived the
+            # demo, went on holding the port, and went on holding the demo's
+            # stdout open, so the supervisor waited for a pipe that never
+            # closed and the run never ended. The demo stops the server by
+            # name instead; see Demo.stop().
             stdout=subprocess.DEVNULL if quiet else None,
         )
         url = f"http://127.0.0.1:{DEMO_PORT}"
         _wait_for_http(f"{url}/")
-        return Demo(demo_dir=demo_dir, url=url, server=server, keep=keep)
+        return Demo(demo_dir=demo_dir, url=url, server=server, keep=keep, lock_file=lock_file)
     except BaseException:
         if server is not None:
-            Demo(demo_dir=demo_dir, url="", server=server, keep=keep).stop()
-        elif not keep:
-            shutil.rmtree(demo_dir, ignore_errors=True)
+            Demo(demo_dir=demo_dir, url="", server=server, keep=keep, lock_file=lock_file).stop()
+        else:
+            if lock_file is not None:
+                lock_file.close()
+            if not keep:
+                shutil.rmtree(demo_dir, ignore_errors=True)
         raise
 
 
@@ -195,6 +380,16 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--keep", action="store_true", help="keep the scratch dir on exit")
     args = parser.parse_args()
+    # The handler is installed BEFORE the demo starts, not after it is up.
+    # A supervisor that stops the demo with SIGTERM would otherwise kill
+    # this process without a teardown while it was still building the SPA,
+    # seeding the database or waiting for the server -- the whole
+    # webServer.timeout budget -- and the teardown below would never run.
+    # Installing the handler first means the signal always unwinds through
+    # it: `sys.exit` raises SystemExit, which the `except BaseException` in
+    # start_demo() catches and cleans up after, and which the `finally`
+    # below turns into a stopped server.
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     demo = start_demo(keep=args.keep)
     print(f"\n[demo] Runway demo is up: {demo.url}")
     print("[demo] Loopback only, no login. Ctrl-C stops it and deletes all demo data.")
