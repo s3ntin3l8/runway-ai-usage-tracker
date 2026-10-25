@@ -1,0 +1,101 @@
+name: UX Validation
+# The browser-level UX guard. The axe guard and the contrast check run in
+# jsdom and cannot see what only a real browser shows: a page that scrolls
+# sideways on a phone, a control that is present but too small to hit, a
+# focus ring painted off-screen, and the fixed chrome sitting on top of the
+# content it should sit above.
+#
+# The suite needs a populated app, so it runs against the demo instance
+# rather than the security suite's empty-database server.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'webapp/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+
+concurrency:
+  # Without a group, every push to a pull request leaves the previous run
+  # going until it finishes on its own.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ux:
+    name: UX (Chromium, 390px)
+    runs-on: ubuntu-24.04
+    # The image carries the browsers and their system dependencies, so this
+    # job runs no apt transaction and downloads no browser. The budget covers
+    # the image pull, pip, npm, the SPA build and the suite.
+    timeout-minutes: 25
+    container:
+      # The browsers and the system libraries they need are baked into this
+      # image at build time. That is the point of it: `playwright install
+      # --with-deps` unconditionally runs `apt-get update` against the
+      # runner's apt mirror, and a stalled mirror took 39 minutes and 27
+      # seconds of the security job's budget on 2026-10-23 (#876) -- the
+      # browser checks never ran at all. The image also carries no Python and
+      # no repository-pinned Node, so setup-python and setup-node provide
+      # those.
+      #
+      # The tag follows the locked playwright-core version in
+      # webapp/package-lock.json, and scripts/check_workflow_pins.py fails the
+      # build when the two disagree. The digest is the multi-arch index
+      # digest; docs/security-validation.md records how to resolve it again.
+      image: mcr.microsoft.com/playwright:v1.64.1-noble@sha256:47b510dd9230bf0b9bfc9b20102241e577ea7a99334ab4c3ca19f19770e9b8ea
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          # The npm cache: setup-node's own option, keyed on the lockfile hash.
+          # It needs no actions/cache reference of its own, so
+          # scripts/action_pins.json records no action the workflows never name.
+          cache: npm
+          cache-dependency-path: webapp/package-lock.json
+      - name: Install Python test dependencies
+        run: |
+          python -m venv .venv
+          # The suite's set, not the union: this job runs the UX suite, not
+          # the lint gate. It carries the app's own dependencies too, which is
+          # what the demo instance runs on.
+          .venv/bin/pip install -r requirements-test.txt
+      - name: Register the toolchain's shared library
+        # setup-python's Linux build has an empty RUNPATH, so its interpreter
+        # finds libpython only through LD_LIBRARY_PATH. The demo instance
+        # starts the server as a child process of node, and there the variable
+        # did not reach the dynamic loader: the job failed with "error while
+        # loading shared libraries: libpython3.12.so.1.0" before a single
+        # check ran. The image carries no other libpython -- the ubuntu base
+        # has no Python at all -- so registering the directory with the
+        # linker makes the interpreter work wherever it is started.
+        run: |
+          echo "${pythonLocation:?the toolchain location is not set}/lib" > /etc/ld.so.conf.d/runway-python.conf
+          command -v ldconfig >/dev/null || { echo "the image has no ldconfig, so the toolchain's shared library cannot be registered" >&2; exit 1; }
+          ldconfig
+      - name: Check immutable CI references
+        # The pins of this workflow are checked where they are introduced, so
+        # a workflow that names an unpinned action cannot reach the suite.
+        run: .venv/bin/python scripts/check_workflow_pins.py
+      - name: Install webapp dependencies
+        run: npm --prefix webapp ci
+      - name: UX suite
+        # The suite builds the SPA and seeds the demo database before it
+        # starts, so this step is the slow one. HOME is pointed at root's
+        # home for the same reason as in the security workflow: the browser
+        # runs as root here. DOCKER_CONFIG keeps the runner's own docker
+        # client reading its configuration where it expects it.
+        env:
+          HOME: /root
+          DOCKER_CONFIG: /github/home/.docker
+        run: npm --prefix webapp run test:ux
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: ux-report
+          path: webapp/playwright-report

@@ -198,6 +198,11 @@ def main() -> None:
     demo = start_demo(keep=args.keep)
     print(f"\n[demo] Runway demo is up: {demo.url}")
     print("[demo] Loopback only, no login. Ctrl-C stops it and deletes all demo data.")
+    # The server runs in its own session, so it outlives this process unless
+    # the teardown below runs. A supervisor that stops the demo with SIGTERM
+    # (Playwright's web server runner does) would otherwise kill this process
+    # without a teardown, and the server would keep holding the port.
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     try:
         demo.server.wait()
     except KeyboardInterrupt:
