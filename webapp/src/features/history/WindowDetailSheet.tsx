@@ -1,12 +1,11 @@
 // Drill-down for one quota window: fill-up curve + token breakdown + per-model table.
 
 import { useMemo } from 'react';
-import type { ChartSeriesPoint, HistoryWindowRow, WindowDetailModelEntry } from '@/api/types';
+import type { HistoryWindowRow, WindowDetailModelEntry } from '@/api/types';
 import { EChart } from '@/components/charts/EChart';
 import {
   baseAxisStyle,
   baseTooltip,
-  otherSeriesLabel,
   splitChartSeries,
   useChartTokens,
 } from '@/components/charts/theme';
@@ -43,34 +42,19 @@ export function WindowDetailSheet({
   );
 }
 
-/**
- * The "Other" line's curve: at every time point it sums the models it
- * stands for. A model with no reading at a time point contributes nothing
- * there, and a time point no model reported on is left out of the line.
- */
-function sumFillSeries(
-  models: { model_id: string; series: ChartSeriesPoint[] }[],
-): [number, number][] {
-  const byTs = new Map<string, number>();
-  for (const m of models) {
-    for (const p of m.series) {
-      if (p.pct_used == null) continue;
-      byTs.set(p.ts, (byTs.get(p.ts) ?? 0) + p.pct_used);
-    }
-  }
-  return Array.from(byTs, ([ts, value]): [number, number] => [Date.parse(ts), value]);
-}
-
 function DetailBody({ row }: { row: HistoryWindowRow }) {
   const detail = useWindowDetail(row);
   const t = useChartTokens();
 
-  const option = useMemo(() => {
+  const built = useMemo(() => {
     if (!detail.data) return null;
     const byModel = detail.data.fill_by_model.filter((m) => m.model_id !== '');
-    // The palette has six colours: the model lines past the sixth share one
-    // "Other (N)" line instead of repeating a colour.
-    const { kept, overflow, hiddenCount } = splitChartSeries(byModel);
+    // The palette has six colours: the model lines past the sixth are left
+    // out rather than drawn. A fill curve is a percentage of that model's
+    // OWN limit, so the overflow cannot be summed into one curve — 60% of
+    // one limit plus 60% of another is 120% of neither. The chart says how
+    // many models are out of the picture instead.
+    const { kept, hiddenCount } = splitChartSeries(byModel);
     const series = [
       {
         name: 'Total',
@@ -90,40 +74,32 @@ function DetailBody({ row }: { row: HistoryWindowRow }) {
         itemStyle: { color: t.series[i] },
       })),
     ];
-    if (overflow.length > 0) {
-      series.push({
-        name: otherSeriesLabel(hiddenCount),
-        type: 'line' as const,
-        showSymbol: false,
-        data: sumFillSeries(overflow),
-        // Grey, not a seventh categorical colour: this is the remainder.
-        lineStyle: { width: 1.25, type: 'dashed' as const, color: t.fgMuted },
-        itemStyle: { color: t.fgMuted },
-      });
-    }
     return {
-      tooltip: {
-        trigger: 'axis' as const,
-        ...baseTooltip(t),
-        valueFormatter: (v: number | null) => (v == null ? '—' : `${Number(v).toFixed(0)}%`),
+      hiddenCount,
+      option: {
+        tooltip: {
+          trigger: 'axis' as const,
+          ...baseTooltip(t),
+          valueFormatter: (v: number | null) => (v == null ? '—' : `${Number(v).toFixed(0)}%`),
+        },
+        legend: {
+          bottom: 0,
+          type: 'scroll' as const,
+          icon: 'circle',
+          itemWidth: 8,
+          itemHeight: 8,
+          textStyle: { color: t.fgMuted, fontSize: 11, fontFamily: t.fontFamily },
+        },
+        grid: { left: 36, right: 12, top: 12, bottom: 40 },
+        xAxis: { type: 'time' as const, ...baseAxisStyle(t), splitLine: { show: false } },
+        yAxis: {
+          type: 'value' as const,
+          max: 100,
+          ...baseAxisStyle(t),
+          axisLabel: { color: t.axis, fontSize: 10, fontFamily: t.fontFamily, formatter: '{value}%' },
+        },
+        series,
       },
-      legend: {
-        bottom: 0,
-        type: 'scroll' as const,
-        icon: 'circle',
-        itemWidth: 8,
-        itemHeight: 8,
-        textStyle: { color: t.fgMuted, fontSize: 11, fontFamily: t.fontFamily },
-      },
-      grid: { left: 36, right: 12, top: 12, bottom: 40 },
-      xAxis: { type: 'time' as const, ...baseAxisStyle(t), splitLine: { show: false } },
-      yAxis: {
-        type: 'value' as const,
-        max: 100,
-        ...baseAxisStyle(t),
-        axisLabel: { color: t.axis, fontSize: 10, fontFamily: t.fontFamily, formatter: '{value}%' },
-      },
-      series,
     };
   }, [detail.data, t]);
 
@@ -143,8 +119,15 @@ function DetailBody({ row }: { row: HistoryWindowRow }) {
 
   return (
     <div className="flex flex-col gap-4">
-      {option && detail.data!.fill_series.length > 0 ? (
-        <EChart option={option} className="h-64" />
+      {built?.option && detail.data!.fill_series.length > 0 ? (
+        <>
+          <EChart option={built.option} className="h-64" />
+          {built.hiddenCount > 0 ? (
+            <p className="mt-1 text-[11px] text-fg-subtle">
+              +{built.hiddenCount} more models not shown
+            </p>
+          ) : null}
+        </>
       ) : (
         <p className="py-6 text-center text-xs text-fg-subtle">No fill data recorded.</p>
       )}

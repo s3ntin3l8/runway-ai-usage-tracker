@@ -101,6 +101,21 @@ describe('RankBar', () => {
     expect(yAxis.data).toEqual(['keep']);
   });
 
+  it('keeps a row whose drawn segments are zero but whose reported total is not', () => {
+    // A provider that reports its own cost has no rate configured, so the
+    // segments sum to zero while the total the backend reports is not.
+    // Filtering on the drawn sum alone would drop the one row that has a
+    // number to disclose.
+    const rows: RankRow[] = [
+      { label: 'keep', value: 50 },
+      { label: 'reported-only', value: 0, reportedValue: 120 },
+    ];
+    render(<RankBar rows={rows} format={format} />, { wrapper });
+    const yAxis = captured.option!.yAxis as { data: string[] };
+    // Sorted by the drawn value, so the row with no drawn bar sits first.
+    expect(yAxis.data).toEqual(['reported-only', 'keep']);
+  });
+
   it('sort order places largest bar first', () => {
     render(<RankBar rows={mockRows} format={format} />, { wrapper });
     const yAxis = captured.option!.yAxis as { data: string[] };

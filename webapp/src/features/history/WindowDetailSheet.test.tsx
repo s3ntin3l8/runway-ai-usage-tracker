@@ -133,9 +133,11 @@ describe('WindowDetailSheet', () => {
     expect(screen.getByText('claude-opus')).toBeInTheDocument();
   });
 
-  it('caps the model lines at the palette size and aggregates the rest', async () => {
-    // Eight models: the palette has six colours, so the last two share one
-    // "Other (2)" line.
+  it('caps the model lines at the palette size and says how many it left out', async () => {
+    // Eight models: the palette has six colours, so the last two are left
+    // out. A fill curve is a percentage of that model's OWN limit, so the
+    // overflow cannot be summed into one curve — two models at 10% each
+    // would draw a 20% curve that is 10% of neither.
     vi.mocked(api.fetchHistoryWindowDetail).mockResolvedValue({
       fill_series: [{ ts: '2026-06-02T00:00:00Z', pct_used: 30 }],
       fill_by_model: Array.from({ length: 8 }, (_, i) => ({
@@ -147,11 +149,11 @@ describe('WindowDetailSheet', () => {
     renderWithProviders(<WindowDetailSheet row={row()} onClose={vi.fn()} />);
     await screen.findByTestId('echart');
     const series = (lastOption as { series: { name: string; data: number[][] }[] }).series;
-    // The total line, six model lines, and one aggregate.
-    expect(series).toHaveLength(8);
+    // The total line and six model lines. Nothing is aggregated.
+    expect(series).toHaveLength(7);
     expect(series.slice(1, 7).map((s) => s.name)).toEqual(['m1', 'm2', 'm3', 'm4', 'm5', 'm6']);
-    expect(series[7].name).toBe('Other (2)');
-    // The aggregate sums the models it stands for, per time point.
-    expect(series[7].data).toEqual([[Date.parse('2026-06-02T00:00:00Z'), 20]]);
+    expect(series.map((s) => s.name)).not.toContain('Other (2)');
+    // And the chart says what it left out.
+    expect(screen.getByText('+2 more models not shown')).toBeInTheDocument();
   });
 });

@@ -100,7 +100,14 @@ export function RankBar({
   // builder so the text alternative lists the rows in the order the chart
   // draws them.
   const sorted = useMemo(
-    () => [...rows].filter((r) => r.value > 0).sort((a, b) => a.value - b.value),
+    // A row survives if EITHER number says it is real. A provider that
+    // reports its own cost has no rate configured, so the segments sum to
+    // zero while the reported total is not — filtering on the drawn sum
+    // alone would drop the row that has a number to disclose.
+    () =>
+      [...rows]
+        .filter((r) => Math.max(r.value, r.reportedValue ?? 0) > 0)
+        .sort((a, b) => a.value - b.value),
     [rows],
   );
 
