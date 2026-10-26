@@ -18,7 +18,7 @@ pytest-timeout==2.4.0
 pytest-xdist==3.8.0
 # `tests/unit/test_sidecar_signatures.py` imports `sigstore` at module level,
 # so the suite cannot even be collected without it.
-sigstore==4.5.0
+sigstore==4.5.1
 # `tests/unit/test_tray_update_check.py` and `tests/unit/test_tray_refresh.py`
 # import `sidecar_app.tray`, which imports `pystray` and `PIL` at module
 # level. The two tray modules that guard their import with `importorskip`

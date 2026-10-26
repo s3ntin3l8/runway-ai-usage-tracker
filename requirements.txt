@@ -11,7 +11,7 @@
 #
 # These are the versions a fresh install resolves to today. To move one, let
 # Dependabot propose it, or edit the pin and run `make install`.
-fastapi==0.159.1
+fastapi==0.161.1
 uvicorn[standard]==0.54.0
 httpx==0.28.1
 # `httpx` requires `certifi`, but only with a floor -- so without this the

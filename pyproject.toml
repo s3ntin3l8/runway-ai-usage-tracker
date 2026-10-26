@@ -15,7 +15,7 @@ requires-python = ">=3.12"
 # so a floating range here would reach the user's binary with no pull
 # request and no commit.
 dependencies = [
-    "fastapi==0.159.1",
+    "fastapi==0.161.1",
     "uvicorn[standard]==0.54.0",
     "httpx==0.28.1",
     # `httpx` pulls `certifi` in, but only with a floor -- so the CI set and
@@ -37,7 +37,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-sidecar = ["sigstore==4.5.0"]
+sidecar = ["sigstore==4.5.1"]
 desktop = [
     "pystray==0.19.5",
     "Pillow==13.0.0",
