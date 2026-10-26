@@ -258,12 +258,14 @@ class _VerificationProbe(probe._Probe):
                     self.state.selected_session = cast(str, sid)
                     environment = row.get("environment")
                     kind = environment.get("kind") if isinstance(environment, dict) else None
-                    if kind in ("anthropic_cloud", "bridge"):
-                        self.state.execution_kind = kind
-                    elif isinstance(kind, str) and _ENVIRONMENT_KIND.fullmatch(kind):
-                        # An unrecognized label is observed, never mapped onto a known kind.
-                        self.state.execution_kind = "other"
                     if isinstance(kind, str) and _ENVIRONMENT_KIND.fullmatch(kind):
+                        # An unrecognized label is observed, never mapped onto a known kind.
+                        if kind == "anthropic_cloud":
+                            self.state.execution_kind = "anthropic_cloud"
+                        elif kind == "bridge":
+                            self.state.execution_kind = "bridge"
+                        else:
+                            self.state.execution_kind = "other"
                         self.state.environment_kind = kind
             if cursor is None:
                 self.state.list_complete = True

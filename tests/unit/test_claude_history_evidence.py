@@ -98,3 +98,52 @@ def test_runtime_image_includes_standalone_report_validator():
     dockerfile = Path("Dockerfile").read_text()
     assert "COPY scripts/verify_claude_cloud.py ./scripts/" in dockerfile
     assert "!scripts/verify_claude_cloud.py" in Path(".dockerignore").read_text()
+
+
+def test_reports_from_before_the_environment_label_stay_valid():
+    envelope = evidence()
+    envelope["report"].pop("environment_kind")
+    assert evaluate(envelope)["status"] == "stop"
+
+
+@pytest.mark.parametrize(
+    "execution,label",
+    [
+        ("anthropic_cloud", None),
+        ("anthropic_cloud", "bridge"),
+        ("bridge", "anthropic_cloud"),
+        ("unknown", "byoc_runner"),
+        ("other", None),
+        ("other", "bridge"),
+        ("other", "Not Snake"),
+    ],
+)
+def test_execution_and_environment_kind_must_agree(execution, label):
+    envelope = evidence()
+    envelope["report"].update(execution_kind=execution, environment_kind=label)
+    with pytest.raises(EvidenceError):
+        evaluate(envelope)
+
+
+@pytest.mark.parametrize(
+    "execution,label",
+    [("anthropic_cloud", "anthropic_cloud"), ("bridge", "bridge"), ("other", "byoc_runner")],
+)
+def test_consistent_environment_pairs_are_accepted(execution, label):
+    envelope = evidence()
+    envelope["report"].update(execution_kind=execution, environment_kind=label)
+    assert evaluate(envelope)["report"]["environment_kind"] == label
+
+
+def test_the_pinned_mapped_fixture_record_still_reproduces_its_documented_stop():
+    import json
+    from pathlib import Path
+
+    record = Path(__file__).parents[2] / "docs/evidence/acceptance"
+    envelope = json.loads((record / "claude-cloud-mapped-fixture-669-20261026.json").read_text())
+    result = evaluate(envelope)
+    assert result["reasons"] == [
+        "accounting_requires_review",
+        "coverage_requires_review",
+        "provenance_requires_review",
+    ]

@@ -403,13 +403,14 @@ def _history_report(value: Any) -> None:
             "scope_observations",
             "declared_category",
             "execution_kind",
-            "environment_kind",
             "cloud_contract_verified",
             "ready_for_ingestion",
             "live_acceptance_passed",
             "provenance_verified",
         }
-        | ({"rejected_list"} if type(value) is dict and "rejected_list" in value else set()),
+        | ({"rejected_list"} if type(value) is dict and "rejected_list" in value else set())
+        # Reports from builds before the field existed stay valid.
+        | ({"environment_kind"} if type(value) is dict and "environment_kind" in value else set()),
     )
     rejected = value.get("rejected_list")
     if rejected is not None:
@@ -480,11 +481,17 @@ def _history_report(value: Any) -> None:
         },
     )
     _choice(value["execution_kind"], {"anthropic_cloud", "bridge", "other", "unknown"})
-    kind = value["environment_kind"]
-    _require(
-        kind is None
-        or (type(kind) is str and re.fullmatch(r"[a-z][a-z0-9_]{0,31}", kind) is not None)
-    )
+    if "environment_kind" in value:
+        kind, execution = value["environment_kind"], value["execution_kind"]
+        _require(
+            kind is None
+            or (type(kind) is str and re.fullmatch(r"[a-z][a-z0-9_]{0,31}", kind) is not None)
+        )
+        # The two fields are defined jointly: a label exists unless the kind is unknown,
+        # a known kind is its own label, and `other` is any other label.
+        _require((kind is None) == (execution == "unknown"))
+        _require(execution not in {"anthropic_cloud", "bridge"} or kind == execution)
+        _require(execution != "other" or kind not in {"anthropic_cloud", "bridge"})
 
 
 def _history_decision(value: Any) -> dict[str, Any]:
