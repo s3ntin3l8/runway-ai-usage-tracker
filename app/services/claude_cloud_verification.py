@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import re
 import secrets
-from typing import Any, cast, get_args
+from typing import Any, Literal, cast, get_args
 from urllib.parse import quote
 
 import httpx
@@ -40,7 +40,11 @@ from scripts.claude_cloud_list_boundary import (
 
 _RECORD: TypeAdapter[CheckpointRecord] = TypeAdapter(CheckpointRecord)
 _ENVIRONMENT_KIND = re.compile(r"[a-z][a-z0-9_]{0,31}")
-_KNOWN_KINDS = ("anthropic_cloud", "bridge")
+# The environment kinds this verifier recognizes; any other label is reported as "other".
+_KNOWN_KINDS: dict[str, Literal["anthropic_cloud", "bridge"]] = {
+    "anthropic_cloud": "anthropic_cloud",
+    "bridge": "bridge",
+}
 
 MAX_REQUESTS = 512
 MAX_BYTES = 256 * 1024 * 1024
@@ -261,12 +265,7 @@ class _VerificationProbe(probe._Probe):
                     kind = environment.get("kind") if isinstance(environment, dict) else None
                     if isinstance(kind, str) and _ENVIRONMENT_KIND.fullmatch(kind):
                         # An unrecognized label is observed, never mapped onto a known kind.
-                        if kind == "anthropic_cloud":
-                            self.state.execution_kind = "anthropic_cloud"
-                        elif kind == "bridge":
-                            self.state.execution_kind = "bridge"
-                        else:
-                            self.state.execution_kind = "other"
+                        self.state.execution_kind = _KNOWN_KINDS.get(kind, "other")
                         self.state.environment_kind = kind
             if cursor is None:
                 self.state.list_complete = True

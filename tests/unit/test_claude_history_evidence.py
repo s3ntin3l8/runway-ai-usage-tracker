@@ -6,7 +6,7 @@ import pytest
 
 from app.models.claude_cloud_verification import VerificationState
 from app.services.claude_cloud_verification import build_verification_report
-from scripts.verify_claude_cloud import EvidenceError, evaluate
+from scripts.verify_claude_cloud import EvidenceError, _history_report, evaluate
 
 
 def evidence():
@@ -125,6 +125,8 @@ def test_a_resumed_pre_label_checkpoint_reports_a_consistent_pair(kind):
     assert state.environment_kind is None  # what the previous build persisted
     report = build_verification_report("c" * 32, state)
     assert report["environment_kind"] == kind
+    report.pop("job_handle")
+    _history_report(report)  # the evaluator accepts what a resumed job reports
 
 
 @pytest.mark.parametrize(
