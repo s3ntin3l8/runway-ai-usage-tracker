@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import re
 import secrets
-from typing import Any, cast, get_args
+from typing import Any, Literal, cast, get_args
 from urllib.parse import quote
 
 import httpx
@@ -39,6 +39,12 @@ from scripts.claude_cloud_list_boundary import (
 )
 
 _RECORD: TypeAdapter[CheckpointRecord] = TypeAdapter(CheckpointRecord)
+_ENVIRONMENT_KIND = re.compile(r"[a-z][a-z0-9_]{0,31}")
+# The environment kinds this verifier recognizes; any other label is reported as "other".
+_KNOWN_KINDS: dict[str, Literal["anthropic_cloud", "bridge"]] = {
+    "anthropic_cloud": "anthropic_cloud",
+    "bridge": "bridge",
+}
 
 MAX_REQUESTS = 512
 MAX_BYTES = 256 * 1024 * 1024
@@ -257,8 +263,10 @@ class _VerificationProbe(probe._Probe):
                     self.state.selected_session = cast(str, sid)
                     environment = row.get("environment")
                     kind = environment.get("kind") if isinstance(environment, dict) else None
-                    if kind in ("anthropic_cloud", "bridge"):
-                        self.state.execution_kind = kind
+                    if isinstance(kind, str) and _ENVIRONMENT_KIND.fullmatch(kind):
+                        # An unrecognized label is observed, never mapped onto a known kind.
+                        self.state.execution_kind = _KNOWN_KINDS.get(kind, "other")
+                        self.state.environment_kind = kind
             if cursor is None:
                 self.state.list_complete = True
                 if self.state.selected_session is None:
@@ -496,6 +504,13 @@ def build_verification_report(handle: str, state: VerificationState) -> dict[str
         "scope_observations": _scope_summary(local, records),
         "declared_category": state.declared_category,
         "execution_kind": state.execution_kind if safe else "unknown",
+        # A checkpoint from a build before the label existed recorded only a known kind.
+        "environment_kind": (
+            state.environment_kind
+            or (state.execution_kind if state.execution_kind in _KNOWN_KINDS else None)
+        )
+        if safe
+        else None,
         "cloud_contract_verified": False,
         "ready_for_ingestion": False,
         "live_acceptance_passed": False,

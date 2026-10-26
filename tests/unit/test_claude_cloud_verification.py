@@ -504,3 +504,39 @@ async def test_status_rechecks_local_authority_without_provider_or_checkpoint_wr
     assert report["outcome"] == "source_changed"
     assert report["account_verified"] is False and report["history_events"] == 0
     assert store.snapshot(handle) == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "environment,kind,label",
+    [
+        ({"kind": "anthropic_cloud"}, "anthropic_cloud", "anthropic_cloud"),
+        ({"kind": "bridge"}, "bridge", "bridge"),
+        ({"kind": "byoc_runner"}, "other", "byoc_runner"),
+        ({"kind": "Has Spaces/Private-Name"}, "unknown", None),
+        ({"kind": 7}, "unknown", None),
+        ({}, "unknown", None),
+        (None, "unknown", None),
+    ],
+)
+async def test_environment_kind_is_reported_only_as_a_safe_label(
+    source_environment, environment, kind, label
+):
+    from app.services.claude_cloud_verification import build_verification_report
+
+    store = store_for(source_environment)
+    handle = await start(store, session_id="session-fixture")
+
+    def upstream(request):
+        if request.url.path.endswith("/profile"):
+            return httpx.Response(200, json=profile())
+        if request.url.path == "/v1/code/sessions":
+            row = {"id": "session-fixture"}
+            if environment is not None:
+                row["environment"] = environment
+            return httpx.Response(200, json={"data": [row], "next_cursor": None})
+        return httpx.Response(200, json={"data": [], "next_cursor": None})
+
+    state = await advance(handle, store, upstream)
+    report = build_verification_report(handle, state)
+    assert report["execution_kind"] == kind and report["environment_kind"] == label

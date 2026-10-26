@@ -6,7 +6,7 @@ import pytest
 
 from app.models.claude_cloud_verification import VerificationState
 from app.services.claude_cloud_verification import build_verification_report
-from scripts.verify_claude_cloud import EvidenceError, evaluate
+from scripts.verify_claude_cloud import EvidenceError, _history_report, evaluate
 
 
 def evidence():
@@ -98,3 +98,75 @@ def test_runtime_image_includes_standalone_report_validator():
     dockerfile = Path("Dockerfile").read_text()
     assert "COPY scripts/verify_claude_cloud.py ./scripts/" in dockerfile
     assert "!scripts/verify_claude_cloud.py" in Path(".dockerignore").read_text()
+
+
+def test_reports_from_before_the_environment_label_stay_valid():
+    envelope = evidence()
+    envelope["report"].pop("environment_kind")
+    assert evaluate(envelope)["reasons"] == [
+        "history_not_complete",
+        "accounting_requires_review",
+        "coverage_requires_review",
+        "provenance_requires_review",
+    ]
+
+
+@pytest.mark.parametrize("kind", ["anthropic_cloud", "bridge"])
+def test_a_resumed_pre_label_checkpoint_reports_a_consistent_pair(kind):
+    state = VerificationState(
+        account_id="private-holder",
+        source_id="private-source",
+        job_key="a" * 64,
+        source_digest="b" * 64,
+        created_at=1000.0,
+        deadline=2800.0,
+        execution_kind=kind,
+    )
+    assert state.environment_kind is None  # what the previous build persisted
+    report = build_verification_report("c" * 32, state)
+    assert report["environment_kind"] == kind
+    report.pop("job_handle")
+    _history_report(report)  # the evaluator accepts what a resumed job reports
+
+
+@pytest.mark.parametrize(
+    "execution,label",
+    [
+        ("anthropic_cloud", None),
+        ("anthropic_cloud", "bridge"),
+        ("bridge", "anthropic_cloud"),
+        ("unknown", "byoc_runner"),
+        ("other", None),
+        ("other", "bridge"),
+        ("other", "Not Snake"),
+    ],
+)
+def test_execution_and_environment_kind_must_agree(execution, label):
+    envelope = evidence()
+    envelope["report"].update(execution_kind=execution, environment_kind=label)
+    with pytest.raises(EvidenceError):
+        evaluate(envelope)
+
+
+@pytest.mark.parametrize(
+    "execution,label",
+    [("anthropic_cloud", "anthropic_cloud"), ("bridge", "bridge"), ("other", "byoc_runner")],
+)
+def test_consistent_environment_pairs_are_accepted(execution, label):
+    envelope = evidence()
+    envelope["report"].update(execution_kind=execution, environment_kind=label)
+    assert evaluate(envelope)["report"]["environment_kind"] == label
+
+
+def test_the_pinned_mapped_fixture_record_still_reproduces_its_documented_stop():
+    import json
+    from pathlib import Path
+
+    record = Path(__file__).parents[2] / "docs/evidence/acceptance"
+    envelope = json.loads((record / "claude-cloud-mapped-fixture-669-20261026.json").read_text())
+    result = evaluate(envelope)
+    assert result["reasons"] == [
+        "accounting_requires_review",
+        "coverage_requires_review",
+        "provenance_requires_review",
+    ]
