@@ -16,7 +16,7 @@
   "s3ntin3l8/.github/.github/workflows/codeql.yml": "bd7f8eaa4f2e212185e042472ec790f13374ce1f",
   "s3ntin3l8/.github/.github/workflows/dependency-review.yml": "8c62b6d0671313b8b975882f0a6d871673b6def8",
   "s3ntin3l8/.github/.github/workflows/ghcr-cleanup.yml": "bd7f8eaa4f2e212185e042472ec790f13374ce1f",
-  "s3ntin3l8/.github/.github/workflows/hermes-review.yml": "03fbdae8cda323122c232f7530db0648d17a85b8",
+  "s3ntin3l8/.github/.github/workflows/hermes-review.yml": "8957219ed8c28f90559cff917853542102011458",
   "s3ntin3l8/.github/.github/workflows/release-please.yml": "bd7f8eaa4f2e212185e042472ec790f13374ce1f",
   "sigstore/cosign-installer": "6f9f17788090df1f26f669e9d70d6ae9567deba6",
   "softprops/action-gh-release": "efb35369e0ad2afab669f228072c1b0d510eae64"
