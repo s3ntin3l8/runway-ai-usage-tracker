@@ -1735,7 +1735,7 @@ export interface ClaudeListBoundaryObservation {
   duplicate_valid_ids: number;
   previously_seen_ids: number;
   cursor_state: 'missing' | 'null' | 'empty_string' | 'nonempty_string' | 'invalid';
-  /** Acceptance by the current parser; never a provider contract guarantee. */
+  /** Frozen diagnostic-v1 sample cursor rule; excludes verification terminal omission. */
   cursor_supported: boolean;
   cursor_repeated: boolean | null;
   has_more_state: 'missing' | 'true' | 'false' | 'invalid';
