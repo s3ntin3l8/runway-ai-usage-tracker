@@ -74,3 +74,41 @@ async def test_snapshot_nested_metadata_cannot_mutate_live_cache():
     _, metadata = await cache.peek_source("anthropic", "one", "a")
     metadata["cards"][0]["remaining"] = "changed"
     assert (await cache.peek_source("anthropic", "one", "a"))[1]["cards"] == [{"remaining": "10"}]
+
+
+@pytest.mark.asyncio
+async def test_instance_pin_changes_when_the_same_credential_is_replaced():
+    cache = TokenCache()
+    await cache.store(
+        "anthropic", {"cookie_sessionKey": "fixture-secret"}, account_id="one", source_id="a"
+    )
+    first = await cache.peek_source_instance("anthropic", "one", "a")
+    repeated = await cache.peek_source_instance("anthropic", "one", "a")
+    assert first == repeated
+    assert "fixture-secret" not in repr(first[2])
+    await cache.remove_source("anthropic", "one", "a")
+    await cache.store(
+        "anthropic", {"cookie_sessionKey": "fixture-secret"}, account_id="one", source_id="a"
+    )
+    replaced = await cache.peek_source_instance("anthropic", "one", "a")
+    assert first[:2] == replaced[:2] and first[2] != replaced[2]
+    assert await cache.peek_source_instance("anthropic", "other", "a") is None
+
+
+@pytest.mark.asyncio
+async def test_instance_pin_still_protects_live_values_from_mutation():
+    cache = TokenCache()
+    await cache.store(
+        "anthropic",
+        {"cookie_sessionKey": "fixture"},
+        account_id="one",
+        source_id="a",
+        source_metadata={"nested": [{"value": "original"}]},
+    )
+    first = await cache.peek_source_instance("anthropic", "one", "a")
+    first[0]["cookie_sessionKey"] = "changed"
+    first[1]["nested"][0]["value"] = "changed"
+    actual = await cache.peek_source_instance("anthropic", "one", "a")
+    assert actual[0]["cookie_sessionKey"] == "fixture"
+    assert actual[1]["nested"][0]["value"] == "original"
+    assert first[2] == actual[2]

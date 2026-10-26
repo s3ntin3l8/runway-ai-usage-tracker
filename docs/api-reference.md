@@ -318,7 +318,65 @@ return HTTP 503 and refuse credential persistence.
 |--------|-------|------|-------------|
 | `POST` | `/api/v1/system/debug/sources/{provider_id}` | Admin | Try each credential source of one account (`account_id`, default `default`) once, live, and report per source: `outcome` (`healthy`/`degraded`/`auth_failed`/`unavailable`, or `waiting_on_machine`/`disabled`/`pending`/`over_limit` for a source that was deliberately not called; at most 12 sources are called per request and `truncated` says when more were left out), `http_status`, `error_type`, a redacted `message`, `cards`, `duration_ms` (`5/minute`). Writes nothing — no health/attempt update, promotion, backoff or cookie-tag change — and never refreshes a token; each source runs (a few at a time) on its own copy of the collector in a probe mode that also suppresses token-cache stores, the account's rejected flag and provider error events, pinned to that source. Never returns secret values |
 | `POST` | `/api/v1/system/debug/claude-cloud` | Admin | Explicit admin-only diagnostic for one cached Claude source (`2/minute`, one in flight per worker). Strict body: `account_id`, `source_id`, optional `organization_id`/`session_id`, integer `max_history_pages` 1–3 (default 2), optional strict integer `report_version` 1 or 2 (default 1); maximum 8 KiB and no duplicate keys. Verifies holder/org, rechecks source and consent, then samples the first 20 sessions and at most 150 events for one listed session. Default v1 is unchanged; explicit v2 adds fixed structural counts at declared paths and an independent SDK-style audit at object-valued `payload`, without decoding strings or traversing arrays. Its observations may use `event`, `data`, `content`, or `payload`; v1 retains only the first three. Location reports are never combined. Fixed outcomes, numeric observations and separate unverified SDK-envelope audits only; never returns identifiers, credentials, cursors, content or raw errors. Bounded to 30s, 1 MiB/response, 4 MiB total, five GETs; no discovery, redirect, compression, retry, refresh, promotion, health or usage write. GET is inert. `sample_complete` applies only to the sampled page chain; `cloud_contract_verified` and `ready_for_ingestion` stay false. See [cloud diagnostic details and readiness](evidence/acceptance/claude-cloud-accounting-669.md#operator-triggered-server-diagnostic) |
+| `POST` | `/api/v1/system/debug/claude-chat-fixture` | Admin | Explicit exact-target ordinary Chat observation (`2/minute`, shared cloud diagnostic worker gate). Strict private inputs: `account_id`, `source_id`, `organization_id`, `conversation_id`; no credential values. Cached manual/config cookie only; three fixed GETs maximum, 20s total, 5s/request, 1 MiB/response, 3 MiB total. Returns fixed shape counts only. GET is inert. See [Chat fixture diagnostic](#ordinary-chat-fixture-diagnostic) |
 | `GET` | `/api/v1/system/debug/raw/{provider_id}` | Admin | Run collector and return raw HTTP exchanges (debug; secrets redacted best-effort); optional `account_id` selects that account's collector. Omitting it preserves provider-wide lookup and captures the first active match (or creates the registered collector if none is active) |
+
+### Ordinary Chat fixture diagnostic
+
+`POST /api/v1/system/debug/claude-chat-fixture` is an operator-triggered
+visibility check, separate from the frozen Code cloud protocols. All four
+body fields are required strings; organization and conversation IDs must be
+UUIDs. Unknown fields, duplicate keys and bodies over 8 KiB are rejected without
+echoing their contents. Existing admin authentication, Host, origin and rate
+protections apply. Keep exact target identifiers in private operator input;
+never put them in command arguments, issue comments or retained evidence.
+
+The selected source must already be cached, enabled, account-scoped and manually
+configured. There is no environment, file, browser, Keychain or alternate-source
+fallback. The three GETs go only to `https://claude.ai`: `/api/account`,
+`/api/organizations`, then the asserted organization's exact conversation.
+Account identity, organization membership and the returned conversation UUID
+must match. An existing organization binding must also match. Responses remain
+in memory. Redirects, proxies, compressed responses, retries, token renewal,
+model execution and credential/health/usage writes are disabled.
+
+Before and after dispatch and before retaining results, the diagnostic rechecks
+durable eligibility and the exact cache instance. Removing, replacing or
+restoring even an identical source invalidates an in-flight result. This is a
+process-local race guard, not a durable source-generation protocol. Denials and
+failures stop this attempt; another provider attempt requires explicit operator
+intent. A worker gate shared with cloud diagnostics prevents overlap there.
+Cancellation releases it; provider requests already dispatched cannot be undone.
+
+The report has `format_version: 1`, a fixed `outcome` and `stage`, request/status
+counts, identity-verification booleans, message-role and message-ID shape counts,
+and usage-shape histograms at the conversation and message scopes. It inspects
+only four declared usage fields (`input_tokens`, `output_tokens`,
+`cache_read_input_tokens`, `cache_creation_input_tokens`) and `token_count` shape.
+No text, names, identifiers, credentials, raw errors or counter values are
+returned. At most 500 messages are inspected; unsupported structures stop rather
+than becoming empty success. `observed` demonstrates visibility of this target
+only. Unknown pagination is not traversed or treated as complete. Context/quota
+fields are not consumption evidence, and SDK accounting rules are not assumed
+to apply to ordinary Chat.
+
+`history_complete`, `exact_token_accounting_verified`, `provenance_verified`,
+`cloud_contract_verified` and `ready_for_ingestion` are always literal `false`.
+A phone-only fixture also needs a separate operator witness; remote MCP
+`get_sessions` success does not establish Runway visibility or phone provenance.
+No collector activation follows from this report.
+
+The independent, standard-library evaluator runs without application imports:
+`python -I -S scripts/verify_claude_chat_fixture.py < sanitized-envelope.json`.
+Its strict envelope requires `format_version: 1`, a full `source_commit`,
+immutable Runway `image` digest, UTC `observed_at`, `deployment`
+(`selected-production` or `isolated-test`) and `report`. It checks evidence
+consistency but does not authenticate those receipts. Exit status **2** and
+`status: stop` are expected even for a visible fixture: accounting, history
+completeness and provenance remain unverified. Before live execution, review the
+immutable packaged build, exact source/account/organization/target assertion,
+request budgets, current deployment and rollback readiness. Target entry alone
+must never initiate provider operations.
 
 ## Data health (admin)
 

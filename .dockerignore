@@ -96,6 +96,8 @@ scripts/*
 !scripts/audit_claude_usage.py
 !scripts/verify_claude_cloud.py
 !scripts/claude_cloud_structure.py
+!scripts/claude_chat_evidence.py
+!scripts/verify_claude_chat_fixture.py
 !scripts/claude_cloud_list_boundary.py
 !scripts/sidecar_pkg/
 scripts/sidecar_pkg/*

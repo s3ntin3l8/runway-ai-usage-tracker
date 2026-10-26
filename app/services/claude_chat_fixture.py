@@ -1,0 +1,198 @@
+"""One source-pinned manual-cookie Chat observation; no discovery, refresh or writes."""
+
+from __future__ import annotations
+
+import asyncio
+from typing import Any
+
+import httpx
+from sqlalchemy.exc import SQLAlchemyError
+
+from app.models.claude_chat_fixture import ChatFixtureRequest
+from app.services import claude_cloud_probe as authority
+from app.services.claude_verification import subscription_headers
+from app.services.collectors.anthropic_console import ConsoleAPIError
+from app.services.probe_mode import probing
+from app.services.token_cache import SourceCacheInstance
+from scripts.claude_chat_evidence import empty_report, observe_conversation
+
+TOTAL_TIMEOUT = 20.0
+MAX_RESPONSE_BYTES = 1024 * 1024
+MAX_TOTAL_BYTES = 3 * MAX_RESPONSE_BYTES
+MAX_REQUESTS = 3
+
+
+async def _load_source(
+    account: str, source_id: str
+) -> tuple[dict[str, str], str | None, tuple[Any, ...], SourceCacheInstance]:
+    if account == "default":
+        raise authority.ProbeError("source_ineligible")
+    snapshot = await authority.token_cache.peek_source_instance("anthropic", account, source_id)
+    if snapshot is None:
+        raise authority.ProbeError("source_unavailable")
+    tokens, candidate, instance = snapshot
+    if candidate.get("identity_pending") or candidate.get("durable_source") is True:
+        raise authority.ProbeError("source_ineligible")
+    cookies = [tokens[key] for key in ("cookie_sessionKey", "session_cookie") if tokens.get(key)]
+    if not cookies or any(not isinstance(value, str) or len(value) > 16384 for value in cookies):
+        raise authority.ProbeError("source_ineligible")
+    if len(set(cookies)) != 1:
+        raise authority.ProbeError("source_ineligible")
+    try:
+        subscription_headers(cookies[0])
+    except ConsoleAPIError:
+        raise authority.ProbeError("source_ineligible") from None
+    organization, proof = await asyncio.to_thread(
+        authority._authority_read, account, source_id, tokens, candidate
+    )
+    # Config cookies only. A native/enrolled/legacy sidecar must not borrow this consent.
+    if proof[0] != "config" or (proof[1] and not proof[1].startswith("config:")):
+        raise authority.ProbeError("unsupported_source")
+    expires = authority.IdentityExtractor.exp_from_tokens(tokens)
+    if expires is not None and expires <= authority.time.time():
+        raise authority.ProbeError("expired")
+    if (
+        await authority.token_cache.peek_source_instance("anthropic", account, source_id)
+        != snapshot
+    ):
+        raise authority.ProbeError("source_changed")
+    return tokens, organization, proof, instance
+
+
+class _Attempt:
+    def __init__(self, request: ChatFixtureRequest, client: httpx.AsyncClient):
+        self.request = request
+        self.account = authority.canonical_account_id(request.account_id)
+        self.client = client
+        self.report = empty_report()
+        self.snapshot: (
+            tuple[dict[str, str], str | None, tuple[Any, ...], SourceCacheInstance] | None
+        ) = None
+        self.total_bytes = 0
+
+    async def check_source(self) -> None:
+        try:
+            now = await _load_source(self.account, self.request.source_id)
+        except authority.ProbeError:
+            raise authority.ProbeError("source_changed") from None
+        if now != self.snapshot:
+            raise authority.ProbeError("source_changed")
+
+    async def get(self, path: str, headers: dict[str, str]) -> Any:
+        await self.check_source()
+        if self.report["requests"] >= MAX_REQUESTS:
+            raise authority.ProbeError("response_limit")
+        self.report["requests"] += 1
+        async with self.client.stream(
+            "GET", "https://claude.ai" + path, headers=headers, timeout=5, follow_redirects=False
+        ) as response:
+            self.report["http_status"] = response.status_code
+            if response.status_code in (401, 403):
+                raise authority.ProbeError("rejected")
+            if response.status_code == 429:
+                raise authority.ProbeError("rate_limited")
+            if response.status_code != 200:
+                raise authority.ProbeError("unavailable")
+            if response.headers.get("content-encoding", "identity").lower() != "identity":
+                raise authority.ProbeError("unsupported_contract")
+            body = bytearray()
+            async for chunk in response.aiter_bytes(chunk_size=65536):
+                self.total_bytes += len(chunk)
+                if (
+                    len(body) + len(chunk) > MAX_RESPONSE_BYTES
+                    or self.total_bytes > MAX_TOTAL_BYTES
+                ):
+                    raise authority.ProbeError("response_limit")
+                body.extend(chunk)
+        await self.check_source()
+        return authority.json.loads(
+            body, object_pairs_hook=authority._object, parse_constant=authority._constant
+        )
+
+    async def inspect(self) -> None:
+        assert self.snapshot is not None
+        tokens, bound_org, _, _ = self.snapshot
+        organization = authority._uuid(self.request.organization_id)
+        target = authority._uuid(self.request.conversation_id)
+        if organization is None or target is None or (bound_org and bound_org != organization):
+            raise authority.ProbeError("source_ineligible")
+        cookie = tokens.get("cookie_sessionKey") or tokens["session_cookie"]
+        headers = {**subscription_headers(cookie), "Accept-Encoding": "identity"}
+        self.report["stage"] = "account"
+        account = await self.get("/api/account", headers)
+        if isinstance(account, list) and len(account) == 1:
+            account = account[0]
+        if not isinstance(account, dict) or authority._uuid(account.get("uuid")) is None:
+            raise authority.ProbeError("identity_unavailable")
+        email = account.get("email_address")
+        if not isinstance(email, str) or "@" not in email:
+            raise authority.ProbeError("identity_unavailable")
+        if authority.canonical_account_id(email) != self.account:
+            raise authority.ProbeError("identity_mismatch")
+        self.report["account_verified"] = True
+        self.report["stage"] = "organizations"
+        organizations = await self.get("/api/organizations", headers)
+        if not isinstance(organizations, list) or len(organizations) > 100:
+            raise authority.ProbeError("unsupported_contract")
+        ids = [
+            authority._uuid(row.get("uuid")) if isinstance(row, dict) else None
+            for row in organizations
+        ]
+        if None in ids or len(set(ids)) != len(ids):
+            raise authority.ProbeError("unsupported_contract")
+        if organization not in ids:
+            raise authority.ProbeError("organization_mismatch")
+        self.report["organization_verified"] = True
+        self.report["stage"] = "conversation"
+        payload = await self.get(
+            f"/api/organizations/{organization}/chat_conversations/{target}", headers
+        )
+        if not isinstance(payload, dict) or authority._uuid(payload.get("uuid")) != target:
+            raise authority.ProbeError("target_mismatch")
+        observed = observe_conversation(payload)
+        for field in ("messages", "roles", "identities", "usage"):
+            self.report[field] = observed[field]
+        self.report.update(target_verified=True, stage="complete", outcome="observed")
+
+
+async def inspect_chat_fixture(
+    request: ChatFixtureRequest, client: httpx.AsyncClient
+) -> dict[str, Any]:
+    """Observe a private exact target; all late source uncertainty clears observations."""
+    attempt = _Attempt(request, client)
+    if authority._gate.locked():
+        attempt.report["outcome"] = "busy"
+        return attempt.report
+    async with authority._gate:
+        with probing():
+            try:
+                async with asyncio.timeout(TOTAL_TIMEOUT):
+                    attempt.snapshot = await _load_source(attempt.account, request.source_id)
+                    async with authority.token_cache.using_source(
+                        "anthropic", attempt.account, request.source_id
+                    ):
+                        try:
+                            await attempt.inspect()
+                        except (authority.ProbeError, httpx.HTTPError, ValueError, RecursionError):
+                            await attempt.check_source()
+                            raise
+                        await attempt.check_source()
+            except authority.ProbeError as exc:
+                attempt.report["outcome"] = str(exc)
+            except (TimeoutError, httpx.TimeoutException):
+                attempt.report["outcome"] = "timeout"
+            except SQLAlchemyError:
+                attempt.report["outcome"] = "source_unavailable"
+            except httpx.HTTPError:
+                attempt.report["outcome"] = "unavailable"
+            except (ValueError, RecursionError):
+                attempt.report["outcome"] = "unsupported_contract"
+    if attempt.report["outcome"] in ("source_changed", "source_unavailable", "timeout"):
+        report = empty_report()
+        report.update(
+            outcome=attempt.report["outcome"],
+            requests=attempt.report["requests"],
+            http_status=attempt.report["http_status"],
+        )
+        return report
+    return attempt.report

@@ -1442,6 +1442,52 @@ export interface SourceProbeResponse {
   sources: SourceProbeResult[];
 }
 
+/** Private operator input, never returned by the Chat fixture diagnostic. */
+export interface ClaudeChatFixtureRequest {
+  account_id: string;
+  source_id: string;
+  organization_id: string;
+  conversation_id: string;
+}
+
+export type ChatValueShape = 'missing' | 'null' | 'empty_object' | 'object'
+  | 'array' | 'string' | 'boolean' | 'number';
+export type ChatCounterShape = 'missing' | 'null' | 'zero' | 'positive_integer'
+  | 'invalid_number' | 'boolean' | 'string' | 'array' | 'object';
+export interface ChatUsageScope {
+  records: number;
+  shapes: Record<ChatValueShape, number>;
+  fields: Record<'input_tokens' | 'output_tokens' | 'cache_read_input_tokens'
+    | 'cache_creation_input_tokens', Record<ChatCounterShape, number>>;
+  /** Shape of token_count only; never interpreted as consumed tokens. */
+  context_count_shapes: Record<ChatCounterShape, number>;
+}
+
+/** Counts of fixed field shapes, with no transcript, identifiers or token values. */
+export interface ClaudeChatFixtureReport {
+  format_version: 1;
+  outcome: 'observed' | 'busy' | 'source_unavailable' | 'source_ineligible'
+    | 'unsupported_source' | 'source_changed' | 'expired' | 'identity_mismatch'
+    | 'identity_unavailable' | 'organization_mismatch' | 'target_mismatch'
+    | 'rejected' | 'rate_limited' | 'unavailable' | 'timeout' | 'response_limit'
+    | 'unsupported_contract';
+  stage: 'source' | 'account' | 'organizations' | 'conversation' | 'complete';
+  requests: number;
+  http_status: number | null;
+  account_verified: boolean;
+  organization_verified: boolean;
+  target_verified: boolean;
+  messages: number;
+  roles: Record<'human' | 'assistant' | 'unknown', number>;
+  identities: Record<'present' | 'missing' | 'invalid' | 'duplicate', number>;
+  usage: Record<'conversation' | 'messages', ChatUsageScope>;
+  history_complete: false;
+  exact_token_accounting_verified: false;
+  provenance_verified: false;
+  cloud_contract_verified: false;
+  ready_for_ingestion: false;
+}
+
 /** Explicit read-only sample. IDs are inputs only; no credentials are accepted. */
 export interface ClaudeCloudProbeRequest {
   account_id: string;
