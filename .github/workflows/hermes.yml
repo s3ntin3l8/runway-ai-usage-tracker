@@ -7,8 +7,11 @@ name: Hermes (review)
 #      an issue) any time you want another look -- including every follow-up
 #      after the initial auto-review.
 # Both call the same reusable workflow (s3ntin3l8/.github/.github/workflows/
-# hermes-review.yml@main) with a different `mode`, gated by github.event_name
-# so each job only runs for its own trigger.
+# hermes-review.yml) with a different `mode`, gated by github.event_name
+# so each job only runs for its own trigger. Unlike the other Hermes callers,
+# which track @main, this one is pinned to a commit SHA: scripts/check_workflow_pins.py
+# requires it. When hermes-review.yml changes, bump both `uses:` lines AND its entry
+# in scripts/action_pins.json (and the matching hash in .secrets.baseline).
 #
 # IMPORTANT: do NOT add `synchronize` back. It re-triggers a fresh review on
 # EVERY subsequent push, which on a PR under active iteration is an unbounded
