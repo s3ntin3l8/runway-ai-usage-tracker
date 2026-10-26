@@ -20,8 +20,8 @@ tracks the observed output-accounting gap.
 | Deployment label | `selected-production` |
 
 Both architecture audits passed under the existing policy; signing preceded exact
-digest promotion. All 17 packaged source hashes matched. Network-isolated packaged
-checks passed for omitted terminal cursors, durable resume, terminal no replay,
+digest promotion. The operator reported that all 17 packaged source hashes matched and that
+network-isolated packaged checks passed for omitted terminal cursors, durable resume, terminal no replay,
 public report validation, the archive API and verified backup preservation.
 These checks made no provider requests.
 
@@ -43,6 +43,9 @@ that its manifest serializer preserves `bridgeSessionIds` and its session lookup
 uses those bindings. Its explicit comparison function strips either `cse_` or
 `session_` before comparing the remaining identifier. The independently checked
 module hashes are retained in the observations file; vendor code was not executed.
+The 70-link comparison and packaged checks are operator-reported receipts, not
+claims authenticated by the release-image audit artifact. Their fixed results are
+retained under `operator_reported_checks` in the observations file.
 
 Using exactly that rule in memory, all 70 bridge links in the available Desktop
 manifests matched IDs in the exhausted cloud list and associated local transcripts.
@@ -103,7 +106,11 @@ The [JSON envelope](claude-cloud-mapped-fixture-669-20261026.json) is the comple
 sanitized report without its transport handle. The separate
 [observations](claude-cloud-mapped-fixture-669-20261026-observations.json) contain
 only fixed categories, counts, booleans and build hashes; they are not additions to
-the frozen verification schema.
+the frozen verification schema. Its `fixture_preflight` block records preparation
+**before** provider access, when history parity was still unverified. The separate
+`final_input_cache_comparison` block records the completed 25-message match; full
+output accounting remains unverified. These stages must not be read as simultaneous
+claims about the final outcome.
 
 ```sh
 python -m scripts.verify_claude_cloud \

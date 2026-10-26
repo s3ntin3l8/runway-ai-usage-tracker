@@ -2,7 +2,10 @@
 
 These are **point-in-time acceptance and verification records** produced by
 superpowers-driven PR runs, named after the GitHub issue they evidence
-(`<provider>-<topic>-<issue>.{md,json}`).
+(`<provider>-<topic>-<issue>.{md,json}`). Repeated runs may append a
+`-YYYYMMDD` date before the extension to keep earlier records unchanged. A
+companion `-observations.json` file may hold sanitized supplementary checks;
+the paired report documents its relationship to the primary evidence schema.
 
 They are **not** maintained reference documentation. Do not read them to learn
 how the system behaves today — for current behaviour read:
