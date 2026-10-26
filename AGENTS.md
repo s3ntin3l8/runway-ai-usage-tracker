@@ -20,10 +20,11 @@ semantics), [`CONTRIBUTING.md`](CONTRIBUTING.md) (contributor workflow),
   `git fetch` updates `origin/*` but never fast-forwards local `main`, so a
   local `main` is routinely stale. Always:
   `git fetch origin && git checkout -b <branch> origin/main`.
-  Branching off local `main` is what makes a PR show up as "out-of-date with
-  the base branch" the moment it is opened (`main` requires *strict*,
-  up-to-date status checks). (Exception: deliberately stacking on another
-  feature branch.) Work in a dedicated git worktree per branch — this repo
+  Branching off local `main` drags stale history into the PR. `main` does
+  *not* require branches to be up to date (`required_status_checks.strict =
+  false`, deliberately — see [`docs/ci-cd.md`](docs/ci-cd.md)), so a PR that
+  is merely behind still merges without a rebase. (Exception: deliberately
+  stacking on another feature branch.) Work in a dedicated git worktree per branch — this repo
   conventionally uses the gitignored `.wt/<slug>`.
 - **Never commit directly to `main`.** Branch and open a PR.
 - **PR title needs a Conventional Commits prefix** (`feat:`, `fix:`, `chore:`,
