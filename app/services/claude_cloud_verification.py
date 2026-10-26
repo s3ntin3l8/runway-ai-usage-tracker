@@ -40,6 +40,7 @@ from scripts.claude_cloud_list_boundary import (
 
 _RECORD: TypeAdapter[CheckpointRecord] = TypeAdapter(CheckpointRecord)
 _ENVIRONMENT_KIND = re.compile(r"[a-z][a-z0-9_]{0,31}")
+_KNOWN_KINDS = ("anthropic_cloud", "bridge")
 
 MAX_REQUESTS = 512
 MAX_BYTES = 256 * 1024 * 1024
@@ -504,7 +505,13 @@ def build_verification_report(handle: str, state: VerificationState) -> dict[str
         "scope_observations": _scope_summary(local, records),
         "declared_category": state.declared_category,
         "execution_kind": state.execution_kind if safe else "unknown",
-        "environment_kind": state.environment_kind if safe else None,
+        # A checkpoint from a build before the label existed recorded only a known kind.
+        "environment_kind": (
+            state.environment_kind
+            or (state.execution_kind if state.execution_kind in _KNOWN_KINDS else None)
+        )
+        if safe
+        else None,
         "cloud_contract_verified": False,
         "ready_for_ingestion": False,
         "live_acceptance_passed": False,

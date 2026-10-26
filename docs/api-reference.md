@@ -953,10 +953,12 @@ counts, numeric `sequence` diagnostics, SDK-envelope `audit`, `comparison`,
 lower-snake `environment_kind` label (or null; absent in reports from older builds, which the
 evaluator still accepts), optional `rejected_list`. Comparisons report input/cache overlap only; children remain
 separate from main-agent totals. Execution metadata is an observation, not proven
-provenance. A checkpoint written with `environment_kind` cannot be resumed by a build
-without the field (the checkpoint models reject unknown fields), so finish or cancel a
-job before rolling back to an older image. provenance. No provider/account/message IDs, model names, source IDs, cursors,
-HMACs, salt, transcript content or raw errors leave the report.
+provenance. No provider/account/message IDs, model names, source IDs, cursors,
+HMACs, salt, transcript content or raw errors leave the report. A checkpoint written
+with `environment_kind` cannot be resumed by a build without the field (the checkpoint
+models reject unknown fields), so finish or cancel a job before rolling back to an
+older image. A checkpoint from before the field resumes here with the label taken from
+a known `execution_kind`.
 
 All `cloud_contract_verified`, `ready_for_ingestion`, `live_acceptance_passed` and
 `provenance_verified` flags remain false. Complete pagination is not complete

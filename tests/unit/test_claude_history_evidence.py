@@ -103,7 +103,28 @@ def test_runtime_image_includes_standalone_report_validator():
 def test_reports_from_before_the_environment_label_stay_valid():
     envelope = evidence()
     envelope["report"].pop("environment_kind")
-    assert evaluate(envelope)["status"] == "stop"
+    assert evaluate(envelope)["reasons"] == [
+        "history_not_complete",
+        "accounting_requires_review",
+        "coverage_requires_review",
+        "provenance_requires_review",
+    ]
+
+
+@pytest.mark.parametrize("kind", ["anthropic_cloud", "bridge"])
+def test_a_resumed_pre_label_checkpoint_reports_a_consistent_pair(kind):
+    state = VerificationState(
+        account_id="private-holder",
+        source_id="private-source",
+        job_key="a" * 64,
+        source_digest="b" * 64,
+        created_at=1000.0,
+        deadline=2800.0,
+        execution_kind=kind,
+    )
+    assert state.environment_kind is None  # what the previous build persisted
+    report = build_verification_report("c" * 32, state)
+    assert report["environment_kind"] == kind
 
 
 @pytest.mark.parametrize(
