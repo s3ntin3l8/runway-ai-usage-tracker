@@ -3,12 +3,18 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import time
 from typing import Any
 
 import httpx
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.models.claude_chat_fixture import ChatFixtureRequest
+
+# Deliberately share the existing diagnostic's worker gate and read-only source
+# authority. Chat owns its request/response/time budgets and public vocabulary;
+# the Code protocol and its evidence formats remain unchanged.
 from app.services import claude_cloud_probe as authority
 from app.services.claude_verification import subscription_headers
 from app.services.collectors.anthropic_console import ConsoleAPIError
@@ -49,7 +55,7 @@ async def _load_source(
     if proof[0] != "config" or (proof[1] and not proof[1].startswith("config:")):
         raise authority.ProbeError("unsupported_source")
     expires = authority.IdentityExtractor.exp_from_tokens(tokens)
-    if expires is not None and expires <= authority.time.time():
+    if expires is not None and expires <= time.time():
         raise authority.ProbeError("expired")
     if (
         await authority.token_cache.peek_source_instance("anthropic", account, source_id)
@@ -87,6 +93,11 @@ class _Attempt:
             "GET", "https://claude.ai" + path, headers=headers, timeout=5, follow_redirects=False
         ) as response:
             self.report["http_status"] = response.status_code
+            if (
+                "text/html" in response.headers.get("content-type", "").lower()
+                or response.headers.get("cf-mitigated") == "challenge"
+            ):
+                raise authority.ProbeError("challenge")
             if response.status_code in (401, 403):
                 raise authority.ProbeError("rejected")
             if response.status_code == 429:
@@ -104,8 +115,10 @@ class _Attempt:
                 ):
                     raise authority.ProbeError("response_limit")
                 body.extend(chunk)
-        await self.check_source()
-        return authority.json.loads(
+        # The next dispatch rechecks authority before any new credential use.
+        # The outer guard also rechecks on errors and before publishing results;
+        # another engine here would repeat the same boundary check.
+        return json.loads(
             body, object_pairs_hook=authority._object, parse_constant=authority._constant
         )
 

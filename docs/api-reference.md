@@ -340,13 +340,16 @@ must match. An existing organization binding must also match. Responses remain
 in memory. Redirects, proxies, compressed responses, retries, token renewal,
 model execution and credential/health/usage writes are disabled.
 
-Before and after dispatch and before retaining results, the diagnostic rechecks
-durable eligibility and the exact cache instance. Removing, replacing or
+Before every dispatch and before publishing results (including failures), the
+diagnostic rechecks durable eligibility and the exact cache instance. Removing, replacing or
 restoring even an identical source invalidates an in-flight result. This is a
 process-local race guard, not a durable source-generation protocol. Denials and
 failures stop this attempt; another provider attempt requires explicit operator
 intent. A worker gate shared with cloud diagnostics prevents overlap there.
 Cancellation releases it; provider requests already dispatched cannot be undone.
+An HTML response or an explicit `cf-mitigated: challenge` reports `challenge`,
+separately from credential rejection and malformed JSON. It stops this attempt
+without cookie re-entry, browser automation or a retry.
 
 The report has `format_version: 1`, a fixed `outcome` and `stage`, request/status
 counts, identity-verification booleans, message-role and message-ID shape counts,

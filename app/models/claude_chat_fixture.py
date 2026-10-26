@@ -64,6 +64,7 @@ class ChatFixtureReport(_Strict):
         "identity_unavailable",
         "organization_mismatch",
         "target_mismatch",
+        "challenge",
         "rejected",
         "rate_limited",
         "unavailable",

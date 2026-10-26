@@ -340,7 +340,7 @@ async def test_client_cancellation_never_retries_and_releases_gate(environment):
     await asyncio.wait_for(dispatched.wait(), timeout=1)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
-        await task
+        await asyncio.wait_for(task, timeout=1)
     assert len(calls) == 1 and not authority._gate.locked()
 
 
@@ -401,3 +401,63 @@ def test_production_budgets_are_fixed():
 
     assert service.MAX_REQUESTS == 3 and service.TOTAL_TIMEOUT == 20
     assert service.MAX_RESPONSE_BYTES == 1024 * 1024 and service.MAX_TOTAL_BYTES == 3 * 1024 * 1024
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "status,headers",
+    [
+        (403, {"cf-mitigated": "challenge"}),
+        (200, {"content-type": "text/html; charset=utf-8"}),
+    ],
+)
+async def test_browser_challenge_is_distinct_without_cookie_reentry_or_retry(
+    environment, status, headers
+):
+    from app.models.claude_chat_fixture import ChatFixtureReport
+    from scripts.verify_claude_chat_fixture import validate_report
+
+    calls = []
+
+    def challenge(req):
+        calls.append(req)
+        return httpx.Response(status, headers=headers, content=b"private-challenge-body")
+
+    report = await run(request(), challenge)
+    assert report["outcome"] == "challenge" and report["requests"] == len(calls) == 1
+    assert report["target_verified"] is False and report["messages"] == 0
+    assert "private" not in json.dumps(report)
+    ChatFixtureReport.model_validate(report)
+    validate_report(report)
+
+
+@pytest.mark.asyncio
+async def test_source_recheck_work_fits_the_attempt_budget_without_redundant_engines(
+    environment, monkeypatch
+):
+    checks = []
+    real = authority._authority_read
+
+    def count_checks(*args):
+        checks.append(None)
+        return real(*args)
+
+    monkeypatch.setattr(authority, "_authority_read", count_checks)
+    calls = []
+    report = await run(request(), upstream(calls))
+    assert report["outcome"] == "observed" and len(calls) == 3
+    assert 3 <= len(checks) <= 6
+
+
+@pytest.mark.asyncio
+async def test_request_ceiling_stops_a_future_fourth_dispatch(environment):
+    from app.services.claude_chat_fixture import _Attempt, _load_source
+
+    calls = []
+    async with httpx.AsyncClient(transport=httpx.MockTransport(upstream(calls))) as client:
+        attempt = _Attempt(request(), client)
+        attempt.snapshot = await _load_source(ACCOUNT, SOURCE)
+        attempt.report["requests"] = 3
+        with pytest.raises(authority.ProbeError, match="^response_limit$"):
+            await attempt.get("/api/account", {})
+    assert not calls and attempt.report["requests"] == 3

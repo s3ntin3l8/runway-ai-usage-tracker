@@ -35,6 +35,7 @@ OUTCOMES = (
     "identity_unavailable",
     "organization_mismatch",
     "target_mismatch",
+    "challenge",
     "rejected",
     "rate_limited",
     "unavailable",
@@ -259,6 +260,8 @@ def main() -> int:
         try:
             sys.stdout.close()
         except OSError:
+            # A closed downstream pipe cannot receive another diagnostic. Keep
+            # the fixed failure exit instead of retrying output or leaking errors.
             pass
     return 2
 

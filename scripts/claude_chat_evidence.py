@@ -30,6 +30,7 @@ OUTCOMES = (
     "identity_unavailable",
     "organization_mismatch",
     "target_mismatch",
+    "challenge",
     "rejected",
     "rate_limited",
     "unavailable",

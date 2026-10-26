@@ -1469,7 +1469,7 @@ export interface ClaudeChatFixtureReport {
   outcome: 'observed' | 'busy' | 'source_unavailable' | 'source_ineligible'
     | 'unsupported_source' | 'source_changed' | 'expired' | 'identity_mismatch'
     | 'identity_unavailable' | 'organization_mismatch' | 'target_mismatch'
-    | 'rejected' | 'rate_limited' | 'unavailable' | 'timeout' | 'response_limit'
+    | 'challenge' | 'rejected' | 'rate_limited' | 'unavailable' | 'timeout' | 'response_limit'
     | 'unsupported_contract';
   stage: 'source' | 'account' | 'organizations' | 'conversation' | 'complete';
   requests: number;
