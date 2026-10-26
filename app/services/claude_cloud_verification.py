@@ -39,6 +39,7 @@ from scripts.claude_cloud_list_boundary import (
 )
 
 _RECORD: TypeAdapter[CheckpointRecord] = TypeAdapter(CheckpointRecord)
+_ENVIRONMENT_KIND = re.compile(r"[a-z][a-z0-9_]{0,31}")
 
 MAX_REQUESTS = 512
 MAX_BYTES = 256 * 1024 * 1024
@@ -259,6 +260,11 @@ class _VerificationProbe(probe._Probe):
                     kind = environment.get("kind") if isinstance(environment, dict) else None
                     if kind in ("anthropic_cloud", "bridge"):
                         self.state.execution_kind = kind
+                    elif isinstance(kind, str) and _ENVIRONMENT_KIND.fullmatch(kind):
+                        # An unrecognized label is observed, never mapped onto a known kind.
+                        self.state.execution_kind = "other"
+                    if isinstance(kind, str) and _ENVIRONMENT_KIND.fullmatch(kind):
+                        self.state.environment_kind = kind
             if cursor is None:
                 self.state.list_complete = True
                 if self.state.selected_session is None:
@@ -496,6 +502,7 @@ def build_verification_report(handle: str, state: VerificationState) -> dict[str
         "scope_observations": _scope_summary(local, records),
         "declared_category": state.declared_category,
         "execution_kind": state.execution_kind if safe else "unknown",
+        "environment_kind": state.environment_kind if safe else None,
         "cloud_contract_verified": False,
         "ready_for_ingestion": False,
         "live_acceptance_passed": False,

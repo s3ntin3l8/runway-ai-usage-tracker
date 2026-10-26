@@ -190,7 +190,8 @@ class VerificationState(_PrivateModel):
         "mobile_only",
         "unknown",
     ] = "unknown"
-    execution_kind: Literal["anthropic_cloud", "bridge", "unknown"] = "unknown"
+    execution_kind: Literal["anthropic_cloud", "bridge", "other", "unknown"] = "unknown"
+    environment_kind: Annotated[StrictStr, Field(pattern=r"^[a-z][a-z0-9_]{0,31}$")] | None = None
     phase: Literal["listing", "history", "complete", "stopped"] = "listing"
     outcome: VerificationOutcome = "pending"
     in_flight: bool = False
@@ -393,7 +394,8 @@ class VerificationReport(_PrivateModel):
         "mobile_only",
         "unknown",
     ]
-    execution_kind: Literal["anthropic_cloud", "bridge", "unknown"]
+    execution_kind: Literal["anthropic_cloud", "bridge", "other", "unknown"]
+    environment_kind: Annotated[StrictStr, Field(pattern=r"^[a-z][a-z0-9_]{0,31}$")] | None
     cloud_contract_verified: Literal[False]
     ready_for_ingestion: Literal[False]
     live_acceptance_passed: Literal[False]

@@ -948,8 +948,9 @@ The strict report contains `format_version: 1`, opaque transport `job_handle`,
 `accepted_response_bytes`, `http_status`, account/org verification booleans,
 `listed_sessions`, `list_pages`, `list_complete`, history page/event/completion
 counts, numeric `sequence` diagnostics, SDK-envelope `audit`, `comparison`,
-`subagent_comparison`, fixed `scope_observations`, `declared_category` and
-`execution_kind`, optional `rejected_list`. Comparisons report input/cache overlap only; children remain
+`subagent_comparison`, fixed `scope_observations`, `declared_category`,
+`execution_kind` (`other` is an unrecognized label; `unknown` is absent) with its
+lower-snake `environment_kind` label (or null), optional `rejected_list`. Comparisons report input/cache overlap only; children remain
 separate from main-agent totals. Execution metadata is an observation, not proven
 provenance. No provider/account/message IDs, model names, source IDs, cursors,
 HMACs, salt, transcript content or raw errors leave the report.

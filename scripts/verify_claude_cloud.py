@@ -403,6 +403,7 @@ def _history_report(value: Any) -> None:
             "scope_observations",
             "declared_category",
             "execution_kind",
+            "environment_kind",
             "cloud_contract_verified",
             "ready_for_ingestion",
             "live_acceptance_passed",
@@ -478,7 +479,12 @@ def _history_report(value: Any) -> None:
             "unknown",
         },
     )
-    _choice(value["execution_kind"], {"anthropic_cloud", "bridge", "unknown"})
+    _choice(value["execution_kind"], {"anthropic_cloud", "bridge", "other", "unknown"})
+    kind = value["environment_kind"]
+    _require(
+        kind is None
+        or (type(kind) is str and re.fullmatch(r"[a-z][a-z0-9_]{0,31}", kind) is not None)
+    )
 
 
 def _history_decision(value: Any) -> dict[str, Any]:

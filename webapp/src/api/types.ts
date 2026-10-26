@@ -1711,7 +1711,8 @@ export interface ClaudeVerificationReport {
     | 'unknown_parent_records' | 'request_scopes' | 'record_versions' | 'record_version_changes'
     | 'scope_conflicts' | 'unknown_scope_records' | 'shared_session_scopes' | 'shared_parent_scopes', number>;
   declared_category: ClaudeVerificationCategory;
-  execution_kind: 'anthropic_cloud' | 'bridge' | 'unknown';
+  execution_kind: 'anthropic_cloud' | 'bridge' | 'other' | 'unknown';
+  environment_kind: string | null;
   cloud_contract_verified: false; ready_for_ingestion: false;
   live_acceptance_passed: false; provenance_verified: false;
 }
