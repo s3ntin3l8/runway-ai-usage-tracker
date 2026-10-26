@@ -164,9 +164,10 @@ suite. Run the same gate by hand:
 make lint && make test && make web-lint && make web-test
 ```
 
-- **Branch off `origin/main`**, never your local `main`, and keep the branch
-  up to date — `main` requires strict status checks (see the workflow rules in
-  [AGENTS.md](AGENTS.md)).
+- **Branch off `origin/main`**, never your local `main`. `main` does not
+  require branches to be up to date, so a PR that is merely behind still
+  merges without a rebase (see the workflow rules in [AGENTS.md](AGENTS.md)
+  and [docs/ci-cd.md](docs/ci-cd.md)).
 - **PR title must use a
   [Conventional Commits](https://www.conventionalcommits.org/) prefix**
   (`feat:`, `fix:`, `chore:`, `docs:`, ...). This repo squash-merges PRs and
