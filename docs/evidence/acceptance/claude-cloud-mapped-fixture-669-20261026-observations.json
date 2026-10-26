@@ -1,0 +1,139 @@
+{
+  "format_version": 1,
+  "source_commit": "5fa8a3d77bfec3aa9a2d12691215a6a1f573bd7c",
+  "scope": "one_desktop_code_bridge_fixture",
+  "mapping": {
+    "desktop_version": "3.6556.2",
+    "provider_requests": 0,
+    "static_only": true,
+    "credential_access": false,
+    "native_execution": false,
+    "manifest_bridge_ids_persisted": true,
+    "primary_client_prefix_equivalence": [
+      "cse_",
+      "session_"
+    ],
+    "path_subject_org_binding_verified": true,
+    "listed_bridge_links": 70,
+    "mapped_fixture_records": 47,
+    "mapped_fixture_messages": 25,
+    "underlying_api_contract_guarantee": false,
+    "module_sha256": {
+      "index.chunk-DBIg6EBr.js": "fc36cf3e49487bc7b00e4f039a9f792fedbec135fc49dbd429f7872de89d9090",
+      "index.chunk-DNPOm2Zc.js": "6b27cd273bedd283c531bf6770e4cd6e576bbeece0e0b92dbc0b0705099c3379",
+      "index.chunk-DlYkVJEe.js": "719a20e6427800b0931f1a8a2cac9cebf1e5e779e5f559c5bc91ab1dc48dea45",
+      "index.chunk-jPKPzV-P.js": "6e898798943b990e6eefa9209c61d977866b7898f681864f02c8cad3bb691ed5"
+    },
+    "explicit_bridge_lookup_observed": true,
+    "persisted_dispatch_pair_observed": true,
+    "manifest_email_fields_absent": true,
+    "subject_and_org_directory_binding_matches": 70
+  },
+  "output_observations": {
+    "provider_requests": 0,
+    "distinct_matching_messages": 25,
+    "matching_output_observation_sets": 0,
+    "differing_output_observation_sets": 25,
+    "local_output_variant_messages": 0,
+    "cloud_output_variant_messages": 0,
+    "local_output_above_one_messages": 25,
+    "cloud_output_above_one_messages": 24,
+    "output_consumption_verified": false
+  },
+  "result_marker_static_evidence": {
+    "module": "index.chunk-gMUTWD54.js",
+    "sha256": "427537a795feddba75c5c1aed0bb188af12221fc4d1ce07266267b77727236f4",
+    "static_only": true,
+    "bridge_send_result_constructs_marker": true,
+    "result_constructor_zero_usage": true,
+    "result_constructor_empty_model_usage": true,
+    "historical_event_origin_established": false,
+    "provider_requests": 0
+  },
+  "independent_report_matches": true,
+  "cloud_contract_verified": false,
+  "ready_for_ingestion": false,
+  "fixture_preflight": {
+    "source_kind": "desktop_code",
+    "records": 47,
+    "distinct_messages": 25,
+    "account_subject_mapping_verified": true,
+    "organization_mapping_verified": true,
+    "explicit_manifest_bridge_link": true,
+    "cloud_list_membership_verified": true,
+    "cloud_history_message_parity_verified": false,
+    "prefix_rule_from_primary_client": true,
+    "single_link_required": true,
+    "synthetic_selection_checks": true
+  },
+  "final_input_cache_comparison": {
+    "verified": true,
+    "matched_messages": 25,
+    "missing_messages": 0,
+    "additional_cloud_messages": 0,
+    "mismatched_messages": 0,
+    "full_output_accounting_verified": false
+  },
+  "operator_reported_checks": {
+    "evidence_origin": "sanitized_operator_receipts",
+    "bridge_mapping": {
+      "source_commit": "5fa8a3d77bfec3aa9a2d12691215a6a1f573bd7c",
+      "provider_requests": 0,
+      "listed_sessions": 1474,
+      "manifest_count": 87,
+      "bridge_links": [
+        {
+          "category": "bridgeSessionIds",
+          "checked_links": 70,
+          "exact_listed_matches": 0,
+          "canonical_listed_matches": 70,
+          "selected_matches": 0
+        },
+        {
+          "category": "cloudSessionId",
+          "checked_links": 0,
+          "exact_listed_matches": 0,
+          "canonical_listed_matches": 0,
+          "selected_matches": 0
+        },
+        {
+          "category": "movedToCloud",
+          "checked_links": 0,
+          "exact_listed_matches": 0,
+          "canonical_listed_matches": 0,
+          "selected_matches": 0
+        }
+      ],
+      "bridge_state": {
+        "exists": true,
+        "linked_pairs": 1,
+        "listed_matches": 0
+      },
+      "linked_local_transcript_candidates": 70,
+      "candidates_with_matching_account": 0,
+      "subject_parent_matches": 70,
+      "org_child_matches": 70,
+      "subject_child_matches": 0,
+      "org_parent_matches": 0,
+      "same_message_parity_verified": false,
+      "execution_provenance_verified": false
+    },
+    "packaged_verification": {
+      "pulled": true,
+      "revision_verified": true,
+      "packaged_source_verified": true,
+      "packaged_job_smoke": true,
+      "durable_resume": true,
+      "terminal_no_replay": true,
+      "public_projection": true,
+      "provider_requests": 0,
+      "packaged_boundary_smoke": true,
+      "original_checkpoint_unchanged": true,
+      "packaged_archive_api_smoke": true,
+      "packaged_backup_smoke": true,
+      "omitted_terminal_smoke": true
+    },
+    "packaged_source_files_checked": 17,
+    "independently_authenticated_by_this_json": false
+  }
+}

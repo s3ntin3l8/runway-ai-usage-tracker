@@ -1,0 +1,122 @@
+{
+  "format_version": 2,
+  "source_commit": "5fa8a3d77bfec3aa9a2d12691215a6a1f573bd7c",
+  "image": "ghcr.io/s3ntin3l8/runway@sha256:53615b2695e588437fb40552a50d84c6413eee5ec1566fedaa4bab99eb32310a",
+  "observed_at": "2026-10-26T15:17:42Z",
+  "deployment": "selected-production",
+  "report": {
+    "format_version": 1,
+    "started_at": 1793027393.5133605,
+    "deadline": 1793029193.5133605,
+    "last_verified_at": 1793027818.455238,
+    "phase": "complete",
+    "outcome": "complete",
+    "requests": 95,
+    "accepted_response_bytes": 2085346,
+    "http_status": 200,
+    "account_verified": true,
+    "organization_verified": true,
+    "listed_sessions": 1475,
+    "list_pages": 74,
+    "rejected_list": null,
+    "list_complete": true,
+    "history_pages": 2,
+    "history_events": 76,
+    "history_complete": true,
+    "sequence": {
+      "numeric": 76,
+      "invalid": 0,
+      "duplicates": 0,
+      "gaps": 0,
+      "out_of_order": 0
+    },
+    "audit": {
+      "format_version": 1,
+      "status": "incomplete",
+      "source_contract": "sdk_style_jsonl",
+      "cloud_contract_verified": false,
+      "ready_for_ingestion": false,
+      "assistant_output_accounting": "excluded_placeholder",
+      "assistant": {
+        "records": 47,
+        "unique_messages": 25,
+        "duplicate_messages": 22,
+        "conflicting_messages": 0,
+        "subagent_records": 0,
+        "input_cache_observations": {
+          "input_tokens": 18176,
+          "cache_read_input_tokens": 1369162,
+          "cache_creation_input_tokens": 69191
+        }
+      },
+      "result": {
+        "records": 2,
+        "usage_observations": 2,
+        "model_usage_observations": 0,
+        "last_usage_observation": {
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 0
+        },
+        "last_model_usage_observation": null,
+        "usage_decreases": 0,
+        "model_usage_decreases": 0,
+        "error_results": 0
+      },
+      "diagnostics": [
+        "missing_result_model_usage",
+        "result_scope_unverified"
+      ]
+    },
+    "comparison": {
+      "local_messages": 25,
+      "cloud_messages": 25,
+      "matched_messages": 25,
+      "missing_messages": 0,
+      "additional_cloud_messages": 0,
+      "mismatched_messages": 0,
+      "local_conflicts": 0,
+      "cloud_conflicts": 0,
+      "local_unusable_records": 0,
+      "cloud_unusable_records": 0,
+      "all_expected_input_cache_match": true,
+      "cloud_contract_verified": false,
+      "ready_for_ingestion": false
+    },
+    "subagent_comparison": {
+      "local_messages": 0,
+      "cloud_messages": 0,
+      "matched_messages": 0,
+      "missing_messages": 0,
+      "additional_cloud_messages": 0,
+      "mismatched_messages": 0,
+      "local_conflicts": 0,
+      "cloud_conflicts": 0,
+      "local_unusable_records": 0,
+      "cloud_unusable_records": 0,
+      "all_expected_input_cache_match": false,
+      "cloud_contract_verified": false,
+      "ready_for_ingestion": false
+    },
+    "scope_observations": {
+      "initializations": 0,
+      "session_scopes": 1,
+      "parent_scopes": 0,
+      "unknown_parent_records": 0,
+      "request_scopes": 0,
+      "record_versions": 0,
+      "record_version_changes": 0,
+      "scope_conflicts": 0,
+      "unknown_scope_records": 0,
+      "shared_session_scopes": 0,
+      "shared_parent_scopes": 0
+    },
+    "declared_category": "desktop_code",
+    "execution_kind": "unknown",
+    "cloud_contract_verified": false,
+    "ready_for_ingestion": false,
+    "live_acceptance_passed": false,
+    "provenance_verified": false
+  }
+}

@@ -2,7 +2,10 @@
 
 These are **point-in-time acceptance and verification records** produced by
 superpowers-driven PR runs, named after the GitHub issue they evidence
-(`<provider>-<topic>-<issue>.{md,json}`).
+(`<provider>-<topic>-<issue>.{md,json}`). Repeated runs may append a
+`-YYYYMMDD` date before the extension to keep earlier records unchanged. A
+companion `-observations.json` file may hold sanitized supplementary checks;
+the paired report documents its relationship to the primary evidence schema.
 
 They are **not** maintained reference documentation. Do not read them to learn
 how the system behaves today — for current behaviour read:
@@ -40,6 +43,7 @@ produces a newer file.
 | [`claude-console-native-investigation-666.md`](acceptance/claude-console-native-investigation-666.md) / [`.json`](acceptance/claude-console-native-investigation-666.json) | #666 | Native investigation of the Claude Console credential path |
 | [`claude-cloud-accounting-669.md`](acceptance/claude-cloud-accounting-669.md) | #669 | Offline accounting audit of the Claude cloud usage interface |
 | [`claude-cloud-verification-669.md`](acceptance/claude-cloud-verification-669.md) | #669 | Live-verification gates for the cloud accounting audit |
+| [`claude-cloud-mapped-fixture-669-20261026.md`](acceptance/claude-cloud-mapped-fixture-669-20261026.md) / [`.json`](acceptance/claude-cloud-mapped-fixture-669-20261026.json) / [observations](acceptance/claude-cloud-mapped-fixture-669-20261026-observations.json) | #669, #992, #993 | One mapped Desktop Code fixture: input/cache parity passed; output, coverage and provenance remain unverified |
 | [`claude-automatic-native-acceptance-671.json`](acceptance/claude-automatic-native-acceptance-671.json) / [`.md`](acceptance/claude-automatic-native-acceptance-671.md) | #671 | Acceptance of automatic native credential discovery |
 | [`claude-native-macos-acceptance-672.json`](acceptance/claude-native-macos-acceptance-672.json) / [`.md`](acceptance/claude-native-macos-acceptance-672.md) | #672 | Acceptance for the remaining macOS Claude credential sources |
 | [`claude-native-oauth-acceptance-679.json`](acceptance/claude-native-oauth-acceptance-679.json) / [`.md`](acceptance/claude-native-oauth-acceptance-679.md) | #679 | Acceptance of the Claude Desktop OAuth path |
