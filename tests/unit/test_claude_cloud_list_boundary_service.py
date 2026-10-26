@@ -135,15 +135,29 @@ async def test_timeout_stops_once_without_changing_the_original_checkpoint(
     source_environment, monkeypatch
 ):
     import asyncio
+    import types
 
     from app.services import claude_cloud_list_boundary as boundary
 
     store, handle, before = await stopped(source_environment)
-    monkeypatch.setattr(boundary, "TOTAL_TIMEOUT", 0.05)
+    # No wall-clock budget: the deadline is pulled to "now" from inside the upstream, so the
+    # timeout can only fire after the call has been recorded, however loaded the runner is.
+    budgets = []
+
+    def unbounded_timeout(_delay):
+        budgets.append(asyncio.timeout(None))
+        return budgets[-1]
+
+    monkeypatch.setattr(
+        boundary,
+        "asyncio",
+        types.SimpleNamespace(**{**vars(asyncio), "timeout": unbounded_timeout}),
+    )
     calls = []
 
     async def upstream(request):
         calls.append(request)
+        budgets[0].reschedule(asyncio.get_running_loop().time())
         await asyncio.Event().wait()
 
     report = await inspect(handle, store, upstream)
