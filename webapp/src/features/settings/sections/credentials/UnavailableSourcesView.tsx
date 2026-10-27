@@ -3,7 +3,7 @@
 // "not signed in" — its credential exists, the sidecar just cannot read it — so these
 // are listed here rather than among the credentials waiting for an account.
 
-import { CheckCircle2, Lock } from 'lucide-react';
+import { CircleCheck, Lock } from 'lucide-react';
 import type { BlockedSource } from '@/api/types';
 import { Badge } from '@/components/ui/Badge';
 import { Card } from '@/components/ui/Card';
@@ -22,7 +22,7 @@ export function UnavailableSourcesView({ sources }: { sources: BlockedSource[] }
   if (sources.length === 0) {
     return (
       <EmptyState
-        icon={CheckCircle2}
+        icon={CircleCheck}
         title="Every credential source can be read"
         description="Nothing is blocked: each machine can open every store it needs."
       />

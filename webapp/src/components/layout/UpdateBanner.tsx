@@ -4,7 +4,7 @@
 
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowUpCircle, X } from 'lucide-react';
+import { CircleArrowUp, X } from 'lucide-react';
 import { fetchSettings } from '@/api/endpoints';
 
 const RELEASES_URL = 'https://github.com/s3ntin3l8/runway-ai-usage-tracker/releases';
@@ -35,7 +35,7 @@ export function UpdateBanner() {
 
   return (
     <div className="flex items-center gap-3 border-b border-edge bg-warning-muted px-4 py-2 text-[13px] text-warning lg:px-8">
-      <ArrowUpCircle className="size-4 shrink-0" aria-hidden />
+      <CircleArrowUp className="size-4 shrink-0" aria-hidden />
       <p className="min-w-0 flex-1">
         Runway <span className="font-semibold">v{latest}</span> is available — pull the latest
         server image to update.{' '}

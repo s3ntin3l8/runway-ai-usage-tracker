@@ -8,7 +8,7 @@ import { claudeConnectionLabel } from '@/lib/providerFamilies';
 
 import { useId, useMemo, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Archive, MoreHorizontal, Pencil, Trash2 } from 'lucide-react';
+import { Archive, Ellipsis, Pencil, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { deleteProviderConfig, putDiscoveredAccountLabel, putProviderConfig } from '@/api/endpoints';
 import type { ProviderAccount, ProviderConfig } from '@/api/types';
@@ -368,7 +368,7 @@ export function ProviderDetailDialog({
                               )
                             }
                           >
-                            <MoreHorizontal className="size-4" />
+                            <Ellipsis className="size-4" />
                           </Button>
                           {isMenuOpen ? (
                             <div

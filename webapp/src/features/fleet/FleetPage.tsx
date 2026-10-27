@@ -6,7 +6,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link, useLocation, useSearchParams } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  ArrowUpCircle,
+  CircleArrowUp,
   CircleAlert,
   Pause,
   Plus,
@@ -199,7 +199,7 @@ export function FleetPage() {
                 onClick={() => setConfirmUpdateAll(true)}
                 loading={updateAll.isPending}
               >
-                <ArrowUpCircle className="size-3.5" aria-hidden />
+                <CircleArrowUp className="size-3.5" aria-hidden />
                 Update all ({updatable.length})
               </Button>
             ) : null}
@@ -517,7 +517,7 @@ function SidecarCard({
             ) : null}
             {sidecar.update_available ? (
               <Button size="sm" variant="secondary" onClick={onUpdate}>
-                <ArrowUpCircle className="size-3.5" aria-hidden />
+                <CircleArrowUp className="size-3.5" aria-hidden />
                 Update now
               </Button>
             ) : null}

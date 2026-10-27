@@ -14,7 +14,7 @@ describe('Button', () => {
     render(<Button loading>Save</Button>);
     const btn = screen.getByRole('button', { name: 'Save' });
     expect(btn).toBeDisabled();
-    // the Loader2 icon is aria-hidden
+    // the LoaderCircle icon is aria-hidden
     expect(btn.querySelector('.animate-spin')).toBeTruthy();
   });
 

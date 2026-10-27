@@ -4,7 +4,7 @@
 import { useState } from 'react';
 import { SidecarSources } from './SidecarSources';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowUpCircle } from 'lucide-react';
+import { CircleArrowUp } from 'lucide-react';
 import { toast } from 'sonner';
 import { fetchAppConfig, patchSidecar, setSidecarKeepAlive, setSidecarSettings } from '@/api/endpoints';
 import type { Sidecar, SidecarChannel, SidecarLogLevel } from '@/api/types';
@@ -427,7 +427,7 @@ function UpdatesSection({
         <div className="mt-2.5 flex items-center justify-between gap-3 border-t border-edge pt-2.5">
           <p className="text-[12px] text-fg-muted">A newer sidecar build is available.</p>
           <Button size="sm" variant="secondary" onClick={onUpdate}>
-            <ArrowUpCircle className="size-3.5" aria-hidden />
+            <CircleArrowUp className="size-3.5" aria-hidden />
             Update now
           </Button>
         </div>

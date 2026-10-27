@@ -3,7 +3,7 @@
 // unstyled defaults while the user is dragging or the collect is in flight.
 
 import type { ReactNode } from 'react';
-import { Loader2, RefreshCw } from 'lucide-react';
+import { LoaderCircle, RefreshCw } from 'lucide-react';
 
 function IndicatorRow({ icon, children }: { icon: ReactNode; children: ReactNode }) {
   return (
@@ -24,7 +24,7 @@ export function PullingIndicator() {
 
 export function RefreshingIndicator() {
   return (
-    <IndicatorRow icon={<Loader2 className="size-4 animate-spin" aria-hidden />}>
+    <IndicatorRow icon={<LoaderCircle className="size-4 animate-spin" aria-hidden />}>
       Refreshing…
     </IndicatorRow>
   );
