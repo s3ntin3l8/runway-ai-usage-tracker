@@ -139,9 +139,20 @@ def test_the_local_fallback_and_disabled_sources_are_not_blamed(session):
     )
 
 
-def test_a_silent_non_cookie_credential_on_a_mac_gets_no_keychain_hint(session):
+@pytest.mark.parametrize("kind", ["cookie", "keychain", "sidecar"])
+def test_a_silent_keychain_governed_or_unknown_kind_on_a_mac_gets_the_hint(session, kind):
     _host(session, "macbook", "Darwin/25.6.0")
-    _source(session, "macbook", timedelta(days=3), source_type="env")
+    _source(session, "macbook", timedelta(days=3), source_type=kind)
+
+    reason = _missing_collector_reason(session, "anthropic_console", "org")
+
+    assert reason.startswith("its credential from macbook stopped reporting; check this Mac")
+
+
+@pytest.mark.parametrize("kind", ["env", "file"])
+def test_a_silent_env_or_file_credential_on_a_mac_gets_no_keychain_hint(session, kind):
+    _host(session, "macbook", "Darwin/25.6.0")
+    _source(session, "macbook", timedelta(days=3), source_type=kind)
 
     assert (
         _missing_collector_reason(session, "anthropic_console", "org")

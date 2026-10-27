@@ -25,6 +25,10 @@ _FLOOR_SECONDS = 30  # minimum poller tick to prevent pathological config values
 _CREDENTIAL_SILENCE = timedelta(seconds=TokenCache.DEFAULT_TTL)
 
 
+# Source kinds (``describe_origin``) that Keychain consent never governs.
+_NOT_KEYCHAIN_GOVERNED = frozenset({"env", "file"})
+
+
 def _missing_collector_reason(session: Session, provider_id: str, account_id: str) -> str:
     """Why an account's server collection has no outcome this cycle.
 
@@ -60,11 +64,12 @@ def _missing_collector_reason(session: Session, provider_id: str, account_id: st
     host = session.get(SidecarRegistry, newest.sidecar_id)
     name = (host.custom_name or host.hostname) if host else None
     reason = f"its credential from {name or newest.sidecar_id} stopped reporting"
-    # Pairing and Keychain consent only govern browser-cookie sources; a Mac's env or file
-    # credential going quiet has a different cause, so it gets no hint.
+    # Pairing and Keychain consent govern cookie and Keychain sources, and a source reported
+    # with no origin (an older sidecar build) is of unknown kind. A Mac's env or file
+    # credential going quiet has a different cause, so it alone gets no hint.
     if (
         host is not None
-        and newest.source_type == "cookie"
+        and newest.source_type not in _NOT_KEYCHAIN_GOVERNED
         and (host.os_platform or "").startswith("Darwin")
     ):
         # The registry id's shape says nothing about pairing: an unpaired machine keeps its
