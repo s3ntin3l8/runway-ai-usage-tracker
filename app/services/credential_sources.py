@@ -125,10 +125,14 @@ def _collapse_home(path: str) -> str:
 
 
 # The kinds ``describe_origin_full`` can return. A source reported with no origin is
-# "sidecar": its kind is unknown, not absent.
+# "sidecar": its kind is unknown, not absent. A new kind must be added here, and
+# ``test_origin_kinds_match_describe_origin`` fails until it is.
 ORIGIN_KINDS = frozenset({"env", "file", "cookie", "keychain", "sidecar"})
-# The ones Keychain consent never governs: anything else on a Mac can be gated by it.
+# The ones Keychain consent never governs.
 KEYCHAIN_UNGOVERNED_KINDS = frozenset({"env", "file"})
+# What can be gated by it on a Mac. A kind outside ``ORIGIN_KINDS`` is in neither set, so
+# it fails closed: it gets no pairing advice until someone classifies it.
+KEYCHAIN_GOVERNED_KINDS = ORIGIN_KINDS - KEYCHAIN_UNGOVERNED_KINDS
 
 
 def describe_origin_full(origin: str | None) -> OriginDisplay:

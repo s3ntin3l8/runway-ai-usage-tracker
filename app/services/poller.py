@@ -12,7 +12,7 @@ from app.core.db import engine
 from app.models.schemas import LimitCard
 from app.services.accumulator import upsert_latest_usage
 from app.services.collector_manager import LOCAL_SIDECAR_ID, manager
-from app.services.credential_sources import KEYCHAIN_UNGOVERNED_KINDS
+from app.services.credential_sources import KEYCHAIN_GOVERNED_KINDS
 from app.services.token_cache import TokenCache
 
 logger = logging.getLogger(__name__)
@@ -63,10 +63,11 @@ def _missing_collector_reason(session: Session, provider_id: str, account_id: st
     reason = f"its credential from {name or newest.sidecar_id} stopped reporting"
     # Pairing and Keychain consent govern cookie and Keychain sources, and a source reported
     # with no origin (an older sidecar build) is of unknown kind. A Mac's env or file
-    # credential going quiet has a different cause, so it alone gets no hint.
+    # credential going quiet has a different cause, and a kind nobody has classified yet
+    # gets no hint rather than possibly wrong advice.
     if (
         host is not None
-        and newest.source_type not in KEYCHAIN_UNGOVERNED_KINDS
+        and newest.source_type in KEYCHAIN_GOVERNED_KINDS
         and (host.os_platform or "").startswith("Darwin")
     ):
         # The registry id's shape says nothing about pairing: an unpaired machine keeps its

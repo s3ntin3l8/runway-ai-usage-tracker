@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import inspect
+import re
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -9,7 +11,9 @@ from sqlmodel import Session, SQLModel, create_engine
 from sqlmodel.pool import StaticPool
 
 from app.models.db import CredentialSource, SidecarDevice, SidecarRegistry
+from app.services import credential_sources
 from app.services.credential_sources import (
+    KEYCHAIN_GOVERNED_KINDS,
     KEYCHAIN_UNGOVERNED_KINDS,
     ORIGIN_KINDS,
     describe_origin,
@@ -165,6 +169,17 @@ def test_a_silent_env_or_file_credential_on_a_mac_gets_no_keychain_hint(session,
     )
 
 
+def test_origin_kinds_match_describe_origin():
+    # Read the kinds out of the function itself, so a new ``OriginDisplay("<kind>", ...)``
+    # branch fails here until it is added to ORIGIN_KINDS and classified.
+    source = inspect.getsource(credential_sources.describe_origin_full)
+    produced = set(re.findall(r'OriginDisplay\(\s*"(\w+)"', source))
+
+    assert produced == ORIGIN_KINDS
+    assert KEYCHAIN_UNGOVERNED_KINDS <= ORIGIN_KINDS
+    assert KEYCHAIN_GOVERNED_KINDS | KEYCHAIN_UNGOVERNED_KINDS == ORIGIN_KINDS
+
+
 @pytest.mark.parametrize(
     "origin",
     [
@@ -175,18 +190,25 @@ def test_a_silent_env_or_file_credential_on_a_mac_gets_no_keychain_hint(session,
         "cookie:anthropic_console/Chrome/Default/Cookies#abc",
         "cookie:opencode/session",
         "keychain:Claude Desktop/oauth/abc",
-        "keychain:Claude Code-credentials",
     ],
 )
-def test_every_origin_kind_is_classified_for_the_keychain_hint(origin):
-    # A kind added to ``describe_origin`` but not to ORIGIN_KINDS fails here, so it cannot start
-    # (or stop) getting the pairing hint without someone deciding which it should be.
+def test_every_origin_describes_as_a_known_kind(origin):
     kind, _label = describe_origin(origin)
+
     assert kind in ORIGIN_KINDS
-    assert KEYCHAIN_UNGOVERNED_KINDS <= ORIGIN_KINDS
 
 
 def test_a_source_with_no_origin_is_of_unknown_kind_and_keeps_the_hint():
     kind, _label = describe_origin(None)
 
-    assert kind == "sidecar" and kind not in KEYCHAIN_UNGOVERNED_KINDS
+    assert kind == "sidecar" and kind in KEYCHAIN_GOVERNED_KINDS
+
+
+def test_a_kind_nobody_has_classified_gets_no_hint(session):
+    _host(session, "macbook", "Darwin/25.6.0")
+    _source(session, "macbook", timedelta(days=3), source_type="brand-new-kind")
+
+    assert (
+        _missing_collector_reason(session, "anthropic_console", "org")
+        == "its credential from macbook stopped reporting"
+    )
