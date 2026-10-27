@@ -589,6 +589,13 @@ The read layer was split out of what used to be a single 1979-line
 operator-triggered server diagnostic for the Claude cloud accounting path.
 See [evidence](evidence/README.md) for the acceptance records.
 
+`app/services/claude_cloud_collector.py` is the one server-side API collector that writes
+`usage_events` itself (all other collectors return cards): for Claude Code cloud-runner
+sessions only, behind `CLAUDE_CLOUD_COLLECTOR_ENABLED` (default off). It subclasses the
+probe's read-only client, so it inherits the exact-source, no-refresh and account checks, and
+keeps its per-session state in `claude_cloud_session_usage` and
+`claude_cloud_collector_state`. See [Claude cloud-runner sessions](collection_logic.md#claude-cloud-runner-sessions).
+
 ## CI/CD and releases
 
 The workflows, the gates they enforce and the release choreography live in

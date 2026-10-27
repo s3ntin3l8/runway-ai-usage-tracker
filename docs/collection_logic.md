@@ -234,6 +234,31 @@ Nothing is maximised and nothing is summed. `pct_used` is then re-derived from
 the primary card's own `used_value` / `limit_value`, so the enrichment can
 never change the quota percentage — only the token and message breakdown.
 
+## Claude cloud-runner sessions
+
+Local scraping already covers CLI, Desktop and bridge sessions. Claude Code sessions that run
+on Anthropic's cloud runner leave no local transcript, so a server-side collector
+(`app/services/claude_cloud_collector.py`, `CLAUDE_CLOUD_COLLECTOR_ENABLED`, default off)
+reads them from `GET /v1/code/sessions`:
+
+- Only rows whose top-level `environment_kind` is `anthropic_cloud` count. `bridge` rows are
+  local sessions mirrored to claude.ai and are skipped, so nothing is counted twice.
+- A cloud row can carry `external_metadata.usage` (input, output, cache read and write
+  tokens). The collector keeps the last block per session and writes only the increase as a
+  `usage_events` row (`sidecar_id` `server`, `entrypoint` `cloud`). The event identity is the
+  session digest plus a revision, so a replay is a duplicate, never a second event. The API's
+  `cost_usd` is not used; Runway prices the tokens itself.
+- The block has no per-turn timing: an increase is dated by the row's `updated_at`.
+- A block that shrinks writes nothing and is counted (`last_regressions`); a smaller block seen on two consecutive sweeps becomes the baseline (so the session counts again once it grows), while a one-sweep dip that recovers is never billed. A counter the API
+  did not report stays unknown in the stored state, and feeds its event as 0.
+- After the first full sweep the collector stops paging once a page is entirely older than the
+  newest `updated_at` already processed, but only if the pages read so far are newest-first.
+  Every 24th sweep ignores that mark, in case `updated_at` does not move with usage.
+- Known limits: which of the block's totals is authoritative is still open (the block's input
+  differs from the per-message sum, and its output from the last result record); the collector
+  records the block as reported. A cloud session later resumed on a local machine could also
+  appear in local transcripts; there is no cross-source deduplication for that case.
+
 ## Implementation Notes
 
 - The strategy options dict carries exactly one key: `enrich`. There is no

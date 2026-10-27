@@ -14,54 +14,10 @@ if str(_REPO_ROOT) not in sys.path:
 
 from app.core.source_apps import CLAUDE_CODE  # noqa: E402
 from app.models.schemas import UsageEventPush  # noqa: E402
+from app.services.model_normalization import normalize_anthropic_model  # noqa: E402
 
-
-def _normalize_anthropic_model(model: str) -> str:
-    """Map a raw Claude model id to a ``family-version`` slug for grouping.
-
-    The version is preserved so the dashboard can split Opus 4.8 / 4.7 / 4.6.
-    The date snapshot token (YYYYMMDD) is dropped so all snapshots of one
-    version aggregate. Position-independent, so it handles both the new
-    ordering ("claude-opus-4-5-20250929") and the older one
-    ("claude-3-5-sonnet-20241022", "claude-3-opus-20240229").
-
-    Examples:
-        "claude-opus-4-5-20250929"   -> "opus-4.5"
-        "claude-opus-4-7"            -> "opus-4.7"
-        "claude-3-5-sonnet-20241022" -> "sonnet-3.5"
-        "claude-3-opus-20240229"     -> "opus-3"
-        "claude-opus-4-20250514"     -> "opus-4"
-        "claude-fable-5"             -> "fable-5"
-        "opus"                       -> "opus"
-        ""                           -> "unknown"
-
-    Cost lookup falls back to the bare family in
-    ``app/services/cost_calculator.py``, so a version with no dedicated
-    pricing row still bills at the family rate.
-    """
-    m = model.lower()
-    if "opus" in m:
-        family = "opus"
-    elif "sonnet" in m:
-        family = "sonnet"
-    elif "haiku" in m:
-        family = "haiku"
-    elif "design" in m or "omelette" in m:
-        family = "design"
-    else:
-        # Unknown family (e.g. "claude-fable-5"): take the first segment as the
-        # family and fall through to the version logic so the version is kept
-        # ("fable-5"), the same way the hard-coded families above are handled.
-        base = m.replace("claude-", "")
-        if not base:
-            return "unknown"
-        family = base.split("-")[0]
-
-    # Collect numeric version tokens, dropping the 8-digit date snapshot.
-    version_parts = [t for t in m.split("-") if t.isdigit() and len(t) != 8]
-    if not version_parts:
-        return family
-    return f"{family}-{'.'.join(version_parts)}"
+# Kept under its old name for importers inside the sidecar package.
+_normalize_anthropic_model = normalize_anthropic_model
 
 
 def parse_anthropic_events(
