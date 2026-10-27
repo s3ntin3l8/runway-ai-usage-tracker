@@ -194,10 +194,8 @@ exclude_gitignore = true
 # `scripts/` is excluded wholesale: it is a namespace package, so mypy finds
 # `scripts/demo/env.py` under two module names and aborts the run, and
 # bringing the directory in surfaces several dozen pre-existing errors that
-# cannot be cleared without an unrelated namespace-package fix. The
-# exclusion is narrowed for `scripts/sign_release_image.py` so the
-# release-signing step is type-checked like the rest of the tree.
-exclude = ["tests", "scripts/(?!sign_release_image\\.py$).*\\.py$", "sidecar_app", "scratch", "evidence"]
+# cannot be cleared without an unrelated namespace-package fix.
+exclude = ["tests", "scripts", "sidecar_app", "scratch", "evidence"]
 
 [[tool.mypy.overrides]]
 module = "app.services.collectors.*"

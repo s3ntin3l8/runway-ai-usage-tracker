@@ -95,6 +95,11 @@ ambient GitHub OIDC token endpoint returning a body that is not JSON, not
 cosign v3.1.3 and not the image. It is the first time this path ran cosign
 v3, so it is new surface that no earlier run exercised.
 
+> Update 2026-10-27: `scripts/sign_release_image.py` and the local
+> `docker-publish.yml` fork are retired. The shared `docker-publish.yml`
+> (s3ntin3l8/.github#164, #166) signs with cosign v3.1.3 and carries the same
+> narrow retry for every consumer; the description below is the record of why.
+
 `scripts/sign_release_image.py` now owns the step. It retries only that
 ambient-credential fault, at most three times, with an escalating ten-second
 backoff (about 60 seconds in total); every other failure - a rejected

@@ -8,7 +8,7 @@ Settings → About can show it and a reader can jump to the diff.
 Resolution order:
 
 1. ``RUNWAY_BUILD_SHA`` — baked into the Docker image at build time (the
-   ``BUILD_SHA`` build arg in the Dockerfile) and settable by operators for
+   ``COMMIT_SHA`` build arg in the Dockerfile) and settable by operators for
    source or pip installs.
 2. ``git rev-parse HEAD`` — only when the server runs from a source checkout,
    so ``make dev`` reports the working tree's commit.

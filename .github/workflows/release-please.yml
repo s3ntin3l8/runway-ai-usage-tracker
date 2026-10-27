@@ -31,12 +31,14 @@ jobs:
       contents: read
       packages: write
       id-token: write
-    uses: ./.github/workflows/docker-publish.yml
+    uses: s3ntin3l8/.github/.github/workflows/docker-publish.yml@main
     with:
       image-name: 's3ntin3l8/runway'
       push-release: true
       release-tag: ${{ needs.release-please.outputs.tag_name }}
       release-channel: ${{ contains(needs.release-please.outputs.tag_name, '-beta.') && 'beta' || 'stable' }}
+      # See ci-cd.yml: audits the candidate, then signs and promotes that digest.
+      audit-command: python -m scripts.audit_release_image --output image-audit
     secrets: inherit
 
   build-sidecar:
