@@ -157,3 +157,57 @@ def test_keep_alive_change_writes_audit_row(client, session):
     (row,) = _audit_rows(session)
     assert row.action == "sidecar.keep_alive"
     assert row.target_id == "ka-host"
+
+
+def test_adopt_dry_run_writes_nothing_and_apply_is_audited(client, session):
+    from datetime import timedelta
+
+    device = "device-" + "b" * 32
+    now = datetime.now(UTC)
+    session.add(
+        SidecarRegistry(
+            sidecar_id="adopt-host",
+            hostname="adopt-host",
+            os_platform="Windows/11",
+            first_seen=now - timedelta(days=9),
+            last_seen=now - timedelta(minutes=5),
+        )
+    )
+    session.add(
+        SidecarRegistry(
+            sidecar_id=device,
+            hostname="adopt-host",
+            os_platform="Windows/11",
+            first_seen=now - timedelta(minutes=4),
+            last_seen=now,
+        )
+    )
+    session.commit()
+
+    listed = client.get("/api/v1/fleet/sidecars").json()["sidecars"]
+    by_id = {s["sidecar_id"]: s for s in listed}
+    assert [c["sidecar_id"] for c in by_id[device]["adoptable_legacy"]] == ["adopt-host"]
+    assert by_id["adopt-host"]["adoptable_legacy"] == []
+
+    preview = client.post(
+        f"/api/v1/fleet/sidecars/{device}/adopt", json={"legacy_sidecar_id": "adopt-host"}
+    )
+    assert preview.status_code == 200 and preview.json()["dry_run"] is True
+    assert session.get(SidecarRegistry, "adopt-host") is not None
+    assert session.exec(select(AuditLog).where(AuditLog.action == "sidecar.adopt")).first() is None
+
+    applied = client.post(
+        f"/api/v1/fleet/sidecars/{device}/adopt",
+        json={"legacy_sidecar_id": "adopt-host", "dry_run": False},
+    )
+    assert applied.status_code == 200 and applied.json()["dry_run"] is False
+    session.expire_all()
+    assert session.get(SidecarRegistry, "adopt-host") is None
+    row = session.exec(select(AuditLog).where(AuditLog.action == "sidecar.adopt")).one()
+    assert row.target_id == device
+
+    refused = client.post(
+        f"/api/v1/fleet/sidecars/{device}/adopt",
+        json={"legacy_sidecar_id": "nobody", "dry_run": False},
+    )
+    assert refused.status_code == 409

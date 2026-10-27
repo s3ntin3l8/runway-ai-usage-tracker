@@ -9,7 +9,7 @@ from sqlmodel import Session, select
 from app.core.log_redaction import redact_secrets
 from app.core.login_dirs import stored_login_dirs
 from app.core.utils import scrub_log
-from app.models.db import CredentialSource, SidecarRegistry
+from app.models.db import CredentialSource, SidecarDevice, SidecarRegistry
 from app.models.schemas import LoginDirectoryReport
 from app.services.refresh_policy import parse_provider_flags
 
@@ -143,6 +143,19 @@ class FleetRegistryService:
         logger.info(f"Remote update delivered to sidecar '{scrub_log(sidecar_id)}'")
         return True
 
+    @staticmethod
+    def _device_hostname(sidecar_id: str, session: Session) -> str | None:
+        """The hostname an enrolled device paired under; ``None`` for a legacy sidecar.
+
+        An enrolled device reports as ``device-<hex>``, which is no name for a person to
+        read, so its card borrows the hostname recorded at pairing."""
+        from app.services import sidecar_devices
+
+        if not sidecar_devices.reserved_registry_id(sidecar_id):
+            return None
+        device = session.get(SidecarDevice, sidecar_id.removeprefix("device-"))
+        return device.hostname if device and device.hostname else None
+
     def upsert_sidecar(  # noqa: PLR0913 - one registry row, many reported fields
         self,
         sidecar_id: str,
@@ -171,10 +184,14 @@ class FleetRegistryService:
             logger.debug(f"Ignoring unknown log level {log_level!r} from a sidecar")
             log_level = None
         row = session.get(SidecarRegistry, sidecar_id)
+        device_hostname = self._device_hostname(sidecar_id, session)
         if row:
             row.last_seen = datetime.now(UTC)
             row.ingest_count += 1
             row.last_ip = source_ip
+            if device_hostname and row.hostname in (None, sidecar_id):
+                # Heals a row registered before the hostname was carried over.
+                row.hostname = device_hostname
             if sidecar_version is not None:
                 row.sidecar_version = sidecar_version
             if os_platform is not None:
@@ -203,7 +220,7 @@ class FleetRegistryService:
         else:
             row = SidecarRegistry(
                 sidecar_id=sidecar_id,
-                hostname=sidecar_id,
+                hostname=device_hostname or sidecar_id,
                 last_ip=source_ip,
                 sidecar_version=sidecar_version,
                 os_platform=os_platform,

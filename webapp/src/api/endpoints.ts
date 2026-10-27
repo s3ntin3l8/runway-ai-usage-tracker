@@ -42,6 +42,7 @@ import type {
   SessionEntry,
   SessionsPaginatedResponse,
   Sidecar,
+  SidecarAdoptSummary,
   SidecarChannel,
   SidecarLogLevel,
   SidecarDownloads,
@@ -247,6 +248,14 @@ export const patchSidecar = (sidecarId: string, body: { custom_name?: string; ta
   api<Sidecar>(`/api/v1/fleet/sidecars/${encodeURIComponent(sidecarId)}`, {
     method: 'PATCH',
     body: JSON.stringify(body),
+  });
+
+// Fold a legacy sidecar's history and settings into the enrolled device that replaced it.
+// `dryRun` previews the counts and writes nothing.
+export const adoptLegacySidecar = (sidecarId: string, legacySidecarId: string, dryRun: boolean) =>
+  api<SidecarAdoptSummary>(`/api/v1/fleet/sidecars/${encodeURIComponent(sidecarId)}/adopt`, {
+    method: 'POST',
+    body: JSON.stringify({ legacy_sidecar_id: legacySidecarId, dry_run: dryRun }),
   });
 
 export const deleteSidecar = (sidecarId: string) =>
