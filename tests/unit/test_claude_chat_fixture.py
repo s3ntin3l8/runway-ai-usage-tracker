@@ -283,11 +283,13 @@ async def test_missing_account_identity_is_unknown_not_an_account_mismatch(envir
 @pytest.mark.parametrize(
     "raw,encoding",
     [
-        (b'{"uuid":"one","uuid":"two"}', "identity"),
-        (b'{"counter":NaN}', "identity"),
-        (b"<html>private-transcript</html>", "identity"),
-        (b"{}", "gzip"),
-        (b"x" * (1024 * 1024 + 1), "identity"),
+        pytest.param(b'{"uuid":"one","uuid":"two"}', "identity", id="duplicate-key"),
+        pytest.param(b'{"counter":NaN}', "identity", id="nan-constant"),
+        pytest.param(b"<html>private-transcript</html>", "identity", id="html"),
+        pytest.param(b"{}", "gzip", id="content-encoding"),
+        # An explicit id: pytest would otherwise build the test id from the
+        # 1 MiB value, and CI's verbose log and junit report choke on it.
+        pytest.param(b"x" * (1024 * 1024 + 1), "identity", id="oversized"),
     ],
 )
 async def test_unsupported_response_bodies_stop_without_echoing_or_retrying(
