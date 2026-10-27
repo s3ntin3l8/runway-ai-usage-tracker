@@ -508,19 +508,29 @@ async def test_status_rechecks_local_authority_without_provider_or_checkpoint_wr
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "environment,kind,label",
+    "fields,kind,label",
     [
-        ({"kind": "anthropic_cloud"}, "anthropic_cloud", "anthropic_cloud"),
-        ({"kind": "bridge"}, "bridge", "bridge"),
-        ({"kind": "byoc_runner"}, "other", "byoc_runner"),
-        ({"kind": "Has Spaces/Private-Name"}, "unknown", None),
-        ({"kind": 7}, "unknown", None),
+        ({"environment_kind": "anthropic_cloud"}, "anthropic_cloud", "anthropic_cloud"),
+        ({"environment_kind": "bridge"}, "bridge", "bridge"),
+        ({"environment_kind": "byoc_runner"}, "other", "byoc_runner"),
+        ({"environment_kind": "Has Spaces/Private-Name"}, "unknown", None),
+        ({"environment_kind": 7}, "unknown", None),
+        ({"environment_kind": None}, "unknown", None),
+        # A nested environment.kind is a fallback for an absent top-level field only.
+        ({"environment": {"kind": "anthropic_cloud"}}, "anthropic_cloud", "anthropic_cloud"),
+        (
+            {"environment_kind": "bridge", "environment": {"kind": "anthropic_cloud"}},
+            "bridge",
+            "bridge",
+        ),
+        ({"environment_kind": None, "environment": {"kind": "bridge"}}, "unknown", None),
+        ({"environment": {"kind": 7}}, "unknown", None),
+        ({"environment": {}}, "unknown", None),
         ({}, "unknown", None),
-        (None, "unknown", None),
     ],
 )
 async def test_environment_kind_is_reported_only_as_a_safe_label(
-    source_environment, environment, kind, label
+    source_environment, fields, kind, label
 ):
     from app.services.claude_cloud_verification import build_verification_report
 
@@ -531,9 +541,7 @@ async def test_environment_kind_is_reported_only_as_a_safe_label(
         if request.url.path.endswith("/profile"):
             return httpx.Response(200, json=profile())
         if request.url.path == "/v1/code/sessions":
-            row = {"id": "session-fixture"}
-            if environment is not None:
-                row["environment"] = environment
+            row = {"id": "session-fixture", **fields}
             return httpx.Response(200, json={"data": [row], "next_cursor": None})
         return httpx.Response(200, json={"data": [], "next_cursor": None})
 
