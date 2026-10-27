@@ -1003,3 +1003,42 @@ class ClaudeCloudVerificationArchive(SQLModel, table=True):  # type: ignore[call
     revision: int
     state_encrypted: str
     archived_at: float
+
+
+class ClaudeCloudSessionUsage(SQLModel, table=True):  # type: ignore[call-arg]
+    """Last usage block observed for one Claude cloud-runner session.
+
+    The collector writes only the increase since this row as ``usage_events``. The session
+    is held as a one-way digest; counters are ``None`` until the API has reported them.
+    """
+
+    __tablename__ = "claude_cloud_session_usage"
+    __table_args__ = (
+        UniqueConstraint("account_id", "session_digest", name="uq_claude_cloud_session"),
+    )
+    id: int | None = Field(default=None, primary_key=True)
+    account_id: str = Field(index=True)
+    session_digest: str
+    tokens_input: int | None = None
+    tokens_output: int | None = None
+    tokens_cache_read: int | None = None
+    tokens_cache_create: int | None = None
+    model_id: str | None = None
+    # One per event written for this session; part of the event's dedup identity.
+    revision: int = 0
+    regressions: int = 0
+    last_seen: float = 0
+
+
+class ClaudeCloudCollectorState(SQLModel, table=True):  # type: ignore[call-arg]
+    """Per-account progress and outcome of the Claude cloud-runner collector."""
+
+    __tablename__ = "claude_cloud_collector_state"
+    account_id: str = Field(primary_key=True)
+    # Newest session ``updated_at`` seen by a sweep that reached its end or stopped early.
+    high_water: str | None = None
+    cycles: int = 0
+    last_cycle_at: float = 0
+    last_outcome: str = "never_run"
+    last_events: int = 0
+    last_regressions: int = 0

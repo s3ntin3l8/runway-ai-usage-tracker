@@ -1,6 +1,10 @@
 # Claude cloud accounting investigation (#669)
 
-The cloud collector is not enabled. The first implementation milestone is an
+The general cloud collector is not enabled. A narrower server-side collector for **cloud-runner
+sessions only** (`environment_kind == anthropic_cloud`) exists behind
+`CLAUDE_CLOUD_COLLECTOR_ENABLED` (default off); see
+[collection logic](../../collection_logic.md#claude-cloud-runner-sessions). It does not replace
+local collection and skips `bridge` sessions. The first implementation milestone was an
 **offline audit of SDK-style usage records**, separate from a cloud API adapter.
 The historical endpoint envelope, account/org binding, coverage, pagination,
 sequence continuity and cloud/local deduplication still require revalidation.

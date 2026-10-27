@@ -21,6 +21,7 @@ from app.core.db import init_db
 from app.core.encryption import EncryptionError
 from app.core.http_security import BrowserBoundaryMiddleware
 from app.core.rate_limit import limiter
+from app.services.claude_cloud_collector import ClaudeCloudCollector
 from app.services.collector_manager import manager
 from app.services.poller import poller
 from app.services.sidecar_version_checker import sidecar_version_checker
@@ -166,6 +167,11 @@ async def lifespan(app: FastAPI):
     # every 24h so the fleet view can flag outdated sidecars).
     sidecar_version_checker.start()
 
+    # Opt-in: collect usage for Claude Code cloud-runner sessions from the session list.
+    claude_cloud_collector = ClaudeCloudCollector(settings.CLAUDE_CLOUD_COLLECTOR_INTERVAL_SECONDS)
+    if settings.CLAUDE_CLOUD_COLLECTOR_ENABLED:
+        claude_cloud_collector.start()
+
     yield
     # Shutdown logic
     preview_cleanup_task.cancel()
@@ -176,6 +182,7 @@ async def lifespan(app: FastAPI):
     await poller.stop()
     await token_auto_refresher.stop()
     await sidecar_version_checker.stop()
+    await claude_cloud_collector.stop()
     await manager.close()
 
 

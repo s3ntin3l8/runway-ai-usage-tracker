@@ -176,6 +176,12 @@ class Settings(BaseSettings):
     TOKEN_AUTO_REFRESH_INTERVAL_SECONDS: int = 300
     TOKEN_AUTO_REFRESH_THRESHOLD_SECONDS: int = 600
 
+    # Server-side collector for Claude Code cloud-runner sessions (usage deltas from the
+    # session list's usage block). Off by default until it has been checked against a
+    # verification run; see docs/collection_logic.md.
+    CLAUDE_CLOUD_COLLECTOR_ENABLED: bool = False
+    CLAUDE_CLOUD_COLLECTOR_INTERVAL_SECONDS: int = 1800
+
     KEYCHAIN_PROMPT_MODE: str = "always"
 
     # Quota limits
