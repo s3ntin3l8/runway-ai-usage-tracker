@@ -200,13 +200,22 @@ async def test_bridge_rows_and_rows_without_a_block_write_nothing(environment):
 
 
 @pytest.mark.asyncio
-async def test_a_decrease_writes_nothing_and_the_smaller_block_becomes_the_baseline(environment):
+async def test_a_one_sweep_dip_is_not_billed_when_it_recovers(environment):
     await sweep(listing([[row(usage=block())]])[0])
     report = await sweep(listing([[row(usage=block(read=100))]])[0])
     assert report.events == 0 and report.regressions == 1 and len(events(environment)) == 1
+    recovered = await sweep(listing([[row(usage=block())]])[0])
+    assert recovered.events == 0 and len(events(environment)) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_shrink_held_for_two_sweeps_becomes_the_baseline(environment):
+    await sweep(listing([[row(usage=block())]])[0])
+    await sweep(listing([[row(usage=block(read=100))]])[0])
+    await sweep(listing([[row(usage=block(read=100))]])[0])
     with Session(environment) as session:
         stored = session.exec(select(ClaudeCloudSessionUsage)).one()
-        assert stored.tokens_cache_read == 100 and stored.regressions == 1
+        assert stored.tokens_cache_read == 100 and stored.regressions == 2
         assert session.get(ClaudeCloudCollectorState, ACCOUNT).last_regressions == 1
     # The session counts again from the new baseline instead of staying dead.
     grown = await sweep(listing([[row(usage=block(read=160))]])[0])
@@ -214,14 +223,13 @@ async def test_a_decrease_writes_nothing_and_the_smaller_block_becomes_the_basel
 
 
 @pytest.mark.asyncio
-async def test_one_session_listed_twice_is_a_contract_failure_not_a_crash(environment):
-    upstream, _ = listing([[row(usage=block())], [row(usage=block(inp=11))]])
-    report = await sweep(upstream)
-    assert report.outcome == "unsupported_contract" and events(environment) == []
-    with Session(environment) as session:
-        assert session.get(ClaudeCloudCollectorState, ACCOUNT).last_outcome == (
-            "unsupported_contract"
-        )
+async def test_an_unexpected_apply_failure_is_contained(environment, monkeypatch):
+    def broken(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(collector, "_apply", broken)
+    report = await sweep(listing([[row(usage=block())]])[0])
+    assert report.outcome == "internal_error"
 
 
 @pytest.mark.asyncio

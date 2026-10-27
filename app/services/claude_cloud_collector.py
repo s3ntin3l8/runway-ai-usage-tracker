@@ -151,6 +151,12 @@ class _CollectorProbe(probe._Probe):
         )
         super().__init__(cast(ClaudeCloudProbeRequest, request), client, total_byte_limit=MAX_BYTES)
 
+    async def get(self, *args: Any, **kwargs: Any) -> Any:
+        # The endpoint lock is held per request, so a sweep never turns an operator-triggered
+        # probe or verification away for longer than one page.
+        async with probe._gate:
+            return await super().get(*args, **kwargs)
+
 
 async def _sweep(
     attempt: _CollectorProbe, high_water: datetime | None, full: bool, report: CycleReport
@@ -248,12 +254,20 @@ def _apply(
             )
             delta, regressed = usage_delta(previous, item.usage)
             if regressed:
-                # Nothing is written for a shrink, and the smaller block becomes the baseline,
-                # so a session whose counters restarted counts again once they climb.
+                # Nothing is written for a shrink. Only a shrink seen on two consecutive sweeps
+                # becomes the baseline (counters that restarted count again once they climb); a
+                # one-sweep dip that recovers is not billed twice.
                 row.regressions += 1
                 report.regressions += 1
-                moves.append((row, item.usage, item.model))
+                row.shrunk_streak += 1
+                if row.shrunk_streak >= 2:
+                    row.shrunk_streak = 0
+                    moves.append((row, item.usage, item.model))
+                else:
+                    row.last_seen = now
+                    session.add(row)
                 continue
+            row.shrunk_streak = 0
             if delta:
                 moment = item.updated_at or datetime.fromtimestamp(now, UTC)
                 pushes.append(
@@ -369,9 +383,8 @@ async def collect_account(account: str, source_id: str, client: httpx.AsyncClien
     high_water, cycles = await asyncio.to_thread(_state, account)
     full = high_water is None or cycles % FULL_SWEEP_EVERY == 0
     attempt = _CollectorProbe(account, source_id, client)
-    async with probe._gate:
-        with probing():
-            sweep = await _read(attempt, source_id, high_water, full, report)
+    with probing():
+        sweep = await _read(attempt, source_id, high_water, full, report)
     now = time.time()
     if sweep is None:
         await asyncio.to_thread(_record, attempt.account, report.outcome, now)
@@ -384,8 +397,8 @@ async def collect_account(account: str, source_id: str, client: httpx.AsyncClien
         await asyncio.to_thread(
             _apply, attempt.account, observed, newest, complete or ordered, report, now
         )
-    except SQLAlchemyError:
-        report.outcome = "storage_error"
+    except Exception as exc:  # one account's failure must not abort the others
+        report.outcome = "storage_error" if isinstance(exc, SQLAlchemyError) else "internal_error"
         await asyncio.to_thread(_record, attempt.account, report.outcome, now)
         return report
     report.outcome = "ok" if complete else "truncated"
@@ -414,13 +427,14 @@ async def collect_all(client: httpx.AsyncClient) -> dict[str, CycleReport]:
                 break
     for report in reports.values():
         logger.info(
-            "Claude cloud collector: outcome=%s pages=%d listed=%d cloud=%d events=%d regressions=%d",
+            "Claude cloud collector: outcome=%s pages=%d listed=%d cloud=%d events=%d regressions=%d notes=%s",
             report.outcome,
             report.pages,
             report.listed,
             report.cloud_sessions,
             report.events,
             report.regressions,
+            ",".join(report.notes) or "-",
         )
     return reports
 

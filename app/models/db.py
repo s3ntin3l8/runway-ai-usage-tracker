@@ -1023,6 +1023,7 @@ class ClaudeCloudSessionUsage(SQLModel, table=True):  # type: ignore[call-arg]
     tokens_output: int | None = None
     tokens_cache_read: int | None = None
     tokens_cache_create: int | None = None
+    shrunk_streak: int = 0
     model_id: str | None = None
     # One per event written for this session; part of the event's dedup identity.
     revision: int = 0
