@@ -18,6 +18,7 @@ from scripts.check_workflow_pins import (
     load_pins,
     locked_playwright,
     references,
+    tracks_main,
 )
 
 GOOD_SHA = "a" * 40
@@ -44,6 +45,8 @@ class TestShippedWorkflowsArePinned:
 
     def test_every_external_reference_is_pinned_to_a_commit_sha(self):
         for reference in references(WORKFLOWS):
+            if tracks_main(reference):
+                continue
             assert REVISION.fullmatch(reference.revision), (
                 f"{reference.path}:{reference.line} pins {reference.action} to "
                 f"{reference.revision!r}, which is not a commit SHA"
@@ -59,12 +62,16 @@ class TestTheRecord:
 
     def test_the_record_covers_every_action_the_workflows_use(self):
         recorded = set(load_pins())
-        used = {reference.action for reference in references(WORKFLOWS)}
+        used = {
+            reference.action for reference in references(WORKFLOWS) if not tracks_main(reference)
+        }
         assert used <= recorded
 
     def test_the_record_holds_no_action_the_workflows_dropped(self):
         recorded = set(load_pins())
-        used = {reference.action for reference in references(WORKFLOWS)}
+        used = {
+            reference.action for reference in references(WORKFLOWS) if not tracks_main(reference)
+        }
         assert recorded == used
 
     def test_the_record_is_readable_json(self):
@@ -123,6 +130,54 @@ class TestFindings:
         problems = findings(tmp_path, {"actions/checkout": GOOD_SHA})
         assert len(problems) == 1
         assert "not pinned to a commit SHA" in problems[0]
+
+    @pytest.mark.parametrize(
+        "target",
+        [
+            "s3ntin3l8/.github/.github/workflows/ci-python.yml",
+            "s3ntin3l8/.github/.github/actions/dockerhub-login",
+        ],
+    )
+    def test_the_owners_shared_repository_may_track_main(self, tmp_path, target):
+        write_workflow(tmp_path, "ci.yml", f"    uses: {target}@main\n")
+        assert findings(tmp_path, {}) == []
+
+    @pytest.mark.parametrize("ref", ["v1", "release", "abc1234", "Main", "main2"])
+    def test_any_other_ref_of_the_shared_repository_is_reported(self, tmp_path, ref):
+        write_workflow(
+            tmp_path,
+            "ci.yml",
+            f"    uses: s3ntin3l8/.github/.github/workflows/ci-python.yml@{ref}\n",
+        )
+        problems = findings(tmp_path, {})
+        assert any("not pinned to a commit SHA" in problem for problem in problems)
+
+    def test_the_full_ref_form_of_main_is_reported_with_what_is_accepted(self, tmp_path):
+        write_workflow(
+            tmp_path,
+            "ci.yml",
+            "    uses: s3ntin3l8/.github/.github/workflows/ci-python.yml@refs/heads/main\n",
+        )
+        problems = findings(tmp_path, {})
+        assert len(problems) == 1
+        assert "exactly `@main`" in problems[0]
+
+    def test_main_of_any_other_repository_is_reported(self, tmp_path):
+        write_workflow(tmp_path, "ci.yml", "      - uses: actions/checkout@main\n")
+        problems = findings(tmp_path, {"actions/checkout": GOOD_SHA})
+        assert any("not pinned to a commit SHA" in problem for problem in problems)
+
+    def test_a_lookalike_repository_may_not_track_main(self, tmp_path):
+        write_workflow(tmp_path, "ci.yml", "      - uses: s3ntin3l8/.github-evil/x/y@main\n")
+        assert findings(tmp_path, {}) != []
+
+    def test_a_sha_pinned_shared_workflow_is_still_compared_with_the_record(self, tmp_path):
+        write_workflow(
+            tmp_path,
+            "ci.yml",
+            f"    uses: s3ntin3l8/.github/.github/workflows/ci-python.yml@{GOOD_SHA}\n",
+        )
+        assert findings(tmp_path, {}) != []
 
     def test_a_local_workflow_path_needs_no_revision(self, tmp_path):
         write_workflow(

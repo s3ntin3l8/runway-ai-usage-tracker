@@ -8,10 +8,8 @@ name: Hermes (review)
 #      after the initial auto-review.
 # Both call the same reusable workflow (s3ntin3l8/.github/.github/workflows/
 # hermes-review.yml) with a different `mode`, gated by github.event_name
-# so each job only runs for its own trigger. Unlike the other Hermes callers,
-# which track @main, this one is pinned to a commit SHA: scripts/check_workflow_pins.py
-# requires it. When hermes-review.yml changes, bump both `uses:` lines AND its entry
-# in scripts/action_pins.json (and the matching hash in .secrets.baseline).
+# so each job only runs for its own trigger. Like every s3ntin3l8/.github caller
+# it tracks @main (scripts/check_workflow_pins.py accepts exactly that ref there).
 #
 # IMPORTANT: do NOT add `synchronize` back. It re-triggers a fresh review on
 # EVERY subsequent push, which on a PR under active iteration is an unbounded
@@ -92,7 +90,7 @@ jobs:
       !startsWith(github.event.pull_request.head.ref, 'mullion/task-')
     permissions:
       contents: read # all gh calls in the callee use the Hermes App token
-    uses: s3ntin3l8/.github/.github/workflows/hermes-review.yml@3918ee08f8bddb70b3f40a6cacb34e6bc76f4851 # main @ 2026-10-27
+    uses: s3ntin3l8/.github/.github/workflows/hermes-review.yml@main
     with:
       mode: auto # review on trigger, no @mention needed
       mention-trigger: s3ntin3l8-hermes
@@ -114,7 +112,7 @@ jobs:
       contains(fromJSON('["MEMBER", "OWNER", "COLLABORATOR"]'), github.event.comment.author_association)
     permissions:
       contents: read # all gh calls in the callee use the Hermes App token
-    uses: s3ntin3l8/.github/.github/workflows/hermes-review.yml@3918ee08f8bddb70b3f40a6cacb34e6bc76f4851 # main @ 2026-10-27
+    uses: s3ntin3l8/.github/.github/workflows/hermes-review.yml@main
     with:
       mention-trigger: s3ntin3l8-hermes # mode: on-demand is the reusable workflow's default
       # See the auto-review job above: poll the run instead of firing and

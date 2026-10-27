@@ -108,9 +108,17 @@ RUNWAY_PROXY_TEST=1 pytest tests/security/test_real_proxy.py
 
 ### CI references
 
-External actions and reusable workflows are pinned to commit SHAs; the shared
-workflows used by Runway also have immutable action references;
+External actions and reusable workflows are pinned to commit SHAs;
 `python scripts/check_workflow_pins.py` enforces this in CI.
+
+The one exception is the owner's own `s3ntin3l8/.github` repository (the shared
+reusable workflows and composite actions). Its callers track `@main`, like every
+other repository of the owner, and the check accepts that ref and no other there
+(a branch, a tag or a short SHA still fails). Everything it holds has one owner
+and is gated by that repository's required checks, so a SHA pin adds no trust
+boundary, only a bump of the callers, the record and the baseline after each fix.
+References on `@main` are not recorded in `scripts/action_pins.json`. Third-party
+actions and images stay pinned.
 
 The recorded revision of each action lives in `scripts/action_pins.json`, and
 the check runs in **both directions**: a reference the record does not cover is

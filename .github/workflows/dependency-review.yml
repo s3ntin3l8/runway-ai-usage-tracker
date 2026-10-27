@@ -20,4 +20,4 @@ jobs:
     if: ${{ github.event.repository.private == false }}
     permissions:
       contents: read
-    uses: s3ntin3l8/.github/.github/workflows/dependency-review.yml@8c62b6d0671313b8b975882f0a6d871673b6def8 # main @ 2026-09-10
+    uses: s3ntin3l8/.github/.github/workflows/dependency-review.yml@main

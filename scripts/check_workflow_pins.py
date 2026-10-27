@@ -14,6 +14,14 @@ The comparison runs in both directions. A reference nothing records is a pin no
 one vouches for. A recorded revision no workflow uses is a record that has
 drifted away from the workflows it was written for.
 
+One owner's repository is the exception. ``s3ntin3l8/.github`` holds the shared
+reusable workflows and composite actions, and its ``main`` is gated by its own
+required checks (actionlint, zizmor, a harness), so a SHA pin on it adds no trust
+boundary, only a bump of the callers, this record and the secrets baseline after
+every fix. A reference to that repository is therefore exempt when its ref is
+exactly ``main``, and is neither compared with the record nor expected in it.
+Any other ref there (a branch, a tag, a short SHA) is held to the SHA rule.
+
 The container images a job runs in are pinned the same way, by digest. A tag
 moves under the build exactly like a branch does, and the Playwright image
 carries the browsers the browser matrix tests with, so the tag is checked
@@ -42,6 +50,9 @@ REVISION = re.compile(r"[0-9a-f]{40}")
 USE = re.compile(r"\s*(?:-\s*)?uses:\s*([^\s#]+)")
 IMAGE = re.compile(r"\s*(?:-\s*)?image:\s*([^\s#]+)")
 DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
+#: The one repository whose references may track ``main`` instead of a SHA.
+TRACKED_REPOSITORY = "s3ntin3l8/.github"
+TRACKED_REF = "main"
 #: The version a container tag carries, e.g. ``v1.64.1-noble`` -> ``1.64.1``.
 VERSION = re.compile(r"v?(\d+\.\d+\.\d+)")
 #: The image that carries the browsers the browser matrix runs with.
@@ -99,6 +110,12 @@ class Image:
         """The version the tag carries, e.g. ``1.64.1``."""
         match = VERSION.search(self.tag)
         return match.group(1) if match else None
+
+
+def tracks_main(reference: Reference) -> bool:
+    """Whether ``reference`` is the owner's own repository on its ``main``."""
+    repository = "/".join(reference.action.split("/")[:2])
+    return repository == TRACKED_REPOSITORY and reference.revision == TRACKED_REF
 
 
 def references(root: Path) -> list[Reference]:
@@ -214,6 +231,8 @@ def findings(root: Path, pins: dict[str, str], lockfile: Path = LOCKFILE) -> lis
     problems: list[str] = []
     used: set[str] = set()
     for reference in references(root):
+        if tracks_main(reference):
+            continue
         recorded = pins.get(reference.action)
         if recorded is not None:
             used.add(reference.action)
@@ -221,6 +240,12 @@ def findings(root: Path, pins: dict[str, str], lockfile: Path = LOCKFILE) -> lis
             problems.append(
                 f"{reference.path}:{reference.line}: {reference.action}@{reference.revision} "
                 "is not pinned to a commit SHA"
+                + (
+                    f" (a {TRACKED_REPOSITORY} reference may also be exactly "
+                    f"`@{TRACKED_REF}`, not `refs/heads/{TRACKED_REF}` or any other ref)"
+                    if reference.action.startswith(f"{TRACKED_REPOSITORY}/")
+                    else ""
+                )
             )
             continue
         if recorded is None:

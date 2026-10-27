@@ -131,7 +131,7 @@ semantics), [`CONTRIBUTING.md`](CONTRIBUTING.md) (contributor workflow),
   [`docs/audit/README.md`](docs/audit/README.md) is the convention — read it
   before writing one.
 - `scripts/action_pins.json` — the recorded revision of every external CI
-  action. A workflow pin that is well-formed but wrong fails the job at action
+  action (except `s3ntin3l8/.github` callers on `@main`, which are not recorded). A workflow pin that is well-formed but wrong fails the job at action
   resolution, before any step in it runs, so the pin is checked against this
   record rather than only for shape. **Bumping an action means editing the
   workflow and this record in the same change**, then re-running
