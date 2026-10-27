@@ -4,9 +4,21 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
+
+# A manual Run (Mullion's button) must not race a push-triggered run: both would
+# open the same tag and publish the same image tags and sidecar assets. Queue, never
+# cancel, so a running release is not interrupted.
+concurrency:
+  group: release-please
+  cancel-in-progress: false
 
 jobs:
   release-please:
+    # A dispatch can start from any ref, and the publish jobs below load their
+    # workflow files from the dispatched ref (`uses: ./...`). Release from main only;
+    # a skipped job leaves release_created empty, so every publish job is skipped.
+    if: ${{ github.ref == 'refs/heads/main' }}
     permissions:
       contents: write
       pull-requests: write
