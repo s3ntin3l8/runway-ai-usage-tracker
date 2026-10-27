@@ -1011,7 +1011,7 @@ The strict report contains `format_version: 1`, opaque transport `job_handle`,
 counts, numeric `sequence` diagnostics, SDK-envelope `audit`, `comparison`,
 `subagent_comparison`, fixed `scope_observations`, `declared_category`,
 `execution_kind` (`other` is an unrecognized label; `unknown` is absent) with its
-lower-snake `environment_kind` label (or null; absent in reports from older builds, which the
+lower-snake `environment_kind` label (read from the list row's top-level `environment_kind` field; or null; absent in reports from older builds, which the
 evaluator still accepts), optional `rejected_list`. Comparisons report input/cache overlap only; children remain
 separate from main-agent totals. Execution metadata is an observation, not proven
 provenance. No provider/account/message IDs, model names, source IDs, cursors,
