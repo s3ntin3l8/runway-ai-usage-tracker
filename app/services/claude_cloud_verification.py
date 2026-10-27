@@ -272,8 +272,17 @@ class _VerificationProbe(probe._Probe):
                     self.state.selected_session = cast(str, sid)
                 else:
                     self.state.equivalent_session = cast(str, sid)
-                environment = row.get("environment")
-                kind = environment.get("kind") if isinstance(environment, dict) else None
+                # The label always describes the row that ends up selected: an exact row
+                # replaces whatever a held-back equivalent row recorded, even with none.
+                self.state.execution_kind = "unknown"
+                self.state.environment_kind = None
+                # The list row carries the label at the top level; a nested
+                # environment.kind is accepted only when that key is absent
+                # (an explicit null stays unknown).
+                kind = row.get("environment_kind")
+                if "environment_kind" not in row:
+                    environment = row.get("environment")
+                    kind = environment.get("kind") if isinstance(environment, dict) else None
                 if isinstance(kind, str) and _ENVIRONMENT_KIND.fullmatch(kind):
                     # An unrecognized label is observed, never mapped onto a known kind.
                     self.state.execution_kind = _KNOWN_KINDS.get(kind, "other")

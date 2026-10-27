@@ -324,7 +324,7 @@ class CheckpointStore:
             or any(getattr(new, key) < getattr(old, key) for key in counters)
             or any(
                 getattr(old, key) is not None and getattr(old, key) != getattr(new, key)
-                for key in ("subject", "organization", "selected_session")
+                for key in ("subject", "organization", "selected_session", "equivalent_session")
             )
             or old.phase in ("complete", "stopped")
             or (old.phase == "history" and new.phase == "listing")

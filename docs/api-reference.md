@@ -932,9 +932,10 @@ Actions:
   using the exact eligible cached source. Optional `organization_id`, `session_id`,
   `declared_category`, `job_key` and `expected_local` are strict inputs. Start
   performs no provider requests. A `session_id` matches the listed id with or
-  without a `cse_` or `session_` prefix (an exact listed id wins over a prefix-equivalent one) (the list returns `cse_…`, claude.ai shows
-  `session_…`); this mirrors the primary client's observed behaviour, not an API
-  guarantee. Expected local fixtures contain at most 256
+  without a `cse_` or `session_` prefix — an exact listed id wins over a
+  prefix-equivalent one; the list returns `cse_…` and claude.ai shows `session_…`.
+  This mirrors the primary client's observed behaviour, not an API guarantee.
+  Expected local fixtures contain at most 256
   reduced assistant records, strict numeric usage, and identities HMACed with the
   supplied 32-byte hex job key. Never submit transcripts, tokens or raw message IDs.
 - `{"action":"step","job_handle":"…"}` explicitly advances one batch:
@@ -1014,8 +1015,10 @@ The strict report contains `format_version: 1`, opaque transport `job_handle`,
 counts, numeric `sequence` diagnostics, SDK-envelope `audit`, `comparison`,
 `subagent_comparison`, fixed `scope_observations`, `declared_category`,
 `execution_kind` (`other` is an unrecognized label; `unknown` is absent) with its
-lower-snake `environment_kind` label (or null; absent in reports from older builds, which the
-evaluator still accepts), optional `rejected_list`. Comparisons report input/cache overlap only; children remain
+lower-snake `environment_kind` label (read from the list row's top-level
+`environment_kind` field, falling back to a nested `environment.kind` only when
+that key is absent; null when neither is a valid label; absent in reports from
+older builds, which the evaluator still accepts), optional `rejected_list`. Comparisons report input/cache overlap only; children remain
 separate from main-agent totals. Execution metadata is an observation, not proven
 provenance. No provider/account/message IDs, model names, source IDs, cursors,
 HMACs, salt, transcript content or raw errors leave the report. A checkpoint written

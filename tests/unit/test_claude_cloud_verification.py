@@ -515,19 +515,29 @@ async def test_status_rechecks_local_authority_without_provider_or_checkpoint_wr
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "environment,kind,label",
+    "fields,kind,label",
     [
-        ({"kind": "anthropic_cloud"}, "anthropic_cloud", "anthropic_cloud"),
-        ({"kind": "bridge"}, "bridge", "bridge"),
-        ({"kind": "byoc_runner"}, "other", "byoc_runner"),
-        ({"kind": "Has Spaces/Private-Name"}, "unknown", None),
-        ({"kind": 7}, "unknown", None),
+        ({"environment_kind": "anthropic_cloud"}, "anthropic_cloud", "anthropic_cloud"),
+        ({"environment_kind": "bridge"}, "bridge", "bridge"),
+        ({"environment_kind": "byoc_runner"}, "other", "byoc_runner"),
+        ({"environment_kind": "Has Spaces/Private-Name"}, "unknown", None),
+        ({"environment_kind": 7}, "unknown", None),
+        ({"environment_kind": None}, "unknown", None),
+        # A nested environment.kind is a fallback for an absent top-level field only.
+        ({"environment": {"kind": "anthropic_cloud"}}, "anthropic_cloud", "anthropic_cloud"),
+        (
+            {"environment_kind": "bridge", "environment": {"kind": "anthropic_cloud"}},
+            "bridge",
+            "bridge",
+        ),
+        ({"environment_kind": None, "environment": {"kind": "bridge"}}, "unknown", None),
+        ({"environment": {"kind": 7}}, "unknown", None),
+        ({"environment": {}}, "unknown", None),
         ({}, "unknown", None),
-        (None, "unknown", None),
     ],
 )
 async def test_environment_kind_is_reported_only_as_a_safe_label(
-    source_environment, environment, kind, label
+    source_environment, fields, kind, label
 ):
     from app.services.claude_cloud_verification import build_verification_report
 
@@ -538,9 +548,7 @@ async def test_environment_kind_is_reported_only_as_a_safe_label(
         if request.url.path.endswith("/profile"):
             return httpx.Response(200, json=profile())
         if request.url.path == "/v1/code/sessions":
-            row = {"id": "session-fixture"}
-            if environment is not None:
-                row["environment"] = environment
+            row = {"id": "session-fixture", **fields}
             return httpx.Response(200, json={"data": [row], "next_cursor": None})
         return httpx.Response(200, json={"data": [], "next_cursor": None})
 
@@ -552,6 +560,8 @@ async def test_environment_kind_is_reported_only_as_a_safe_label(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("pages", [[["cse_abc", "abc"]], [["cse_abc"], ["abc"]]])
 async def test_exact_listed_id_wins_over_a_prefix_equivalent_one(source_environment, pages):
+    from app.services.claude_cloud_verification import build_verification_report
+
     store = store_for(source_environment)
     handle = await start(store, session_id="abc")
     history = []
@@ -565,7 +575,12 @@ async def test_exact_listed_id_wins_over_a_prefix_equivalent_one(source_environm
             return httpx.Response(
                 200,
                 json={
-                    "data": [{"id": sid} for sid in pages[index]],
+                    # Only the held-back equivalent row carries a label; it must not leak
+                    # onto the exact row that ends up selected.
+                    "data": [
+                        {"id": sid, **({"environment_kind": "bridge"} if sid != "abc" else {})}
+                        for sid in pages[index]
+                    ],
                     "next_cursor": str(index + 1) if more else None,
                 },
             )
@@ -574,3 +589,27 @@ async def test_exact_listed_id_wins_over_a_prefix_equivalent_one(source_environm
 
     state = await advance(handle, store, upstream)
     assert state.outcome == "complete" and history == ["/v1/code/sessions/abc/events"]
+    report = build_verification_report(handle, state)
+    assert report["execution_kind"] == "unknown" and report["environment_kind"] is None
+
+
+@pytest.mark.asyncio
+async def test_equivalent_row_label_is_kept_when_it_is_the_only_match(source_environment):
+    from app.services.claude_cloud_verification import build_verification_report
+
+    store = store_for(source_environment)
+    handle = await start(store, session_id="session_abc")
+
+    def upstream(request):
+        if request.url.path.endswith("/profile"):
+            return httpx.Response(200, json=profile())
+        if request.url.path == "/v1/code/sessions":
+            row = {"id": "cse_abc", "environment_kind": "anthropic_cloud"}
+            return httpx.Response(200, json={"data": [row], "next_cursor": None})
+        assert request.url.path == "/v1/code/sessions/cse_abc/events"
+        return httpx.Response(200, json={"data": [], "next_cursor": None})
+
+    state = await advance(handle, store, upstream)
+    report = build_verification_report(handle, state)
+    assert state.outcome == "complete" and report["execution_kind"] == "anthropic_cloud"
+    assert report["environment_kind"] == "anthropic_cloud"
