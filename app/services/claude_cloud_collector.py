@@ -39,8 +39,8 @@ from app.models.db import ClaudeCloudCollectorState, ClaudeCloudSessionUsage
 from app.models.schemas import UsageEventPush
 from app.services import claude_cloud_probe as probe
 from app.services.event_ingestor import EventIngestor
+from app.services.model_normalization import normalize_anthropic_model
 from app.services.probe_mode import probing
-from scripts.sidecar_pkg.event_extractors.anthropic import _normalize_anthropic_model
 
 logger = logging.getLogger(__name__)
 
@@ -154,14 +154,19 @@ class _CollectorProbe(probe._Probe):
 
 async def _sweep(
     attempt: _CollectorProbe, high_water: datetime | None, full: bool, report: CycleReport
-) -> tuple[list[SessionObservation], datetime | None, bool]:
-    """Page the session list; returns cloud rows, the newest ``updated_at``, completeness."""
+) -> tuple[list[SessionObservation], datetime | None, bool, bool]:
+    """Page the session list.
+
+    Returns the cloud rows, the newest ``updated_at``, whether the list was read to a safe
+    stopping point, and whether every row seen was newest-first.
+    """
     headers = await attempt.identity()
     observed: list[SessionObservation] = []
     newest: datetime | None = None
     previous: datetime | None = None
     ordered = True
     seen: set[str] = set()
+    listed_ids: set[str] = set()
     cursor: str | None = None
     while True:
         params: dict[str, Any] = {"limit": PAGE_LIMIT}
@@ -177,6 +182,10 @@ async def _sweep(
             sid = row.get("id")
             if not isinstance(sid, str) or not probe._SESSION_ID.fullmatch(sid):
                 raise probe.ProbeError("unsupported_contract")
+            if sid in listed_ids:
+                # One session twice would double count it; the verifier rejects this too.
+                raise probe.ProbeError("unsupported_contract")
+            listed_ids.add(sid)
             updated = _timestamp(row.get("updated_at"))
             if updated is None:
                 ordered = already_processed = False
@@ -193,13 +202,14 @@ async def _sweep(
             if usage is not None:
                 observed.append(SessionObservation(sid, usage, read_model(row), updated))
         if cursor is None:
-            return observed, newest, True
+            return observed, newest, True, ordered
         # An early stop needs the pages read so far to be newest-first. Pages not yet read can
         # still disagree; the periodic full sweep (FULL_SWEEP_EVERY) is the backstop for that.
         if not full and ordered and already_processed:
-            return observed, newest, True
+            return observed, newest, True, ordered
         if cursor in seen or report.pages >= MAX_PAGES:
-            return observed, newest, False
+            report.notes.append("cursor_repeat" if cursor in seen else "max_pages")
+            return observed, newest, False, ordered
         seen.add(cursor)
         await asyncio.sleep(PAGE_PAUSE)
 
@@ -208,7 +218,7 @@ def _apply(
     account: str,
     observed: list[SessionObservation],
     newest: datetime | None,
-    complete: bool,
+    advance: bool,
     report: CycleReport,
     now: float,
 ) -> None:
@@ -238,9 +248,11 @@ def _apply(
             )
             delta, regressed = usage_delta(previous, item.usage)
             if regressed:
+                # Nothing is written for a shrink, and the smaller block becomes the baseline,
+                # so a session whose counters restarted counts again once they climb.
                 row.regressions += 1
                 report.regressions += 1
-                session.add(row)
+                moves.append((row, item.usage, item.model))
                 continue
             if delta:
                 moment = item.updated_at or datetime.fromtimestamp(now, UTC)
@@ -250,7 +262,7 @@ def _apply(
                         account_id=account,
                         event_id=f"cloud:{digest}:{row.revision + 1}",
                         ts=moment.isoformat(),
-                        model_id=_normalize_anthropic_model(item.model or ""),
+                        model_id=normalize_anthropic_model(item.model or ""),
                         source_app=CLAUDE_CODE,
                         session_id=digest,
                         entrypoint=EVENT_ENTRYPOINT,
@@ -281,7 +293,7 @@ def _apply(
         state.last_cycle_at = now
         state.last_events = report.events
         state.last_regressions = report.regressions
-        if complete and newest is not None:
+        if advance and newest is not None:
             kept = _timestamp(state.high_water)
             state.high_water = (max(newest, kept) if kept else newest).isoformat()
         session.add(state)
@@ -305,46 +317,79 @@ def _record_outcome(account: str, outcome: str, now: float) -> None:
         session.commit()
 
 
+async def _read(
+    attempt: _CollectorProbe,
+    source_id: str,
+    high_water: datetime | None,
+    full: bool,
+    report: CycleReport,
+) -> tuple[list[SessionObservation], datetime | None, bool, bool] | None:
+    """The network half of a sweep; sets ``report.outcome`` and returns None on failure."""
+    try:
+        async with asyncio.timeout(CYCLE_TIMEOUT):
+            attempt.tokens, attempt.expected_org, attempt.authority = await probe._load_source(
+                attempt.account, source_id
+            )
+            async with probe.token_cache.using_source("anthropic", attempt.account, source_id):
+                try:
+                    result = await _sweep(attempt, high_water, full, report)
+                except (probe.ProbeError, httpx.HTTPError, ValueError, RecursionError):
+                    await attempt.check_source()
+                    raise
+                # Results are discarded unless the exact source is still the one used.
+                await attempt.check_source()
+                return result
+    except probe.ProbeError as exc:
+        report.outcome = str(exc)
+    except (TimeoutError, httpx.TimeoutException):
+        report.outcome = "timeout"
+    except SQLAlchemyError:
+        report.outcome = "source_unavailable"
+    except httpx.HTTPError:
+        report.outcome = "unavailable"
+    except (ValueError, RecursionError):
+        report.outcome = "unsupported_contract"
+    return None
+
+
+def _record(account: str, outcome: str, now: float) -> None:
+    try:
+        _record_outcome(account, outcome, now)
+    except SQLAlchemyError:
+        logger.warning("Claude cloud collector could not record its outcome")
+
+
 async def collect_account(account: str, source_id: str, client: httpx.AsyncClient) -> CycleReport:
     """One bounded sweep for one account through one exact cached source."""
     report = CycleReport()
+    if probe._gate.locked():
+        # An operator-triggered probe or verification holds the endpoint: add no load.
+        report.outcome = "busy"
+        return report
     high_water, cycles = await asyncio.to_thread(_state, account)
     full = high_water is None or cycles % FULL_SWEEP_EVERY == 0
     attempt = _CollectorProbe(account, source_id, client)
-    sweep: tuple[list[SessionObservation], datetime | None, bool] | None = None
-    with probing():
-        try:
-            async with asyncio.timeout(CYCLE_TIMEOUT):
-                attempt.tokens, attempt.expected_org, attempt.authority = await probe._load_source(
-                    attempt.account, source_id
-                )
-                async with probe.token_cache.using_source("anthropic", attempt.account, source_id):
-                    try:
-                        sweep = await _sweep(attempt, high_water, full, report)
-                    except (probe.ProbeError, httpx.HTTPError, ValueError, RecursionError):
-                        await attempt.check_source()
-                        raise
-                    # Results are discarded unless the exact source is still the one used.
-                    await attempt.check_source()
-        except probe.ProbeError as exc:
-            report.outcome = str(exc)
-        except (TimeoutError, httpx.TimeoutException):
-            report.outcome = "timeout"
-        except SQLAlchemyError:
-            report.outcome = "source_unavailable"
-        except httpx.HTTPError:
-            report.outcome = "unavailable"
-        except (ValueError, RecursionError):
-            report.outcome = "unsupported_contract"
+    async with probe._gate:
+        with probing():
+            sweep = await _read(attempt, source_id, high_water, full, report)
     now = time.time()
     if sweep is None:
-        await asyncio.to_thread(_record_outcome, attempt.account, report.outcome, now)
+        await asyncio.to_thread(_record, attempt.account, report.outcome, now)
         return report
-    observed, newest, complete = sweep
+    observed, newest, complete, ordered = sweep
     report.cloud_sessions = len(observed)
-    await asyncio.to_thread(_apply, attempt.account, observed, newest, complete, report, now)
+    try:
+        # A list that could not be read to its end still advances the mark when what was read
+        # was newest-first, so one oversized list does not pin the collector to full sweeps.
+        await asyncio.to_thread(
+            _apply, attempt.account, observed, newest, complete or ordered, report, now
+        )
+    except SQLAlchemyError:
+        report.outcome = "storage_error"
+        await asyncio.to_thread(_record, attempt.account, report.outcome, now)
+        return report
     report.outcome = "ok" if complete else "truncated"
-    await asyncio.to_thread(_record_outcome, attempt.account, report.outcome, now)
+    await asyncio.to_thread(_record, attempt.account, report.outcome, now)
     return report
 
 
@@ -365,6 +410,8 @@ async def collect_all(client: httpx.AsyncClient) -> dict[str, CycleReport]:
                 reports[account] = report
                 break
             reports.setdefault(account, report)
+            if report.outcome == "busy":
+                break
     for report in reports.values():
         logger.info(
             "Claude cloud collector: outcome=%s pages=%d listed=%d cloud=%d events=%d regressions=%d",

@@ -200,14 +200,68 @@ async def test_bridge_rows_and_rows_without_a_block_write_nothing(environment):
 
 
 @pytest.mark.asyncio
-async def test_a_decrease_writes_nothing_and_is_counted(environment):
+async def test_a_decrease_writes_nothing_and_the_smaller_block_becomes_the_baseline(environment):
     await sweep(listing([[row(usage=block())]])[0])
     report = await sweep(listing([[row(usage=block(read=100))]])[0])
     assert report.events == 0 and report.regressions == 1 and len(events(environment)) == 1
     with Session(environment) as session:
         stored = session.exec(select(ClaudeCloudSessionUsage)).one()
-        assert stored.tokens_cache_read == 300 and stored.regressions == 1
+        assert stored.tokens_cache_read == 100 and stored.regressions == 1
         assert session.get(ClaudeCloudCollectorState, ACCOUNT).last_regressions == 1
+    # The session counts again from the new baseline instead of staying dead.
+    grown = await sweep(listing([[row(usage=block(read=160))]])[0])
+    assert grown.events == 1 and events(environment)[1].tokens_cache_read == 60
+
+
+@pytest.mark.asyncio
+async def test_one_session_listed_twice_is_a_contract_failure_not_a_crash(environment):
+    upstream, _ = listing([[row(usage=block())], [row(usage=block(inp=11))]])
+    report = await sweep(upstream)
+    assert report.outcome == "unsupported_contract" and events(environment) == []
+    with Session(environment) as session:
+        assert session.get(ClaudeCloudCollectorState, ACCOUNT).last_outcome == (
+            "unsupported_contract"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_busy_endpoint_gate_skips_the_sweep_without_requests(environment):
+    upstream, calls = listing([[row(usage=block())]])
+    async with probe._gate:
+        report = await sweep(upstream)
+    assert report.outcome == "busy" and calls == [] and events(environment) == []
+
+
+@pytest.mark.asyncio
+async def test_a_storage_failure_is_recorded_and_does_not_escape(environment, monkeypatch):
+    from sqlalchemy.exc import OperationalError
+
+    def broken(*args, **kwargs):
+        raise OperationalError("insert", {}, Exception("locked"))
+
+    monkeypatch.setattr(collector, "_apply", broken)
+    report = await sweep(listing([[row(usage=block())]])[0])
+    assert report.outcome == "storage_error"
+    with Session(environment) as session:
+        assert session.get(ClaudeCloudCollectorState, ACCOUNT).last_outcome == "storage_error"
+
+
+@pytest.mark.asyncio
+async def test_an_oversized_ordered_list_still_advances_the_high_water_mark(
+    environment, monkeypatch
+):
+    monkeypatch.setattr(collector, "MAX_PAGES", 2)
+    pages = [
+        [row("cse_a", usage=block(), updated="2026-10-27T10:00:00Z")],
+        [row("cse_b", usage=block(), updated="2026-10-26T10:00:00Z")],
+        [row("cse_c", usage=block(), updated="2026-10-25T10:00:00Z")],
+    ]
+    report = await sweep(listing(pages)[0])
+    assert report.outcome == "truncated" and report.notes == ["max_pages"]
+    with Session(environment) as session:
+        state = session.get(ClaudeCloudCollectorState, ACCOUNT)
+        assert state.high_water.startswith("2026-10-27T10:00:00")
+        assert state.last_outcome == "truncated"
 
 
 @pytest.mark.asyncio
@@ -350,3 +404,11 @@ async def test_the_background_task_starts_and_stops(monkeypatch):
         await real_sleep(0)
     await task.stop()
     assert seen and task._task is None
+
+
+def test_the_collector_imports_only_what_the_server_image_ships():
+    """The image copies app/ and a few named scripts; the sidecar extractors are not among them."""
+    from pathlib import Path
+
+    source = Path(collector.__file__).read_text()
+    assert "event_extractors" not in source and "sidecar_pkg" not in source

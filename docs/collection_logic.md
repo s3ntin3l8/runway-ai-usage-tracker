@@ -249,7 +249,7 @@ reads them from `GET /v1/code/sessions`:
   session digest plus a revision, so a replay is a duplicate, never a second event. The API's
   `cost_usd` is not used; Runway prices the tokens itself.
 - The block has no per-turn timing: an increase is dated by the row's `updated_at`.
-- A block that shrinks writes nothing and is counted (`last_regressions`); a counter the API
+- A block that shrinks writes nothing and is counted (`last_regressions`); the smaller block becomes the baseline, so the session counts again once it grows. A counter the API
   did not report stays unknown in the stored state, and feeds its event as 0.
 - After the first full sweep the collector stops paging once a page is entirely older than the
   newest `updated_at` already processed, but only if the pages read so far are newest-first.
