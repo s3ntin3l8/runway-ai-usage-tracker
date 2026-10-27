@@ -262,9 +262,10 @@ class _VerificationProbe(probe._Probe):
                 ):
                     self.state.selected_session = cast(str, sid)
                     # The list row carries the label at the top level; a nested
-                    # environment.kind is accepted only when that is absent.
+                    # environment.kind is accepted only when that key is absent
+                    # (an explicit null stays unknown).
                     kind = row.get("environment_kind")
-                    if kind is None:
+                    if "environment_kind" not in row:
                         environment = row.get("environment")
                         kind = environment.get("kind") if isinstance(environment, dict) else None
                     if isinstance(kind, str) and _ENVIRONMENT_KIND.fullmatch(kind):

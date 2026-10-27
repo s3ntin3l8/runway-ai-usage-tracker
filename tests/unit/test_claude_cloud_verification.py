@@ -523,6 +523,8 @@ async def test_status_rechecks_local_authority_without_provider_or_checkpoint_wr
             "bridge",
             "bridge",
         ),
+        ({"environment_kind": None, "environment": {"kind": "bridge"}}, "unknown", None),
+        ({"environment": {"kind": 7}}, "unknown", None),
         ({"environment": {}}, "unknown", None),
         ({}, "unknown", None),
     ],
