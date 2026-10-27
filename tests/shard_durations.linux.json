@@ -208,7 +208,6 @@
     "tests/unit/test_rebuild_rollups_for_pairs.py": 6.84,
     "tests/unit/test_reclassify_hermes_pending.py": 0.07,
     "tests/unit/test_recost_events.py": 1.17,
-    "tests/unit/test_registry_login.py": 0.33,
     "tests/unit/test_registry_utf8.py": 0.01,
     "tests/unit/test_release_ci_recovery.py": 0.12,
     "tests/unit/test_replay.py": 0.07,

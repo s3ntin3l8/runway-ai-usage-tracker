@@ -29,7 +29,6 @@ temporary directories so discovery fixtures cannot touch developer logins.
 For example: `python scripts/dev_checks.py test tests/unit/test_self_update.py`.
 `install-python` is the Python-only half of `install` — no npm, no git hooks —
 which is what the native Windows CI jobs use.
-Git Bash is needed for the registry-login shell action's tests on Windows.
 Symlink tests require Windows Developer Mode or an elevated process; a missing
 symlink privilege is reported as a specific skip, not Windows acceptance of those checks.
 POSIX permission assertions remain active on POSIX; Windows still checks

@@ -108,6 +108,16 @@ and issuer `https://token.actions.githubusercontent.com`. Certificate chain,
 transparency evidence and index digest claims were checked. A separate registry
 inspection confirmed the public versioned tag matches the index above.
 
+**Signing identity after the shared-workflow migration.** Images published from
+the move to the shared `docker-publish.yml` onward are signed by that workflow, so
+their certificate identity is
+`https://github.com/s3ntin3l8/.github/.github/workflows/docker-publish.yml@refs/heads/main`
+(the same issuer, `https://token.actions.githubusercontent.com`). Images signed
+before it carry the identity above, so verifying an older tag needs the old one.
+The audit evidence of those later releases is the `release-image-audit-<image-slug>`
+artifact (`release-image-audit-s3ntin3l8-runway`), not `release-image-audit`;
+the passages above describe earlier runs and keep the name they had.
+
 ## Util-linux applicability review, 2026-10-15
 
 [Issue #640](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/640)

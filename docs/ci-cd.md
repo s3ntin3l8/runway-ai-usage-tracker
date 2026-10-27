@@ -43,12 +43,17 @@ Workflows live in `.github/workflows/`.
     rebuild leaves `:edge` serving the previous commit's image and that
     image's SHA. The SHA still names the exact build that is running — it is
     the SHA of the *build*, not of `main` — but it is no longer `main`'s tip.
-    The checked-out commit is passed as the `BUILD_SHA` build arg and baked
-    in as `RUNWAY_BUILD_SHA`, so the running server reports the exact build
-    it is in Settings → About — every `:edge` image ships the same version
-    string, so the SHA is what tells two of them apart. The Dockerfile has
-    to declare `ARG BUILD_SHA` in its **final** stage (a builder-stage ARG
-    never reaches the running image); the build fails loudly if it doesn't.
+    The shared workflow passes the checked-out commit as the `COMMIT_SHA`
+    build arg and the Dockerfile bakes it in as `RUNWAY_BUILD_SHA`, so the
+    running server reports the exact build it is in Settings → About — every
+    `:edge` image ships the same version string, so the SHA is what tells two
+    of them apart. The Dockerfile has to declare `ARG COMMIT_SHA` in its
+    **final** stage (a builder-stage ARG never reaches the running image); the
+    build fails loudly if the final stage uses it without the declaration.
+    The workflow runs `python -m scripts.audit_release_image` on the candidate
+    image through its `audit-command` input, then signs and promotes that
+    digest; the evidence is kept as the `release-image-audit-<image-slug>`
+    artifact.
   - Every job above except the two `test-*` ones and `image-changed` is
     advisory: none of them is a required status check.
   - Required checks on `main`: `test-python / lint`,
@@ -142,7 +147,7 @@ Workflows live in `.github/workflows/`.
     ships.
 - **`release-please.yml`** — on push to `main` (or a manual `workflow_dispatch` run, `main` only, serialized): opens/merges the release PR
   from Conventional Commits (see *Releases*). When it cuts a release it also
-  runs `docker-publish.yml` with `push-release: true` (stable → `:latest` +
+  runs the shared `docker-publish.yml` with `push-release: true` (stable → `:latest` +
   version tags; beta → `:beta` + version tag, selected by `release-channel`)
   and calls `sidecar-build.yml` via `build-sidecar`/`publish-sidecar` —
   for stable and beta releases alike.

@@ -10,7 +10,8 @@ This script turns an ``image-audit`` directory into that stored scan. The
 workflows retain one in three shapes, and the difference decides where the two
 architectures are:
 
-- ``immutable-image-audit`` and ``release-image-audit`` audit an image index
+- ``immutable-image-audit`` and ``release-image-audit`` (since the move to the
+  shared publish workflow, ``release-image-audit-<image-slug>``) audit an image index
   in one go, so their directory holds ``amd64.vulnerabilities.json``,
   ``arm64.vulnerabilities.json`` and one ``evidence.json`` side by side. This
   is the shape to record from: both architectures of one published image.
