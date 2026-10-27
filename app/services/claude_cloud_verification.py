@@ -257,20 +257,31 @@ class _VerificationProbe(probe._Probe):
             self.state.listed_sessions += len(rows)
             self.state.list_pages += 1
             for row, sid in zip(rows, ids, strict=True):
-                if self.state.selected_session is None and (
-                    self.state.target_session is None
-                    or probe.session_key(self.state.target_session)
-                    == probe.session_key(cast(str, sid))
-                ):
+                target = self.state.target_session
+                exact = target is None or sid == target
+                # An exact listed id wins over a prefix-equivalent one wherever it sits in
+                # the list, so an equivalent is held back until the list is exhausted.
+                equivalent = (
+                    not exact
+                    and probe.session_key(cast(str, target)) == probe.session_key(cast(str, sid))
+                    and self.state.equivalent_session is None
+                )
+                if self.state.selected_session is not None or not (exact or equivalent):
+                    continue
+                if exact:
                     self.state.selected_session = cast(str, sid)
-                    environment = row.get("environment")
-                    kind = environment.get("kind") if isinstance(environment, dict) else None
-                    if isinstance(kind, str) and _ENVIRONMENT_KIND.fullmatch(kind):
-                        # An unrecognized label is observed, never mapped onto a known kind.
-                        self.state.execution_kind = _KNOWN_KINDS.get(kind, "other")
-                        self.state.environment_kind = kind
+                else:
+                    self.state.equivalent_session = cast(str, sid)
+                environment = row.get("environment")
+                kind = environment.get("kind") if isinstance(environment, dict) else None
+                if isinstance(kind, str) and _ENVIRONMENT_KIND.fullmatch(kind):
+                    # An unrecognized label is observed, never mapped onto a known kind.
+                    self.state.execution_kind = _KNOWN_KINDS.get(kind, "other")
+                    self.state.environment_kind = kind
             if cursor is None:
                 self.state.list_complete = True
+                if self.state.selected_session is None:
+                    self.state.selected_session = self.state.equivalent_session
                 if self.state.selected_session is None:
                     self.state.phase = "complete"
                     self.state.outcome = (

@@ -395,13 +395,17 @@ class _Probe:
         if not ids:
             self.report["outcome"] = "no_sessions" if cursor is None else "sample_limited"
             return
+        # An exact listed id wins; the prefix-equivalent form is only a fallback.
         sid = next(
-            (
-                cast(str, value)
-                for value in ids
-                if target is not None and session_key(cast(str, value)) == session_key(target)
+            (cast(str, v) for v in ids if v == target),
+            next(
+                (
+                    cast(str, v)
+                    for v in ids
+                    if target is not None and session_key(cast(str, v)) == session_key(target)
+                ),
+                cast(str, ids[0]),
             ),
-            cast(str, ids[0]),
         )
         await self.history(sid, headers)
 

@@ -1018,3 +1018,33 @@ async def test_payload_preserves_conflicts_subagents_and_error_results_without_d
         "private-content",
     ):
         assert secret not in encoded
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "target,listed,requested",
+    [
+        ("session_abc", ["first", "cse_abc"], "cse_abc"),
+        ("cse_abc", ["first", "abc"], "abc"),
+        # An exact listed id wins over a prefix-equivalent one listed earlier.
+        ("abc", ["cse_abc", "abc"], "abc"),
+    ],
+)
+async def test_sample_target_matches_prefix_equivalent_ids_exact_first(
+    environment, target, listed, requested
+):
+    paths = []
+
+    def upstream(r):
+        paths.append(r.url.path)
+        if r.url.path.endswith("/profile"):
+            return httpx.Response(200, json=profile())
+        if r.url.path == "/v1/code/sessions":
+            return httpx.Response(
+                200, json={"data": [{"id": sid} for sid in listed], "next_cursor": None}
+            )
+        assert r.url.path == f"/v1/code/sessions/{requested}/events"
+        return httpx.Response(200, json={"data": [], "next_cursor": None})
+
+    result = await run(request(session_id=target), upstream)
+    assert result["outcome"] == "sample_complete" and len(paths) == 3

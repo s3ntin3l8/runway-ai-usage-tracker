@@ -547,3 +547,30 @@ async def test_environment_kind_is_reported_only_as_a_safe_label(
     state = await advance(handle, store, upstream)
     report = build_verification_report(handle, state)
     assert report["execution_kind"] == kind and report["environment_kind"] == label
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("pages", [[["cse_abc", "abc"]], [["cse_abc"], ["abc"]]])
+async def test_exact_listed_id_wins_over_a_prefix_equivalent_one(source_environment, pages):
+    store = store_for(source_environment)
+    handle = await start(store, session_id="abc")
+    history = []
+
+    def upstream(request):
+        if request.url.path.endswith("/profile"):
+            return httpx.Response(200, json=profile())
+        if request.url.path == "/v1/code/sessions":
+            index = int(request.url.params.get("cursor") or 0)
+            more = index + 1 < len(pages)
+            return httpx.Response(
+                200,
+                json={
+                    "data": [{"id": sid} for sid in pages[index]],
+                    "next_cursor": str(index + 1) if more else None,
+                },
+            )
+        history.append(request.url.path)
+        return httpx.Response(200, json={"data": [], "next_cursor": None})
+
+    state = await advance(handle, store, upstream)
+    assert state.outcome == "complete" and history == ["/v1/code/sessions/abc/events"]
