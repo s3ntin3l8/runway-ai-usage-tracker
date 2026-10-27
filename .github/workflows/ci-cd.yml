@@ -205,13 +205,13 @@ jobs:
     # leaves the contents unchanged.
     #
     # One thing does change on every commit: the Dockerfile bakes the commit
-    # (COMMIT_SHA) in as RUNWAY_BUILD_SHA, so a rebuilt image is never byte-identical to
-    # its predecessor. Skipping the rebuild therefore leaves :edge serving
-    # the previous commit's image, and that image's SHA. The SHA still names
-    # the exact build that is running -- it is the SHA of the *build*, not of
-    # main -- but it is no longer main's tip. Rebuilding every time costs
-    # about four minutes per main push, roughly one percent of this
-    # repository's CI; this keeps the contents honest and accepts the lag.
+    # (COMMIT_SHA) in as RUNWAY_BUILD_SHA, so a rebuilt image is never byte-
+    # identical to its predecessor. Skipping the rebuild therefore leaves :edge
+    # serving the previous commit's image, and that image's SHA. The SHA still
+    # names the exact build that is running -- it is the SHA of the *build*, not
+    # of main -- but it is no longer main's tip. Rebuilding every time costs about
+    # four minutes per main push, roughly one percent of this repository's CI;
+    # this keeps the contents honest and accepts the lag.
     #
     # If the base commit cannot be found the answer is "changed", so an
     # unresolvable comparison rebuilds rather than silently skipping the
