@@ -140,7 +140,7 @@ Workflows live in `.github/workflows/`.
     and lives in its own workflow, filtered to the paths that can change the
     image. The daily `published` job audits the arm64 image that actually
     ships.
-- **`release-please.yml`** — on push to `main`: opens/merges the release PR
+- **`release-please.yml`** — on push to `main` (or a manual `workflow_dispatch` run, `main` only, serialized): opens/merges the release PR
   from Conventional Commits (see *Releases*). When it cuts a release it also
   runs `docker-publish.yml` with `push-release: true` (stable → `:latest` +
   version tags; beta → `:beta` + version tag, selected by `release-channel`)
