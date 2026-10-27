@@ -181,6 +181,9 @@ class VerificationState(_PrivateModel):
     organization: UUIDString | None = None
     target_session: SessionID | None = None
     selected_session: SessionID | None = None
+    # A listed id equal to the target only after a cse_/session_ prefix is stripped; used
+    # when no exact match is listed.
+    equivalent_session: SessionID | None = None
     declared_category: Literal[
         "cli_code",
         "desktop_code",

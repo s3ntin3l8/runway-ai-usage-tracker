@@ -931,7 +931,11 @@ Actions:
 - `{"action":"start","account_id":"…","source_id":"…"}` records one job
   using the exact eligible cached source. Optional `organization_id`, `session_id`,
   `declared_category`, `job_key` and `expected_local` are strict inputs. Start
-  performs no provider requests. Expected local fixtures contain at most 256
+  performs no provider requests. A `session_id` matches the listed id with or
+  without a `cse_` or `session_` prefix — an exact listed id wins over a
+  prefix-equivalent one; the list returns `cse_…` and claude.ai shows `session_…`.
+  This mirrors the primary client's observed behaviour, not an API guarantee.
+  Expected local fixtures contain at most 256
   reduced assistant records, strict numeric usage, and identities HMACed with the
   supplied 32-byte hex job key. Never submit transcripts, tokens or raw message IDs.
 - `{"action":"step","job_handle":"…"}` explicitly advances one batch:
@@ -1020,8 +1024,9 @@ provenance. No provider/account/message IDs, model names, source IDs, cursors,
 HMACs, salt, transcript content or raw errors leave the report. A checkpoint written
 with `environment_kind` cannot be resumed by a build without the field (the checkpoint
 models reject unknown fields), so finish or cancel a job before rolling back to an
-older image. A checkpoint from before the field resumes here with the label taken from
-a known `execution_kind`.
+older image; the same holds for the `equivalent_session` field a job records when only a
+prefix-equivalent id is listed for its target. A checkpoint from before the field resumes
+here with the label taken from a known `execution_kind`.
 
 All `cloud_contract_verified`, `ready_for_ingestion`, `live_acceptance_passed` and
 `provenance_verified` flags remain false. Complete pagination is not complete

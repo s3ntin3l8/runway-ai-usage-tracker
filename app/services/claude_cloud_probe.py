@@ -36,6 +36,20 @@ from scripts.claude_cloud_list_boundary import SESSION_ID as _SESSION_ID
 from scripts.claude_cloud_structure import empty_structure, observe_structure
 from scripts.sidecar_pkg.source_catalog import source_for_origin
 
+
+def session_key(sid: str) -> str:
+    """The id with a ``cse_`` or ``session_`` prefix removed.
+
+    The list API returns ``cse_...`` while claude.ai shows ``session_...`` for the same
+    session. The primary client strips either prefix before comparing; this is observed
+    behaviour, not an API guarantee, so it is used only to match an operator-supplied target.
+    """
+    for prefix in ("cse_", "session_"):
+        if sid.startswith(prefix):
+            return sid[len(prefix) :]
+    return sid
+
+
 BASE_URL = "https://api.anthropic.com"
 TOTAL_TIMEOUT = 30.0
 MAX_RESPONSE_BYTES = 1024 * 1024
@@ -372,15 +386,26 @@ class _Probe:
             raise ProbeError("unsupported_contract")
         if len(set(ids)) != len(ids):
             raise ProbeError("unsupported_contract")
-        if self.request.session_id is not None and self.request.session_id not in ids:
+        target = self.request.session_id
+        if target is not None and session_key(target) not in {
+            session_key(cast(str, v)) for v in ids
+        }:
             self.report["outcome"] = "sample_not_found"
             return
         if not ids:
             self.report["outcome"] = "no_sessions" if cursor is None else "sample_limited"
             return
+        # An exact listed id wins; the prefix-equivalent form is only a fallback.
         sid = next(
-            (cast(str, value) for value in ids if value == self.request.session_id),
-            cast(str, ids[0]),
+            (cast(str, v) for v in ids if v == target),
+            next(
+                (
+                    cast(str, v)
+                    for v in ids
+                    if target is not None and session_key(cast(str, v)) == session_key(target)
+                ),
+                cast(str, ids[0]),
+            ),
         )
         await self.history(sid, headers)
 

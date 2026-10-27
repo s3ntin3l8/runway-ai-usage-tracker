@@ -215,6 +215,23 @@ def test_job_deadline_does_not_restart_its_budget(tmp_path):
     assert store.snapshot(handle).requests == 0
 
 
+def test_a_recorded_equivalent_session_cannot_be_rewritten_or_cleared(tmp_path):
+    from app.services.claude_cloud_checkpoints import CheckpointError
+
+    store, state, _, _, _ = setup_store(tmp_path)
+    handle = store.create(state)
+    owner = store.claim(handle)
+    owner.state.equivalent_session = "cse_abc"
+    store.save(owner)
+    owner.state.equivalent_session = "cse_other"
+    with pytest.raises(CheckpointError, match="^invalid_transition$"):
+        store.save(owner)
+    owner.state.equivalent_session = None
+    with pytest.raises(CheckpointError, match="^invalid_transition$"):
+        store.save(owner)
+    store.release(owner)
+
+
 def test_progress_and_identity_cannot_be_rolled_back_with_a_valid_lease(tmp_path):
     from app.services.claude_cloud_checkpoints import CheckpointError
 

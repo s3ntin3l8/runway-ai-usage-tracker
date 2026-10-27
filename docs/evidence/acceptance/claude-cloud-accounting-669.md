@@ -107,7 +107,7 @@ Request fields:
 | `account_id` | Exact resolved account slot; `default` cannot be probed. |
 | `source_id` | Exact cached source ID, supplied in the body rather than the URL. |
 | `organization_id` | Optional UUID assertion, checked against the authenticated profile and any configured organization binding. |
-| `session_id` | Optional safe session ID that must appear in the sampled list page. |
+| `session_id` | Optional safe session ID that must appear in the sampled list page, with or without a `cse_`/`session_` prefix (an exact listed id wins). |
 | `max_history_pages` | Literal integer 1–3; defaults to 2. |
 | `report_version` | Strict integer 1 or 2; defaults to the unchanged v1 report. V2 adds allowlisted structural counters and a separate object-valued `payload` usage audit. |
 

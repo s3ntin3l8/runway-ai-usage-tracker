@@ -259,7 +259,14 @@ async def test_cancelled_inflight_step_is_not_automatically_replayed(source_envi
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "target,expected", [("session-later", "complete"), ("session-absent", "target_not_found")]
+    "target,expected",
+    [
+        ("session-later", "complete"),
+        ("session-absent", "target_not_found"),
+        ("session_session-later", "complete"),
+        ("cse_session-later", "complete"),
+        ("session_absent", "target_not_found"),
+    ],
 )
 async def test_target_selection_exhausts_the_list_before_history(
     source_environment, target, expected
@@ -548,3 +555,61 @@ async def test_environment_kind_is_reported_only_as_a_safe_label(
     state = await advance(handle, store, upstream)
     report = build_verification_report(handle, state)
     assert report["execution_kind"] == kind and report["environment_kind"] == label
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("pages", [[["cse_abc", "abc"]], [["cse_abc"], ["abc"]]])
+async def test_exact_listed_id_wins_over_a_prefix_equivalent_one(source_environment, pages):
+    from app.services.claude_cloud_verification import build_verification_report
+
+    store = store_for(source_environment)
+    handle = await start(store, session_id="abc")
+    history = []
+
+    def upstream(request):
+        if request.url.path.endswith("/profile"):
+            return httpx.Response(200, json=profile())
+        if request.url.path == "/v1/code/sessions":
+            index = int(request.url.params.get("cursor") or 0)
+            more = index + 1 < len(pages)
+            return httpx.Response(
+                200,
+                json={
+                    # Only the held-back equivalent row carries a label; it must not leak
+                    # onto the exact row that ends up selected.
+                    "data": [
+                        {"id": sid, **({"environment_kind": "bridge"} if sid != "abc" else {})}
+                        for sid in pages[index]
+                    ],
+                    "next_cursor": str(index + 1) if more else None,
+                },
+            )
+        history.append(request.url.path)
+        return httpx.Response(200, json={"data": [], "next_cursor": None})
+
+    state = await advance(handle, store, upstream)
+    assert state.outcome == "complete" and history == ["/v1/code/sessions/abc/events"]
+    report = build_verification_report(handle, state)
+    assert report["execution_kind"] == "unknown" and report["environment_kind"] is None
+
+
+@pytest.mark.asyncio
+async def test_equivalent_row_label_is_kept_when_it_is_the_only_match(source_environment):
+    from app.services.claude_cloud_verification import build_verification_report
+
+    store = store_for(source_environment)
+    handle = await start(store, session_id="session_abc")
+
+    def upstream(request):
+        if request.url.path.endswith("/profile"):
+            return httpx.Response(200, json=profile())
+        if request.url.path == "/v1/code/sessions":
+            row = {"id": "cse_abc", "environment_kind": "anthropic_cloud"}
+            return httpx.Response(200, json={"data": [row], "next_cursor": None})
+        assert request.url.path == "/v1/code/sessions/cse_abc/events"
+        return httpx.Response(200, json={"data": [], "next_cursor": None})
+
+    state = await advance(handle, store, upstream)
+    report = build_verification_report(handle, state)
+    assert state.outcome == "complete" and report["execution_kind"] == "anthropic_cloud"
+    assert report["environment_kind"] == "anthropic_cloud"
