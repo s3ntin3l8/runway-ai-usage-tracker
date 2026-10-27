@@ -177,7 +177,9 @@ jobs:
           # vite-plugin-pwa -> workbox-build chain. It has no patched release (4.3.1 is
           # the latest and is in range) and `npm audit fix` would downgrade the PWA plugin
           # to 0.2.1, so a bare `npm audit` here would stay red until upstream moves.
-          # Drop `--audit-level` once it does. See #1033.
+          # Drop `--audit-level` once it does:
+          # https://github.com/advisories/GHSA-gcqx-w48m-w2h4
+          # Low findings in the dev tree are not reported here; see #1035.
           npm --prefix webapp audit --audit-level=moderate
 
   installer-check:
