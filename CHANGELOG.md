@@ -5,6 +5,63 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0-beta.15](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v3.0.0-beta.14...v3.0.0-beta.15) (2026-10-27)
+
+
+### Features
+
+* add bounded ordinary Claude Chat fixture diagnostic ([#996](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/996)) ([1b72924](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/1b72924ae704dc5d4612c03c5e479a4d20c16f7f))
+* **api:** let the rankings say how much they left out ([#971](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/971)) ([a05988f](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/a05988f4e59678a0339d6c123f2ac394eccab658))
+* **claude:** accept session_ and cse_ forms of a cloud verification target ([#1020](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1020)) ([73a2650](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/73a2650271c7a0b87aa1c29446fb6d37c14b8c43))
+* **claude:** add offline cloud diagnostic verification ([#917](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/917)) ([34946cb](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/34946cb114ea754240102117f580f0d20a801a3a))
+* **claude:** add opt-in structural cloud-history diagnostics ([#942](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/942)) ([7a6623e](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/7a6623ecfaef7705221fb713629e27e1196a4d7f))
+* **claude:** add source-pinned cloud history diagnostic ([#908](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/908)) ([4d28629](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/4d2862933a7e07d5d5eb115d52c5fa99c909dd7b))
+* **claude:** collect usage for Claude Code cloud-runner sessions ([#1022](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1022)) ([14feb62](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/14feb62856ebd42f5ec742fe64ae1e8169ed2335))
+* **claude:** preserve terminal verification checkpoints ([#985](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/985)) ([c4d2453](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/c4d2453a282ec4de758987a9e12f0a64ab2dfee8))
+* **claude:** report the cloud-history environment kind as a safe label ([#1000](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1000)) ([8873953](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/88739532c648bf980b06dc5c112ce9dbfe55ba66))
+* **claude:** verify complete cloud histories with durable checkpoints ([#972](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/972)) ([f69e1d0](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/f69e1d05ac7bc916467ab810a629801117cfb0b0))
+* **credentials:** show a merged-away account in the fleet view ([2d77d1c](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/2d77d1cedbeb11982edb067acdb8497496b715cf))
+* **credentials:** show that an account was merged into another one ([784a03e](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/784a03e78324d7ada7b6b891939d311ec2baba32))
+* **credentials:** the merge journals what it moved ([a3139a5](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/a3139a5a4ec8d80274e3e65a27b8bb0d6c108765))
+* **credentials:** un-merge a merged account ([83fd343](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/83fd34341ed947160a86bb59d48c43fdc3a4dc48))
+* **fleet:** never lose a pending usage event ([#910](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/910)) ([83c5bd3](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/83c5bd3c6ccc00219936a2f7a9d887f37b2b78d9))
+* **hermes:** write the watermark as an append-only log ([#959](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/959)) ([e2c64ea](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/e2c64eab33415da21c8eea91ee93e18a75fc0fa8))
+* **insights:** rank sessions and hosts, add a last-24-hours range ([9c54290](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/9c54290f2517089f6db76e7a46490112a5c1c6a5))
+* **project:** name the git repository a working directory belongs to ([#923](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/923)) ([5256eb2](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/5256eb2ac31c0e4c67263c66f2078359667bd39b))
+
+
+### Bug Fixes
+
+* **ci:** include copied runtime helpers in image input filters ([#1025](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1025)) ([f44c271](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/f44c271125d361a8e2ea47e07f7d96d95cfa7892))
+* **ci:** make docs and Hermes native tests portable on Windows ([c0d3026](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/c0d3026769a65fed8cd38397cc398852638ab0a7))
+* **claude:** accept omitted terminal cursors in verification ([#986](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/986)) ([5fa8a3d](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/5fa8a3d77bfec3aa9a2d12691215a6a1f573bd7c))
+* **claude:** accept read-only Code sources in cloud diagnostic ([#935](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/935)) ([b764a89](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/b764a894afe547a1e182c724020fb4a34c30d526))
+* **claude:** audit cloud payload usage in explicit v2 diagnostics ([#955](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/955)) ([0154dfe](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/0154dfe6940d4f231903190bbb48c903a0d217a4))
+* **claude:** inspect failed list boundaries without resuming jobs ([#978](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/978)) ([0d2b646](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/0d2b6467d8d992533ab6f8e72da2b0720c742cf2))
+* **claude:** read the top-level environment_kind of a cloud session row ([#1019](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1019)) ([369ea64](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/369ea64bf68441cf75df17d163203ffd261fddd9))
+* **claude:** recognize sidecar path origins in cloud diagnostic ([#939](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/939)) ([5d86239](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/5d86239cea0d9eb8bc067ba3bb10978f4c6cc451))
+* **claude:** retain sanitized rejected-list observations ([#983](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/983)) ([a9fcc21](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/a9fcc211f4d7093cd048bfb1d1f5a5a17546169e))
+* **credentials:** a merged-away account follows the merge ([d0b003c](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/d0b003c7dc5149b3a7364ce4ad79f0785681bbd0))
+* **credentials:** a retired account holds no credential ([f3d8ad2](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/f3d8ad2c0121e8ca3bb27d27ec34a78f9b390feb))
+* **credentials:** read an expiry's unit from its magnitude, not as milliseconds ([#899](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/899)) ([0e0cf7f](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/0e0cf7f954dd7e96d5c98cc64c620fe704a22472)), closes [#779](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/779)
+* **demo:** test the scratch-dir lock only where there is one ([#979](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/979)) ([0f76026](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/0f760266c5bea99ebc72d79870afc9e87a1a2e5b))
+* **fleet:** schedule Hermes event collection on every poll ([#930](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/930)) ([35e497a](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/35e497ae7e52ed1df12f831774c3c006ea9a08f6))
+* **fleet:** schedule MiniMax Code collection on every poll ([#928](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/928)) ([5df7b23](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/5df7b234fd23f3908dd191c72dd5243f704a7ab8))
+* **hermes:** prune the watermark slices of a vanished Hermes database ([#926](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/926)) ([0fbe082](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/0fbe0826ca039c7a55f7fa061718986d16231359))
+* **hermes:** reclaim the watermark slices of a deleted Hermes session ([#958](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/958)) ([d616329](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/d61632957917c2af66afbab78cb77e2559975567))
+* **hermes:** resolve canonical events from the native collector identity ([#931](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/931)) ([7b4d0e8](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/7b4d0e871c7fb8756c9e139512195a40ac2fd0c5))
+* **opencode:** the reclassify script reads opencode v2's session_message table ([#902](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/902)) ([6150852](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/6150852b00c4511e3c2d31ba2bb6e20a0f55b980)), closes [#633](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/633)
+* **project:** derive the project label independently of the server's OS ([#922](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/922)) ([239740d](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/239740d785406ced1400703a87da48ea0afa8955))
+* **settings:** stop filing an account under the family's representative ([#900](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/900)) ([4f0242f](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/4f0242f745c5ad2cd8cf64893f3e47f21cd70792)), closes [#795](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/795)
+* **sidecar:** attribute Hermes events to the provider they used ([#932](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/932)) ([3a88b22](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/3a88b22cf1750a5cdf8a82b70b16c2d43d8217c5))
+* **tests:** let the Windows runner's suite pass ([#984](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/984)) ([73a9571](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/73a957101483f15059846e7fa80dc08d93ae57fa))
+* **webapp:** keep the selected tab in view, and guard the layout a jsdom test cannot see ([#975](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/975)) ([b0474dd](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/b0474ddc77d67a681cd11b70f58203be374696db))
+* **webapp:** make the charts say what they mean ([#968](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/968)) ([262adfe](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/262adfeb58269087c0452c0d27528579773c11f0))
+* **webapp:** make the dashboard usable on a phone ([#967](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/967)) ([aaa53e0](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/aaa53e0c66799d99359f3f77339fd7ec37667069))
+* **webapp:** resolve P0/P1 findings from the UI/UX audit ([#947](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/947)) ([03947d0](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/03947d0f87acebea15d531088c5db02adf18fb11))
+* **webapp:** stop the dashboard from rendering numbers and states dishonestly ([#966](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/966)) ([3841c41](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/3841c41a1cab75b236814e364004666f07c227df))
+* **webapp:** use the dashboard's own vocabulary and make it reachable ([#969](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/969)) ([4a4065d](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/4a4065d78e9cce417f1bf425ffefac922e69449e))
+
 ## [3.0.0-beta.14](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v3.0.0-beta.13...v3.0.0-beta.14) (2026-10-24)
 
 
