@@ -100,6 +100,7 @@ async def test_accounts_missing_from_server_outcomes_are_aged_to_stale():
         patch("app.services.poller.manager") as mock_mgr,
         patch("app.services.poller.Session") as mock_session,
         patch("app.services.accumulator.mark_latest_usage_source_stale") as mark_stale,
+        patch("app.services.poller._missing_collector_reason", return_value="because"),
     ):
         mock_mgr.collect_all = AsyncMock(return_value=[])
         db_session = mock_session.return_value.__enter__.return_value
@@ -112,7 +113,7 @@ async def test_accounts_missing_from_server_outcomes_are_aged_to_stale():
         provider_id="anthropic",
         source_id="server:anthropic",
         account_id="former-account",
-        reason="its collector is no longer active",
+        reason="because",
     )
 
 
