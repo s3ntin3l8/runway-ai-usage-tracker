@@ -48,7 +48,7 @@ export function AdoptLegacyNotice({
     onSuccess: () => {
       toast.success(`Adopted ${legacy?.sidecar_id}`);
       setOpen(false);
-      queryClient.invalidateQueries({ queryKey: ['fleet'] });
+      queryClient.invalidateQueries({ queryKey: ['fleet', 'sidecars'] });
     },
     onError: (err) => toast.error(err.message),
   });

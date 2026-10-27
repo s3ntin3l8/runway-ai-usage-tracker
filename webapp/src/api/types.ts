@@ -612,6 +612,9 @@ export interface SidecarAdoptSummary {
   pending_events: number;
   credential_tags: number;
   settings: string[];
+  /** Only on a real adoption, not a dry run. */
+  rollup_pairs_rebuilt?: number;
+  windows_rebuilt?: number;
 }
 
 export interface Sidecar {

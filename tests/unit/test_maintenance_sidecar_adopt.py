@@ -15,6 +15,7 @@ from app.models.db import (
     SidecarRegistry,
     UsageEvent,
     UsagePeriodRollup,
+    UsageWindow,
 )
 from app.services.fleet_registry import fleet_registry
 from app.services.maintenance.sidecar_adopt import (
@@ -153,7 +154,8 @@ def test_apply_moves_history_tags_and_settings_then_retires_the_legacy_row():
     session.commit()
 
     preview = plan_adopt_sidecar(session, legacy_id="desktop", device_id=DEVICE)
-    assert (preview.events, preview.pending_events, preview.credential_tags) == (2, 1, 1)
+    # p1 is already on the device, so only the duplicate-free count would move (none here).
+    assert (preview.events, preview.pending_events, preview.credential_tags) == (2, 0, 1)
     assert sorted(preview.settings) == ["custom_name", "tags_json"]
 
     result = apply_adopt_sidecar(session, legacy_id="desktop", device_id=DEVICE)
@@ -214,3 +216,72 @@ def test_legacy_sidecar_keeps_the_id_it_reported_as_hostname():
     row = fleet_registry.upsert_sidecar("macbook", "10.0.0.1", session)
 
     assert row.hostname == "macbook"
+
+
+def test_preview_counts_only_the_pending_events_that_would_move():
+    session = _session()
+    _pair(session)
+    for event_id, sidecar_id in (("p1", "desktop"), ("p2", "desktop"), ("p1", DEVICE)):
+        session.add(
+            PendingUsageEvent(
+                provider_id="anthropic",
+                event_id=event_id,
+                sidecar_id=sidecar_id,
+                ts=T0,
+                payload_json="{}",
+            )
+        )
+    session.commit()
+
+    assert plan_adopt_sidecar(session, legacy_id="desktop", device_id=DEVICE).pending_events == 1
+
+
+def test_unknown_sidecars_are_not_found_rather_than_refused():
+    session = _session()
+    _pair(session)
+
+    with pytest.raises(LookupError):
+        plan_adopt_sidecar(session, legacy_id="nobody", device_id=DEVICE)
+    with pytest.raises(LookupError):
+        plan_adopt_sidecar(session, legacy_id="desktop", device_id="device-" + "f" * 32)
+
+
+def test_retry_after_a_failed_rebuild_still_repairs_the_derived_rows(monkeypatch):
+    session = _session()
+    _pair(session)
+    _event(session, "e1", "desktop")
+    session.add(
+        UsageWindow(
+            provider_id="anthropic",
+            account_id="me@example.com",
+            window_type="session",
+            window_start=datetime(2026, 9, 30, 23, tzinfo=UTC),
+            window_end=datetime(2026, 10, 1, 4, tzinfo=UTC),
+            sidecar_id="desktop",
+            msgs=1,
+        )
+    )
+    session.commit()
+
+    from app.services.maintenance import sidecar_adopt
+
+    real = sidecar_adopt.rebuild_windows_overlapping
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("rebuild interrupted")
+
+    monkeypatch.setattr(sidecar_adopt, "rebuild_windows_overlapping", boom)
+    with pytest.raises(RuntimeError):
+        apply_adopt_sidecar(session, legacy_id="desktop", device_id=DEVICE)
+    # The events moved and were committed; the legacy row must still be there to retry.
+    assert session.get(SidecarRegistry, "desktop") is not None
+    assert {e.sidecar_id for e in session.exec(select(UsageEvent))} == {DEVICE}
+
+    monkeypatch.setattr(sidecar_adopt, "rebuild_windows_overlapping", real)
+    result = apply_adopt_sidecar(session, legacy_id="desktop", device_id=DEVICE)
+
+    assert result.events == 0  # nothing left to move, yet the derived rows were found
+    assert result.windows_rebuilt >= 1
+    assert session.get(SidecarRegistry, "desktop") is None
+    assert [w.sidecar_id for w in session.exec(select(UsageWindow))] != ["desktop"]
+    assert not any(w.sidecar_id == "desktop" for w in session.exec(select(UsageWindow)))

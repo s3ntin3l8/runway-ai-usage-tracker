@@ -2976,14 +2976,17 @@ class SidecarAdoptRequest(BaseModel):
 
 @router.post("/sidecars/{sidecar_id}/adopt")
 @limiter.limit("10/minute")
-async def adopt_legacy_sidecar(
+def adopt_legacy_sidecar(
     request: Request,
     sidecar_id: str,
     body: SidecarAdoptRequest,
     session: Session = Depends(get_session),
     _auth: None = Depends(require_admin_key),
 ) -> dict[str, Any]:
-    """Fold a legacy sidecar's history and settings into the enrolled device that replaced it."""
+    """Fold a legacy sidecar's history and settings into the enrolled device that replaced it.
+
+    A plain ``def``: the retag and rebuild are blocking SQLite work, so FastAPI runs the
+    handler in its threadpool instead of stalling every other request (and sidecar check-in)."""
     try:
         if body.dry_run:
             plan = plan_adopt_sidecar(
@@ -2993,6 +2996,8 @@ async def adopt_legacy_sidecar(
         result = apply_adopt_sidecar(
             session, legacy_id=body.legacy_sidecar_id, device_id=sidecar_id
         )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from None
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from None
     audit_log.record(
@@ -3006,12 +3011,16 @@ async def adopt_legacy_sidecar(
 
 
 def _adopt_summary(value: AdoptPlan | AdoptResult) -> dict[str, Any]:
-    return {
+    summary: dict[str, Any] = {
         "events": value.events,
         "pending_events": value.pending_events,
         "credential_tags": value.credential_tags,
         "settings": value.settings,
     }
+    if isinstance(value, AdoptResult):
+        summary["rollup_pairs_rebuilt"] = value.rollup_pairs_rebuilt
+        summary["windows_rebuilt"] = value.windows_rebuilt
+    return summary
 
 
 @router.patch("/sidecars/{sidecar_id}")

@@ -201,6 +201,7 @@ def test_adopt_dry_run_writes_nothing_and_apply_is_audited(client, session):
         json={"legacy_sidecar_id": "adopt-host", "dry_run": False},
     )
     assert applied.status_code == 200 and applied.json()["dry_run"] is False
+    assert {"rollup_pairs_rebuilt", "windows_rebuilt"} <= applied.json().keys()
     session.expire_all()
     assert session.get(SidecarRegistry, "adopt-host") is None
     row = session.exec(select(AuditLog).where(AuditLog.action == "sidecar.adopt")).one()
@@ -210,4 +211,10 @@ def test_adopt_dry_run_writes_nothing_and_apply_is_audited(client, session):
         f"/api/v1/fleet/sidecars/{device}/adopt",
         json={"legacy_sidecar_id": "nobody", "dry_run": False},
     )
-    assert refused.status_code == 409
+    assert refused.status_code == 404
+    assert (
+        client.post(
+            "/api/v1/fleet/sidecars/nobody/adopt", json={"legacy_sidecar_id": "adopt-host"}
+        ).status_code
+        == 404
+    )

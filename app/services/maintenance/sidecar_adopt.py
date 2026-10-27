@@ -28,6 +28,8 @@ from app.models.db import (
     PendingUsageEvent,
     SidecarRegistry,
     UsageEvent,
+    UsagePeriodRollup,
+    UsageWindow,
 )
 from app.services import sidecar_devices
 from app.services.account_identity import normalize_sidecar_id
@@ -115,24 +117,20 @@ class AdoptResult:
     windows_rebuilt: int = 0
 
 
-def _candidates(session: Session, device_id: str) -> dict[str, SidecarRegistry]:
-    rows = list(session.exec(select(SidecarRegistry)).all())
-    return {
-        legacy["sidecar_id"]: next(r for r in rows if r.sidecar_id == legacy["sidecar_id"])
-        for legacy in adoptable_legacy(rows).get(device_id, [])
-    }
-
-
 def _check(
     session: Session, legacy_id: str, device_id: str
 ) -> tuple[SidecarRegistry, SidecarRegistry]:
+    """Raises ``LookupError`` for a sidecar that does not exist, ``ValueError`` for a refusal."""
+    rows = {row.sidecar_id: row for row in session.exec(select(SidecarRegistry)).all()}
+    device, legacy = rows.get(device_id), rows.get(legacy_id)
+    if device is None:
+        raise LookupError(f"Sidecar '{device_id}' not found")
+    if legacy is None:
+        raise LookupError(f"Sidecar '{legacy_id}' not found")
     if not sidecar_devices.reserved_registry_id(device_id):
         raise ValueError("Only an enrolled device can adopt a legacy sidecar")
-    device = session.get(SidecarRegistry, device_id)
-    if device is None:
-        raise ValueError(f"Sidecar '{device_id}' not found")
-    legacy = _candidates(session, device_id).get(legacy_id)
-    if legacy is None:
+    candidates = adoptable_legacy(list(rows.values())).get(device_id, [])
+    if legacy_id not in {c["sidecar_id"] for c in candidates}:
         raise ValueError(f"'{legacy_id}' is not a legacy sidecar this device can adopt")
     return legacy, device
 
@@ -148,15 +146,17 @@ def _settings_to_copy(legacy: SidecarRegistry, device: SidecarRegistry) -> list[
     ]
 
 
-def plan_adopt_sidecar(session: Session, *, legacy_id: str, device_id: str) -> AdoptPlan:
-    """Read-only preview of what an adoption would move."""
-    legacy, device = _check(session, legacy_id, device_id)
+def _plan(session: Session, legacy: SidecarRegistry, device: SidecarRegistry) -> AdoptPlan:
+    legacy_id, device_id = legacy.sidecar_id, device.sidecar_id
     plan = AdoptPlan(settings=_settings_to_copy(legacy, device))
     plan.events, plan.ts_min, plan.ts_max = session.execute(
         select(func.count(), func.min(UsageEvent.ts), func.max(UsageEvent.ts)).where(
             UsageEvent.sidecar_id == legacy_id
         )
     ).one()
+    # Derived rows still tagged with the legacy id belong in the rebuild too. After the
+    # events have moved they are all that is left to find, so a retry of an adoption that
+    # failed part-way still repairs them instead of skipping them and deleting the legacy row.
     plan.pairs = {
         (provider, account)
         for provider, account in session.execute(
@@ -165,11 +165,44 @@ def plan_adopt_sidecar(session: Session, *, legacy_id: str, device_id: str) -> A
             .distinct()
         )
     }
+    plan.pairs |= {
+        (provider, account)
+        for provider, account in session.execute(
+            select(UsagePeriodRollup.provider_id, UsagePeriodRollup.account_id)
+            .where(UsagePeriodRollup.sidecar_id == legacy_id)
+            .distinct()
+        )
+    }
+    for provider, account, start, end in session.execute(
+        select(
+            UsageWindow.provider_id,
+            UsageWindow.account_id,
+            func.min(UsageWindow.window_start),
+            func.max(UsageWindow.window_end),
+        )
+        .where(UsageWindow.sidecar_id == legacy_id)
+        .group_by(UsageWindow.provider_id, UsageWindow.account_id)
+    ):
+        plan.pairs.add((provider, account))
+        plan.ts_min = min(filter(None, (plan.ts_min, start)))
+        plan.ts_max = max(filter(None, (plan.ts_max, end)))
+    # What would actually move: a copy the device already reported is dropped, not moved.
     plan.pending_events = session.execute(
-        select(func.count()).where(PendingUsageEvent.sidecar_id == legacy_id)
+        text(
+            "SELECT COUNT(*) FROM pending_usage_events p WHERE p.sidecar_id = :legacy "
+            "AND NOT EXISTS (SELECT 1 FROM pending_usage_events d WHERE d.sidecar_id = :device "
+            "AND d.provider_id = p.provider_id AND d.event_id = p.event_id)"
+        ),
+        {"legacy": legacy_id, "device": device_id},
     ).scalar_one()
     plan.credential_tags = len(_tags_to_move(session, legacy_id, device_id))
     return plan
+
+
+def plan_adopt_sidecar(session: Session, *, legacy_id: str, device_id: str) -> AdoptPlan:
+    """Read-only preview of what an adoption would move."""
+    legacy, device = _check(session, legacy_id, device_id)
+    return _plan(session, legacy, device)
 
 
 def _tags_to_move(session: Session, legacy_id: str, device_id: str) -> list[CredentialTag]:
@@ -189,10 +222,11 @@ def apply_adopt_sidecar(session: Session, *, legacy_id: str, device_id: str) -> 
 
     The event retag is chunked (``_chunked_sql``) so a long history never holds
     SQLite's writer lock in one transaction. Re-running after a partial failure
-    resumes: the legacy row only goes last, and a second call finds nothing left
-    to move."""
+    resumes: the legacy row only goes last, and the rebuild set is read from the
+    derived rows that still carry the legacy id, so it survives the events having
+    already moved."""
     legacy, device = _check(session, legacy_id, device_id)
-    plan = plan_adopt_sidecar(session, legacy_id=legacy_id, device_id=device_id)
+    plan = _plan(session, legacy, device)
 
     chunked_update(
         session, UsageEvent, [col(UsageEvent.sidecar_id) == legacy_id], {"sidecar_id": device_id}
@@ -232,7 +266,8 @@ def apply_adopt_sidecar(session: Session, *, legacy_id: str, device_id: str) -> 
         settings=plan.settings,
     )
     if plan.pairs and plan.ts_min is not None and plan.ts_max is not None:
-        # Both are derived from events, which now carry the device id.
+        # Both are derived from events, which now carry the device id; rebuilding also
+        # drops the rows still tagged with the legacy id.
         rebuild_rollups_for_pairs(session, plan.pairs)
         session.commit()
         result.rollup_pairs_rebuilt = len(plan.pairs)
