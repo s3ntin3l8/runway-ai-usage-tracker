@@ -1242,15 +1242,27 @@ def test_prune_keeps_the_slices_of_a_database_whose_path_holds_a_pipe(tmp_path):
         db_path.unlink(missing_ok=True)
 
 
-def test_prune_reclaims_a_pipe_path_database_that_is_gone(tmp_path):
+def test_prune_reclaims_a_pipe_path_database_that_is_gone(monkeypatch, tmp_path):
     """The pipe-in-path prune, on a path string rather than a real file.
 
     A Windows path cannot hold a ``|``, so the test above cannot create its
     database there. The prune only ever sees the path as a string and asks
     whether the file exists, so a path that was never created exercises the
     same rule on every platform.
+
+    Windows also refuses to stat such a path: it raises WinError 123, not
+    FileNotFoundError, and "I cannot tell" keeps the slices. So the stat of
+    this one path answers "not found", as it does for a POSIX path.
     """
     gone = str(tmp_path / "pipe|name.db")
+    real_stat = os.stat
+
+    def stat(path, *args, **kwargs):
+        if path == gone:
+            raise FileNotFoundError(path)
+        return real_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(hermes_extractor.os, "stat", stat)
     state = {
         gone: {
             "default": {
