@@ -201,8 +201,9 @@ jobs:
     #
     # The paths below mirror the COPY lines in the Dockerfile, which is what
     # decides the image's contents: the Dockerfile, requirements.txt, app/ and
-    # the webapp/ the frontend builder compiles. A change to anything else
-    # leaves the contents unchanged.
+    # the webapp/ the frontend builder compiles, and the runtime helpers it
+    # copies out of scripts/ one by one. A change to any other script leaves
+    # the contents unchanged.
     #
     # One thing does change on every commit: the Dockerfile bakes the commit
     # in as RUNWAY_BUILD_SHA, so a rebuilt image is never byte-identical to
@@ -236,7 +237,7 @@ jobs:
           changed=true
           if [ -n "$before" ] && git cat-file -e "${before}^{commit}" 2>/dev/null; then
             if git diff --name-only "$before" HEAD -- \
-              | grep -qE '^(Dockerfile|\.dockerignore|requirements\.txt)$|^app/|^webapp/'; then
+              | grep -qE '^(Dockerfile|\.dockerignore|requirements\.txt)$|^app/|^webapp/|^(scripts/audit_claude_usage\.py|scripts/verify_claude_cloud\.py|scripts/claude_cloud_structure\.py|scripts/claude_chat_evidence\.py|scripts/verify_claude_chat_fixture\.py|scripts/claude_cloud_list_boundary\.py|scripts/sidecar_pkg/source_catalog\.py|scripts/sidecar_pkg/source_catalog_data\.py)$'; then
               changed=true
             else
               changed=false
