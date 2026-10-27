@@ -152,6 +152,16 @@ class TestFindings:
         problems = findings(tmp_path, {})
         assert any("not pinned to a commit SHA" in problem for problem in problems)
 
+    def test_the_full_ref_form_of_main_is_reported_with_what_is_accepted(self, tmp_path):
+        write_workflow(
+            tmp_path,
+            "ci.yml",
+            "    uses: s3ntin3l8/.github/.github/workflows/ci-python.yml@refs/heads/main\n",
+        )
+        problems = findings(tmp_path, {})
+        assert len(problems) == 1
+        assert "exactly `@main`" in problems[0]
+
     def test_main_of_any_other_repository_is_reported(self, tmp_path):
         write_workflow(tmp_path, "ci.yml", "      - uses: actions/checkout@main\n")
         problems = findings(tmp_path, {"actions/checkout": GOOD_SHA})

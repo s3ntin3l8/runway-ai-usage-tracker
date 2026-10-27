@@ -240,6 +240,12 @@ def findings(root: Path, pins: dict[str, str], lockfile: Path = LOCKFILE) -> lis
             problems.append(
                 f"{reference.path}:{reference.line}: {reference.action}@{reference.revision} "
                 "is not pinned to a commit SHA"
+                + (
+                    f" (a {TRACKED_REPOSITORY} reference may also be exactly "
+                    f"`@{TRACKED_REF}`, not `refs/heads/{TRACKED_REF}` or any other ref)"
+                    if reference.action.startswith(f"{TRACKED_REPOSITORY}/")
+                    else ""
+                )
             )
             continue
         if recorded is None:
