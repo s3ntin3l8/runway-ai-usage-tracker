@@ -1,5 +1,5 @@
 import { cva, type VariantProps } from 'class-variance-authority';
-import { Loader2 } from 'lucide-react';
+import { LoaderCircle } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { markFocusable } from '@/lib/focusable';
 
@@ -65,7 +65,7 @@ export const Button = markFocusable(function Button({
       disabled={disabled || loading}
       {...props}
     >
-      {loading ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : null}
+      {loading ? <LoaderCircle className="size-3.5 animate-spin" aria-hidden /> : null}
       {children}
     </button>
   );

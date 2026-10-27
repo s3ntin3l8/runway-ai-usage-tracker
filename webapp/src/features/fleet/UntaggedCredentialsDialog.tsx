@@ -28,7 +28,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import { toast } from 'sonner';
-import { AlertTriangle } from 'lucide-react';
+import { TriangleAlert } from 'lucide-react';
 
 import {
   fetchProviderConfigs,
@@ -507,7 +507,7 @@ function UntaggedRow({
         <ClaudeSourceOrganizationPicker sourceId={entry.source_id!} providerId={entry.provider_id} onComplete={onOrganizationComplete} />
       ) : pickableAccounts.length === 0 ? (
         <p className="mt-2 flex items-start gap-2 text-[12px] text-warning">
-          <AlertTriangle className="mt-px size-3.5 shrink-0" aria-hidden />
+          <TriangleAlert className="mt-px size-3.5 shrink-0" aria-hidden />
           {/* The whole message lives in one span: as flex children of this <p>, the
               text runs, the provider id and the link would each become their own
               flex item and wrap independently (ragged, gappy layout). One span

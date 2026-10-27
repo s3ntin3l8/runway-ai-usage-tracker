@@ -5,7 +5,7 @@
 
 import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { CheckCircle2, Loader2, XCircle } from 'lucide-react';
+import { CircleCheck, LoaderCircle, CircleX } from 'lucide-react';
 import { toast } from 'sonner';
 import type { DataHealthFindingGroup } from '@/api/types';
 import { Button } from '@/components/ui/Button';
@@ -259,25 +259,25 @@ export function FixDialog({ open, onOpenChange, checkId, group }: FixDialogProps
             <div className="flex items-center gap-2 text-[13px] font-medium">
               {job.data?.status === 'running' && (
                 <>
-                  <Loader2 className="size-4 animate-spin text-fg-muted" aria-hidden />
+                  <LoaderCircle className="size-4 animate-spin text-fg-muted" aria-hidden />
                   Applying…
                 </>
               )}
               {job.data?.status === 'succeeded' && (
                 <>
-                  <CheckCircle2 className="size-4 text-ok" aria-hidden />
+                  <CircleCheck className="size-4 text-ok" aria-hidden />
                   {job.data.result?.summary ?? 'Fix applied'}
                 </>
               )}
               {job.data?.status === 'failed' && (
                 <>
-                  <XCircle className="size-4 text-critical" aria-hidden />
+                  <CircleX className="size-4 text-critical" aria-hidden />
                   Fix failed
                 </>
               )}
             {job.isError && !jobDone && (
                 <>
-                  <XCircle className="size-4 text-critical" aria-hidden />
+                  <CircleX className="size-4 text-critical" aria-hidden />
                   Could not check job status
                 </>
               )}

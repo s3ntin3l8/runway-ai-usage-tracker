@@ -4,7 +4,7 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
-import { CheckCircle2 } from 'lucide-react';
+import { CircleCheck } from 'lucide-react';
 import { fetchUntaggedCredentials } from '@/api/endpoints';
 import type { UntaggedCredential } from '@/api/types';
 import { Button } from '@/components/ui/Button';
@@ -79,7 +79,7 @@ export function NeedsMappingView({ pendingUsageEvents }: { pendingUsageEvents: n
           <Skeleton className="mt-3 h-12 w-full" />
         ) : items.length === 0 ? (
           <EmptyState
-            icon={CheckCircle2}
+            icon={CircleCheck}
             title="Every credential has an account"
             description="Nothing is waiting to be mapped."
           />

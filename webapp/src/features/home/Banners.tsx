@@ -7,7 +7,7 @@ import { CredentialFileMigrationNotice } from '@/components/CredentialFileMigrat
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router';
 import {
-  AlertTriangle,
+  TriangleAlert,
   BellOff,
   HeartPulse,
   KeyRound,
@@ -156,7 +156,7 @@ export function Banners({ credentials, anomalies, fleet, dataHealth }: BannersPr
       {kinds.collection.active ? (
         <Banner
           tone="critical"
-          icon={<AlertTriangle className="size-4 shrink-0" aria-hidden />}
+          icon={<TriangleAlert className="size-4 shrink-0" aria-hidden />}
           kind="collection"
           fingerprint={fp.collection}
         >
