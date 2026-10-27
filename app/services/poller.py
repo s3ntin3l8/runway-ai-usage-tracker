@@ -12,6 +12,7 @@ from app.core.db import engine
 from app.models.schemas import LimitCard
 from app.services.accumulator import upsert_latest_usage
 from app.services.collector_manager import LOCAL_SIDECAR_ID, manager
+from app.services.credential_sources import KEYCHAIN_UNGOVERNED_KINDS
 from app.services.token_cache import TokenCache
 
 logger = logging.getLogger(__name__)
@@ -23,10 +24,6 @@ _FLOOR_SECONDS = 30  # minimum poller tick to prevent pathological config values
 # A sidecar credential unseen for this long has stopped reporting: the server's own
 # in-memory copy of it expires after the same time.
 _CREDENTIAL_SILENCE = timedelta(seconds=TokenCache.DEFAULT_TTL)
-
-
-# Source kinds (``describe_origin``) that Keychain consent never governs.
-_NOT_KEYCHAIN_GOVERNED = frozenset({"env", "file"})
 
 
 def _missing_collector_reason(session: Session, provider_id: str, account_id: str) -> str:
@@ -69,7 +66,7 @@ def _missing_collector_reason(session: Session, provider_id: str, account_id: st
     # credential going quiet has a different cause, so it alone gets no hint.
     if (
         host is not None
-        and newest.source_type not in _NOT_KEYCHAIN_GOVERNED
+        and newest.source_type not in KEYCHAIN_UNGOVERNED_KINDS
         and (host.os_platform or "").startswith("Darwin")
     ):
         # The registry id's shape says nothing about pairing: an unpaired machine keeps its
@@ -80,8 +77,9 @@ def _missing_collector_reason(session: Session, provider_id: str, account_id: st
             else None
         )
         if device is None or device.revoked:
-            # Since Keychain consent, a Mac only contributes browser cookies once it is paired
-            # and the operator has enabled the source on that machine.
+            # Since Keychain consent, a Mac only contributes its browser cookies and Keychain
+            # logins (and sources of unknown kind) once it is paired and the operator has
+            # enabled the source on that machine.
             reason += "; check this Mac is paired and its Keychain source is enabled"
     return reason
 

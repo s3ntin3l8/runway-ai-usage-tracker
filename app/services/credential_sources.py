@@ -124,6 +124,13 @@ def _collapse_home(path: str) -> str:
     return path
 
 
+# The kinds ``describe_origin_full`` can return. A source reported with no origin is
+# "sidecar": its kind is unknown, not absent.
+ORIGIN_KINDS = frozenset({"env", "file", "cookie", "keychain", "sidecar"})
+# The ones Keychain consent never governs: anything else on a Mac can be gated by it.
+KEYCHAIN_UNGOVERNED_KINDS = frozenset({"env", "file"})
+
+
 def describe_origin_full(origin: str | None) -> OriginDisplay:
     """Describe a sidecar credential origin: kind, label, owning app and a display path."""
     value = origin or "sidecar"
