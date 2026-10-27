@@ -22,7 +22,7 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
-    uses: s3ntin3l8/.github/.github/workflows/release-please.yml@bd7f8eaa4f2e212185e042472ec790f13374ce1f # main
+    uses: s3ntin3l8/.github/.github/workflows/release-please.yml@main
 
   build-docker:
     needs: release-please

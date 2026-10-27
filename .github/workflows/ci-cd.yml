@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   test-python:
-    uses: s3ntin3l8/.github/.github/workflows/ci-python.yml@8cbee823b2c24a947211641a99240c37f3055e74 # main
+    uses: s3ntin3l8/.github/.github/workflows/ci-python.yml@main
     with:
       python-version: '3.12'
       # Total line coverage is 91.6%; the floor keeps ~6 points of headroom
@@ -56,7 +56,7 @@ jobs:
     secrets: inherit
 
   test-frontend:
-    uses: s3ntin3l8/.github/.github/workflows/ci-node.yml@8cbee823b2c24a947211641a99240c37f3055e74 # main
+    uses: s3ntin3l8/.github/.github/workflows/ci-node.yml@main
     with:
       # Node 24 ships npm 11, the first npm that writes the libc metadata
       # npm needs to pick the glibc or musl build of an optional native
