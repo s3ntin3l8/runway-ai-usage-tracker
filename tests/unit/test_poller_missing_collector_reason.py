@@ -25,14 +25,19 @@ def session_fixture():
 
 
 def _source(
-    session: Session, sidecar_id: str | None, age: timedelta, *, enabled: bool = True
+    session: Session,
+    sidecar_id: str | None,
+    age: timedelta,
+    *,
+    enabled: bool = True,
+    source_type: str = "cookie",
 ) -> None:
     session.add(
         CredentialSource(
             provider_id="anthropic_console",
             account_id="org",
             source_id=f"sidecar:{sidecar_id}",
-            source_type="cookie" if sidecar_id else "config",
+            source_type=source_type if sidecar_id else "config",
             source_label="Chrome cookie",
             sidecar_id=sidecar_id,
             last_seen=NOW - age,
@@ -131,4 +136,14 @@ def test_the_local_fallback_and_disabled_sources_are_not_blamed(session):
     assert (
         _missing_collector_reason(session, "anthropic_console", "org")
         == "its collector is no longer active"
+    )
+
+
+def test_a_silent_non_cookie_credential_on_a_mac_gets_no_keychain_hint(session):
+    _host(session, "macbook", "Darwin/25.6.0")
+    _source(session, "macbook", timedelta(days=3), source_type="env")
+
+    assert (
+        _missing_collector_reason(session, "anthropic_console", "org")
+        == "its credential from macbook stopped reporting"
     )

@@ -60,7 +60,13 @@ def _missing_collector_reason(session: Session, provider_id: str, account_id: st
     host = session.get(SidecarRegistry, newest.sidecar_id)
     name = (host.custom_name or host.hostname) if host else None
     reason = f"its credential from {name or newest.sidecar_id} stopped reporting"
-    if host is not None and (host.os_platform or "").startswith("Darwin"):
+    # Pairing and Keychain consent only govern browser-cookie sources; a Mac's env or file
+    # credential going quiet has a different cause, so it gets no hint.
+    if (
+        host is not None
+        and newest.source_type == "cookie"
+        and (host.os_platform or "").startswith("Darwin")
+    ):
         # The registry id's shape says nothing about pairing: an unpaired machine keeps its
         # device row with ``revoked`` set.
         device = (
