@@ -931,7 +931,10 @@ Actions:
 - `{"action":"start","account_id":"…","source_id":"…"}` records one job
   using the exact eligible cached source. Optional `organization_id`, `session_id`,
   `declared_category`, `job_key` and `expected_local` are strict inputs. Start
-  performs no provider requests. Expected local fixtures contain at most 256
+  performs no provider requests. A `session_id` matches the listed id with or
+  without a `cse_` or `session_` prefix (the list returns `cse_…`, claude.ai shows
+  `session_…`); this mirrors the primary client's observed behaviour, not an API
+  guarantee. Expected local fixtures contain at most 256
   reduced assistant records, strict numeric usage, and identities HMACed with the
   supplied 32-byte hex job key. Never submit transcripts, tokens or raw message IDs.
 - `{"action":"step","job_handle":"…"}` explicitly advances one batch:

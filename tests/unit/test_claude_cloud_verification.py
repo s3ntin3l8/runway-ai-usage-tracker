@@ -259,7 +259,14 @@ async def test_cancelled_inflight_step_is_not_automatically_replayed(source_envi
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "target,expected", [("session-later", "complete"), ("session-absent", "target_not_found")]
+    "target,expected",
+    [
+        ("session-later", "complete"),
+        ("session-absent", "target_not_found"),
+        ("session_session-later", "complete"),
+        ("cse_session-later", "complete"),
+        ("session_absent", "target_not_found"),
+    ],
 )
 async def test_target_selection_exhausts_the_list_before_history(
     source_environment, target, expected

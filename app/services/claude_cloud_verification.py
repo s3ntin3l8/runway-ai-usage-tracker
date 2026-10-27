@@ -258,7 +258,9 @@ class _VerificationProbe(probe._Probe):
             self.state.list_pages += 1
             for row, sid in zip(rows, ids, strict=True):
                 if self.state.selected_session is None and (
-                    self.state.target_session is None or self.state.target_session == sid
+                    self.state.target_session is None
+                    or probe.session_key(self.state.target_session)
+                    == probe.session_key(cast(str, sid))
                 ):
                     self.state.selected_session = cast(str, sid)
                     environment = row.get("environment")
