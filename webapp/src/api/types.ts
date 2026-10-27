@@ -598,7 +598,27 @@ export interface LoginDirectoryReport {
   searched: Partial<Record<'anthropic' | 'chatgpt', string[]>>;
 }
 
+/** A legacy shared-key sidecar this enrolled device probably replaced (same hostname + OS). */
+export interface AdoptableSidecar {
+  sidecar_id: string;
+  last_seen: string;
+  ingest_count: number;
+}
+
+/** What adopting a legacy sidecar moves (or, for a dry run, would move). */
+export interface SidecarAdoptSummary {
+  dry_run: boolean;
+  events: number;
+  pending_events: number;
+  credential_tags: number;
+  settings: string[];
+  /** Only on a real adoption, not a dry run. */
+  rollup_pairs_rebuilt?: number;
+  windows_rebuilt?: number;
+}
+
 export interface Sidecar {
+  adoptable_legacy?: AdoptableSidecar[];
   login_dirs_desired?: LoginDirectorySettings;
   login_dirs_report?: LoginDirectoryReport | null;
   sidecar_id: string;

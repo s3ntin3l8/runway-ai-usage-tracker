@@ -67,6 +67,14 @@ from app.services.fleet_registry import (
     effective_update_channel,
     fleet_registry,
 )
+from app.services.maintenance.sidecar_adopt import (
+    AdoptPlan,
+    AdoptResult,
+    SidecarNotFoundError,
+    adoptable_legacy,
+    apply_adopt_sidecar,
+    plan_adopt_sidecar,
+)
 from app.services.refresh_policy import KEEP_ALIVE_PROVIDERS, parse_provider_flags
 from app.services.token_cache import token_cache
 
@@ -2934,7 +2942,16 @@ async def list_sidecars(
         select(SidecarRegistry).order_by(col(SidecarRegistry.last_seen).desc())
     ).all()
     channel, auto_update = _fleet_update_defaults(session)
-    return {"sidecars": [fleet_registry.to_dict(row, channel, auto_update) for row in rows]}
+    adoptable = adoptable_legacy(list(rows))
+    return {
+        "sidecars": [
+            {
+                **fleet_registry.to_dict(row, channel, auto_update),
+                "adoptable_legacy": adoptable.get(row.sidecar_id, []),
+            }
+            for row in rows
+        ]
+    }
 
 
 @router.get("/sidecars/{sidecar_id}", dependencies=[Depends(require_admin_key)])
@@ -2950,6 +2967,61 @@ async def get_sidecar(
         raise HTTPException(status_code=404, detail=f"Sidecar '{sidecar_id}' not found")
     channel, auto_update = _fleet_update_defaults(session)
     return fleet_registry.to_dict(row, channel, auto_update)
+
+
+class SidecarAdoptRequest(BaseModel):
+    legacy_sidecar_id: str
+    # Preview what would move; nothing is written.
+    dry_run: bool = True
+
+
+@router.post("/sidecars/{sidecar_id}/adopt")
+@limiter.limit("10/minute")
+def adopt_legacy_sidecar(
+    request: Request,
+    sidecar_id: str,
+    body: SidecarAdoptRequest,
+    session: Session = Depends(get_session),
+    _auth: None = Depends(require_admin_key),
+) -> dict[str, Any]:
+    """Fold a legacy sidecar's history and settings into the enrolled device that replaced it.
+
+    A plain ``def``: the retag and rebuild are blocking SQLite work, so FastAPI runs the
+    handler in its threadpool instead of stalling every other request (and sidecar check-in)."""
+    try:
+        if body.dry_run:
+            plan = plan_adopt_sidecar(
+                session, legacy_id=body.legacy_sidecar_id, device_id=sidecar_id
+            )
+            return {"dry_run": True, **_adopt_summary(plan)}
+        result = apply_adopt_sidecar(
+            session, legacy_id=body.legacy_sidecar_id, device_id=sidecar_id
+        )
+    except SidecarNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from None
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    audit_log.record(
+        session,
+        request,
+        action="sidecar.adopt",
+        target_id=sidecar_id,
+        payload={"legacy_sidecar_id": body.legacy_sidecar_id, **_adopt_summary(result)},
+    )
+    return {"dry_run": False, **_adopt_summary(result)}
+
+
+def _adopt_summary(value: AdoptPlan | AdoptResult) -> dict[str, Any]:
+    summary: dict[str, Any] = {
+        "events": value.events,
+        "pending_events": value.pending_events,
+        "credential_tags": value.credential_tags,
+        "settings": value.settings,
+    }
+    if isinstance(value, AdoptResult):
+        summary["rollup_pairs_rebuilt"] = value.rollup_pairs_rebuilt
+        summary["windows_rebuilt"] = value.windows_rebuilt
+    return summary
 
 
 @router.patch("/sidecars/{sidecar_id}")

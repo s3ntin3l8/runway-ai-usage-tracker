@@ -164,6 +164,7 @@ connections to the workstation.
 | `PATCH /fleet/sidecars/{id}` | Update a sidecar's registration. |
 | `PUT /fleet/sidecars/{id}/settings` | Change per-sidecar settings (update policy, channel, keep-alive, login directories). |
 | `PUT /fleet/sidecars/{id}/keep-alive` | Set the keep-alive switch for one machine. |
+| `POST /fleet/sidecars/{id}/adopt` | Fold the legacy sidecar a re-paired machine used to report as into its enrolled card (history, tags, settings); `dry_run` previews. |
 | `POST /fleet/sidecars/{id}/pause` | Pause collection. |
 | `POST /fleet/sidecars/{id}/resume` | Resume — **only** a server-imposed pause, within existing local consent. |
 | `POST /fleet/sidecars/{id}/update` | Ask the sidecar to self-install on its next heartbeat. |
