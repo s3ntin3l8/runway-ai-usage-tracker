@@ -110,6 +110,24 @@ def _resolve_source(incoming: str | None, existing: str | None) -> str | None:
     return incoming
 
 
+class SourceCacheInstance:
+    """An opaque, process-local identity retaining one live cache entry."""
+
+    __slots__ = ("_entry",)
+
+    def __init__(self, entry: object):
+        self._entry = entry
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, SourceCacheInstance) and self._entry is other._entry
+
+    def __hash__(self) -> int:
+        return id(self._entry)
+
+    def __repr__(self) -> str:
+        return "<SourceCacheInstance>"
+
+
 class TokenCache:
     """
     In-memory cache for tokens received from sidecars, supporting tenant isolation.
@@ -662,6 +680,22 @@ class TokenCache:
                 updated += 1
         return updated
 
+    def _peek_source_entry(
+        self, provider: str, account_id: str, source_id: str
+    ) -> tuple[dict[str, str], dict[str, Any], float] | None:
+        """Read only while holding _lock; no reload, expiry mutation or fallback."""
+        entry = (
+            self._source_cache.get(provider, {})
+            .get(canonical_account_id(account_id), {})
+            .get(source_id)
+        )
+        if entry is None:
+            return None
+        _, metadata, timestamp = entry
+        if metadata.get("durable_source") is not True and time.time() - timestamp > self._ttl:
+            return None
+        return entry
+
     async def peek_source(
         self, provider: str, account_id: str, source_id: str
     ) -> tuple[dict[str, str], dict[str, Any]] | None:
@@ -671,17 +705,24 @@ class TokenCache:
         preserves legacy TTL while an enrolled source has no heartbeat lease.
         """
         async with self._lock:
-            entry = (
-                self._source_cache.get(provider, {})
-                .get(canonical_account_id(account_id), {})
-                .get(source_id)
-            )
+            entry = self._peek_source_entry(provider, account_id, source_id)
             if entry is None:
                 return None
-            tokens, metadata, timestamp = entry
-            if metadata.get("durable_source") is not True and time.time() - timestamp > self._ttl:
+            return dict(entry[0]), copy.deepcopy(entry[1])
+
+    async def peek_source_instance(
+        self, provider: str, account_id: str, source_id: str
+    ) -> tuple[dict[str, str], dict[str, Any], SourceCacheInstance] | None:
+        """Also pin the exact entry against remove/restore races within this process.
+
+        Any entry replacement, even with identical credentials, invalidates the
+        pin. It is not a durable credential generation or a cross-process proof.
+        """
+        async with self._lock:
+            entry = self._peek_source_entry(provider, account_id, source_id)
+            if entry is None:
                 return None
-            return dict(tokens), copy.deepcopy(metadata)
+            return dict(entry[0]), copy.deepcopy(entry[1]), SourceCacheInstance(entry)
 
     async def get_source_candidates(self, provider: str, account_id: str) -> list[dict[str, Any]]:
         """Return live source bundles in configured priority order."""

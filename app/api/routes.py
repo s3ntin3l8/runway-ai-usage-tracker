@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends
 
 from app.api.endpoints.auth import router as auth_router
+from app.api.endpoints.claude_chat_fixture import router as claude_chat_fixture_router
 from app.api.endpoints.claude_cloud_list_boundary import router as claude_cloud_list_boundary_router
 from app.api.endpoints.claude_cloud_probe import router as claude_cloud_probe_router
 from app.api.endpoints.claude_cloud_verification import router as claude_cloud_verification_router
@@ -24,6 +25,7 @@ v1_router.include_router(fleet_router, prefix="/fleet", tags=["fleet"])
 v1_router.include_router(fleet_sources_router, prefix="/fleet", tags=["fleet"])
 v1_router.include_router(auth_router, prefix="/auth", tags=["auth"])
 v1_router.include_router(system_router, prefix="/system", tags=["system"])
+v1_router.include_router(claude_chat_fixture_router, prefix="/system", tags=["system"])
 v1_router.include_router(claude_cloud_list_boundary_router, prefix="/system", tags=["system"])
 v1_router.include_router(claude_cloud_probe_router, prefix="/system", tags=["system"])
 v1_router.include_router(claude_cloud_verification_router, prefix="/system", tags=["system"])
