@@ -11,7 +11,8 @@ from sqlmodel import Session
 from app.core.db import engine
 from app.models.schemas import LimitCard
 from app.services.accumulator import upsert_latest_usage
-from app.services.collector_manager import manager
+from app.services.collector_manager import LOCAL_SIDECAR_ID, manager
+from app.services.token_cache import TokenCache
 
 logger = logging.getLogger(__name__)
 
@@ -19,9 +20,9 @@ logger = logging.getLogger(__name__)
 _SLEEP_INTERVAL = 7200  # 2 hours in seconds
 _DORMANT_THRESHOLD = 3  # consecutive identical polls before sleep
 _FLOOR_SECONDS = 30  # minimum poller tick to prevent pathological config values
-# A sidecar credential unseen for this long has stopped reporting (the server's own
-# in-memory copy of it expires after the same 30 minutes).
-_CREDENTIAL_SILENCE = timedelta(minutes=30)
+# A sidecar credential unseen for this long has stopped reporting: the server's own
+# in-memory copy of it expires after the same time.
+_CREDENTIAL_SILENCE = timedelta(seconds=TokenCache.DEFAULT_TTL)
 
 
 def _missing_collector_reason(session: Session, provider_id: str, account_id: str) -> str:
@@ -32,37 +33,45 @@ def _missing_collector_reason(session: Session, provider_id: str, account_id: st
     second is the operator's to fix, and where they should look depends on it."""
     from sqlmodel import col, select
 
-    from app.models.db import CredentialSource, SidecarRegistry
+    from app.models.db import CredentialSource, SidecarDevice, SidecarRegistry
     from app.services import sidecar_devices
 
-    sources = session.exec(
+    gone = "its collector is no longer active"
+    # A disabled source was switched off on purpose, and the "local" fallback names no machine.
+    newest = session.exec(
         select(CredentialSource)
         .where(
             CredentialSource.provider_id == provider_id,
             CredentialSource.account_id == account_id,
             col(CredentialSource.sidecar_id).is_not(None),
+            CredentialSource.sidecar_id != LOCAL_SIDECAR_ID,
+            col(CredentialSource.enabled).is_(True),
         )
         .order_by(col(CredentialSource.last_seen).desc())
-    ).all()
-    newest = sources[0] if sources else None
+    ).first()
     if newest is None or newest.sidecar_id is None:
-        return "its collector is no longer active"
+        return gone
     last_seen = (
         newest.last_seen if newest.last_seen.tzinfo else newest.last_seen.replace(tzinfo=UTC)
     )
     if datetime.now(UTC) - last_seen < _CREDENTIAL_SILENCE:
         # Still being reported, so the credential is not what went missing.
-        return "its collector is no longer active"
-    reason = f"its credential from {newest.sidecar_id} stopped reporting"
+        return gone
     host = session.get(SidecarRegistry, newest.sidecar_id)
-    if (
-        host is not None
-        and (host.os_platform or "").startswith("Darwin")
-        and not sidecar_devices.reserved_registry_id(host.sidecar_id)
-    ):
-        # Since Keychain consent, a Mac only contributes browser cookies once it is paired
-        # and the operator has enabled the source on that machine.
-        reason += "; check this Mac is paired and its Keychain source is enabled"
+    name = (host.custom_name or host.hostname) if host else None
+    reason = f"its credential from {name or newest.sidecar_id} stopped reporting"
+    if host is not None and (host.os_platform or "").startswith("Darwin"):
+        # The registry id's shape says nothing about pairing: an unpaired machine keeps its
+        # device row with ``revoked`` set.
+        device = (
+            session.get(SidecarDevice, host.sidecar_id.removeprefix("device-"))
+            if sidecar_devices.reserved_registry_id(host.sidecar_id)
+            else None
+        )
+        if device is None or device.revoked:
+            # Since Keychain consent, a Mac only contributes browser cookies once it is paired
+            # and the operator has enabled the source on that machine.
+            reason += "; check this Mac is paired and its Keychain source is enabled"
     return reason
 
 
