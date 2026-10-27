@@ -117,16 +117,20 @@ class AdoptResult:
     windows_rebuilt: int = 0
 
 
+class SidecarNotFoundError(LookupError):
+    """Named so a stray ``KeyError``/``IndexError`` from inside a rebuild is never reported as 404."""
+
+
 def _check(
     session: Session, legacy_id: str, device_id: str
 ) -> tuple[SidecarRegistry, SidecarRegistry]:
-    """Raises ``LookupError`` for a sidecar that does not exist, ``ValueError`` for a refusal."""
+    """Raises ``SidecarNotFoundError`` for a sidecar that does not exist, ``ValueError`` for a refusal."""
     rows = {row.sidecar_id: row for row in session.exec(select(SidecarRegistry)).all()}
     device, legacy = rows.get(device_id), rows.get(legacy_id)
     if device is None:
-        raise LookupError(f"Sidecar '{device_id}' not found")
+        raise SidecarNotFoundError(f"Sidecar '{device_id}' not found")
     if legacy is None:
-        raise LookupError(f"Sidecar '{legacy_id}' not found")
+        raise SidecarNotFoundError(f"Sidecar '{legacy_id}' not found")
     if not sidecar_devices.reserved_registry_id(device_id):
         raise ValueError("Only an enrolled device can adopt a legacy sidecar")
     candidates = adoptable_legacy(list(rows.values())).get(device_id, [])
@@ -265,12 +269,13 @@ def apply_adopt_sidecar(session: Session, *, legacy_id: str, device_id: str) -> 
         credential_tags=plan.credential_tags,
         settings=plan.settings,
     )
-    if plan.pairs and plan.ts_min is not None and plan.ts_max is not None:
-        # Both are derived from events, which now carry the device id; rebuilding also
-        # drops the rows still tagged with the legacy id.
+    if plan.pairs:
+        # Rollups are derived from events, which now carry the device id; rebuilding also
+        # drops the rows still tagged with the legacy id. They need no time bounds.
         rebuild_rollups_for_pairs(session, plan.pairs)
         session.commit()
         result.rollup_pairs_rebuilt = len(plan.pairs)
+    if plan.pairs and plan.ts_min is not None and plan.ts_max is not None:
         for provider_id in sorted({provider for provider, _ in plan.pairs}):
             result.windows_rebuilt += rebuild_windows_overlapping(
                 session,

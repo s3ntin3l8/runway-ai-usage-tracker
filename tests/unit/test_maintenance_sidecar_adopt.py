@@ -19,6 +19,7 @@ from app.models.db import (
 )
 from app.services.fleet_registry import fleet_registry
 from app.services.maintenance.sidecar_adopt import (
+    SidecarNotFoundError,
     adoptable_legacy,
     apply_adopt_sidecar,
     plan_adopt_sidecar,
@@ -240,9 +241,9 @@ def test_unknown_sidecars_are_not_found_rather_than_refused():
     session = _session()
     _pair(session)
 
-    with pytest.raises(LookupError):
+    with pytest.raises(SidecarNotFoundError):
         plan_adopt_sidecar(session, legacy_id="nobody", device_id=DEVICE)
-    with pytest.raises(LookupError):
+    with pytest.raises(SidecarNotFoundError):
         plan_adopt_sidecar(session, legacy_id="desktop", device_id="device-" + "f" * 32)
 
 
@@ -285,3 +286,25 @@ def test_retry_after_a_failed_rebuild_still_repairs_the_derived_rows(monkeypatch
     assert session.get(SidecarRegistry, "desktop") is None
     assert [w.sidecar_id for w in session.exec(select(UsageWindow))] != ["desktop"]
     assert not any(w.sidecar_id == "desktop" for w in session.exec(select(UsageWindow)))
+
+
+def test_rollups_are_rebuilt_even_when_only_rollup_rows_carry_the_legacy_id():
+    session = _session()
+    _pair(session)
+    session.add(
+        UsagePeriodRollup(
+            provider_id="anthropic",
+            account_id="me@example.com",
+            period_type="lifetime",
+            period_key="all",
+            model_id="",
+            sidecar_id="desktop",
+            msgs=4,
+        )
+    )
+    session.commit()
+
+    result = apply_adopt_sidecar(session, legacy_id="desktop", device_id=DEVICE)
+
+    assert result.rollup_pairs_rebuilt == 1
+    assert not any(r.sidecar_id == "desktop" for r in session.exec(select(UsagePeriodRollup)))

@@ -70,6 +70,7 @@ from app.services.fleet_registry import (
 from app.services.maintenance.sidecar_adopt import (
     AdoptPlan,
     AdoptResult,
+    SidecarNotFoundError,
     adoptable_legacy,
     apply_adopt_sidecar,
     plan_adopt_sidecar,
@@ -2996,7 +2997,7 @@ def adopt_legacy_sidecar(
         result = apply_adopt_sidecar(
             session, legacy_id=body.legacy_sidecar_id, device_id=sidecar_id
         )
-    except LookupError as exc:
+    except SidecarNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from None
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from None
