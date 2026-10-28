@@ -14,7 +14,12 @@ from sqlmodel import Session, SQLModel, col, create_engine, select
 from sqlmodel.pool import StaticPool
 
 from app.models.db import UsageEvent
-from app.services.maintenance._chunked_sql import _next_batch_ids, chunked_delete, chunked_update
+from app.services.maintenance._chunked_sql import (
+    _is_sqlite_locked_or_busy,
+    _next_batch_ids,
+    chunked_delete,
+    chunked_update,
+)
 
 
 def _session() -> Session:
@@ -179,6 +184,7 @@ def test_chunked_update_retries_on_locked_database_and_succeeds():
             [col(UsageEvent.provider_id) == "minimax"],
             {"account_id": "alice@example.com"},
             batch_size=10,
+            initial_backoff=0.001,
         )
 
     assert total == 5
@@ -206,7 +212,11 @@ def test_chunked_delete_retries_on_locked_database_and_succeeds():
 
     with patch.object(session, "exec", side_effect=mock_exec):
         total = chunked_delete(
-            session, UsageEvent, [col(UsageEvent.provider_id) == "minimax"], batch_size=10
+            session,
+            UsageEvent,
+            [col(UsageEvent.provider_id) == "minimax"],
+            batch_size=10,
+            initial_backoff=0.001,
         )
 
     assert total == 5
@@ -230,6 +240,8 @@ def test_chunked_update_raises_after_max_retries_exhausted():
                 [col(UsageEvent.provider_id) == "minimax"],
                 {"account_id": "alice@example.com"},
                 batch_size=10,
+                max_retries=2,
+                initial_backoff=0.001,
             )
 
 
@@ -244,3 +256,48 @@ def test_next_batch_ids_releases_transaction_lock():
     assert len(ids) == 3
     # Transaction is not active / in-progress on the session
     assert not session.in_transaction()
+
+
+def test_next_batch_ids_retries_on_locked_database_and_succeeds():
+    """_next_batch_ids catches OperationalError during SELECT, rolls back, retries and succeeds."""
+    session = _session()
+    _seed(session, 3)
+
+    original_execute = session.execute
+    attempts = 0
+
+    def mock_execute(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise OperationalError("SELECT ...", {}, Exception("database is locked"))
+        return original_execute(*args, **kwargs)
+
+    with patch.object(session, "execute", side_effect=mock_execute):
+        ids = _next_batch_ids(
+            session,
+            UsageEvent,
+            [col(UsageEvent.provider_id) == "minimax"],
+            cursor_id=0,
+            batch_size=10,
+            initial_backoff=0.001,
+        )
+
+    assert len(ids) == 3
+    assert attempts == 2
+    assert not session.in_transaction()
+
+
+def test_is_sqlite_locked_or_busy_discriminates_error_origin():
+    """Parameters containing 'locked' or 'busy' must not cause unrelated errors to be treated as lock contention."""
+    # Fake error with parameter containing 'device-busy-machine'
+    unrelated_exc = OperationalError(
+        "UPDATE usage_events SET sidecar_id='device-busy-machine' ...",
+        {"id": "busy"},
+        Exception("no such table: usage_events"),
+    )
+    assert not _is_sqlite_locked_or_busy(unrelated_exc)
+
+    # Real lock error
+    lock_exc = OperationalError("UPDATE ...", {}, Exception("database is locked"))
+    assert _is_sqlite_locked_or_busy(lock_exc)

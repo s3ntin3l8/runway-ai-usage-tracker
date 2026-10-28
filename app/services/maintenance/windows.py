@@ -97,10 +97,11 @@ def rebuild_windows_for_providers(session: Session, providers: list[str] | None)
         stmt = stmt.where(UsageWindow.provider_id.in_(providers))  # type: ignore[attr-defined]
         del_stmt = del_stmt.where(UsageWindow.provider_id.in_(providers))  # type: ignore[attr-defined]
     index = _index_by_identity(list(session.exec(stmt).all()))
+    session.commit()
+    session.expunge_all()  # drop identity-mapped rows the SELECT above loaded
 
     session.exec(del_stmt)  # type: ignore[call-overload]
     session.commit()
-    session.expunge_all()  # drop identity-mapped rows the SELECT above loaded
 
     _replay(session, index)
     return len(index)
@@ -131,9 +132,11 @@ def rebuild_windows_overlapping(
         ).all()
     )
     index = _index_by_identity(rows)
+    session.commit()
+
     for row in rows:
         session.delete(row)
-    session.flush()
+    session.commit()
 
     _replay(session, index)
     return len(index)
