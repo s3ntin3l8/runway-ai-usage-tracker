@@ -16,6 +16,7 @@ are rebuilt from the moved events, never patched.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
@@ -60,15 +61,28 @@ def _os_family(os_platform: str | None) -> str:
     return (os_platform or "").split("/", 1)[0].lower()
 
 
-def load_enrollment_times(session: Session) -> dict[str, datetime]:
+def load_enrollment_times(
+    session: Session, registry_ids: Iterable[str] | None = None
+) -> dict[str, datetime]:
     """Registry id -> the instant a device was enrolled (when its pairing code was redeemed).
+
+    Pass the registry ids in hand to read only those devices (the fleet list and a merge need a
+    handful of rows, not the whole table); ``None`` reads every device.
 
     The handover check below must compare against this, not the device row's ``first_seen``:
     ``first_seen`` is something a merge deliberately moves back to the old entry's, and the
     comparison would then stop offering every *other* old entry of the same machine."""
+    statement = select(SidecarDevice)
+    if registry_ids is not None:
+        device_ids = [
+            registry_id.removeprefix("device-")
+            for registry_id in registry_ids
+            if sidecar_devices.reserved_registry_id(registry_id)
+        ]
+        statement = statement.where(col(SidecarDevice.device_id).in_(device_ids))
     return {
         sidecar_devices.registry_id(device.device_id): device.created_at
-        for device in session.exec(select(SidecarDevice)).all()
+        for device in session.exec(statement).all()
     }
 
 
@@ -78,6 +92,10 @@ def _same_machine(
     legacy_name = normalize_sidecar_id(legacy.hostname or legacy.sidecar_id)
     device_name = normalize_sidecar_id(device.hostname or "")
     family = _os_family(device.os_platform)
+    # A device row with no SidecarDevice record (so no enrollment time) falls back to its own
+    # first_seen, which is what the check used before enrollment times existed. Keep it: dropping
+    # the fallback would make such a row match nothing. (A merge moves first_seen back, so for a
+    # row that does have a record the enrollment time above must win.)
     enrolled = enrolled_at.get(device.sidecar_id, device.first_seen)
     return (
         bool(legacy_name)
@@ -185,9 +203,9 @@ def _check(
         raise SidecarNotFoundError(f"Sidecar '{legacy_id}' not found")
     if not sidecar_devices.reserved_registry_id(device_id):
         raise ValueError("Only an enrolled device can adopt a legacy sidecar")
-    candidates = adoptable_legacy(list(rows.values()), load_enrollment_times(session)).get(
-        device_id, []
-    )
+    candidates = adoptable_legacy(
+        list(rows.values()), load_enrollment_times(session, [device_id])
+    ).get(device_id, [])
     if legacy_id not in {c["sidecar_id"] for c in candidates}:
         raise ValueError(f"'{legacy_id}' is not a legacy sidecar this device can adopt")
     return legacy, device

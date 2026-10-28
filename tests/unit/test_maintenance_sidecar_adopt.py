@@ -429,3 +429,35 @@ def test_merging_one_old_entry_keeps_the_other_old_entry_offered():
         ]
         == "docker-desktop"
     )
+
+
+def test_enrollment_times_can_be_read_for_just_the_devices_in_hand():
+    session = _session()
+    other = "c" * 32
+    for device_id, minutes in (("a" * 32, 1), (other, 5)):
+        session.add(
+            SidecarDevice(
+                device_id=device_id,
+                hostname="h",
+                platform="Linux",
+                secret_encrypted="x",
+                created_at=T0 + timedelta(minutes=minutes),
+            )
+        )
+    session.commit()
+
+    assert set(load_enrollment_times(session)) == {DEVICE, "device-" + other}
+    assert set(load_enrollment_times(session, [DEVICE])) == {DEVICE}
+    # A legacy id has no device record, and no ids means nothing to read.
+    assert load_enrollment_times(session, ["desktop"]) == {}
+    assert load_enrollment_times(session, []) == {}
+
+
+def test_a_device_without_an_enrollment_record_falls_back_to_its_first_seen():
+    session = _session()
+    _pair(session)  # no SidecarDevice row at all
+    rows = list(session.exec(select(SidecarRegistry)).all())
+
+    found = adoptable_legacy(rows, load_enrollment_times(session, [DEVICE]))
+
+    assert [c["sidecar_id"] for c in found[DEVICE]] == ["desktop"]
