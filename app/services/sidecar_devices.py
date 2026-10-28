@@ -5,9 +5,11 @@ from __future__ import annotations
 import re
 import secrets
 import uuid
-from typing import Any
+from collections.abc import Iterable
+from datetime import UTC, datetime, timedelta
+from typing import Any, Literal
 
-from sqlmodel import Session
+from sqlmodel import Session, col, select
 
 from app.core.encryption import DecryptionError, encryption_service
 from app.models.db import SidecarDevice
@@ -19,6 +21,53 @@ def registry_id(device_id: str) -> str:
 
 def reserved_registry_id(value: str) -> bool:
     return re.fullmatch(r"device-[a-f0-9]{32}", value) is not None
+
+
+# How long a freshly enrolled device may go without a source sync before that is worth a notice.
+SOURCE_SYNC_GRACE = timedelta(minutes=10)
+
+SourceSyncState = Literal["ok", "never", "pending"]
+
+
+def record_source_sync(session: Session, device_id: str) -> None:
+    """Stamp an accepted ``source-sync`` request on the device (the caller commits)."""
+    device = session.get(SidecarDevice, device_id)
+    if device is not None:
+        device.last_source_sync_at = datetime.now(UTC)
+        session.add(device)
+
+
+def source_sync_states(
+    session: Session, registry_ids: Iterable[str], now: datetime | None = None
+) -> dict[str, tuple[SourceSyncState, datetime | None]]:
+    """Registry id -> (state, last accepted sync) for the enrolled devices among ``registry_ids``.
+
+    ``never`` means the device is past its grace period and has not completed a ``source-sync``
+    (a forward-auth proxy redirecting that route looks exactly like this); ``pending`` is the
+    same inside the grace period. Legacy (unenrolled) and revoked devices are left out."""
+    wanted = [
+        registry_id.removeprefix("device-")
+        for registry_id in registry_ids
+        if reserved_registry_id(registry_id)
+    ]
+    if not wanted:
+        return {}
+    current = now or datetime.now(UTC)
+    states: dict[str, tuple[SourceSyncState, datetime | None]] = {}
+    for device in session.exec(
+        select(SidecarDevice).where(col(SidecarDevice.device_id).in_(wanted))
+    ).all():
+        if device.revoked:
+            continue
+        state: SourceSyncState
+        if device.last_source_sync_at is not None:
+            state = "ok"
+        elif current - device.created_at < SOURCE_SYNC_GRACE:
+            state = "pending"
+        else:
+            state = "never"
+        states[registry_id(device.device_id)] = (state, device.last_source_sync_at)
+    return states
 
 
 def enroll(

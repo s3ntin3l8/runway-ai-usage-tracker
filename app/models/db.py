@@ -26,6 +26,9 @@ class SidecarDevice(SQLModel, table=True):  # type: ignore[call-arg]
     secret_encrypted: str
     revoked: bool = False
     created_at: UTCDateTime = Field(default_factory=lambda: datetime.now(UTC))
+    # Last accepted ``POST /fleet/source-sync`` from this device. Ingest also touches the
+    # source-state rows, so only a real sync request may set it (#1050).
+    last_source_sync_at: UTCDateTime | None = None
 
 
 class SidecarSourceState(SQLModel, table=True):  # type: ignore[call-arg]

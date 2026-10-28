@@ -33,7 +33,7 @@ from app.models.db import (
     UsageEvent,
 )
 from app.models.schemas import IngestRequest, UsageEventPush
-from app.services import audit_log, pairing
+from app.services import audit_log, pairing, sidecar_devices
 from app.services.account_identity import (
     FINGERPRINTED_ORIGIN_PROVIDERS,
     account_config_provider_id,
@@ -2947,12 +2947,16 @@ async def list_sidecars(
     enrolled_at = load_enrollment_times(session, [row.sidecar_id for row in rows])
     adoptable = adoptable_legacy(list(rows), enrolled_at)
     replaced = replaced_by(list(rows), enrolled_at)
+    sync_states = sidecar_devices.source_sync_states(session, [row.sidecar_id for row in rows])
     return {
         "sidecars": [
             {
                 **fleet_registry.to_dict(row, channel, auto_update),
                 "adoptable_legacy": adoptable.get(row.sidecar_id, []),
                 "replaced_by": replaced.get(row.sidecar_id, []),
+                # null for a legacy (unenrolled) sidecar: it has no source sync to miss.
+                "source_sync_state": sync_states.get(row.sidecar_id, (None, None))[0],
+                "source_sync_last_at": sync_states.get(row.sidecar_id, (None, None))[1],
             }
             for row in rows
         ]

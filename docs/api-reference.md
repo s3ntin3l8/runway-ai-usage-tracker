@@ -157,7 +157,7 @@ groups it left out.
 | Method | Route | Auth | Description |
 |--------|-------|------|-------------|
 | `POST` | `/api/v1/fleet/ingest` | HMAC | Push metrics + events from a sidecar (HMAC-SHA256 signed, 600/min/IP) |
-| `GET` | `/api/v1/fleet/sidecars` | Admin | List all registered sidecars |
+| `GET` | `/api/v1/fleet/sidecars` | Admin | List all registered sidecars An enrolled `device-<hex>` entry also carries `source_sync_state`: `ok`, `pending` (enrolled under 10 minutes ago) or `never` (older, and no accepted `POST /fleet/source-sync` yet), with the time of the last accepted sync in `source_sync_last_at`. Both are `null` for a legacy sidecar and a revoked device. Ingest does not count, only a real `source-sync` request, so a proxy redirecting that route shows up as `never` (see [forward-auth.md](forward-auth.md#verify-the-bypass)) |
 | `GET` | `/api/v1/fleet/sidecars/{sidecar_id}` | Admin | Single sidecar details |
 | `PATCH` | `/api/v1/fleet/sidecars/{sidecar_id}` | Admin | Update custom name or tags |
 | `DELETE` | `/api/v1/fleet/sidecars/{sidecar_id}` | Admin | Remove sidecar from registry |

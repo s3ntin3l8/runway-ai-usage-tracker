@@ -631,6 +631,10 @@ export interface Sidecar {
   adoptable_legacy?: SidecarDescriptor[];
   /** On an old shared-key entry: the paired device(s) that replaced it. */
   replaced_by?: SidecarDescriptor[];
+  /** Paired devices only (null/absent on a legacy sidecar). `never` = past the grace period
+   *  without a completed `POST /fleet/source-sync`. */
+  source_sync_state?: 'ok' | 'never' | 'pending' | null;
+  source_sync_last_at?: string | null;
   login_dirs_desired?: LoginDirectorySettings;
   login_dirs_report?: LoginDirectoryReport | null;
   sidecar_id: string;
