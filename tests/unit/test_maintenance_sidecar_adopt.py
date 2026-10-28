@@ -22,7 +22,9 @@ from app.services.maintenance.sidecar_adopt import (
     SidecarNotFoundError,
     adoptable_legacy,
     apply_adopt_sidecar,
+    load_enrollment_times,
     plan_adopt_sidecar,
+    replaced_by,
 )
 
 DEVICE = "device-" + "a" * 32
@@ -308,3 +310,186 @@ def test_rollups_are_rebuilt_even_when_only_rollup_rows_carry_the_legacy_id():
 
     assert result.rollup_pairs_rebuilt == 1
     assert not any(r.sidecar_id == "desktop" for r in session.exec(select(UsagePeriodRollup)))
+
+
+def _counters(session, sidecar_id):
+    row = session.get(SidecarRegistry, sidecar_id)
+    session.refresh(row)
+    return row.ingest_count, row.error_count, row.first_seen
+
+
+def test_adoption_carries_the_push_and_error_counts_and_the_earlier_first_seen():
+    session = _session()
+    _pair(session, ingest_count=18689, error_count=3)
+    device = session.get(SidecarRegistry, DEVICE)
+    device.ingest_count, device.error_count = 207, 1
+    session.add(device)
+    session.commit()
+    legacy_first_seen = session.get(SidecarRegistry, "desktop").first_seen
+
+    preview = plan_adopt_sidecar(session, legacy_id="desktop", device_id=DEVICE)
+    assert preview.pushes_after == 18689 + 207
+
+    result = apply_adopt_sidecar(session, legacy_id="desktop", device_id=DEVICE)
+
+    assert (result.pushes_carried, result.errors_carried) == (18689, 3)
+    pushes, errors, first_seen = _counters(session, DEVICE)
+    assert (pushes, errors) == (18689 + 207, 3 + 1)
+    assert first_seen == legacy_first_seen  # the machine is as old as its history
+
+
+def test_a_failed_adoption_does_not_carry_the_counters_twice_on_retry(monkeypatch):
+    session = _session()
+    _pair(session, ingest_count=100, error_count=2)
+    device = session.get(SidecarRegistry, DEVICE)
+    device.ingest_count, device.error_count = 10, 0
+    session.add(device)
+    session.commit()
+
+    from app.services import fleet_registry as registry
+
+    real = registry.fleet_registry.delete_sidecar
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("delete interrupted")
+
+    monkeypatch.setattr(registry.fleet_registry, "delete_sidecar", boom)
+    with pytest.raises(RuntimeError):
+        apply_adopt_sidecar(session, legacy_id="desktop", device_id=DEVICE)
+    # Nothing was carried, and the legacy row is still there to retry.
+    assert _counters(session, DEVICE)[:2] == (10, 0)
+    assert session.get(SidecarRegistry, "desktop") is not None
+
+    monkeypatch.setattr(registry.fleet_registry, "delete_sidecar", real)
+    apply_adopt_sidecar(session, legacy_id="desktop", device_id=DEVICE)
+
+    assert _counters(session, DEVICE)[:2] == (110, 2)  # carried exactly once
+
+
+def test_the_preview_names_both_sides():
+    session = _session()
+    _pair(session, ingest_count=500, custom_name="Office PC")
+
+    preview = plan_adopt_sidecar(session, legacy_id="desktop", device_id=DEVICE)
+
+    assert preview.legacy["sidecar_id"] == "desktop"
+    assert preview.legacy["name"] == "Office PC"
+    assert preview.legacy["ingest_count"] == 500
+    assert preview.device["sidecar_id"] == DEVICE
+    assert preview.device["name"] == "desktop"  # the device's hostname, not its id
+
+
+def test_replaced_by_is_the_inverse_of_adoptable_legacy():
+    session = _session()
+    _pair(session)
+    rows = list(session.exec(select(SidecarRegistry)).all())
+
+    forward = adoptable_legacy(rows)
+    inverse = replaced_by(rows)
+
+    assert [c["sidecar_id"] for c in forward[DEVICE]] == ["desktop"]
+    assert [d["sidecar_id"] for d in inverse["desktop"]] == [DEVICE]
+    assert DEVICE not in inverse and "desktop" not in forward
+
+
+def test_merging_one_old_entry_keeps_the_other_old_entry_offered():
+    """The merge moves the device's first_seen back to the old entry's. The "same machine" check
+    must not depend on it, or every *other* old entry of the machine drops out of the offer."""
+    session = _session()
+    _pair(session)
+    _registry(session, "docker-desktop", hostname="desktop")  # a second old entry, same machine
+    session.add(
+        SidecarDevice(
+            device_id=DEVICE.removeprefix("device-"),
+            hostname="desktop",
+            platform="Windows",
+            secret_encrypted="x",
+            created_at=T0 + timedelta(minutes=1),
+        )
+    )
+    session.commit()
+    enrolled = load_enrollment_times(session)
+    rows = list(session.exec(select(SidecarRegistry)).all())
+    assert sorted(c["sidecar_id"] for c in adoptable_legacy(rows, enrolled)[DEVICE]) == [
+        "desktop",
+        "docker-desktop",
+    ]
+
+    apply_adopt_sidecar(session, legacy_id="desktop", device_id=DEVICE)
+
+    assert session.get(SidecarRegistry, DEVICE).first_seen < T0  # it did move back
+    enrolled = load_enrollment_times(session)
+    rows = list(session.exec(select(SidecarRegistry)).all())
+    assert [c["sidecar_id"] for c in adoptable_legacy(rows, enrolled)[DEVICE]] == ["docker-desktop"]
+    assert [d["sidecar_id"] for d in replaced_by(rows, enrolled)["docker-desktop"]] == [DEVICE]
+    # And a second merge is still accepted rather than answering "not a candidate".
+    assert (
+        plan_adopt_sidecar(session, legacy_id="docker-desktop", device_id=DEVICE).legacy[
+            "sidecar_id"
+        ]
+        == "docker-desktop"
+    )
+
+
+def test_enrollment_times_can_be_read_for_just_the_devices_in_hand():
+    session = _session()
+    other = "c" * 32
+    for device_id, minutes in (("a" * 32, 1), (other, 5)):
+        session.add(
+            SidecarDevice(
+                device_id=device_id,
+                hostname="h",
+                platform="Linux",
+                secret_encrypted="x",
+                created_at=T0 + timedelta(minutes=minutes),
+            )
+        )
+    session.commit()
+
+    assert set(load_enrollment_times(session)) == {DEVICE, "device-" + other}
+    assert set(load_enrollment_times(session, [DEVICE])) == {DEVICE}
+    # A legacy id has no device record, and no ids means nothing to read.
+    assert load_enrollment_times(session, ["desktop"]) == {}
+    assert load_enrollment_times(session, []) == {}
+
+
+def test_a_device_without_an_enrollment_record_falls_back_to_its_first_seen():
+    session = _session()
+    _pair(session)  # no SidecarDevice row at all
+    rows = list(session.exec(select(SidecarRegistry)).all())
+
+    found = adoptable_legacy(rows, load_enrollment_times(session, [DEVICE]))
+
+    assert [c["sidecar_id"] for c in found[DEVICE]] == ["desktop"]
+
+
+def test_a_missing_enrollment_record_is_logged_once_at_debug(caplog):
+    session = _session()
+    session.add(
+        SidecarDevice(
+            device_id="a" * 32, hostname="h", platform="Linux", secret_encrypted="x", created_at=T0
+        )
+    )
+    session.commit()
+    gone = "device-" + "d" * 32
+
+    with caplog.at_level("DEBUG", logger="app.services.maintenance.sidecar_adopt"):
+        load_enrollment_times(session, [DEVICE, gone])
+
+    messages = [r.getMessage() for r in caplog.records if "enrollment record" in r.getMessage()]
+    assert len(messages) == 1 and gone in messages[0] and DEVICE not in messages[0]
+
+
+def test_nothing_is_logged_when_every_requested_device_has_a_record(caplog):
+    session = _session()
+    session.add(
+        SidecarDevice(
+            device_id="a" * 32, hostname="h", platform="Linux", secret_encrypted="x", created_at=T0
+        )
+    )
+    session.commit()
+
+    with caplog.at_level("DEBUG", logger="app.services.maintenance.sidecar_adopt"):
+        load_enrollment_times(session, [DEVICE, "desktop"])  # a legacy id is not a device
+
+    assert not [r for r in caplog.records if "enrollment record" in r.getMessage()]

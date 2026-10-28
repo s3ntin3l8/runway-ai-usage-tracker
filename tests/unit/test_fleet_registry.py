@@ -5,6 +5,9 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 
 import pytest
+from sqlalchemy import text
+from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel.pool import StaticPool
 
 from app.models.db import SidecarRegistry
 from app.services.fleet_registry import FleetRegistryService
@@ -45,7 +48,8 @@ class TestUpsertSidecar:
 
         service.upsert_sidecar("host-1", "10.0.0.2", mock_session)
 
-        assert existing.ingest_count == 6
+        # The count is bumped in SQL (see test_ingest_count_is_incremented_in_sql); a mocked
+        # session never evaluates that expression, so only the plain fields are asserted here.
         assert existing.last_ip == "10.0.0.2"
         assert existing.last_seen > datetime(2026, 1, 1, tzinfo=UTC)
         mock_session.add.assert_not_called()
@@ -452,3 +456,45 @@ class TestPerLoginKeepAliveReporting:
         assert IngestRequest(**base, keep_alive_providers={"xai": True}).keep_alive_providers == {
             "xai": True
         }
+
+
+class TestIngestCountIsAtomic:
+    """The merge of a re-paired machine adds its push count to the device's row while the device
+    keeps ingesting, so the per-ingest increment must be a SQL expression, not read-modify-write."""
+
+    @staticmethod
+    def _session():
+        engine = create_engine(
+            "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+        )
+        SQLModel.metadata.create_all(engine)
+        return Session(engine)
+
+    def test_ingest_count_is_incremented_in_sql(self, service):
+        session = self._session()
+        service.upsert_sidecar("host-1", "10.0.0.1", session)  # registers the row at 0
+
+        row = service.upsert_sidecar("host-1", "10.0.0.1", session)
+
+        assert row.ingest_count == 1
+
+    def test_a_stale_read_does_not_erase_a_concurrent_addition(self, service):
+        session = self._session()
+        service.upsert_sidecar("host-1", "10.0.0.1", session)
+        stale = session.get(SidecarRegistry, "host-1")
+        assert stale.ingest_count == 0  # what a handler that read the row early holds
+        # Meanwhile another transaction adds a carried count of 100 straight to the column.
+        session.execute(text("UPDATE sidecar_registry SET ingest_count = ingest_count + 100"))
+
+        row = service.upsert_sidecar("host-1", "10.0.0.1", session)
+
+        # 0 + 100 + this ingest. A read-modify-write would have written the stale 0 + 1 = 1.
+        assert row.ingest_count == 101
+
+    def test_error_count_is_incremented_in_sql_too(self, service):
+        session = self._session()
+        service.upsert_sidecar("host-1", "10.0.0.1", session, collection_errors=2)
+
+        row = service.upsert_sidecar("host-1", "10.0.0.1", session, collection_errors=3)
+
+        assert row.error_count == 5

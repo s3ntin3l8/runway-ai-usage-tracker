@@ -188,11 +188,17 @@ def test_adopt_dry_run_writes_nothing_and_apply_is_audited(client, session):
     by_id = {s["sidecar_id"]: s for s in listed}
     assert [c["sidecar_id"] for c in by_id[device]["adoptable_legacy"]] == ["adopt-host"]
     assert by_id["adopt-host"]["adoptable_legacy"] == []
+    # The old entry's card offers the same merge, pointing the other way.
+    assert [d["sidecar_id"] for d in by_id["adopt-host"]["replaced_by"]] == [device]
+    assert by_id[device]["replaced_by"] == []
 
     preview = client.post(
         f"/api/v1/fleet/sidecars/{device}/adopt", json={"legacy_sidecar_id": "adopt-host"}
     )
     assert preview.status_code == 200 and preview.json()["dry_run"] is True
+    assert preview.json()["from"]["sidecar_id"] == "adopt-host"
+    assert preview.json()["into"]["sidecar_id"] == device
+    assert preview.json()["pushes_after"] == 0  # neither fixture row has pushed
     assert session.get(SidecarRegistry, "adopt-host") is not None
     assert session.exec(select(AuditLog).where(AuditLog.action == "sidecar.adopt")).first() is None
 
@@ -202,6 +208,7 @@ def test_adopt_dry_run_writes_nothing_and_apply_is_audited(client, session):
     )
     assert applied.status_code == 200 and applied.json()["dry_run"] is False
     assert {"rollup_pairs_rebuilt", "windows_rebuilt"} <= applied.json().keys()
+    assert {"pushes_carried", "errors_carried"} <= applied.json().keys()
     session.expire_all()
     assert session.get(SidecarRegistry, "adopt-host") is None
     row = session.exec(select(AuditLog).where(AuditLog.action == "sidecar.adopt")).one()

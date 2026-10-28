@@ -73,7 +73,9 @@ from app.services.maintenance.sidecar_adopt import (
     SidecarNotFoundError,
     adoptable_legacy,
     apply_adopt_sidecar,
+    load_enrollment_times,
     plan_adopt_sidecar,
+    replaced_by,
 )
 from app.services.refresh_policy import KEEP_ALIVE_PROVIDERS, parse_provider_flags
 from app.services.token_cache import token_cache
@@ -2942,12 +2944,15 @@ async def list_sidecars(
         select(SidecarRegistry).order_by(col(SidecarRegistry.last_seen).desc())
     ).all()
     channel, auto_update = _fleet_update_defaults(session)
-    adoptable = adoptable_legacy(list(rows))
+    enrolled_at = load_enrollment_times(session, [row.sidecar_id for row in rows])
+    adoptable = adoptable_legacy(list(rows), enrolled_at)
+    replaced = replaced_by(list(rows), enrolled_at)
     return {
         "sidecars": [
             {
                 **fleet_registry.to_dict(row, channel, auto_update),
                 "adoptable_legacy": adoptable.get(row.sidecar_id, []),
+                "replaced_by": replaced.get(row.sidecar_id, []),
             }
             for row in rows
         ]
@@ -3021,6 +3026,13 @@ def _adopt_summary(value: AdoptPlan | AdoptResult) -> dict[str, Any]:
     if isinstance(value, AdoptResult):
         summary["rollup_pairs_rebuilt"] = value.rollup_pairs_rebuilt
         summary["windows_rebuilt"] = value.windows_rebuilt
+        summary["pushes_carried"] = value.pushes_carried
+        summary["errors_carried"] = value.errors_carried
+    else:
+        # The preview names both sides and what the device's push count becomes.
+        summary["from"] = value.legacy
+        summary["into"] = value.device
+        summary["pushes_after"] = value.pushes_after
     return summary
 
 
