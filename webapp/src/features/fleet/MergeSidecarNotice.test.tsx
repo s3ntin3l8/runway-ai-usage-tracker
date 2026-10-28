@@ -91,6 +91,24 @@ describe('MergeSidecarNotice', () => {
     await waitFor(() => expect(toast.success).toHaveBeenCalled());
   });
 
+  it.each([
+    ['one', 1, /1 source setting \(enabled, priority\)/],
+    ['none', 0, null],
+    ['an older server that does not report it', undefined, null],
+  ])('lists the carried source settings: %s', async (_label, count, line) => {
+    const user = userEvent.setup();
+    vi.mocked(api.adoptLegacySidecar).mockImplementation(async (_id, _legacy, dryRun) => ({
+      ...summary(dryRun),
+      source_prefs: count,
+    }));
+    renderWithProviders(<MergeSidecarNotice sidecar={onDevice} />);
+
+    await user.click(screen.getByRole('button', { name: /review merge/i }));
+    expect(await screen.findByText(/19 credential tags/)).toBeInTheDocument();
+    if (line) expect(screen.getByText(line)).toBeInTheDocument();
+    else expect(screen.queryByText(/source setting/)).not.toBeInTheDocument();
+  });
+
   it('stays hidden once dismissed, from either card', async () => {
     const user = userEvent.setup();
     const { unmount } = renderWithProviders(<MergeSidecarNotice sidecar={onDevice} />);

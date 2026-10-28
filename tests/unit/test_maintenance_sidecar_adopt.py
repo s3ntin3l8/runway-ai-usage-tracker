@@ -655,3 +655,19 @@ def test_two_fingerprints_that_both_sides_carry_each_keep_their_own_choice():
 
     assert result.source_prefs == 2
     assert _prefs(session, DEVICE) == {XAI_A: (False, 0), XAI_B: (True, 5)}
+
+
+def test_an_exact_match_owns_the_device_row_over_a_newer_plain_one():
+    session = _session()
+    _pair(session)
+    # The old entry holds both forms of one source: the keyed row mirrors the device's, the plain
+    # (pre-fingerprint) row is newer and disabled. Exact-first means the keyed row claims the device
+    # row, so the plain leftover does not overwrite it. Fold-first would carry the disabled state.
+    _source(session, "desktop", XAI_A, provider="xai", last_seen=T0 - timedelta(days=3))
+    _source(session, "desktop", "env:XAI_API_KEY", provider="xai", enabled=False, last_seen=T0)
+    _source(session, DEVICE, XAI_A, provider="xai")
+
+    result = apply_adopt_sidecar(session, legacy_id="desktop", device_id=DEVICE)
+
+    assert result.source_prefs == 0
+    assert _prefs(session, DEVICE) == {XAI_A: (True, 0)}

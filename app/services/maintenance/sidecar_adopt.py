@@ -17,7 +17,7 @@ are rebuilt from the moved events, never patched.
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
@@ -317,7 +317,13 @@ def _source_prefs(
 
     Key = tuple[str, str, str | None]
 
-    def index(rows: list[CredentialSource], key: Any, *, newest_wins: bool) -> dict[Key, Any]:
+    def index(
+        rows: list[CredentialSource],
+        key: Callable[[CredentialSource], Key],
+        *,
+        newest_wins: bool,
+    ) -> dict[Key, CredentialSource | None]:
+        """Rows by key; ``None`` marks a key that is ambiguous (several device rows)."""
         found: dict[Key, CredentialSource | None] = {}
         for row in rows:
             k = key(row)
