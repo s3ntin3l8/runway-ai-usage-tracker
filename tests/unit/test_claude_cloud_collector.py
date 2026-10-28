@@ -360,6 +360,7 @@ async def test_neither_ids_nor_secrets_reach_the_logs(environment, caplog):
     assert reports[ACCOUNT].outcome == "ok"
     assert SECRET_ID not in caplog.text and "fixture-access" not in caplog.text
     assert "events=1" in caplog.text
+    assert "logins=" in caplog.text and ":ok" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -420,3 +421,76 @@ def test_the_collector_imports_only_what_the_server_image_ships():
 
     source = Path(collector.__file__).read_text()
     assert "event_extractors" not in source and "sidecar_pkg" not in source
+
+
+@pytest.mark.asyncio
+async def test_every_login_outcome_is_logged_by_kind_without_ids(environment, caplog):
+    cache = probe.token_cache
+    await cache.store(
+        "anthropic",
+        {"oauth_token": "desktop-access", "refresh_token": "unused"},
+        account_id=ACCOUNT,
+        source_id="aaa-desktop",
+        source_metadata={"credential_origin": "keychain:Claude Desktop/oauth/abc"},
+    )
+    caplog.set_level(logging.INFO)
+    upstream, _ = listing([[row(usage=block())]])
+    async with httpx.AsyncClient(transport=httpx.MockTransport(upstream)) as client:
+        reports = await collector.collect_all(client)
+    assert reports[ACCOUNT].outcome == "ok"
+    assert "aaa-desktop" not in caplog.text and "desktop-access" not in caplog.text
+    assert "logins=keychain#" in caplog.text and ":ok" in caplog.text
+    assert collector.session_digest("aaa-desktop")[:6] in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_an_account_whose_logins_are_all_rejected_still_logs_them(
+    environment, caplog, monkeypatch
+):
+    cache = probe.token_cache
+    await cache.store(
+        "anthropic",
+        {"oauth_token": "desktop-access", "refresh_token": "unused"},
+        account_id=ACCOUNT,
+        source_id="aaa-desktop",
+        source_metadata={"credential_origin": "keychain:Claude Desktop/oauth/abc"},
+    )
+
+    async def rejected(account, source_id, client):
+        report = collector.CycleReport()
+        report.outcome = "unsupported_source" if source_id == "aaa-desktop" else "source_ineligible"
+        return report
+
+    monkeypatch.setattr(collector, "collect_account", rejected)
+    caplog.set_level(logging.INFO)
+    async with httpx.AsyncClient() as client:
+        reports = await collector.collect_all(client)
+    assert reports[ACCOUNT].outcome == "unsupported_source"
+    assert ":unsupported_source," in caplog.text and ":source_ineligible" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_login_kinds_use_the_origin_vocabulary(environment, caplog, monkeypatch):
+    for source_id, origin in (
+        ("bbb-path", "path:/fixture/.claude/.credentials.json"),
+        ("ccc-bare", None),
+    ):
+        await probe.token_cache.store(
+            "anthropic",
+            {"oauth_token": "x-access", "refresh_token": "unused"},
+            account_id=ACCOUNT,
+            source_id=source_id,
+            source_metadata={"credential_origin": origin} if origin else {},
+        )
+
+    async def rejected(account, source_id, client):
+        report = collector.CycleReport()
+        report.outcome = "source_ineligible"
+        return report
+
+    monkeypatch.setattr(collector, "collect_account", rejected)
+    caplog.set_level(logging.INFO)
+    async with httpx.AsyncClient() as client:
+        await collector.collect_all(client)
+    assert "file#" in caplog.text and "sidecar#" in caplog.text
+    assert "path#" not in caplog.text

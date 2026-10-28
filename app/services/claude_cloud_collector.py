@@ -38,6 +38,7 @@ from app.models.claude_cloud_probe import ClaudeCloudProbeRequest
 from app.models.db import ClaudeCloudCollectorState, ClaudeCloudSessionUsage
 from app.models.schemas import UsageEventPush
 from app.services import claude_cloud_probe as probe
+from app.services.credential_sources import describe_origin_full
 from app.services.event_ingestor import EventIngestor
 from app.services.model_normalization import normalize_anthropic_model
 from app.services.probe_mode import probing
@@ -410,24 +411,30 @@ async def collect_all(client: httpx.AsyncClient) -> dict[str, CycleReport]:
     """Sweep every account that has a usable Claude Code login, once per account."""
     reports: dict[str, CycleReport] = {}
     candidates = await probe.token_cache.get_account_source_candidates("anthropic")
-    by_account: dict[str, list[str]] = {}
+    by_account: dict[str, list[tuple[str, str]]] = {}
     for candidate in candidates:
         slot, source_id = candidate.get("account_slot"), candidate.get("source_id")
         if isinstance(slot, str) and isinstance(source_id, str):
-            by_account.setdefault(slot, []).append(source_id)
-    for account, source_ids in by_account.items():
+            origin = candidate.get("credential_origin")
+            kind = describe_origin_full(origin if isinstance(origin, str) else None).kind
+            by_account.setdefault(slot, []).append((source_id, kind))
+    logins: dict[str, list[str]] = {}
+    for account, sources in by_account.items():
+        attempts = logins.setdefault(account, [])
         # Two logins of one account see the same sessions: the first usable one is enough.
-        for source_id in sorted(source_ids):
+        for source_id, kind in sorted(sources):
             report = await collect_account(account, source_id, client)
+            # A short one-way digest tells two logins of one kind apart without naming either.
+            attempts.append(f"{kind}#{session_digest(source_id)[:6]}:{report.outcome}")
             if report.outcome in ("ok", "truncated"):
                 reports[account] = report
                 break
             reports.setdefault(account, report)
             if report.outcome == "busy":
                 break
-    for report in reports.values():
+    for account, report in reports.items():
         logger.info(
-            "Claude cloud collector: outcome=%s pages=%d listed=%d cloud=%d events=%d regressions=%d notes=%s",
+            "Claude cloud collector: outcome=%s pages=%d listed=%d cloud=%d events=%d regressions=%d notes=%s logins=%s",
             report.outcome,
             report.pages,
             report.listed,
@@ -435,6 +442,7 @@ async def collect_all(client: httpx.AsyncClient) -> dict[str, CycleReport]:
             report.events,
             report.regressions,
             ",".join(report.notes) or "-",
+            ",".join(logins.get(account, [])) or "-",
         )
     return reports
 
