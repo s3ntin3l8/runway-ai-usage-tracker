@@ -116,7 +116,7 @@ def catalog() -> dict[str, SourceDescriptor]:
 # Lifecycle metadata for existing Windows collectors; these are deliberately not
 # part of catalog(), the local macOS Keychain permission/authorization catalog.
 _WINDOWS_CREDENTIALS = (
-    ("github", "git:https://github.com", "GitHub Credential Manager"),
+    ("github", "git:https://github.com", "Git Credential Manager"),
     ("antigravity", "gemini:antigravity", "Antigravity Credential Manager"),
 )
 
