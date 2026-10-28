@@ -440,3 +440,31 @@ async def test_every_login_outcome_is_logged_by_kind_without_ids(environment, ca
     assert reports[ACCOUNT].attempts[0].startswith("keychain:")
     assert reports[ACCOUNT].attempts[-1].endswith(":ok")
     assert "aaa-desktop" not in caplog.text and "desktop-access" not in caplog.text
+    assert "logins=keychain:" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_an_account_whose_logins_are_all_rejected_still_logs_them(
+    environment, caplog, monkeypatch
+):
+    cache = probe.token_cache
+    await cache.store(
+        "anthropic",
+        {"oauth_token": "desktop-access", "refresh_token": "unused"},
+        account_id=ACCOUNT,
+        source_id="aaa-desktop",
+        source_metadata={"credential_origin": "keychain:Claude Desktop/oauth/abc"},
+    )
+
+    async def rejected(account, source_id, client):
+        report = collector.CycleReport()
+        report.outcome = "unsupported_source" if source_id == "aaa-desktop" else "source_ineligible"
+        return report
+
+    monkeypatch.setattr(collector, "collect_account", rejected)
+    caplog.set_level(logging.INFO)
+    async with httpx.AsyncClient() as client:
+        reports = await collector.collect_all(client)
+    assert reports[ACCOUNT].outcome == "unsupported_source"
+    assert "logins=keychain:unsupported_source," in caplog.text
+    assert ":source_ineligible" in caplog.text
