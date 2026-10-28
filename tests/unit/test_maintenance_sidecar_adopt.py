@@ -17,6 +17,7 @@ from app.models.db import (
     UsagePeriodRollup,
     UsageWindow,
 )
+from app.services.account_identity import FINGERPRINT_LEN
 from app.services.fleet_registry import fleet_registry
 from app.services.maintenance.sidecar_adopt import (
     SidecarNotFoundError,
@@ -493,3 +494,180 @@ def test_nothing_is_logged_when_every_requested_device_has_a_record(caplog):
         load_enrollment_times(session, [DEVICE, "desktop"])  # a legacy id is not a device
 
     assert not [r for r in caplog.records if "enrollment record" in r.getMessage()]
+
+
+def _source(session, sidecar_id, origin, *, account="me@example.com", provider="anthropic", **kw):
+    from app.models.db import CredentialSource
+
+    row = CredentialSource(
+        provider_id=provider,
+        account_id=account,
+        source_id=f"{sidecar_id}:{origin}",
+        source_type="sidecar",
+        source_label=origin,
+        credential_origin=origin,
+        sidecar_id=sidecar_id,
+        **kw,
+    )
+    session.add(row)
+    session.commit()
+    return row
+
+
+def _prefs(session, sidecar_id):
+    from app.models.db import CredentialSource
+
+    return {
+        row.credential_origin: (row.enabled, row.priority)
+        for row in session.exec(
+            select(CredentialSource).where(CredentialSource.sidecar_id == sidecar_id)
+        )
+    }
+
+
+def test_a_disabled_source_and_a_custom_priority_survive_the_merge():
+    session = _session()
+    _pair(session)
+    _source(session, "desktop", "cli", enabled=False, priority=0)
+    _source(session, "desktop", "browser", enabled=True, priority=5)
+    _source(session, DEVICE, "cli")  # rediscovered with defaults
+    _source(session, DEVICE, "browser")
+
+    preview = plan_adopt_sidecar(session, legacy_id="desktop", device_id=DEVICE)
+    result = apply_adopt_sidecar(session, legacy_id="desktop", device_id=DEVICE)
+
+    assert preview.source_prefs == result.source_prefs == 2
+    assert _prefs(session, DEVICE) == {"cli": (False, 0), "browser": (True, 5)}
+
+
+def test_unmatched_and_ambiguous_sources_are_left_alone():
+    session = _session()
+    _pair(session)
+    _source(session, "desktop", "gone", enabled=False)  # the device never found it
+    _source(session, "desktop", "cli", enabled=False, account="a@example.com")
+    _source(session, DEVICE, "cli", account="b@example.com")  # same origin, different account
+    # Two device rows for one (provider, account, origin) key: guessing would be wrong.
+    _source(session, "desktop", "dup", enabled=False)
+    _source(session, DEVICE, "dup")
+    twin = _source(session, DEVICE, "dup2")
+    twin.credential_origin = "dup"
+    session.add(twin)
+    session.commit()
+
+    result = apply_adopt_sidecar(session, legacy_id="desktop", device_id=DEVICE)
+
+    assert result.source_prefs == 0
+    assert _prefs(session, DEVICE).get("gone") is None  # not created
+    assert all(enabled for enabled, _ in _prefs(session, DEVICE).values())
+
+
+def test_a_retry_after_a_failed_delete_applies_the_source_preferences_once(monkeypatch):
+    session = _session()
+    _pair(session)
+    _source(session, "desktop", "cli", enabled=False, priority=3)
+    _source(session, DEVICE, "cli")
+
+    from app.services import fleet_registry as registry
+
+    real = registry.fleet_registry.delete_sidecar
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("delete interrupted")
+
+    monkeypatch.setattr(registry.fleet_registry, "delete_sidecar", boom)
+    with pytest.raises(RuntimeError):
+        apply_adopt_sidecar(session, legacy_id="desktop", device_id=DEVICE)
+    # The copy rode the failed transaction, so nothing changed yet.
+    assert _prefs(session, DEVICE) == {"cli": (True, 0)}
+
+    monkeypatch.setattr(registry.fleet_registry, "delete_sidecar", real)
+    result = apply_adopt_sidecar(session, legacy_id="desktop", device_id=DEVICE)
+
+    assert result.source_prefs == 1
+    assert _prefs(session, DEVICE) == {"cli": (False, 3)}
+
+
+XAI_A = f"env:XAI_API_KEY#{'a' * FINGERPRINT_LEN}"
+XAI_B = f"env:XAI_API_KEY#{'b' * FINGERPRINT_LEN}"
+
+
+def test_a_pre_fingerprint_origin_matches_the_devices_fingerprinted_one():
+    session = _session()
+    _pair(session)
+    fp = "c" * FINGERPRINT_LEN
+    _source(session, "desktop", "env:DEEPSEEK_API_KEY", provider="deepseek", enabled=False)
+    _source(session, DEVICE, f"env:DEEPSEEK_API_KEY#{fp}", provider="deepseek")
+
+    result = apply_adopt_sidecar(session, legacy_id="desktop", device_id=DEVICE)
+
+    assert result.source_prefs == 1
+    assert _prefs(session, DEVICE) == {f"env:DEEPSEEK_API_KEY#{fp}": (False, 0)}
+
+
+def test_two_device_fingerprints_for_one_origin_are_not_guessed_between():
+    session = _session()
+    _pair(session)
+    _source(session, "desktop", "env:XAI_API_KEY", provider="xai", enabled=False)
+    _source(session, DEVICE, XAI_A, provider="xai")
+    _source(session, DEVICE, XAI_B, provider="xai")
+
+    assert apply_adopt_sidecar(session, legacy_id="desktop", device_id=DEVICE).source_prefs == 0
+
+
+def test_the_newest_of_several_old_rows_for_one_origin_carries_the_choice():
+    session = _session()
+    _pair(session)
+    # A rotated key leaves stale rows behind; only the newest holds the current choice.
+    _source(
+        session,
+        "desktop",
+        XAI_A,
+        provider="xai",
+        enabled=True,
+        last_seen=T0 - timedelta(days=9),
+    )
+    _source(
+        session,
+        "desktop",
+        XAI_B,
+        provider="xai",
+        enabled=False,
+        priority=4,
+        last_seen=T0,
+    )
+    _source(session, DEVICE, XAI_B, provider="xai")
+
+    result = apply_adopt_sidecar(session, legacy_id="desktop", device_id=DEVICE)
+
+    assert result.source_prefs == 1
+    assert _prefs(session, DEVICE) == {XAI_B: (False, 4)}
+
+
+def test_two_fingerprints_that_both_sides_carry_each_keep_their_own_choice():
+    session = _session()
+    _pair(session)
+    _source(session, "desktop", XAI_A, provider="xai", enabled=False)
+    _source(session, "desktop", XAI_B, provider="xai", priority=5)
+    _source(session, DEVICE, XAI_A, provider="xai")
+    _source(session, DEVICE, XAI_B, provider="xai")
+
+    result = apply_adopt_sidecar(session, legacy_id="desktop", device_id=DEVICE)
+
+    assert result.source_prefs == 2
+    assert _prefs(session, DEVICE) == {XAI_A: (False, 0), XAI_B: (True, 5)}
+
+
+def test_an_exact_match_owns_the_device_row_over_a_newer_plain_one():
+    session = _session()
+    _pair(session)
+    # The old entry holds both forms of one source: the keyed row mirrors the device's, the plain
+    # (pre-fingerprint) row is newer and disabled. Exact-first means the keyed row claims the device
+    # row, so the plain leftover does not overwrite it. Fold-first would carry the disabled state.
+    _source(session, "desktop", XAI_A, provider="xai", last_seen=T0 - timedelta(days=3))
+    _source(session, "desktop", "env:XAI_API_KEY", provider="xai", enabled=False, last_seen=T0)
+    _source(session, DEVICE, XAI_A, provider="xai")
+
+    result = apply_adopt_sidecar(session, legacy_id="desktop", device_id=DEVICE)
+
+    assert result.source_prefs == 0
+    assert _prefs(session, DEVICE) == {XAI_A: (True, 0)}

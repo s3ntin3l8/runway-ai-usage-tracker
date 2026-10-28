@@ -202,11 +202,17 @@ def test_adopt_dry_run_writes_nothing_and_apply_is_audited(client, session):
     assert session.get(SidecarRegistry, "adopt-host") is not None
     assert session.exec(select(AuditLog).where(AuditLog.action == "sidecar.adopt")).first() is None
 
+    from app.services.collector_manager import manager
+
+    manager._last_sync_time = 12345.0
+    assert manager._last_sync_time == 12345.0  # the dry run above must not have touched it
     applied = client.post(
         f"/api/v1/fleet/sidecars/{device}/adopt",
         json={"legacy_sidecar_id": "adopt-host", "dry_run": False},
     )
     assert applied.status_code == 200 and applied.json()["dry_run"] is False
+    # Preferences changed under the collector's cache: the next cycle must reload them.
+    assert manager._last_sync_time == 0.0
     assert {"rollup_pairs_rebuilt", "windows_rebuilt"} <= applied.json().keys()
     assert {"pushes_carried", "errors_carried"} <= applied.json().keys()
     session.expire_all()

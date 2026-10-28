@@ -17,7 +17,7 @@ are rebuilt from the moved events, never patched.
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
@@ -26,6 +26,7 @@ from sqlalchemy import func, text, update
 from sqlmodel import Session, col, select
 
 from app.models.db import (
+    CredentialSource,
     CredentialTag,
     PendingUsageEvent,
     SidecarDevice,
@@ -35,7 +36,7 @@ from app.models.db import (
     UsageWindow,
 )
 from app.services import sidecar_devices
-from app.services.account_identity import normalize_sidecar_id
+from app.services.account_identity import normalize_sidecar_id, split_keyed_origin
 from app.services.maintenance._chunked_sql import chunked_update
 from app.services.maintenance.rollups import rebuild_rollups_for_pairs
 from app.services.maintenance.windows import rebuild_windows_overlapping
@@ -177,6 +178,8 @@ class AdoptPlan:
     events: int = 0
     pending_events: int = 0
     credential_tags: int = 0
+    # Per-source enabled/priority choices that would change on the device (see _source_prefs).
+    source_prefs: int = 0
     settings: list[str] = field(default_factory=list)
     ts_min: datetime | None = None
     ts_max: datetime | None = None
@@ -192,6 +195,7 @@ class AdoptResult:
     events: int = 0
     pending_events: int = 0
     credential_tags: int = 0
+    source_prefs: int = 0
     settings: list[str] = field(default_factory=list)
     rollup_pairs_rebuilt: int = 0
     windows_rebuilt: int = 0
@@ -289,6 +293,7 @@ def _plan(session: Session, legacy: SidecarRegistry, device: SidecarRegistry) ->
         {"legacy": legacy_id, "device": device_id},
     ).scalar_one()
     plan.credential_tags = len(_tags_to_move(session, legacy_id, device_id))
+    plan.source_prefs = len(_source_prefs(session, legacy_id, device_id))
     return plan
 
 
@@ -296,6 +301,78 @@ def plan_adopt_sidecar(session: Session, *, legacy_id: str, device_id: str) -> A
     """Read-only preview of what an adoption would move."""
     legacy, device = _check(session, legacy_id, device_id)
     return _plan(session, legacy, device)
+
+
+def _source_prefs(
+    session: Session, legacy_id: str, device_id: str
+) -> list[tuple[CredentialSource, CredentialSource]]:
+    """(device row, legacy row) pairs where the operator's enabled/priority choice differs.
+
+    The device re-discovers its credentials with defaults, so a source the operator disabled or
+    re-ordered on the legacy entry would otherwise come back enabled at priority 0. Rows match on
+    (provider, account, origin), exact first and then without the fingerprint for what is left. A
+    device row that does not exist yet is not created, and a device key that is ambiguous (two
+    fingerprints under one plain origin) is left alone rather than guessed. Several legacy rows for
+    one key resolve to the newest."""
+
+    Key = tuple[str, str, str | None]
+
+    def index(
+        rows: list[CredentialSource],
+        key: Callable[[CredentialSource], Key],
+        *,
+        newest_wins: bool,
+    ) -> dict[Key, CredentialSource | None]:
+        """Rows by key; ``None`` marks a key that is ambiguous (several device rows)."""
+        found: dict[Key, CredentialSource | None] = {}
+        for row in rows:
+            k = key(row)
+            held = found.get(k)
+            if k not in found:
+                found[k] = row
+            elif newest_wins and held is not None and row.last_seen > held.last_seen:
+                # Stale rows pile up on the old entry (a rotated key); the newest one carries the
+                # operator's current choice, as in the ingest-side carry.
+                found[k] = row
+            elif not newest_wins:
+                # Two device rows for one key: which one is meant is a guess.
+                found[k] = None
+        return found
+
+    def rows_of(sidecar_id: str) -> list[CredentialSource]:
+        return list(
+            session.exec(select(CredentialSource).where(CredentialSource.sidecar_id == sidecar_id))
+        )
+
+    legacy_rows, device_rows = rows_of(legacy_id), rows_of(device_id)
+    matched: list[tuple[CredentialSource, CredentialSource]] = []
+    # Exact origins first, so two fingerprints that both sides carry stay two sources. Only the
+    # rows left over are then folded to their base origin: a sidecar that predates fingerprints
+    # reports ``env:X`` where the re-paired device reports ``env:X#<fp>``, and they are one source.
+    for fold in (False, True):
+
+        def key(row: CredentialSource, fold: bool = fold) -> Key:
+            origin = row.credential_origin
+            if fold and origin:
+                origin = split_keyed_origin(origin)[0]
+            return (row.provider_id, row.account_id, origin)
+
+        legacy_by_key = index(legacy_rows, key, newest_wins=True)
+        device_by_key = index(device_rows, key, newest_wins=False)
+        done: set[Key] = set()
+        for k, legacy_row in legacy_by_key.items():
+            device_row = device_by_key.get(k)
+            if legacy_row is not None and device_row is not None:
+                matched.append((device_row, legacy_row))
+                done.add(k)
+        # A matched key consumes every row filed under it, stale duplicates included.
+        legacy_rows = [row for row in legacy_rows if key(row) not in done]
+        device_rows = [row for row in device_rows if key(row) not in done]
+    return [
+        (device_row, legacy_row)
+        for device_row, legacy_row in matched
+        if (device_row.enabled, device_row.priority) != (legacy_row.enabled, legacy_row.priority)
+    ]
 
 
 def _tags_to_move(session: Session, legacy_id: str, device_id: str) -> list[CredentialTag]:
@@ -394,6 +471,14 @@ def apply_adopt_sidecar(session: Session, *, legacy_id: str, device_id: str) -> 
     session.execute(
         update(SidecarRegistry).where(col(SidecarRegistry.sidecar_id) == device_id).values(**values)
     )
+
+    # The operator's per-source choices ride the same transaction. Copying the same values twice is
+    # harmless, so a retry after a failure converges instead of double-applying.
+    prefs = _source_prefs(session, legacy_id, device_id)
+    for device_row, legacy_row in prefs:
+        device_row.enabled, device_row.priority = legacy_row.enabled, legacy_row.priority
+        session.add(device_row)
+    result.source_prefs = len(prefs)
 
     # Its own tags, pending origins and discovered credentials go with the legacy row.
     from app.services.fleet_registry import fleet_registry

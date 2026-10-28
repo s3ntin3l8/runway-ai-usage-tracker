@@ -41,6 +41,7 @@ const summary = (dry_run: boolean): SidecarAdoptSummary => ({
   events: 44741,
   pending_events: 0,
   credential_tags: 19,
+  source_prefs: 3,
   settings: [],
   from: legacyEntry,
   into: deviceEntry,
@@ -79,6 +80,7 @@ describe('MergeSidecarNotice', () => {
     expect(screen.getByText('Paired device')).toBeInTheDocument();
     expect(screen.getByText(/44,741 usage events move to the paired device/)).toBeInTheDocument();
     expect(screen.getByText(/19 credential tags/)).toBeInTheDocument();
+    expect(screen.getByText(/3 source settings/)).toBeInTheDocument();
     // Both entries are named "macbook"; the pushes line says exactly what the card becomes.
     expect(screen.getByText(/Pushes: 10 \+ 54,985 =/)).toBeInTheDocument();
     expect(screen.getByText('54,995')).toBeInTheDocument();
@@ -87,6 +89,24 @@ describe('MergeSidecarNotice', () => {
     await user.click(screen.getByRole('button', { name: 'Merge into paired device' }));
     await waitFor(() => expect(api.adoptLegacySidecar).toHaveBeenCalledWith(DEVICE, 'macbook', false));
     await waitFor(() => expect(toast.success).toHaveBeenCalled());
+  });
+
+  it.each([
+    ['one', 1, /1 source setting \(enabled, priority\)/],
+    ['none', 0, null],
+    ['an older server that does not report it', undefined, null],
+  ])('lists the carried source settings: %s', async (_label, count, line) => {
+    const user = userEvent.setup();
+    vi.mocked(api.adoptLegacySidecar).mockImplementation(async (_id, _legacy, dryRun) => ({
+      ...summary(dryRun),
+      source_prefs: count,
+    }));
+    renderWithProviders(<MergeSidecarNotice sidecar={onDevice} />);
+
+    await user.click(screen.getByRole('button', { name: /review merge/i }));
+    expect(await screen.findByText(/19 credential tags/)).toBeInTheDocument();
+    if (line) expect(screen.getByText(line)).toBeInTheDocument();
+    else expect(screen.queryByText(/source setting/)).not.toBeInTheDocument();
   });
 
   it('stays hidden once dismissed, from either card', async () => {
