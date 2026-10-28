@@ -360,6 +360,7 @@ async def test_neither_ids_nor_secrets_reach_the_logs(environment, caplog):
     assert reports[ACCOUNT].outcome == "ok"
     assert SECRET_ID not in caplog.text and "fixture-access" not in caplog.text
     assert "events=1" in caplog.text
+    assert "logins=" in caplog.text and ":ok" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -420,3 +421,22 @@ def test_the_collector_imports_only_what_the_server_image_ships():
 
     source = Path(collector.__file__).read_text()
     assert "event_extractors" not in source and "sidecar_pkg" not in source
+
+
+@pytest.mark.asyncio
+async def test_every_login_outcome_is_logged_by_kind_without_ids(environment, caplog):
+    cache = probe.token_cache
+    await cache.store(
+        "anthropic",
+        {"oauth_token": "desktop-access", "refresh_token": "unused"},
+        account_id=ACCOUNT,
+        source_id="aaa-desktop",
+        source_metadata={"credential_origin": "keychain:Claude Desktop/oauth/abc"},
+    )
+    caplog.set_level(logging.INFO)
+    upstream, _ = listing([[row(usage=block())]])
+    async with httpx.AsyncClient(transport=httpx.MockTransport(upstream)) as client:
+        reports = await collector.collect_all(client)
+    assert reports[ACCOUNT].attempts[0].startswith("keychain:")
+    assert reports[ACCOUNT].attempts[-1].endswith(":ok")
+    assert "aaa-desktop" not in caplog.text and "desktop-access" not in caplog.text

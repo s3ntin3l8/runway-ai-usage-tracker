@@ -85,6 +85,7 @@ class CycleReport:
     events: int = 0
     regressions: int = 0
     notes: list[str] = field(default_factory=list)
+    attempts: list[str] = field(default_factory=list)
 
 
 def session_digest(session_id: str) -> str:
@@ -410,15 +411,20 @@ async def collect_all(client: httpx.AsyncClient) -> dict[str, CycleReport]:
     """Sweep every account that has a usable Claude Code login, once per account."""
     reports: dict[str, CycleReport] = {}
     candidates = await probe.token_cache.get_account_source_candidates("anthropic")
-    by_account: dict[str, list[str]] = {}
+    by_account: dict[str, list[tuple[str, str]]] = {}
     for candidate in candidates:
         slot, source_id = candidate.get("account_slot"), candidate.get("source_id")
         if isinstance(slot, str) and isinstance(source_id, str):
-            by_account.setdefault(slot, []).append(source_id)
-    for account, source_ids in by_account.items():
+            origin = candidate.get("credential_origin")
+            kind = origin.split(":", 1)[0] if isinstance(origin, str) and origin else "config"
+            by_account.setdefault(slot, []).append((source_id, kind[:16]))
+    for account, sources in by_account.items():
+        attempts: list[str] = []
         # Two logins of one account see the same sessions: the first usable one is enough.
-        for source_id in sorted(source_ids):
+        for source_id, kind in sorted(sources):
             report = await collect_account(account, source_id, client)
+            attempts.append(f"{kind}:{report.outcome}")
+            report.attempts = attempts
             if report.outcome in ("ok", "truncated"):
                 reports[account] = report
                 break
@@ -427,7 +433,7 @@ async def collect_all(client: httpx.AsyncClient) -> dict[str, CycleReport]:
                 break
     for report in reports.values():
         logger.info(
-            "Claude cloud collector: outcome=%s pages=%d listed=%d cloud=%d events=%d regressions=%d notes=%s",
+            "Claude cloud collector: outcome=%s pages=%d listed=%d cloud=%d events=%d regressions=%d notes=%s logins=%s",
             report.outcome,
             report.pages,
             report.listed,
@@ -435,6 +441,7 @@ async def collect_all(client: httpx.AsyncClient) -> dict[str, CycleReport]:
             report.events,
             report.regressions,
             ",".join(report.notes) or "-",
+            ",".join(report.attempts) or "-",
         )
     return reports
 
