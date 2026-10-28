@@ -163,11 +163,11 @@ If you would rather keep one Traefik router and let Authentik skip the sidecar r
 ^/assets/.*
 ```
 
-Add `^/health$` and `^/api/v1/system/health$` as well if a monitor probes them. Use one mechanism or the other, not a mix that drifts: whichever you choose, the list has to match the table above.
+Add `^/api/v1/system/health$` as well if a monitor probes Runway's health route. Use one mechanism or the other, not a mix that drifts: whichever you choose, the list has to match the table above.
 
 ### Verify the bypass
 
-A blocked path fails quietly, so probe each one from outside, without a session and without following redirects. Anything that reaches Runway answers `401` or `422`; a `302` whose `redirect_url` points at your identity provider means the proxy is still gating it:
+A blocked path fails quietly, so probe each one from outside, without a session and without following redirects. A path that reaches Runway answers `401` or `422` (the signature-protected `POST` routes), or `200` for `GET config`, which gives an unsigned caller the limited view; a `302` whose `redirect_url` points at your identity provider means the proxy is still gating it:
 
 ```bash
 H=https://runway.example.com

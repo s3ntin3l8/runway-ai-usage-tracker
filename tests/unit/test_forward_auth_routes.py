@@ -67,12 +67,47 @@ def test_forward_auth_documentation_lists_every_hmac_only_route():
     assert len(documented) == len(set(documented))
 
 
-def test_pairing_route_is_public_and_code_authenticated():
-    # If this route ever starts calling an HMAC helper it moves into the HMAC-only set above,
-    # and the constant must not double count it.
+def _fleet_routes() -> set[str]:
+    """Every route registered with ``@router.<method>("/path")`` in the fleet modules (AST, so a
+    commented-out decorator does not count)."""
+    source = "\n".join(
+        path.read_text() for path in sorted((ROOT / "app/api/endpoints").glob("fleet*.py"))
+    )
+    routes: set[str] = set()
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for decorator in node.decorator_list:
+            if (
+                isinstance(decorator, ast.Call)
+                and isinstance(decorator.func, ast.Attribute)
+                and isinstance(decorator.func.value, ast.Name)
+                and decorator.func.value.id == "router"
+                and decorator.args
+                and isinstance(decorator.args[0], ast.Constant)
+                and isinstance(decorator.args[0].value, str)
+            ):
+                routes.add(f"{FLEET_PREFIX}{decorator.args[0].value}")
+    return routes
+
+
+def test_pairing_route_exists_and_is_code_authenticated_not_hmac():
+    # The route has to be a real registered route, and must stay out of the HMAC-only set: if it
+    # ever starts calling an HMAC helper it moves there and the constant must not double count it.
+    assert CODE_AUTHENTICATED_ROUTES <= _fleet_routes()
     assert not CODE_AUTHENTICATED_ROUTES & _hmac_only_fleet_routes()
-    source = (ROOT / "app/api/endpoints/fleet.py").read_text()
-    assert '@router.post("/pair"' in source
+
+
+def test_documented_route_table_lists_the_same_sidecar_routes():
+    docs = (ROOT / "docs/forward-auth.md").read_text()
+    expected = _hmac_only_fleet_routes() | CODE_AUTHENTICATED_ROUTES
+    rows = re.findall(r"^\s*\| `(?:GET|POST) (/api/v1/fleet/[^`\s]+)` \|", docs, re.M)
+    assert sorted(rows) == sorted(expected)
+    # The prose says "five"; changing the set must change that wording too (forward-auth.md
+    # section 5, and the "five routes" bullet in docs/deployment.md).
+    assert len(expected) == 5
+    assert "Five fleet routes are called by sidecars" in docs
+    assert "five routes must bypass it" in (ROOT / "docs/deployment.md").read_text()
 
 
 def test_authentik_unauthenticated_paths_list_the_same_sidecar_routes():

@@ -111,7 +111,7 @@ RUNWAY_API_URL=https://runway.example.com RUNWAY_API_KEY="$INGEST_API_KEY" pytho
 
 This applies to **remote and same-host sidecars alike** — the sidecar always runs natively (it needs host keychains/cookies/files) and talks to the server over the network. Going through Traefik is the preferred path: it's TLS-encrypted, which matters because ingest payloads carry OAuth tokens and cookies (HMAC protects integrity, not confidentiality). The sidecar needs only outbound HTTPS — no inbound ports.
 
-Three things to know:
+Four things to know:
 
 - **Behind SSO, five routes must bypass it.** `/api/v1/fleet/ingest` is not the only path a sidecar calls: `config`, `credentials/manifest`, `source-sync` (an enrolled device's consent sync) and `pair` (one-time-code pairing) are too, and a login redirect on any of them fails quietly (ingest keeps working). The list, a verification probe and the Authentik equivalent are in [`docs/forward-auth.md`](forward-auth.md#5-production-hardening-split-the-traefik-router).
 - **Rate-limit bucketing.** The ingest limiter (600/min) keys on client IP. Behind a proxy that IP is Traefik's, so every sidecar collapses into one bucket unless you set `TRUSTED_PROXY_IPS` to Traefik's container IP — then Runway honors the `X-Forwarded-For` Traefik sets and buckets per real client (this also gates `X-Forwarded-User` admin auth). Harmless for a couple of sidecars; set it for a fleet. The match is exact (not CIDR), so pin Traefik to a static IP if you depend on it.
