@@ -310,41 +310,62 @@ def _source_prefs(
 
     The device re-discovers its credentials with defaults, so a source the operator disabled or
     re-ordered on the legacy entry would otherwise come back enabled at priority 0. Rows match on
-    (provider, account, origin without its fingerprint). A device row that does not exist yet is not
-    created, and a device key that is ambiguous (two fingerprints for one origin) is left alone
-    rather than guessed. Several legacy rows for one key resolve to the newest."""
+    (provider, account, origin), exact first and then without the fingerprint for what is left. A
+    device row that does not exist yet is not created, and a device key that is ambiguous (two
+    fingerprints under one plain origin) is left alone rather than guessed. Several legacy rows for
+    one key resolve to the newest."""
 
-    def keyed(
-        sidecar_id: str, *, newest_wins: bool
-    ) -> dict[tuple[str, str, str | None], CredentialSource | None]:
-        # Keyed on the origin's base: a sidecar that predates origin fingerprints reports
-        # ``env:X`` where the re-paired device reports ``env:X#<fp>``, and they are one source.
-        rows: dict[tuple[str, str, str | None], CredentialSource | None] = {}
-        for row in session.exec(
-            select(CredentialSource).where(CredentialSource.sidecar_id == sidecar_id)
-        ):
-            origin = split_keyed_origin(row.credential_origin)[0] if row.credential_origin else None
-            key = (row.provider_id, row.account_id, origin)
-            held = rows.get(key)
-            if key not in rows:
-                rows[key] = row
+    Key = tuple[str, str, str | None]
+
+    def index(rows: list[CredentialSource], key: Any, *, newest_wins: bool) -> dict[Key, Any]:
+        found: dict[Key, CredentialSource | None] = {}
+        for row in rows:
+            k = key(row)
+            held = found.get(k)
+            if k not in found:
+                found[k] = row
             elif newest_wins and held is not None and row.last_seen > held.last_seen:
                 # Stale rows pile up on the old entry (a rotated key); the newest one carries the
                 # operator's current choice, as in the ingest-side carry.
-                rows[key] = row
+                found[k] = row
             elif not newest_wins:
-                # Two device rows for one base (two fingerprints): which one is meant is a guess.
-                rows[key] = None
-        return rows
+                # Two device rows for one key: which one is meant is a guess.
+                found[k] = None
+        return found
 
-    legacy_rows = keyed(legacy_id, newest_wins=True)
-    device_rows = keyed(device_id, newest_wins=False)
+    def rows_of(sidecar_id: str) -> list[CredentialSource]:
+        return list(
+            session.exec(select(CredentialSource).where(CredentialSource.sidecar_id == sidecar_id))
+        )
+
+    legacy_rows, device_rows = rows_of(legacy_id), rows_of(device_id)
+    matched: list[tuple[CredentialSource, CredentialSource]] = []
+    # Exact origins first, so two fingerprints that both sides carry stay two sources. Only the
+    # rows left over are then folded to their base origin: a sidecar that predates fingerprints
+    # reports ``env:X`` where the re-paired device reports ``env:X#<fp>``, and they are one source.
+    for fold in (False, True):
+
+        def key(row: CredentialSource, fold: bool = fold) -> Key:
+            origin = row.credential_origin
+            if fold and origin:
+                origin = split_keyed_origin(origin)[0]
+            return (row.provider_id, row.account_id, origin)
+
+        legacy_by_key = index(legacy_rows, key, newest_wins=True)
+        device_by_key = index(device_rows, key, newest_wins=False)
+        done: set[Key] = set()
+        for k, legacy_row in legacy_by_key.items():
+            device_row = device_by_key.get(k)
+            if legacy_row is not None and device_row is not None:
+                matched.append((device_row, legacy_row))
+                done.add(k)
+        # A matched key consumes every row filed under it, stale duplicates included.
+        legacy_rows = [row for row in legacy_rows if key(row) not in done]
+        device_rows = [row for row in device_rows if key(row) not in done]
     return [
         (device_row, legacy_row)
-        for key, legacy_row in legacy_rows.items()
-        if legacy_row is not None
-        and (device_row := device_rows.get(key)) is not None
-        and (device_row.enabled, device_row.priority) != (legacy_row.enabled, legacy_row.priority)
+        for device_row, legacy_row in matched
+        if (device_row.enabled, device_row.priority) != (legacy_row.enabled, legacy_row.priority)
     ]
 
 

@@ -641,3 +641,17 @@ def test_the_newest_of_several_old_rows_for_one_origin_carries_the_choice():
 
     assert result.source_prefs == 1
     assert _prefs(session, DEVICE) == {XAI_B: (False, 4)}
+
+
+def test_two_fingerprints_that_both_sides_carry_each_keep_their_own_choice():
+    session = _session()
+    _pair(session)
+    _source(session, "desktop", XAI_A, provider="xai", enabled=False)
+    _source(session, "desktop", XAI_B, provider="xai", priority=5)
+    _source(session, DEVICE, XAI_A, provider="xai")
+    _source(session, DEVICE, XAI_B, provider="xai")
+
+    result = apply_adopt_sidecar(session, legacy_id="desktop", device_id=DEVICE)
+
+    assert result.source_prefs == 2
+    assert _prefs(session, DEVICE) == {XAI_A: (False, 0), XAI_B: (True, 5)}
