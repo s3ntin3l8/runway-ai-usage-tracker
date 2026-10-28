@@ -27,13 +27,21 @@ processed ones, which none of the current callers do.
 
 from __future__ import annotations
 
+import logging
+import random
+import time
 from collections.abc import Sequence
 from typing import Any
 
 from sqlalchemy import ColumnElement
+from sqlalchemy.exc import OperationalError
 from sqlmodel import Session, SQLModel, col, delete, select, update
 
+logger = logging.getLogger(__name__)
+
 _DEFAULT_BATCH = 5000
+_MAX_RETRIES = 5
+_INITIAL_BACKOFF = 0.05
 
 
 def _next_batch_ids(
@@ -42,10 +50,65 @@ def _next_batch_ids(
     where: Sequence[ColumnElement[bool]],
     cursor_id: int,
     batch_size: int,
+    *,
+    max_retries: int = _MAX_RETRIES,
+    initial_backoff: float = _INITIAL_BACKOFF,
 ) -> list[int]:
     id_col = col(model.id)  # type: ignore[attr-defined]
     stmt = select(model.id).where(*where, id_col > cursor_id).order_by(id_col).limit(batch_size)  # type: ignore[attr-defined]
-    return [row[0] for row in session.execute(stmt)]
+    for attempt in range(max_retries):
+        try:
+            rows = [row[0] for row in session.execute(stmt)]
+            session.commit()
+            return rows
+        except OperationalError as exc:
+            if (
+                "locked" in str(exc).lower() or "busy" in str(exc).lower()
+            ) and attempt < max_retries - 1:
+                session.rollback()
+                delay = initial_backoff * (2**attempt) + random.uniform(0.01, 0.05)
+                logger.warning(
+                    "Database locked during batch ID lookup of %s (attempt %d/%d); retrying in %.2fs",
+                    model.__name__,
+                    attempt + 1,
+                    max_retries,
+                    delay,
+                )
+                time.sleep(delay)
+                continue
+            raise
+    return []
+
+
+def _execute_with_retry(
+    session: Session,
+    statement: Any,
+    *,
+    action_desc: str,
+    max_retries: int = _MAX_RETRIES,
+    initial_backoff: float = _INITIAL_BACKOFF,
+) -> None:
+    for attempt in range(max_retries):
+        try:
+            session.exec(statement)
+            session.commit()
+            return
+        except OperationalError as exc:
+            if (
+                "locked" in str(exc).lower() or "busy" in str(exc).lower()
+            ) and attempt < max_retries - 1:
+                session.rollback()
+                delay = initial_backoff * (2**attempt) + random.uniform(0.01, 0.05)
+                logger.warning(
+                    "Database locked during %s (attempt %d/%d); retrying in %.2fs",
+                    action_desc,
+                    attempt + 1,
+                    max_retries,
+                    delay,
+                )
+                time.sleep(delay)
+                continue
+            raise
 
 
 def chunked_update(
@@ -64,8 +127,11 @@ def chunked_update(
         ids = _next_batch_ids(session, model, where, cursor, batch_size)
         if not ids:
             break
-        session.exec(update(model).where(id_col.in_(ids)).values(**values))  # type: ignore[call-overload]
-        session.commit()
+        _execute_with_retry(
+            session,
+            update(model).where(id_col.in_(ids)).values(**values),  # type: ignore[call-overload]
+            action_desc=f"chunked update of {model.__name__}",
+        )
         total += len(ids)
         cursor = ids[-1]
         if len(ids) < batch_size:
@@ -88,8 +154,11 @@ def chunked_delete(
         ids = _next_batch_ids(session, model, where, cursor, batch_size)
         if not ids:
             break
-        session.exec(delete(model).where(id_col.in_(ids)))  # type: ignore[call-overload]
-        session.commit()
+        _execute_with_retry(
+            session,
+            delete(model).where(id_col.in_(ids)),  # type: ignore[call-overload]
+            action_desc=f"chunked delete of {model.__name__}",
+        )
         total += len(ids)
         cursor = ids[-1]
         if len(ids) < batch_size:

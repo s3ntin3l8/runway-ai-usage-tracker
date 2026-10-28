@@ -324,6 +324,7 @@ def apply_adopt_sidecar(session: Session, *, legacy_id: str, device_id: str) -> 
     # objects are detached by the time the counters are carried.
     legacy_pushes, legacy_errors = legacy.ingest_count, legacy.error_count
     legacy_first_seen, device_first_seen = legacy.first_seen, device.first_seen
+    session.commit()
 
     chunked_update(
         session, UsageEvent, [col(UsageEvent.sidecar_id) == legacy_id], {"sidecar_id": device_id}
@@ -340,6 +341,7 @@ def apply_adopt_sidecar(session: Session, *, legacy_id: str, device_id: str) -> 
         ),
         {"legacy": legacy_id, "device": device_id},
     )
+    session.commit()
     chunked_update(
         session,
         PendingUsageEvent,

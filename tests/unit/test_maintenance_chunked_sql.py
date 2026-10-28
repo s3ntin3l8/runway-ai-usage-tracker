@@ -6,12 +6,15 @@ on to never commit more than one batch's worth of work at a time.
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from unittest.mock import patch
 
+import pytest
+from sqlalchemy.exc import OperationalError
 from sqlmodel import Session, SQLModel, col, create_engine, select
 from sqlmodel.pool import StaticPool
 
 from app.models.db import UsageEvent
-from app.services.maintenance._chunked_sql import chunked_delete, chunked_update
+from app.services.maintenance._chunked_sql import _next_batch_ids, chunked_delete, chunked_update
 
 
 def _session() -> Session:
@@ -150,3 +153,94 @@ def test_chunked_update_is_resumable_after_a_partial_run():
         batch_size=4,
     )
     assert second == 0  # already-moved rows no longer match account_id == "default"
+
+
+def test_chunked_update_retries_on_locked_database_and_succeeds():
+    """Simulates a transient SQLite lock contention during an UPDATE batch.
+    The update must catch OperationalError, roll back, retry, and successfully complete."""
+    session = _session()
+    _seed(session, 5)
+
+    original_exec = session.exec
+    attempts = 0
+
+    def mock_exec(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        # Fail the first attempt with "database is locked"
+        if attempts == 1:
+            raise OperationalError("UPDATE ...", {}, Exception("database is locked"))
+        return original_exec(*args, **kwargs)
+
+    with patch.object(session, "exec", side_effect=mock_exec):
+        total = chunked_update(
+            session,
+            UsageEvent,
+            [col(UsageEvent.provider_id) == "minimax"],
+            {"account_id": "alice@example.com"},
+            batch_size=10,
+        )
+
+    assert total == 5
+    assert attempts == 2
+    remaining = session.exec(
+        select(UsageEvent).where(col(UsageEvent.account_id) == "default")
+    ).all()
+    assert remaining == []
+
+
+def test_chunked_delete_retries_on_locked_database_and_succeeds():
+    """Simulates a transient SQLite lock contention during a DELETE batch."""
+    session = _session()
+    _seed(session, 5)
+
+    original_exec = session.exec
+    attempts = 0
+
+    def mock_exec(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise OperationalError("DELETE ...", {}, Exception("database is locked"))
+        return original_exec(*args, **kwargs)
+
+    with patch.object(session, "exec", side_effect=mock_exec):
+        total = chunked_delete(
+            session, UsageEvent, [col(UsageEvent.provider_id) == "minimax"], batch_size=10
+        )
+
+    assert total == 5
+    assert attempts == 2
+    assert session.exec(select(UsageEvent)).all() == []
+
+
+def test_chunked_update_raises_after_max_retries_exhausted():
+    """When lock contention is permanent, OperationalError must be re-raised after retries."""
+    session = _session()
+    _seed(session, 5)
+
+    def fail_exec(*args, **kwargs):
+        raise OperationalError("UPDATE ...", {}, Exception("database is locked"))
+
+    with patch.object(session, "exec", side_effect=fail_exec):
+        with pytest.raises(OperationalError, match="database is locked"):
+            chunked_update(
+                session,
+                UsageEvent,
+                [col(UsageEvent.provider_id) == "minimax"],
+                {"account_id": "alice@example.com"},
+                batch_size=10,
+            )
+
+
+def test_next_batch_ids_releases_transaction_lock():
+    """_next_batch_ids commits after reading so no deferred read lock lingers into write operations."""
+    session = _session()
+    _seed(session, 3)
+
+    ids = _next_batch_ids(
+        session, UsageEvent, [col(UsageEvent.provider_id) == "minimax"], cursor_id=0, batch_size=10
+    )
+    assert len(ids) == 3
+    # Transaction is not active / in-progress on the session
+    assert not session.in_transaction()
