@@ -73,7 +73,7 @@ _FILE_APPS: tuple[tuple[tuple[str, ...], str], ...] = (
 # Credential Manager writes its GitHub login to.
 _KEYCHAIN_ENTRY_APPS: dict[str, str] = {
     "gemini:antigravity": "Antigravity CLI",
-    "git:https://github.com": "GitHub Credential Manager",
+    "git:https://github.com": "Git Credential Manager",
 }
 
 _LOGIN_HINTS = {
@@ -87,7 +87,7 @@ _LOGIN_HINTS = {
     "Gemini CLI": "run `gemini`, then `/auth`",
     "Grok CLI": "sign in again in the Grok CLI",
     "Antigravity CLI": "sign in again in the Antigravity CLI",
-    "GitHub Credential Manager": "run `git credential-manager github login`",
+    "Git Credential Manager": "run `git credential-manager github login`",
     "MiniMax Code": "sign in again in the MiniMax Code app",
 }
 

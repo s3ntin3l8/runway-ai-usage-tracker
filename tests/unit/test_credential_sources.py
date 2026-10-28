@@ -862,11 +862,11 @@ def test_describe_origin_full_names_the_windows_credential_store_owner():
     assert login_hint(display.app) == "sign in again in the Antigravity CLI"
 
 
-def test_describe_origin_full_names_github_credential_manager_as_the_github_owner():
+def test_describe_origin_full_names_git_credential_manager_as_the_github_owner():
     """The GitHub entry in the Windows Credential Manager is Git Credential
     Manager's, so the operator is told which tool to sign in with again."""
     display = describe_origin_full("keychain:git:https://github.com")
-    assert display.app == "GitHub Credential Manager"
+    assert display.app == "Git Credential Manager"
     assert display.kind == "keychain"
     assert display.detail is None
     assert login_hint(display.app) == "run `git credential-manager github login`"
