@@ -23,6 +23,7 @@ from app.services.maintenance.sidecar_adopt import (
     adoptable_legacy,
     apply_adopt_sidecar,
     plan_adopt_sidecar,
+    replaced_by,
 )
 
 DEVICE = "device-" + "a" * 32
@@ -308,3 +309,83 @@ def test_rollups_are_rebuilt_even_when_only_rollup_rows_carry_the_legacy_id():
 
     assert result.rollup_pairs_rebuilt == 1
     assert not any(r.sidecar_id == "desktop" for r in session.exec(select(UsagePeriodRollup)))
+
+
+def _counters(session, sidecar_id):
+    row = session.get(SidecarRegistry, sidecar_id)
+    session.refresh(row)
+    return row.ingest_count, row.error_count, row.first_seen
+
+
+def test_adoption_carries_the_push_and_error_counts_and_the_earlier_first_seen():
+    session = _session()
+    _pair(session, ingest_count=18689, error_count=3)
+    device = session.get(SidecarRegistry, DEVICE)
+    device.ingest_count, device.error_count = 207, 1
+    session.add(device)
+    session.commit()
+    legacy_first_seen = session.get(SidecarRegistry, "desktop").first_seen
+
+    preview = plan_adopt_sidecar(session, legacy_id="desktop", device_id=DEVICE)
+    assert preview.pushes_after == 18689 + 207
+
+    result = apply_adopt_sidecar(session, legacy_id="desktop", device_id=DEVICE)
+
+    assert (result.pushes_carried, result.errors_carried) == (18689, 3)
+    pushes, errors, first_seen = _counters(session, DEVICE)
+    assert (pushes, errors) == (18689 + 207, 3 + 1)
+    assert first_seen == legacy_first_seen  # the machine is as old as its history
+
+
+def test_a_failed_adoption_does_not_carry_the_counters_twice_on_retry(monkeypatch):
+    session = _session()
+    _pair(session, ingest_count=100, error_count=2)
+    device = session.get(SidecarRegistry, DEVICE)
+    device.ingest_count, device.error_count = 10, 0
+    session.add(device)
+    session.commit()
+
+    from app.services import fleet_registry as registry
+
+    real = registry.fleet_registry.delete_sidecar
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("delete interrupted")
+
+    monkeypatch.setattr(registry.fleet_registry, "delete_sidecar", boom)
+    with pytest.raises(RuntimeError):
+        apply_adopt_sidecar(session, legacy_id="desktop", device_id=DEVICE)
+    # Nothing was carried, and the legacy row is still there to retry.
+    assert _counters(session, DEVICE)[:2] == (10, 0)
+    assert session.get(SidecarRegistry, "desktop") is not None
+
+    monkeypatch.setattr(registry.fleet_registry, "delete_sidecar", real)
+    apply_adopt_sidecar(session, legacy_id="desktop", device_id=DEVICE)
+
+    assert _counters(session, DEVICE)[:2] == (110, 2)  # carried exactly once
+
+
+def test_the_preview_names_both_sides():
+    session = _session()
+    _pair(session, ingest_count=500, custom_name="Office PC")
+
+    preview = plan_adopt_sidecar(session, legacy_id="desktop", device_id=DEVICE)
+
+    assert preview.legacy["sidecar_id"] == "desktop"
+    assert preview.legacy["name"] == "Office PC"
+    assert preview.legacy["ingest_count"] == 500
+    assert preview.device["sidecar_id"] == DEVICE
+    assert preview.device["name"] == "desktop"  # the device's hostname, not its id
+
+
+def test_replaced_by_is_the_inverse_of_adoptable_legacy():
+    session = _session()
+    _pair(session)
+    rows = list(session.exec(select(SidecarRegistry)).all())
+
+    forward = adoptable_legacy(rows)
+    inverse = replaced_by(rows)
+
+    assert [c["sidecar_id"] for c in forward[DEVICE]] == ["desktop"]
+    assert [d["sidecar_id"] for d in inverse["desktop"]] == [DEVICE]
+    assert DEVICE not in inverse and "desktop" not in forward

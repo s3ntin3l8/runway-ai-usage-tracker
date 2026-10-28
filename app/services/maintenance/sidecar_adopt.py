@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import func, text
+from sqlalchemy import func, text, update
 from sqlmodel import Session, col, select
 
 from app.models.db import (
@@ -82,17 +82,35 @@ def adoptable_legacy(rows: list[SidecarRegistry]) -> dict[str, list[dict[str, An
     for device in rows:
         if not sidecar_devices.reserved_registry_id(device.sidecar_id):
             continue
-        matches = [
-            {
-                "sidecar_id": legacy.sidecar_id,
-                "last_seen": legacy.last_seen.isoformat(),
-                "ingest_count": legacy.ingest_count,
-            }
-            for legacy in legacy_rows
-            if _same_machine(legacy, device)
-        ]
+        matches = [_describe(legacy) for legacy in legacy_rows if _same_machine(legacy, device)]
         if matches:
             result[device.sidecar_id] = matches
+    return result
+
+
+def _describe(row: SidecarRegistry) -> dict[str, Any]:
+    """The facts an operator needs to tell two entries for one machine apart."""
+    return {
+        "sidecar_id": row.sidecar_id,
+        "name": row.custom_name or row.hostname or row.sidecar_id,
+        "os_platform": row.os_platform,
+        "first_seen": row.first_seen.isoformat(),
+        "last_seen": row.last_seen.isoformat(),
+        "ingest_count": row.ingest_count,
+    }
+
+
+def replaced_by(rows: list[SidecarRegistry]) -> dict[str, list[dict[str, Any]]]:
+    """The inverse of ``adoptable_legacy``: map each legacy row to the enrolled device(s) that
+    replaced it, so the old entry's card can offer the same merge."""
+    devices = [r for r in rows if sidecar_devices.reserved_registry_id(r.sidecar_id)]
+    result: dict[str, list[dict[str, Any]]] = {}
+    for legacy in rows:
+        if sidecar_devices.reserved_registry_id(legacy.sidecar_id):
+            continue
+        matches = [_describe(device) for device in devices if _same_machine(legacy, device)]
+        if matches:
+            result[legacy.sidecar_id] = matches
     return result
 
 
@@ -105,6 +123,10 @@ class AdoptPlan:
     ts_min: datetime | None = None
     ts_max: datetime | None = None
     pairs: set[tuple[str, str]] = field(default_factory=set)
+    # Both sides, so a preview can say which entry goes into which.
+    legacy: dict[str, Any] = field(default_factory=dict)
+    device: dict[str, Any] = field(default_factory=dict)
+    pushes_after: int = 0
 
 
 @dataclass
@@ -115,6 +137,8 @@ class AdoptResult:
     settings: list[str] = field(default_factory=list)
     rollup_pairs_rebuilt: int = 0
     windows_rebuilt: int = 0
+    pushes_carried: int = 0
+    errors_carried: int = 0
 
 
 class SidecarNotFoundError(LookupError):
@@ -152,7 +176,12 @@ def _settings_to_copy(legacy: SidecarRegistry, device: SidecarRegistry) -> list[
 
 def _plan(session: Session, legacy: SidecarRegistry, device: SidecarRegistry) -> AdoptPlan:
     legacy_id, device_id = legacy.sidecar_id, device.sidecar_id
-    plan = AdoptPlan(settings=_settings_to_copy(legacy, device))
+    plan = AdoptPlan(
+        settings=_settings_to_copy(legacy, device),
+        legacy=_describe(legacy),
+        device=_describe(device),
+        pushes_after=legacy.ingest_count + device.ingest_count,
+    )
     plan.events, plan.ts_min, plan.ts_max = session.execute(
         select(func.count(), func.min(UsageEvent.ts), func.max(UsageEvent.ts)).where(
             UsageEvent.sidecar_id == legacy_id
@@ -231,6 +260,10 @@ def apply_adopt_sidecar(session: Session, *, legacy_id: str, device_id: str) -> 
     already moved."""
     legacy, device = _check(session, legacy_id, device_id)
     plan = _plan(session, legacy, device)
+    # Read now: the window rebuild below expunges every instance from the session, so these two
+    # objects are detached by the time the counters are carried.
+    legacy_pushes, legacy_errors = legacy.ingest_count, legacy.error_count
+    legacy_first_seen, device_first_seen = legacy.first_seen, device.first_seen
 
     chunked_update(
         session, UsageEvent, [col(UsageEvent.sidecar_id) == legacy_id], {"sidecar_id": device_id}
@@ -285,8 +318,29 @@ def apply_adopt_sidecar(session: Session, *, legacy_id: str, device_id: str) -> 
                 ts_max=plan.ts_max,
             )
 
-    # Last: the legacy row's own tags, pending origins and discovered credentials go with it.
+    # Last, in one commit with the legacy row going away: carry its push and error counts and its
+    # earlier first-seen onto the device, so the card does not read as a brand-new machine. An
+    # atomic UPDATE (not read-modify-write) because the device keeps ingesting while this runs,
+    # and in the same transaction as the delete so a retry after a failure cannot add them twice.
+    result.pushes_carried, result.errors_carried = legacy_pushes, legacy_errors
+    values: dict[str, Any] = {
+        "ingest_count": col(SidecarRegistry.ingest_count) + legacy_pushes,
+        "error_count": col(SidecarRegistry.error_count) + legacy_errors,
+    }
+    if legacy_first_seen < device_first_seen:
+        values["first_seen"] = legacy_first_seen
+    session.execute(
+        update(SidecarRegistry).where(col(SidecarRegistry.sidecar_id) == device_id).values(**values)
+    )
+
+    # Its own tags, pending origins and discovered credentials go with the legacy row.
     from app.services.fleet_registry import fleet_registry
 
-    fleet_registry.delete_sidecar(legacy_id, session)
+    try:
+        fleet_registry.delete_sidecar(legacy_id, session)
+    except Exception:
+        # The carried counters are pending in this transaction; never let them outlive a delete
+        # that did not happen, or a retry on the same session would add them a second time.
+        session.rollback()
+        raise
     return result

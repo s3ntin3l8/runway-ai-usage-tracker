@@ -36,7 +36,7 @@ import { Skeleton, SkeletonRegion } from '@/components/ui/Skeleton';
 import { StatusDot } from '@/components/ui/StatusDot';
 import { timeAgo } from '@/lib/format';
 import { AddSidecarCard } from './AddSidecarCard';
-import { AdoptLegacyNotice } from './AdoptLegacyNotice';
+import { MergeSidecarNotice } from './MergeSidecarNotice';
 import { SidecarSettingsDialog, useSidecarKeepAlive } from './SidecarSettingsDialog';
 import { UntaggedCredentialsDialog } from './UntaggedCredentialsDialog';
 import { buildSidecarNameMap } from './queries';
@@ -505,8 +505,8 @@ function SidecarCard({
             </Link>
           </div>
 
-          {sidecar.adoptable_legacy?.length ? (
-            <AdoptLegacyNotice sidecarId={sidecar.sidecar_id} candidates={sidecar.adoptable_legacy} />
+          {sidecar.adoptable_legacy?.length || sidecar.replaced_by?.length ? (
+            <MergeSidecarNotice sidecar={sidecar} />
           ) : null}
           <SidecarSourceNotice sidecarId={sidecar.sidecar_id} osPlatform={sidecar.os_platform} onOpen={onSettings} />
           <div className="mt-3 flex items-center gap-2">

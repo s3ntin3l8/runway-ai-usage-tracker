@@ -598,27 +598,39 @@ export interface LoginDirectoryReport {
   searched: Partial<Record<'anthropic' | 'chatgpt', string[]>>;
 }
 
-/** A legacy shared-key sidecar this enrolled device probably replaced (same hostname + OS). */
-export interface AdoptableSidecar {
+/** One of the two Fleet entries a re-paired machine ends up with, described so they can be told apart. */
+export interface SidecarDescriptor {
   sidecar_id: string;
+  name: string;
+  os_platform?: string | null;
+  first_seen: string;
   last_seen: string;
   ingest_count: number;
 }
 
-/** What adopting a legacy sidecar moves (or, for a dry run, would move). */
+/** What merging an old shared-key entry into its paired device moves (or, for a dry run, would move). */
 export interface SidecarAdoptSummary {
   dry_run: boolean;
   events: number;
   pending_events: number;
   credential_tags: number;
   settings: string[];
-  /** Only on a real adoption, not a dry run. */
+  /** Dry run only: the old entry, the paired device, and the device's push count after the merge. */
+  from?: SidecarDescriptor;
+  into?: SidecarDescriptor;
+  pushes_after?: number;
+  /** Real run only. */
   rollup_pairs_rebuilt?: number;
   windows_rebuilt?: number;
+  pushes_carried?: number;
+  errors_carried?: number;
 }
 
 export interface Sidecar {
-  adoptable_legacy?: AdoptableSidecar[];
+  /** On a paired device: the old shared-key entries it probably replaced. */
+  adoptable_legacy?: SidecarDescriptor[];
+  /** On an old shared-key entry: the paired device(s) that replaced it. */
+  replaced_by?: SidecarDescriptor[];
   login_dirs_desired?: LoginDirectorySettings;
   login_dirs_report?: LoginDirectoryReport | null;
   sidecar_id: string;
