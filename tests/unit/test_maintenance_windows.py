@@ -11,13 +11,21 @@ all-grains row (`model_id="" and sidecar_id=""`) for the preserved
 
 from __future__ import annotations
 
+import sqlite3
+import tempfile
+import threading
+import time
 from datetime import UTC, datetime, timedelta
+from unittest.mock import patch
 
+from sqlalchemy.exc import OperationalError
 from sqlmodel import Session, SQLModel, create_engine, select
 from sqlmodel.pool import StaticPool
 
+from app.core.db import configure_sqlite_engine
 from app.models.db import UsageEvent, UsageWindow
 from app.services.maintenance.windows import (
+    _replay,
     rebuild_windows_for_providers,
     rebuild_windows_overlapping,
 )
@@ -155,6 +163,8 @@ def test_rebuild_windows_overlapping_only_touches_the_overlapping_window():
     session = _session()
     _event(session, event_id="1", ts=datetime(2026, 8, 28, tzinfo=UTC))
     overlapping = _window(session)
+    overlapping_start = overlapping.window_start
+    overlapping_limit = overlapping.limit_value
     _window(
         session,
         window_start=datetime(2026, 9, 1, tzinfo=UTC),
@@ -172,9 +182,9 @@ def test_rebuild_windows_overlapping_only_touches_the_overlapping_window():
     assert count == 1
     non_overlapping = _all_grains_row(session, window_start=datetime(2026, 9, 1, tzinfo=UTC))
     assert non_overlapping is not None  # untouched
-    rebuilt = _all_grains_row(session, window_start=overlapping.window_start)
+    rebuilt = _all_grains_row(session, window_start=overlapping_start)
     assert rebuilt is not None
-    assert rebuilt.limit_value == overlapping.limit_value
+    assert rebuilt.limit_value == overlapping_limit
 
 
 def test_rebuild_windows_overlapping_preserves_metadata_per_account():
@@ -225,10 +235,8 @@ def test_rebuild_windows_for_providers_drops_a_window_with_no_supporting_events(
     assert list(session.exec(select(UsageWindow))) == []  # nothing survives
 
 
-def test_rebuild_windows_batches_without_losing_windows(monkeypatch):
-    """Exercise the _WINDOW_BATCH commit/expunge cycling with more windows
-    than one batch, without needing hundreds of real rows in the test."""
-    monkeypatch.setattr("app.services.maintenance.windows._WINDOW_BATCH", 2)
+def test_rebuild_windows_replays_multiple_windows_without_loss():
+    """Exercise rebuild_windows_for_providers across multiple windows ensuring all survive."""
     session = _session()
     base_ts = datetime(2026, 8, 1, tzinfo=UTC)
     for i in range(5):
@@ -245,3 +253,202 @@ def test_rebuild_windows_batches_without_losing_windows(monkeypatch):
         )
     )
     assert len(rows) == 5
+
+
+def test_rebuild_windows_overlapping_retries_on_lock_contention_during_delete():
+    """Simulates transient SQLite lock contention during the bulk DELETE phase of rebuild_windows_overlapping."""
+    session = _session()
+    _event(session, event_id="1", ts=datetime(2026, 8, 28, tzinfo=UTC))
+    _window(session)
+
+    original_exec = session.exec
+    attempts = 0
+
+    def mock_exec(*args, **kwargs):
+        nonlocal attempts
+        stmt = args[0] if args else kwargs.get("statement")
+        # Fail the delete statement on first attempt
+        if hasattr(stmt, "is_delete") and stmt.is_delete:
+            attempts += 1
+            if attempts == 1:
+                raise OperationalError("DELETE ...", {}, Exception("database is locked"))
+        return original_exec(*args, **kwargs)
+
+    with patch.object(session, "exec", side_effect=mock_exec):
+        count = rebuild_windows_overlapping(
+            session,
+            provider_id="minimax",
+            account_ids=["alice@example.com"],
+            ts_min=datetime(2026, 8, 28, tzinfo=UTC),
+            ts_max=datetime(2026, 8, 28, tzinfo=UTC),
+            initial_backoff=0.001,
+        )
+
+    assert count == 1
+    assert attempts == 2
+    row = _all_grains_row(session, provider_id="minimax", account_id="alice@example.com")
+    assert row is not None
+    assert row.msgs == 1
+
+
+def test_rebuild_windows_retries_on_lock_contention_during_replay():
+    """Simulates transient SQLite lock contention during close_window replay."""
+    session = _session()
+    _event(session, event_id="1", ts=datetime(2026, 8, 28, tzinfo=UTC))
+    _window(session)
+
+    original_execute = session.execute
+    attempts = 0
+
+    def mock_execute(*args, **kwargs):
+        nonlocal attempts
+        # close_window runs a SELECT on UsageEvent before inserting UsageWindow
+        attempts += 1
+        if attempts == 1:
+            raise OperationalError("SELECT ...", {}, Exception("database is locked"))
+        return original_execute(*args, **kwargs)
+
+    with patch.object(session, "execute", side_effect=mock_execute):
+        count = rebuild_windows_overlapping(
+            session,
+            provider_id="minimax",
+            account_ids=["alice@example.com"],
+            ts_min=datetime(2026, 8, 28, tzinfo=UTC),
+            ts_max=datetime(2026, 8, 28, tzinfo=UTC),
+            initial_backoff=0.001,
+        )
+
+    assert count == 1
+    assert attempts >= 2
+    row = _all_grains_row(session, provider_id="minimax", account_id="alice@example.com")
+    assert row is not None
+    assert row.msgs == 1
+
+
+def test_rebuild_windows_overlapping_waits_for_competing_writer():
+    """Verify that rebuild_windows_overlapping honors SQLite busy_timeout against a 1s competing writer."""
+    with tempfile.NamedTemporaryFile(suffix=".db") as f:
+        db_path = f.name
+
+    engine = create_engine(f"sqlite:///{db_path}", connect_args={"timeout": 30.0})
+    configure_sqlite_engine(engine)
+    SQLModel.metadata.create_all(engine)
+
+    with Session(engine) as s:
+        ev = UsageEvent(
+            provider_id="minimax",
+            account_id="alice@example.com",
+            sidecar_id="dev-01",
+            event_id="msg_1",
+            ts=datetime(2026, 8, 28, tzinfo=UTC),
+            kind="message",
+            tokens_input=100,
+            tokens_output=20,
+            cost_usd=0.05,
+        )
+        s.add(ev)
+        w = UsageWindow(
+            provider_id="minimax",
+            account_id="alice@example.com",
+            window_type="weekly",
+            window_start=datetime(2026, 8, 25, tzinfo=UTC),
+            window_end=datetime(2026, 9, 1, tzinfo=UTC),
+            model_id="",
+            sidecar_id="",
+            msgs=1,
+        )
+        s.add(w)
+        s.commit()
+
+    ready_evt = threading.Event()
+
+    def hold_writer():
+        raw_conn = sqlite3.connect(db_path, isolation_level=None)
+        raw_conn.execute("BEGIN IMMEDIATE")
+        ready_evt.set()
+        time.sleep(1.0)
+        raw_conn.execute("COMMIT")
+        raw_conn.close()
+
+    t = threading.Thread(target=hold_writer)
+    t.start()
+    ready_evt.wait()
+
+    start = time.time()
+    with Session(engine) as s:
+        count = rebuild_windows_overlapping(
+            s,
+            provider_id="minimax",
+            account_ids=["alice@example.com"],
+            ts_min=datetime(2026, 8, 28, tzinfo=UTC),
+            ts_max=datetime(2026, 8, 28, tzinfo=UTC),
+        )
+
+    duration = time.time() - start
+    t.join()
+
+    assert count == 1
+    assert duration >= 0.9, f"Should have waited on busy_timeout, completed in {duration:.2f}s"
+
+
+def test_replay_with_commit_read_waits_for_competing_writer():
+    """Verify that _replay with commit_read=True honors SQLite busy_timeout against a 1.0s writer."""
+    with tempfile.NamedTemporaryFile(suffix=".db") as f:
+        db_path = f.name
+
+    engine = create_engine(f"sqlite:///{db_path}", connect_args={"timeout": 30.0})
+    configure_sqlite_engine(engine)
+    SQLModel.metadata.create_all(engine)
+
+    with Session(engine) as s:
+        ev = UsageEvent(
+            provider_id="minimax",
+            account_id="alice@example.com",
+            sidecar_id="dev-01",
+            event_id="msg_1",
+            ts=datetime(2026, 8, 28, tzinfo=UTC),
+            kind="message",
+            tokens_input=100,
+            tokens_output=20,
+            cost_usd=0.05,
+        )
+        s.add(ev)
+        s.commit()
+
+    index = {
+        (
+            "minimax",
+            "alice@example.com",
+            "weekly",
+            datetime(2026, 8, 25, tzinfo=UTC),
+            datetime(2026, 9, 1, tzinfo=UTC),
+            "",
+            "",
+        ): (None, None)
+    }
+
+    ready_evt = threading.Event()
+
+    def hold_writer():
+        raw_conn = sqlite3.connect(db_path, isolation_level=None)
+        raw_conn.execute("BEGIN IMMEDIATE")
+        ready_evt.set()
+        time.sleep(1.0)
+        raw_conn.execute("COMMIT")
+        raw_conn.close()
+
+    t = threading.Thread(target=hold_writer)
+    t.start()
+    ready_evt.wait()
+
+    start = time.time()
+    with Session(engine) as s:
+        _replay(s, index)
+
+    duration = time.time() - start
+    t.join()
+
+    assert duration >= 0.9, f"Should have waited on busy_timeout, completed in {duration:.2f}s"
+    with Session(engine) as s:
+        rows = list(s.exec(select(UsageWindow)))
+        assert len(rows) > 0
