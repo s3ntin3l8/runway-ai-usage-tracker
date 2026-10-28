@@ -84,6 +84,7 @@ const NATIVE_COOKIE_CLIENTS = ['Chrome', 'Safari', 'Claude Desktop'];
  */
 const KEYCHAIN_ENTRY_OWNERS: Record<string, string | undefined> = {
   'gemini:antigravity': 'Antigravity CLI',
+  'git:https://github.com': 'Git Credential Manager',
 };
 
 /** Describe a raw credential origin for display. Never exposes a secret. */
