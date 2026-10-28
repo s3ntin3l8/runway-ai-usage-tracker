@@ -11,37 +11,67 @@ FLEET_PREFIX = "/api/v1/fleet"
 CODE_AUTHENTICATED_ROUTES = {f"{FLEET_PREFIX}/pair"}
 
 
-def _hmac_only_fleet_routes() -> set[str]:
+AUTH_HELPERS = {"validate_ingest_auth", "verify_config_signature"}
+
+
+def _fleet_route_handlers() -> list[tuple[str, ast.FunctionDef | ast.AsyncFunctionDef]]:
+    """Every ``@router.<method>("/path")`` handler in the fleet modules, as (full route, node).
+
+    Read through the AST, so a commented-out decorator does not count. One walk feeds every
+    check below, so they cannot disagree about what a route is."""
     source = "\n".join(
         path.read_text() for path in sorted((ROOT / "app/api/endpoints").glob("fleet*.py"))
     )
-    module = ast.parse(source)
-    routes: set[str] = set()
-    auth_helpers = {"validate_ingest_auth", "verify_config_signature"}
-    for node in ast.walk(module):
+    handlers: list[tuple[str, ast.FunctionDef | ast.AsyncFunctionDef]] = []
+    for node in ast.walk(ast.parse(source)):
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
-        calls_hmac = any(
+        for decorator in node.decorator_list:
+            if (
+                isinstance(decorator, ast.Call)
+                and isinstance(decorator.func, ast.Attribute)
+                and isinstance(decorator.func.value, ast.Name)
+                and decorator.func.value.id == "router"
+                and decorator.args
+                and isinstance(decorator.args[0], ast.Constant)
+                and isinstance(decorator.args[0].value, str)
+                and decorator.args[0].value.startswith("/")
+            ):
+                handlers.append((f"{FLEET_PREFIX}{decorator.args[0].value}", node))
+    return handlers
+
+
+def _fleet_routes() -> set[str]:
+    return {route for route, _ in _fleet_route_handlers()}
+
+
+def _hmac_only_fleet_routes() -> set[str]:
+    """Routes whose handler authenticates the request itself with a sidecar HMAC."""
+    return {
+        route
+        for route, node in _fleet_route_handlers()
+        if any(
             isinstance(call, ast.Call)
             and isinstance(call.func, ast.Name)
-            and call.func.id in auth_helpers
+            and call.func.id in AUTH_HELPERS
             for call in ast.walk(node)
         )
-        if not calls_hmac:
-            continue
-        for decorator in node.decorator_list:
-            if not isinstance(decorator, ast.Call) or not isinstance(decorator.func, ast.Attribute):
-                continue
-            if (
-                not isinstance(decorator.func.value, ast.Name)
-                or decorator.func.value.id != "router"
-            ):
-                continue
-            if decorator.args and isinstance(decorator.args[0], ast.Constant):
-                route = decorator.args[0].value
-                if isinstance(route, str) and route.startswith("/"):
-                    routes.add(f"{FLEET_PREFIX}{route}")
-    return routes
+    }
+
+
+_NUMBER_WORDS = [
+    "zero",
+    "one",
+    "two",
+    "three",
+    "four",
+    "five",
+    "six",
+    "seven",
+    "eight",
+    "nine",
+    "ten",
+]
 
 
 def test_forward_auth_documentation_lists_every_hmac_only_route():
@@ -67,30 +97,6 @@ def test_forward_auth_documentation_lists_every_hmac_only_route():
     assert len(documented) == len(set(documented))
 
 
-def _fleet_routes() -> set[str]:
-    """Every route registered with ``@router.<method>("/path")`` in the fleet modules (AST, so a
-    commented-out decorator does not count)."""
-    source = "\n".join(
-        path.read_text() for path in sorted((ROOT / "app/api/endpoints").glob("fleet*.py"))
-    )
-    routes: set[str] = set()
-    for node in ast.walk(ast.parse(source)):
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        for decorator in node.decorator_list:
-            if (
-                isinstance(decorator, ast.Call)
-                and isinstance(decorator.func, ast.Attribute)
-                and isinstance(decorator.func.value, ast.Name)
-                and decorator.func.value.id == "router"
-                and decorator.args
-                and isinstance(decorator.args[0], ast.Constant)
-                and isinstance(decorator.args[0].value, str)
-            ):
-                routes.add(f"{FLEET_PREFIX}{decorator.args[0].value}")
-    return routes
-
-
 def test_pairing_route_exists_and_is_code_authenticated_not_hmac():
     # The route has to be a real registered route, and must stay out of the HMAC-only set: if it
     # ever starts calling an HMAC helper it moves there and the constant must not double count it.
@@ -103,11 +109,17 @@ def test_documented_route_table_lists_the_same_sidecar_routes():
     expected = _hmac_only_fleet_routes() | CODE_AUTHENTICATED_ROUTES
     rows = re.findall(r"^\s*\| `(?:GET|POST) (/api/v1/fleet/[^`\s]+)` \|", docs, re.M)
     assert sorted(rows) == sorted(expected)
-    # The prose says "five"; changing the set must change that wording too (forward-auth.md
-    # section 5, and the "five routes" bullet in docs/deployment.md).
-    assert len(expected) == 5
-    assert "Five fleet routes are called by sidecars" in docs
-    assert "five routes must bypass it" in (ROOT / "docs/deployment.md").read_text()
+    # The prose names the count in words; changing the set must change that wording too, but a
+    # harmless rewording must not break the build. Match the number word the set implies.
+    word = _NUMBER_WORDS[len(expected)]
+    # Anchored to the sentence that states the count, so another "five routes" elsewhere in the
+    # file cannot keep the assertion green while the lead sentence goes stale.
+    assert re.search(rf"\*\*Sidecar requests\.\*\*\s+{word}\b", docs, re.I), (
+        f"forward-auth.md's 'Sidecar requests' bullet should open with '{word}'"
+    )
+    assert re.search(
+        rf"\*\*Behind SSO, {word}\b", (ROOT / "docs/deployment.md").read_text(), re.I
+    ), f"deployment.md's 'Behind SSO' bullet should say '{word}'"
 
 
 def test_authentik_unauthenticated_paths_list_the_same_sidecar_routes():
