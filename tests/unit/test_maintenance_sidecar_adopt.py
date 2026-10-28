@@ -461,3 +461,35 @@ def test_a_device_without_an_enrollment_record_falls_back_to_its_first_seen():
     found = adoptable_legacy(rows, load_enrollment_times(session, [DEVICE]))
 
     assert [c["sidecar_id"] for c in found[DEVICE]] == ["desktop"]
+
+
+def test_a_missing_enrollment_record_is_logged_once_at_debug(caplog):
+    session = _session()
+    session.add(
+        SidecarDevice(
+            device_id="a" * 32, hostname="h", platform="Linux", secret_encrypted="x", created_at=T0
+        )
+    )
+    session.commit()
+    gone = "device-" + "d" * 32
+
+    with caplog.at_level("DEBUG", logger="app.services.maintenance.sidecar_adopt"):
+        load_enrollment_times(session, [DEVICE, gone])
+
+    messages = [r.getMessage() for r in caplog.records if "enrollment record" in r.getMessage()]
+    assert len(messages) == 1 and gone in messages[0] and DEVICE not in messages[0]
+
+
+def test_nothing_is_logged_when_every_requested_device_has_a_record(caplog):
+    session = _session()
+    session.add(
+        SidecarDevice(
+            device_id="a" * 32, hostname="h", platform="Linux", secret_encrypted="x", created_at=T0
+        )
+    )
+    session.commit()
+
+    with caplog.at_level("DEBUG", logger="app.services.maintenance.sidecar_adopt"):
+        load_enrollment_times(session, [DEVICE, "desktop"])  # a legacy id is not a device
+
+    assert not [r for r in caplog.records if "enrollment record" in r.getMessage()]

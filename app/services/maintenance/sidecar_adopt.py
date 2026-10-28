@@ -16,6 +16,7 @@ are rebuilt from the moved events, never patched.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -38,6 +39,8 @@ from app.services.account_identity import normalize_sidecar_id
 from app.services.maintenance._chunked_sql import chunked_update
 from app.services.maintenance.rollups import rebuild_rollups_for_pairs
 from app.services.maintenance.windows import rebuild_windows_overlapping
+
+logger = logging.getLogger(__name__)
 
 # A legacy sidecar must have stopped before its replacement showed up; a short
 # grace covers the sidecar's final check-in racing the pairing handshake.
@@ -73,17 +76,26 @@ def load_enrollment_times(
     ``first_seen`` is something a merge deliberately moves back to the old entry's, and the
     comparison would then stop offering every *other* old entry of the same machine."""
     statement = select(SidecarDevice)
+    requested: list[str] = []
     if registry_ids is not None:
-        device_ids = [
+        requested = [
             registry_id.removeprefix("device-")
             for registry_id in registry_ids
             if sidecar_devices.reserved_registry_id(registry_id)
         ]
-        statement = statement.where(col(SidecarDevice.device_id).in_(device_ids))
-    return {
+        statement = statement.where(col(SidecarDevice.device_id).in_(requested))
+    found = {
         sidecar_devices.registry_id(device.device_id): device.created_at
         for device in session.exec(statement).all()
     }
+    missing = sorted(set(map(sidecar_devices.registry_id, requested)) - set(found))
+    if missing:
+        # Not an error: such a device falls back to its own first_seen in the handover check,
+        # which a merge can move. Say so once here rather than per pair inside the check.
+        logger.debug(
+            "No enrollment record for %s; using first_seen for the handover check", missing
+        )
+    return found
 
 
 def _same_machine(
