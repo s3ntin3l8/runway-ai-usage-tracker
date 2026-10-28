@@ -120,4 +120,21 @@ describe('EventsTab', () => {
     expect(screen.getByText('b')).toBeInTheDocument();
     expect(screen.queryAllByTestId('effort-badge')).toHaveLength(0);
   });
+
+  it('shows the machine name in the source column, with the raw id on hover', async () => {
+    const deviceId = `device-${'9'.repeat(32)}`;
+    vi.mocked(api.fetchSidecars).mockResolvedValue({
+      sidecars: [{ sidecar_id: deviceId, hostname: 'desktop' }],
+    } as never);
+    const page = eventsResponse(1, 1);
+    page.events[0].sidecar_id = deviceId;
+    vi.mocked(api.fetchEvents).mockResolvedValue(page);
+    renderWithProviders(
+      <EventsTab providerId="anthropic" accountId="me@example.com" scope={currentPeriod()} active />,
+    );
+
+    const cell = await screen.findByText('desktop');
+    expect(cell).toHaveAttribute('title', deviceId);
+    expect(screen.queryByText(deviceId)).not.toBeInTheDocument();
+  });
 });

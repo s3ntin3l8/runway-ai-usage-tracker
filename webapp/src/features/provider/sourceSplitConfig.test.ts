@@ -30,6 +30,7 @@ describe('getSourceSplitConfig', () => {
       useWindowSplit: true,
       windowType: 'weekly',
       hasSourceSplit: true,
+      splitIsSidecar: true,
     });
   });
 
@@ -75,5 +76,18 @@ describe('getSourceSplitConfig', () => {
       split: byModel,
       useWindowSplit: false,
     });
+  });
+
+  it('flags only the splits keyed by sidecar id', () => {
+    const base = { aggregation, scopeBucket: { by_model: byModel }, scopeLabel: 'March 2026' };
+    // Several machines feed the window: keys are sidecar ids.
+    expect(getSourceSplitConfig({ kind: 'quota', ...base }).splitIsSidecar).toBe(true);
+    // One selected source is still keyed by its sidecar id.
+    expect(getSourceSplitConfig({ kind: 'quota', sidecarId: 'laptop', ...base }).splitIsSidecar).toBe(true);
+    // A single machine falls back to the per-model split: keys are model ids, never relabelled.
+    const single = { ...aggregation, by_sidecar: { laptop: bySidecar.laptop } };
+    expect(getSourceSplitConfig({ kind: 'quota', ...base, aggregation: single }).splitIsSidecar).toBe(false);
+    // Token/spend providers split by model.
+    expect(getSourceSplitConfig({ kind: 'tokens', ...base }).splitIsSidecar).toBe(false);
   });
 });

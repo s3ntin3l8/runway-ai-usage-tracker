@@ -20,7 +20,7 @@ import type {
 } from '@/api/types';
 import { accountConfigProviderIdForUsage, relatedAccountProviderIds } from '@/lib/providerAccountAliases';
 import { AddProviderWizard } from '@/features/settings/sections/AddProviderWizard';
-import { buildSidecarNameMap, useSidecars } from './queries';
+import { buildSidecarNameMap, sidecarLabel, useSidecars } from './queries';
 import { assignBatchInChunks, type BatchAssignmentOutcome } from './pendingUsageBatch';
 import { labelOrMaskedId } from '@/lib/accountDisplay';
 import { errorMessage } from '@/lib/errorMessage';
@@ -388,7 +388,7 @@ export function PendingUsageEventsCard() {
             onChange={(event) => updateFilter(setHost)(event.target.value)}
           >
             <option value="">All hosts</option>
-            {pending.data.sidecars.map((sidecar) => <option key={sidecar} value={sidecar}>{machineNames.get(sidecar) ?? sidecar}</option>)}
+            {pending.data.sidecars.map((sidecar) => <option key={sidecar} value={sidecar}>{sidecarLabel(machineNames, sidecar)}</option>)}
           </select>
         </label>
         <label className="text-xs font-medium text-fg-muted">
@@ -465,7 +465,7 @@ export function PendingUsageEventsCard() {
                     />
                   </TD>
                   <TD className="font-medium">{group.provider_id}</TD>
-                  <TD className="max-w-36 truncate" title={group.sidecar_id}>{machineNames.get(group.sidecar_id) ?? group.sidecar_id}</TD>
+                  <TD className="max-w-36 truncate" title={group.sidecar_id}>{sidecarLabel(machineNames, group.sidecar_id)}</TD>
                   <TD className="max-w-64">
                     <details className="group">
                       <summary className="cursor-pointer truncate font-medium" title={groupLabel(group)}>

@@ -23,6 +23,7 @@ import type {
   DataHealthReport,
   FleetEntry,
 } from '@/api/types';
+import { sidecarLabel } from '@/features/fleet/queries';
 import { timeAgo } from '@/lib/format';
 import { cardStale, failingReason, reasonMentionsKeepAlive } from '@/lib/quota';
 import { cn } from '@/lib/cn';
@@ -143,7 +144,7 @@ export function Banners({ credentials, anomalies, fleet, dataHealth }: BannersPr
   };
 
   const blockedSourceLabel = (s: BlockedSource): string => {
-    const machine = machineNames.get(s.sidecar_id) ?? s.sidecar_id;
+    const machine = sidecarLabel(machineNames, s.sidecar_id);
     const store = s.source_store ?? s.credential_origin;
     const detail = s.detail ? ` (${s.detail})` : '';
     const remedy = s.remedy ? ` ${s.remedy}.` : '';
@@ -189,7 +190,7 @@ export function Banners({ credentials, anomalies, fleet, dataHealth }: BannersPr
           <span>
             {blocked.length === 1
               ? `Credential unmapped on ${
-                  machineNames.get(blocked[0].sidecar_id) ?? blocked[0].sidecar_id
+                  sidecarLabel(machineNames, blocked[0].sidecar_id)
                 } — quota for ${blocked[0].provider_id} won't collect until it is assigned an account.`
               : `${blocked.length} credentials are unmapped — quota for ${[
                   ...new Set(blocked.map((b) => b.provider_id)),

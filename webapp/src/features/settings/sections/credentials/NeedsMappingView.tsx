@@ -18,7 +18,7 @@ import {
   sourceDescription,
   sourceLabel,
 } from '@/features/fleet/UntaggedCredentialsDialog';
-import { useSidecars, buildSidecarNameMap } from '@/features/fleet/queries';
+import { buildSidecarNameMap, sidecarLabel, useSidecars } from '@/features/fleet/queries';
 import { timeAgo } from '@/lib/format';
 
 export function NeedsMappingView({ pendingUsageEvents }: { pendingUsageEvents: number }) {
@@ -103,7 +103,7 @@ export function NeedsMappingView({ pendingUsageEvents }: { pendingUsageEvents: n
                   <p className="text-[11px] text-fg-subtle">
                     <span className="font-mono">{displayOrigin(item.credential_origin)}</span>
                     {' · on '}
-                    {names.get(item.sidecar_id) ?? item.sidecar_id}
+                    {sidecarLabel(names, item.sidecar_id)}
                     {' · first seen '}
                     {timeAgo(item.first_seen)}
                     {item.claimed_account_id ? ` · claims ${item.claimed_account_id}` : ''}

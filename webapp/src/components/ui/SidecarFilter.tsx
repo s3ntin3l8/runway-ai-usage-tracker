@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { fetchUsageSources } from '@/api/endpoints';
-import { useSidecars, sidecarDisplayName } from '@/features/fleet/queries';
+import { sidecarDisplayName, sidecarLabel, useSidecars } from '@/features/fleet/queries';
 import { useUsageSource } from '@/hooks/useUsageSource';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './Select';
 
@@ -29,7 +29,7 @@ export function SidecarFilter() {
         <SelectItem value={ALL}>All sources</SelectItem>
         {[...ids].sort().map((id) => (
           <SelectItem key={id} value={id}>
-            {id === 'local' ? 'This server' : names.get(id) ?? id}
+            {sidecarLabel(names, id)}
           </SelectItem>
         ))}
       </SelectContent>

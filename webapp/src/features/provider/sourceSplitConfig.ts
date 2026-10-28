@@ -7,6 +7,8 @@ export interface SourceSplitConfig {
   useWindowSplit: boolean;
   windowType?: string;
   hasSourceSplit: boolean;
+  // Keys are sidecar ids (not model ids), so a view should show them as machine names.
+  splitIsSidecar: boolean;
 }
 
 export function getSourceSplitConfig({
@@ -38,6 +40,7 @@ export function getSourceSplitConfig({
       useWindowSplit: true,
       windowType: aggregation?.window_type,
       hasSourceSplit: Object.keys(windowSplit).length > 0,
+      splitIsSidecar: sourceIsSidecar,
     };
   }
 
@@ -48,5 +51,6 @@ export function getSourceSplitConfig({
     useWindowSplit: false,
     windowType: aggregation?.window_type,
     hasSourceSplit: Object.keys(split).length > 0,
+    splitIsSidecar: false,
   };
 }

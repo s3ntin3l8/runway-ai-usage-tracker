@@ -1,4 +1,4 @@
-import { screen, within } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import { renderWithProviders } from '@/test/utils';
 import { OverviewTab } from './OverviewTab';
 import * as api from '@/api/endpoints';
@@ -32,7 +32,10 @@ vi.mock('@/components/charts/TokenDonut', async (importOriginal) => ({
   TokenDonut: () => <div data-testid="token-donut" />,
 }));
 vi.mock('@/components/charts/ModelDonut', () => ({
-  ModelDonut: () => <div data-testid="model-donut" />,
+  // Print the keys it was given so a test can see what the legend would say.
+  ModelDonut: ({ byModel }: { byModel: Record<string, unknown> }) => (
+    <div data-testid="model-donut" data-keys={Object.keys(byModel).join('|')} />
+  ),
 }));
 vi.mock('@/features/history/HistoryChart', () => ({
   HistoryChart: () => <div data-testid="history-chart" />,
@@ -256,6 +259,55 @@ describe('OverviewTab', () => {
     });
     renderWithProviders(<OverviewTab entry={entry} scope={scope} />);
     expect(await screen.findByText('Current window by source')).toBeInTheDocument();
+  });
+
+  it('names the machines in the per-source split instead of showing their ids', async () => {
+    const deviceId = `device-${'7'.repeat(32)}`;
+    vi.mocked(api.fetchSidecars).mockResolvedValue({
+      sidecars: [
+        { sidecar_id: deviceId, hostname: 'desktop' },
+        { sidecar_id: 'laptop', hostname: 'laptop', custom_name: 'Studio Mac' },
+      ],
+    } as never);
+    const entry = fleetEntry({
+      window_aggregations: {
+        longest: {
+          window_type: 'weekly',
+          window_start: '2026-06-01T00:00:00Z',
+          window_end: '2026-06-08T00:00:00Z',
+          token_usage: { input: 1, output: 1, total: 2 } as never,
+          by_model: { 'claude-opus': { tokens_input: 100 } },
+          by_sidecar: { [deviceId]: { tokens_input: 50 }, laptop: { tokens_input: 50 } },
+        },
+      },
+    });
+    renderWithProviders(<OverviewTab entry={entry} scope={scope} />);
+
+    await screen.findByText('Current window by source');
+    await waitFor(() => expect(screen.getByTestId('model-donut')).toHaveAttribute('data-keys', 'desktop|Studio Mac'));
+    expect(screen.getByTestId('model-donut').getAttribute('data-keys')).not.toContain('device-');
+  });
+
+  it('leaves a per-model split alone', async () => {
+    vi.mocked(api.fetchSidecars).mockResolvedValue({
+      sidecars: [{ sidecar_id: 'claude-opus', hostname: 'should-not-apply' }],
+    } as never);
+    const entry = fleetEntry({
+      window_aggregations: {
+        longest: {
+          window_type: 'weekly',
+          window_start: '2026-06-01T00:00:00Z',
+          window_end: '2026-06-08T00:00:00Z',
+          token_usage: { input: 1, output: 1, total: 2 } as never,
+          by_model: { 'claude-opus': { tokens_input: 100 } },
+          by_sidecar: { laptop: { tokens_input: 100 } },
+        },
+      },
+    });
+    renderWithProviders(<OverviewTab entry={entry} scope={scope} />);
+
+    await screen.findByText('Current window by model');
+    expect(screen.getByTestId('model-donut')).toHaveAttribute('data-keys', 'claude-opus');
   });
 
   it('renders recent sessions when present', async () => {

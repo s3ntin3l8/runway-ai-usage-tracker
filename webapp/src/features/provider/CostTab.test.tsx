@@ -21,7 +21,10 @@ vi.mock('@/features/history/HistoryChart', () => ({
 // but keep the real modelCost helper (SplitTable depends on it).
 vi.mock('@/components/charts/CostDonut', async (importActual) => ({
   ...(await importActual<typeof import('@/components/charts/CostDonut')>()),
-  CostDonut: () => <div data-testid="cost-donut" />,
+  // Print the keys it was given so a test can see what the legend would say.
+  CostDonut: ({ data }: { data: Record<string, unknown> }) => (
+    <div data-testid="cost-donut" data-keys={Object.keys(data).join('|')} />
+  ),
 }));
 
 describe('CostTab', () => {
@@ -290,5 +293,18 @@ describe('CostTab split-row expander', () => {
     await userEvent.click(toggle);
     expect(toggle).toHaveAttribute('aria-expanded', 'true');
     expect(screen.getByText('Cost breakdown')).toBeInTheDocument();
+  });
+
+  it('names the machines in the by-sidecar table and donut, not their ids', async () => {
+    vi.mocked(api.fetchSidecars).mockResolvedValue({
+      sidecars: [{ sidecar_id: 'laptop', hostname: 'laptop', custom_name: 'Studio Mac' }],
+    } as never);
+    renderCostTab();
+
+    const row = (await screen.findByText('Studio Mac')).closest('tr')!;
+    expect(within(row).getByRole('button', { name: /expand cost breakdown for Studio Mac/i })).toBeInTheDocument();
+    expect(screen.queryByText('laptop')).not.toBeInTheDocument();
+    // The by-sidecar donut is the one whose keys are machine names.
+    expect(screen.getAllByTestId('cost-donut').some((d) => d.getAttribute('data-keys') === 'Studio Mac')).toBe(true);
   });
 });

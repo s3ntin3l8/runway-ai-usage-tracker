@@ -17,7 +17,7 @@ import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Skeleton, SkeletonRegion } from '@/components/ui/Skeleton';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
-import { buildSidecarNameMap, useSidecars } from '@/features/fleet/queries';
+import { buildSidecarNameMap, sidecarLabel, useSidecars } from '@/features/fleet/queries';
 import { useExcludeCache } from '@/hooks/useExcludeCache';
 import { formatAxisCost, formatAxisNumber, formatCost, formatTokens } from '@/lib/format';
 import { formatRangeLabel, type DateRangeValue } from '@/lib/timeRange';
@@ -41,7 +41,7 @@ function sessionRow(
   // `sidecar_id` is the host that pushed the session's *latest* event, so it
   // is the host the session ended on. A session that moved between machines
   // says so, rather than pretending it only ever ran on one.
-  const host = s.sidecar_id ? (hostNames.get(s.sidecar_id) ?? s.sidecar_id) : 'unknown host';
+  const host = s.sidecar_id ? sidecarLabel(hostNames, s.sidecar_id) : 'unknown host';
   const sub = [
     shortSessionId(s.session_id),
     host,

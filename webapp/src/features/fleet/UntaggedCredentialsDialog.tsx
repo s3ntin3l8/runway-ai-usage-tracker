@@ -44,7 +44,7 @@ import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Label } from '@/components/ui/Input';
 import { ResponsiveDialog } from '@/components/ui/ResponsiveDialog';
-import { buildSidecarNameMap, useSidecars } from './queries';
+import { buildSidecarNameMap, sidecarLabel, useSidecars } from './queries';
 import { useInvalidateCredentialViews } from '@/hooks/useInvalidateCredentialViews';
 import { ClaudeSourceOrganizationPicker } from './ClaudeSourceOrganizationPicker';
 import { maskAccountId } from '@/lib/accountDisplay';
@@ -229,7 +229,7 @@ export function UntaggedCredentialsDialog({
         singleEntry
           ? `${singleEntry.provider_id} · ${sourceLabel(singleEntry)}`
           : providerId
-            ? `${providerId} · credentials reported by ${machineNames.get(sidecarId ?? '') ?? sidecarId}`
+            ? `${providerId} · credentials reported by ${sidecarLabel(machineNames, sidecarId ?? '')}`
             : "Choose an account for each credential the sidecar couldn't identify."
       }
     >
