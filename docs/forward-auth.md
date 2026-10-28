@@ -84,7 +84,17 @@ If `is_authenticated` is `false`:
 
 Gating the *entire* host behind `chain-authentik@file` (or whatever your forwardAuth middleware is named) breaks requests that don't authenticate as a browser:
 
-- **Sidecar requests.** `POST /api/v1/fleet/ingest`, `GET /api/v1/fleet/config`, `POST /api/v1/fleet/credentials/manifest`, and `POST /api/v1/fleet/source-sync` use sidecar HMAC signing (legacy ingest or enrolled device key). A proxy SSO redirect prevents account hints and discovered credentials from reaching Runway even if ingest still works. Runway validates signatures and limits unsigned config responses; bypassing proxy SSO does not bypass Runway's endpoint checks.
+- **Sidecar requests.** Five fleet routes are called by sidecars that have no browser session, so none of them can answer a proxy's login redirect:
+
+  | Route | How Runway authenticates it | If the proxy redirects it instead |
+  | --- | --- | --- |
+  | `POST /api/v1/fleet/ingest` | sidecar HMAC (legacy ingest key or enrolled device key) | metrics and events stop arriving |
+  | `GET /api/v1/fleet/config` | HMAC for the full view; unsigned callers get a limited one | account mappings never reach the sidecar |
+  | `POST /api/v1/fleet/credentials/manifest` | sidecar HMAC | discovered credentials cannot be assigned, even though ingest still works |
+  | `POST /api/v1/fleet/source-sync` | enrolled **device** key | a paired Mac never completes a source sync, so it keeps its Keychain-derived credentials (for example the Claude Console cookie) to itself, and pause/revoke commands never reach any enrolled host |
+  | `POST /api/v1/fleet/pair` | the one-time pairing code itself, rate limited to 10/min/IP | a sidecar cannot pair |
+
+  Runway validates every one of them itself, limits unsigned config responses, and rate limits `pair`; bypassing proxy SSO does not bypass Runway's endpoint checks. The failure is quiet: ingest keeps working while `source-sync` is redirected, so check all five (see *Verify the bypass* below).
 - **Performance.** Vite's content-hashed JS/CSS/font bundle (`/assets/*`) is a couple dozen separate requests per page load, and each one would separately pay the forwardAuth round-trip cost (see *Why this matters* below).
 - **The PWA's own update mechanism.** The browser's periodic fetch of `/sw.js` treats a redirect response as a failed update — that's spec behavior, not a Runway quirk. If `/sw.js` is SSO-gated, then the moment a client's Authentik session lapses, its service worker can no longer fetch its own successor and is stuck forever replaying whatever build was cached when the session was last valid. Concretely: a stale pre-fix service worker doesn't know how to distinguish an SSO bounce from a real backend outage, so it renders "Backend unreachable" instead of a login prompt — and re-authenticating in the browser doesn't fix it, because the broken SW is what's serving the page. `/manifest.webmanifest` and the install/splash icons need the same bypass so the PWA install experience isn't degraded either.
 
@@ -97,12 +107,14 @@ services:
       - traefik.enable=true
       - traefik.http.services.runway.loadbalancer.server.port=8765
 
-      # Sidecar endpoints bypass SSO — each request has its own HMAC auth.
-      # Runway applies its own request checks to every listed HMAC-only route.
-      # Keep this exact list aligned with HMAC-only fleet routes in fleet.py;
-      # tests/unit/test_forward_auth_routes.py checks route and doc parity.
-      # newly added routes stay behind Authentik until explicitly listed here.
-      - "traefik.http.routers.runway-ingest.rule=Host(`runway.example.com`) && (Path(`/api/v1/fleet/ingest`) || Path(`/api/v1/fleet/config`) || Path(`/api/v1/fleet/credentials/manifest`) || Path(`/api/v1/fleet/source-sync`))"
+      # Sidecar endpoints bypass SSO — each request has its own HMAC auth (the
+      # pairing route authenticates by its one-time code instead).
+      # Runway applies its own request checks to every listed route.
+      # Keep this exact list aligned with the HMAC-only fleet routes in fleet.py
+      # plus the code-authenticated pairing route; tests/unit/test_forward_auth_routes.py
+      # checks route and doc parity. Newly added routes stay behind Authentik
+      # until explicitly listed here.
+      - "traefik.http.routers.runway-ingest.rule=Host(`runway.example.com`) && (Path(`/api/v1/fleet/ingest`) || Path(`/api/v1/fleet/config`) || Path(`/api/v1/fleet/credentials/manifest`) || Path(`/api/v1/fleet/source-sync`) || Path(`/api/v1/fleet/pair`))"
       - traefik.http.routers.runway-ingest.entrypoints=websecure
       - traefik.http.routers.runway-ingest.tls.certresolver=le
       - traefik.http.routers.runway-ingest.priority=100
@@ -134,6 +146,40 @@ services:
 ```
 
 `.service=runway` on the extra routers is required — Traefik otherwise assumes a service named after the router (`runway-ingest`, which doesn't exist). The explicit `priority=100` guarantees the path-scoped routers win over the Host-only one regardless of how Traefik's default rule-length priority happens to compute; don't rely on the default.
+
+### Authentik: unauthenticated paths instead of router splitting
+
+If you would rather keep one Traefik router and let Authentik skip the sidecar routes, set the proxy provider's **Unauthenticated URLs** (Provider -> *Advanced protocol settings*; `skip_path_regex` in the API and in Terraform's `authentik_provider_proxy`). One anchored regex per line, the same five routes plus the static and PWA files from above:
+
+```text
+^/api/v1/fleet/ingest/?$
+^/api/v1/fleet/config/?$
+^/api/v1/fleet/credentials/manifest/?$
+^/api/v1/fleet/source-sync/?$
+^/api/v1/fleet/pair/?$
+^/sw\.js$
+^/manifest\.webmanifest$
+^/(pwa-|apple-|maskable-|favicon).*
+^/assets/.*
+```
+
+Add `^/api/v1/system/health$` as well if a monitor probes Runway's health route. Use one mechanism or the other, not a mix that drifts: whichever you choose, the list has to match the table above.
+
+### Verify the bypass
+
+A blocked path fails quietly, so probe each one from outside, without a session and without following redirects. A path that reaches Runway answers `401` or `422` (the signature-protected `POST` routes), or `200` for `GET config`, which gives an unsigned caller the limited view; a `302` whose `redirect_url` points at your identity provider means the proxy is still gating it:
+
+```bash
+H=https://runway.example.com
+for p in ingest credentials/manifest source-sync pair; do
+  printf '%-22s ' "POST $p"
+  curl -s -o /dev/null -X POST -H 'Content-Type: application/json' -d '{}' \
+       -w '%{http_code} %{redirect_url}\n' "$H/api/v1/fleet/$p"
+done
+printf '%-22s ' "GET config"; curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' "$H/api/v1/fleet/config"
+```
+
+If `source-sync` shows a redirect, a paired Mac has no source states on the server (Fleet's *Sources* view for it stays empty), its Keychain-derived credentials are withheld, and the server log never sees a `source-sync` request.
 
 ## 6. Why this matters: forward-auth latency
 
