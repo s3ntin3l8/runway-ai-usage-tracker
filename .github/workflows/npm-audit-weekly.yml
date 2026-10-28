@@ -72,7 +72,7 @@ jobs:
                 v.fixAvailable === true
                   ? 'npm audit fix'
                   : v.fixAvailable
-                    ? `${v.fixAvailable.name}@${v.fixAvailable.version}${v.fixAvailable.isSemVerMajor ? ' (major)' : ''}`
+                    ? `move ${v.fixAvailable.name} to ${v.fixAvailable.version}${v.fixAvailable.isSemVerMajor ? ' (major change)' : ''}`
                     : 'none',
             }))
             .sort((a, b) => order.indexOf(a.severity) - order.indexOf(b.severity) || a.name.localeCompare(b.name))
