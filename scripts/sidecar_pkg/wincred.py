@@ -2,8 +2,9 @@
 
 Some Windows CLIs keep their login in the Credential Manager rather than in a
 file: the agy (Antigravity) CLI stores its OAuth token under the target
-``gemini:antigravity``, and the GitHub CLI stores its token under
-``git:https://github.com``.
+``gemini:antigravity``, and Git Credential Manager stores the GitHub login
+under ``git:https://github.com``. The GitHub CLI keeps its own token under
+``gh:<host>`` and is not read from here.
 
 Entries are read through ``CredReadW`` in ``advapi32`` - no PowerShell, no
 extra module, no console window. The earlier route shelled out to
