@@ -8,6 +8,7 @@ import type { BlockedSource } from '@/api/types';
 import { Badge } from '@/components/ui/Badge';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { sidecarLabel, useSidecarNames } from '@/features/fleet/queries';
 import { timeAgo } from '@/lib/format';
 
 const REASON_LABEL: Record<string, string> = {
@@ -19,6 +20,7 @@ const REASON_LABEL: Record<string, string> = {
 const reasonLabel = (reason: string): string => REASON_LABEL[reason] ?? reason;
 
 export function UnavailableSourcesView({ sources }: { sources: BlockedSource[] }) {
+  const names = useSidecarNames();
   if (sources.length === 0) {
     return (
       <EmptyState
@@ -52,7 +54,7 @@ export function UnavailableSourcesView({ sources }: { sources: BlockedSource[] }
                 </span>
               </p>
               <p className="text-[11px] text-fg-subtle">
-                on {source.sidecar_id}
+                on {sidecarLabel(names, source.sidecar_id)}
                 {source.first_seen ? ` · first seen ${timeAgo(source.first_seen)}` : ''}
               </p>
               {source.detail ? (

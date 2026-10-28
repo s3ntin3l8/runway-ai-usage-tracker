@@ -41,11 +41,13 @@ export function ResponsiveDialog({
           <DialogPrimitive.Overlay className="fixed inset-0 z-40 bg-scrim" />
           <DialogPrimitive.Content
             className={cn(
-              'fixed top-1/2 left-1/2 z-50 w-[calc(100vw-2rem)] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-edge bg-overlay p-5 shadow-xl outline-none',
+              // Capped to the viewport as a column: the header stays put and only the body
+              // scrolls, so a tall dialog (the sidecar settings) never runs off the screen.
+              'fixed top-1/2 left-1/2 z-50 flex max-h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col rounded-lg border border-edge bg-overlay p-5 shadow-xl outline-none',
               width,
             )}
           >
-            <div className="flex items-start justify-between gap-4">
+            <div className="flex shrink-0 items-start justify-between gap-4">
               <div>
                 <DialogPrimitive.Title className="text-[15px] font-semibold tracking-tight">
                   {title}
@@ -65,7 +67,7 @@ export function ResponsiveDialog({
                 </DialogPrimitive.Close>
               ) : null}
             </div>
-            <div className="mt-4">{children}</div>
+            <div className="-mx-1 mt-4 min-h-0 flex-1 overflow-y-auto px-1">{children}</div>
           </DialogPrimitive.Content>
         </DialogPrimitive.Portal>
       </DialogPrimitive.Root>

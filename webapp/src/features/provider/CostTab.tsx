@@ -15,6 +15,7 @@ import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/Table';
 import { useExcludeCache } from '@/hooks/useExcludeCache';
 import { cn } from '@/lib/cn';
 import { moneyLabel as moneyLabelFor } from '@/lib/billingType';
+import { relabelSidecarSplit, useSidecarNames } from '@/features/fleet/queries';
 import { formatCost, formatTokens } from '@/lib/format';
 import { DetailSection, Stat } from './detailPrimitives';
 import type { TabScope } from './period';
@@ -71,6 +72,16 @@ export function CostTab({
     const bucket = row?.[data.current_month_key];
     return bucket && typeof bucket !== 'string' ? bucket : null;
   }, [cumulative.data, providerId, accountId]);
+
+  // The by-sidecar split is keyed by sidecar id; show the machine names in the donut and table.
+  const sidecarNames = useSidecarNames();
+  const bySidecar = useMemo(
+    () =>
+      monthBucket?.by_sidecar
+        ? relabelSidecarSplit(monthBucket.by_sidecar, sidecarNames)
+        : monthBucket?.by_sidecar,
+    [monthBucket, sidecarNames],
+  );
 
   const lifetime = useMemo<CumulativeBucket | null>(() => {
     const row = liveCumulative.data?.cumulative.find(
@@ -158,7 +169,7 @@ export function CostTab({
       />
       <SplitTable
         title={`${moneyLabel} by sidecar · ${scopeLabel}`}
-        split={monthBucket?.by_sidecar}
+        split={bySidecar}
         loading={cumulative.isPending}
         nameHeader="Sidecar"
         scopeLabel={scopeLabel}

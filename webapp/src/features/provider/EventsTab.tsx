@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/Table';
+import { sidecarLabel, useSidecarNames } from '@/features/fleet/queries';
 import { formatCost, formatTokens } from '@/lib/format';
 import { formatLocalDateTime } from '@/lib/tz';
 import { useUsageSource } from '@/hooks/useUsageSource';
@@ -30,6 +31,7 @@ export function EventsTab({
 }) {
   const [page, setPage] = useState(0);
   const [sidecarId] = useUsageSource();
+  const sidecarNames = useSidecarNames();
   // Reset to the first page whenever the selected scope changes — the old
   // offset is meaningless against a different window's total.
   useEffect(() => setPage(0), [scope.key, sidecarId]);
@@ -108,8 +110,11 @@ export function EventsTab({
                       </span>
                     )}
                   </TD>
-                  <TD className="hidden text-xs text-fg-muted md:table-cell">
-                    {e.sidecar_id ?? '—'}
+                  <TD
+                    className="hidden text-xs text-fg-muted md:table-cell"
+                    title={e.sidecar_id ?? undefined}
+                  >
+                    {e.sidecar_id ? sidecarLabel(sidecarNames, e.sidecar_id) : '—'}
                   </TD>
                   <TD className="text-right font-mono text-xs tabular">
                     {formatTokens(e.tokens_input ?? 0)}

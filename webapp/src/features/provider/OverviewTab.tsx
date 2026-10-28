@@ -19,6 +19,7 @@ import { hasTokenData, sumTokens } from '@/lib/cumulative';
 import { formatNumber, formatPct, formatTokens } from '@/lib/format';
 import { cardKind, findForecast } from '@/lib/quota';
 import { sourceAppLabel } from '@/lib/sourceApps';
+import { relabelSidecarSplit, useSidecarNames } from '@/features/fleet/queries';
 import { CostOutlookCard } from './CostOutlookCard';
 import { ProviderErrorBanner } from './ProviderErrorBanner';
 import { ProviderAnomalies } from './ProviderAnomalies';
@@ -105,10 +106,20 @@ export function OverviewTab({ entry, scope }: { entry: FleetEntry; scope: TabSco
     scopeBucket,
     scopeLabel,
   });
+  // The window split is keyed by sidecar id when several machines feed the provider; the
+  // legend should read hostnames, not "device-<hex>".
+  const sidecarNames = useSidecarNames();
+  const sourceSplitData = useMemo(
+    () =>
+      sourceSplit.splitIsSidecar
+        ? relabelSidecarSplit(sourceSplit.split, sidecarNames)
+        : sourceSplit.split,
+    [sourceSplit.splitIsSidecar, sourceSplit.split, sidecarNames],
+  );
   const sourceSplitCard = (
     <SourceSplitCard
       title={sourceSplit.title}
-      split={sourceSplit.split}
+      split={sourceSplitData}
       isLoading={cumulative.isPending}
       useWindowSplit={sourceSplit.useWindowSplit}
       windowType={sourceSplit.windowType}
