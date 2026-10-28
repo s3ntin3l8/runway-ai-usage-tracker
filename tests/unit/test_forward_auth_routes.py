@@ -132,3 +132,28 @@ def test_authentik_unauthenticated_paths_list_the_same_sidecar_routes():
         if match:
             listed.add(match.group(1))
     assert listed == _hmac_only_fleet_routes() | CODE_AUTHENTICATED_ROUTES
+
+
+def test_deployment_intro_counts_the_bullets_under_it():
+    """ "Four things to know:" went stale twice while a bullet was added above it. Assert the number
+    word in a "<N> things to know:" intro equals the number of bullets that follow."""
+    lines = (ROOT / "docs/deployment.md").read_text().splitlines()
+    intros = [
+        (index, match.group(1).lower())
+        for index, line in enumerate(lines)
+        if (match := re.fullmatch(r"(\w+) things to know:", line.strip(), re.I))
+    ]
+    assert intros, "docs/deployment.md should keep its '<N> things to know:' intro"
+    for index, word in intros:
+        bullets = 0
+        for line in lines[index + 1 :]:
+            if line.startswith("- "):
+                bullets += 1
+            elif bullets and line.strip():
+                break  # the first non-bullet line after the list ends it
+            elif bullets and not line.strip():
+                continue  # blank lines between bullets do not
+        assert word in _NUMBER_WORDS, f"unknown number word {word!r}"
+        assert _NUMBER_WORDS.index(word) == bullets, (
+            f"deployment.md says '{word} things to know' but lists {bullets} bullets"
+        )
