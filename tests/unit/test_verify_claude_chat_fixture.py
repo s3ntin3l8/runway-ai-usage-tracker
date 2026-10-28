@@ -98,7 +98,7 @@ def test_evaluator_runs_isolated_without_application_or_environment_dependencies
         b'{"report":"private-cookie","report":"private-id"}',
         b'{"source_commit":NaN}',
         b"invalid-private-id",
-        b"x" * (64 * 1024 + 1),
+        pytest.param(b"x" * (64 * 1024 + 1), id="oversized"),
     ],
 )
 def test_malformed_inputs_never_echo_body_or_exception(raw):
@@ -201,7 +201,9 @@ def test_uncertain_authority_cannot_retain_partial_identity_or_observations():
             ChatFixtureReport.model_validate(body["report"])
 
 
-@pytest.mark.parametrize("raw", [None, b"invalid-private", b"x" * (64 * 1024 + 1)])
+@pytest.mark.parametrize(
+    "raw", [None, b"invalid-private", pytest.param(b"x" * (64 * 1024 + 1), id="oversized")]
+)
 def test_cli_entrypoint_in_process_retains_only_sanitized_decision(monkeypatch, capsys, raw):
     import io
     from types import SimpleNamespace
