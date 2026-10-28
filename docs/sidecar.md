@@ -78,6 +78,7 @@ Beta releases use versioned prerelease tags such as `v3.0.0-beta.1` and `v3.0.0-
 - If the link doesn't open the app (e.g. a Linux tray build, or the browser blocks it): open **Settings…** from the tray icon → **Pair with a code…** and enter the server address and code shown in the dashboard.
 - Headless / CLI: `runway-sidecar-cli --pair https://your-server CODE` (or pass the whole `runway-sidecar://pair?…` link). It writes the config and exits; then (re)start the daemon.
 - Only pair with a link you just generated in **your own** dashboard: pairing points this machine's usage data and provider sign-ins at that server.
+- Behind a forward-auth proxy (Authentik, Authelia, ...), `POST /api/v1/fleet/pair` has to reach Runway unauthenticated, and so does `POST /api/v1/fleet/source-sync`, which a paired device calls to sync its per-source consent. If pairing is refused, or a paired Mac keeps its Keychain credentials back, see [Forward-Auth: verify the bypass](forward-auth.md#verify-the-bypass).
 
 **Manual setup:** on first launch, if no config file exists, the app creates a template config and opens it in the default editor.
 

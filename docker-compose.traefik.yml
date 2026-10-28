@@ -28,7 +28,9 @@
 #
 #  Sidecar connectivity: Runway publishes NO host port here — :8765 lives only on
 #  the internal `proxy` network. Sidecars reach the server through the PUBLIC URL;
-#  /api/v1/fleet/ingest rides through Traefik on :443 like any other path:
+#  /api/v1/fleet/ingest rides through Traefik on :443 like any other path (put a
+#  forward-auth SSO in front and ingest/config/credentials/manifest/source-sync/pair
+#  must bypass it: docs/forward-auth.md):
 #
 #         RUNWAY_API_URL=https://${RUNWAY_HOST} RUNWAY_API_KEY=<INGEST_API_KEY> python3 scripts/sidecar.py
 #
