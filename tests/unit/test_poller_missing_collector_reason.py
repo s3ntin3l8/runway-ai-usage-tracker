@@ -172,6 +172,11 @@ def test_a_silent_env_or_file_credential_on_a_mac_gets_no_keychain_hint(session,
 def test_origin_kinds_match_describe_origin():
     # Read the kinds out of the function itself, so a new ``OriginDisplay("<kind>", ...)``
     # branch fails here until it is added to ORIGIN_KINDS and classified.
+    #
+    # The scrape only sees a kind written as a literal first argument. If ``describe_origin_full``
+    # starts returning ``OriginDisplay(kind, ...)`` or ``OriginDisplay(kind="x", ...)``, ``produced``
+    # comes up short and this fails as if a kind were *missing*, not added: change the scrape to
+    # match, rather than hunting for a kind that is not there.
     source = inspect.getsource(credential_sources.describe_origin_full)
     produced = set(re.findall(r'OriginDisplay\(\s*"(\w+)"', source))
 
