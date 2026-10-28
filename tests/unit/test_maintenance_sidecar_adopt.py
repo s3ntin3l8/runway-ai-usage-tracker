@@ -17,6 +17,7 @@ from app.models.db import (
     UsagePeriodRollup,
     UsageWindow,
 )
+from app.services.account_identity import FINGERPRINT_LEN
 from app.services.fleet_registry import fleet_registry
 from app.services.maintenance.sidecar_adopt import (
     SidecarNotFoundError,
@@ -584,3 +585,59 @@ def test_a_retry_after_a_failed_delete_applies_the_source_preferences_once(monke
 
     assert result.source_prefs == 1
     assert _prefs(session, DEVICE) == {"cli": (False, 3)}
+
+
+XAI_A = f"env:XAI_API_KEY#{'a' * FINGERPRINT_LEN}"
+XAI_B = f"env:XAI_API_KEY#{'b' * FINGERPRINT_LEN}"
+
+
+def test_a_pre_fingerprint_origin_matches_the_devices_fingerprinted_one():
+    session = _session()
+    _pair(session)
+    fp = "c" * FINGERPRINT_LEN
+    _source(session, "desktop", "env:DEEPSEEK_API_KEY", provider="deepseek", enabled=False)
+    _source(session, DEVICE, f"env:DEEPSEEK_API_KEY#{fp}", provider="deepseek")
+
+    result = apply_adopt_sidecar(session, legacy_id="desktop", device_id=DEVICE)
+
+    assert result.source_prefs == 1
+    assert _prefs(session, DEVICE) == {f"env:DEEPSEEK_API_KEY#{fp}": (False, 0)}
+
+
+def test_two_device_fingerprints_for_one_origin_are_not_guessed_between():
+    session = _session()
+    _pair(session)
+    _source(session, "desktop", "env:XAI_API_KEY", provider="xai", enabled=False)
+    _source(session, DEVICE, XAI_A, provider="xai")
+    _source(session, DEVICE, XAI_B, provider="xai")
+
+    assert apply_adopt_sidecar(session, legacy_id="desktop", device_id=DEVICE).source_prefs == 0
+
+
+def test_the_newest_of_several_old_rows_for_one_origin_carries_the_choice():
+    session = _session()
+    _pair(session)
+    # A rotated key leaves stale rows behind; only the newest holds the current choice.
+    _source(
+        session,
+        "desktop",
+        XAI_A,
+        provider="xai",
+        enabled=True,
+        last_seen=T0 - timedelta(days=9),
+    )
+    _source(
+        session,
+        "desktop",
+        XAI_B,
+        provider="xai",
+        enabled=False,
+        priority=4,
+        last_seen=T0,
+    )
+    _source(session, DEVICE, XAI_B, provider="xai")
+
+    result = apply_adopt_sidecar(session, legacy_id="desktop", device_id=DEVICE)
+
+    assert result.source_prefs == 1
+    assert _prefs(session, DEVICE) == {XAI_B: (False, 4)}

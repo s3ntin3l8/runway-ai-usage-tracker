@@ -3021,6 +3021,12 @@ def adopt_legacy_sidecar(
         raise HTTPException(status_code=404, detail=str(exc)) from None
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from None
+    # The collector caches (enabled, priority) per source and reloads at most every 60 s; every
+    # other writer of those values forces a resync, so a source just disabled here is not
+    # collected for one more cycle.
+    from app.services.collector_manager import manager
+
+    manager._last_sync_time = 0.0
     audit_log.record(
         session,
         request,

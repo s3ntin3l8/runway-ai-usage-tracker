@@ -36,7 +36,7 @@ from app.models.db import (
     UsageWindow,
 )
 from app.services import sidecar_devices
-from app.services.account_identity import normalize_sidecar_id
+from app.services.account_identity import normalize_sidecar_id, split_keyed_origin
 from app.services.maintenance._chunked_sql import chunked_update
 from app.services.maintenance.rollups import rebuild_rollups_for_pairs
 from app.services.maintenance.windows import rebuild_windows_overlapping
@@ -310,19 +310,35 @@ def _source_prefs(
 
     The device re-discovers its credentials with defaults, so a source the operator disabled or
     re-ordered on the legacy entry would otherwise come back enabled at priority 0. Rows match on
-    (provider, account, origin). A device row that does not exist yet is not created, and a key
-    that is ambiguous on either side (two rows for one origin) is left alone rather than guessed."""
+    (provider, account, origin without its fingerprint). A device row that does not exist yet is not
+    created, and a device key that is ambiguous (two fingerprints for one origin) is left alone
+    rather than guessed. Several legacy rows for one key resolve to the newest."""
 
-    def keyed(sidecar_id: str) -> dict[tuple[str, str, str | None], CredentialSource | None]:
+    def keyed(
+        sidecar_id: str, *, newest_wins: bool
+    ) -> dict[tuple[str, str, str | None], CredentialSource | None]:
+        # Keyed on the origin's base: a sidecar that predates origin fingerprints reports
+        # ``env:X`` where the re-paired device reports ``env:X#<fp>``, and they are one source.
         rows: dict[tuple[str, str, str | None], CredentialSource | None] = {}
         for row in session.exec(
             select(CredentialSource).where(CredentialSource.sidecar_id == sidecar_id)
         ):
-            key = (row.provider_id, row.account_id, row.credential_origin)
-            rows[key] = None if key in rows else row
+            origin = split_keyed_origin(row.credential_origin)[0] if row.credential_origin else None
+            key = (row.provider_id, row.account_id, origin)
+            held = rows.get(key)
+            if key not in rows:
+                rows[key] = row
+            elif newest_wins and held is not None and row.last_seen > held.last_seen:
+                # Stale rows pile up on the old entry (a rotated key); the newest one carries the
+                # operator's current choice, as in the ingest-side carry.
+                rows[key] = row
+            elif not newest_wins:
+                # Two device rows for one base (two fingerprints): which one is meant is a guess.
+                rows[key] = None
         return rows
 
-    legacy_rows, device_rows = keyed(legacy_id), keyed(device_id)
+    legacy_rows = keyed(legacy_id, newest_wins=True)
+    device_rows = keyed(device_id, newest_wins=False)
     return [
         (device_row, legacy_row)
         for key, legacy_row in legacy_rows.items()
