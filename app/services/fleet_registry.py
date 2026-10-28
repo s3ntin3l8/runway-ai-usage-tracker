@@ -4,7 +4,7 @@ import json
 import logging
 from datetime import UTC, datetime, timedelta
 
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from app.core.log_redaction import redact_secrets
 from app.core.login_dirs import stored_login_dirs
@@ -187,7 +187,9 @@ class FleetRegistryService:
         device_hostname = self._device_hostname(sidecar_id, session)
         if row:
             row.last_seen = datetime.now(UTC)
-            row.ingest_count += 1
+            # A SQL expression, not read-modify-write: a merge adds its carried count to this same
+            # column while the device keeps ingesting, and a stale ``+1`` would erase it.
+            row.ingest_count = col(SidecarRegistry.ingest_count) + 1  # type: ignore[assignment]
             row.last_ip = source_ip
             if device_hostname and row.hostname in (None, sidecar_id):
                 # Heals a row registered before the hostname was carried over.
@@ -209,14 +211,14 @@ class FleetRegistryService:
             if log_level is not None:
                 row.log_level = log_level
             if collection_errors > 0:
-                row.error_count += collection_errors
+                row.error_count = col(SidecarRegistry.error_count) + collection_errors  # type: ignore[assignment]
             if last_log_lines is not None:
                 row.recent_logs = _recent_logs_json(last_log_lines)
             if login_dirs_report is not None:
                 row.login_dirs_report = login_dirs_report.model_dump_json()
             if identity_sources is not None:
                 row.identity_sources = json.dumps(identity_sources)
-            logger.debug(f"Updated sidecar '{sidecar_id}' (ingest #{row.ingest_count})")
+            logger.debug(f"Updated sidecar '{sidecar_id}'")
         else:
             row = SidecarRegistry(
                 sidecar_id=sidecar_id,

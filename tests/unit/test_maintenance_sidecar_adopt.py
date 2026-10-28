@@ -22,6 +22,7 @@ from app.services.maintenance.sidecar_adopt import (
     SidecarNotFoundError,
     adoptable_legacy,
     apply_adopt_sidecar,
+    load_enrollment_times,
     plan_adopt_sidecar,
     replaced_by,
 )
@@ -389,3 +390,42 @@ def test_replaced_by_is_the_inverse_of_adoptable_legacy():
     assert [c["sidecar_id"] for c in forward[DEVICE]] == ["desktop"]
     assert [d["sidecar_id"] for d in inverse["desktop"]] == [DEVICE]
     assert DEVICE not in inverse and "desktop" not in forward
+
+
+def test_merging_one_old_entry_keeps_the_other_old_entry_offered():
+    """The merge moves the device's first_seen back to the old entry's. The "same machine" check
+    must not depend on it, or every *other* old entry of the machine drops out of the offer."""
+    session = _session()
+    _pair(session)
+    _registry(session, "docker-desktop", hostname="desktop")  # a second old entry, same machine
+    session.add(
+        SidecarDevice(
+            device_id=DEVICE.removeprefix("device-"),
+            hostname="desktop",
+            platform="Windows",
+            secret_encrypted="x",
+            created_at=T0 + timedelta(minutes=1),
+        )
+    )
+    session.commit()
+    enrolled = load_enrollment_times(session)
+    rows = list(session.exec(select(SidecarRegistry)).all())
+    assert sorted(c["sidecar_id"] for c in adoptable_legacy(rows, enrolled)[DEVICE]) == [
+        "desktop",
+        "docker-desktop",
+    ]
+
+    apply_adopt_sidecar(session, legacy_id="desktop", device_id=DEVICE)
+
+    assert session.get(SidecarRegistry, DEVICE).first_seen < T0  # it did move back
+    enrolled = load_enrollment_times(session)
+    rows = list(session.exec(select(SidecarRegistry)).all())
+    assert [c["sidecar_id"] for c in adoptable_legacy(rows, enrolled)[DEVICE]] == ["docker-desktop"]
+    assert [d["sidecar_id"] for d in replaced_by(rows, enrolled)["docker-desktop"]] == [DEVICE]
+    # And a second merge is still accepted rather than answering "not a candidate".
+    assert (
+        plan_adopt_sidecar(session, legacy_id="docker-desktop", device_id=DEVICE).legacy[
+            "sidecar_id"
+        ]
+        == "docker-desktop"
+    )

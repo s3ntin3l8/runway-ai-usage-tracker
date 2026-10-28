@@ -15,6 +15,7 @@ import type { Sidecar, SidecarDescriptor } from '@/api/types';
 import { Button } from '@/components/ui/Button';
 import { ResponsiveDialog } from '@/components/ui/ResponsiveDialog';
 import { formatCount, timeAgo } from '@/lib/format';
+import { sidecarDisplayName } from './queries';
 
 const DEVICE_ID = /^device-[a-f0-9]{32}$/;
 
@@ -25,10 +26,16 @@ interface Pair {
 }
 
 const dismissKey = (pair: Pair) => `runway.fleet.merge-dismissed.${pair.deviceId}.${pair.legacyId}`;
+// The notice first shipped as "adopt" with this key; a pair dismissed back then stays dismissed.
+const earlierDismissKey = (pair: Pair) =>
+  `runway.fleet.adopt-dismissed.${pair.deviceId}.${pair.legacyId}`;
 
 function isDismissed(pair: Pair): boolean {
   try {
-    return window.localStorage.getItem(dismissKey(pair)) === '1';
+    return (
+      window.localStorage.getItem(dismissKey(pair)) === '1' ||
+      window.localStorage.getItem(earlierDismissKey(pair)) === '1'
+    );
   } catch {
     return false;
   }
@@ -65,7 +72,9 @@ export function MergeSidecarNotice({ sidecar }: { sidecar: Sidecar }) {
   const merge = useMutation({
     mutationFn: () => adoptLegacySidecar(pair!.deviceId, pair!.legacyId, false),
     onSuccess: () => {
-      toast.success(`Merged ${pair?.other.name ?? 'the old entry'} into the paired device`);
+      // Name the entry that goes away: on the old entry's card that is this card, not the other.
+      const moved = isDevice ? pair?.other.name : sidecarDisplayName(sidecar);
+      toast.success(`Merged ${moved ?? 'the old entry'} into the paired device`);
       setOpen(false);
       queryClient.invalidateQueries({ queryKey: ['fleet', 'sidecars'] });
     },

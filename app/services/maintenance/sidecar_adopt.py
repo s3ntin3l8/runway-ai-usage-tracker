@@ -26,6 +26,7 @@ from sqlmodel import Session, col, select
 from app.models.db import (
     CredentialTag,
     PendingUsageEvent,
+    SidecarDevice,
     SidecarRegistry,
     UsageEvent,
     UsagePeriodRollup,
@@ -59,30 +60,52 @@ def _os_family(os_platform: str | None) -> str:
     return (os_platform or "").split("/", 1)[0].lower()
 
 
-def _same_machine(legacy: SidecarRegistry, device: SidecarRegistry) -> bool:
+def load_enrollment_times(session: Session) -> dict[str, datetime]:
+    """Registry id -> the instant a device was enrolled (when its pairing code was redeemed).
+
+    The handover check below must compare against this, not the device row's ``first_seen``:
+    ``first_seen`` is something a merge deliberately moves back to the old entry's, and the
+    comparison would then stop offering every *other* old entry of the same machine."""
+    return {
+        sidecar_devices.registry_id(device.device_id): device.created_at
+        for device in session.exec(select(SidecarDevice)).all()
+    }
+
+
+def _same_machine(
+    legacy: SidecarRegistry, device: SidecarRegistry, enrolled_at: dict[str, datetime]
+) -> bool:
     legacy_name = normalize_sidecar_id(legacy.hostname or legacy.sidecar_id)
     device_name = normalize_sidecar_id(device.hostname or "")
     family = _os_family(device.os_platform)
+    enrolled = enrolled_at.get(device.sidecar_id, device.first_seen)
     return (
         bool(legacy_name)
         and legacy_name == device_name
         and bool(family)
         and family == _os_family(legacy.os_platform)
         # Still reporting after the device appeared: a second install, not its predecessor.
-        and legacy.last_seen <= device.first_seen + _HANDOVER_GRACE
+        and legacy.last_seen <= enrolled + _HANDOVER_GRACE
     )
 
 
-def adoptable_legacy(rows: list[SidecarRegistry]) -> dict[str, list[dict[str, Any]]]:
+def adoptable_legacy(
+    rows: list[SidecarRegistry], enrolled_at: dict[str, datetime] | None = None
+) -> dict[str, list[dict[str, Any]]]:
     """Map each enrolled device's registry id to the legacy rows it likely replaced.
 
     Works on rows the caller already loaded, so listing the fleet costs no extra query."""
+    enrolled_at = enrolled_at or {}
     legacy_rows = [r for r in rows if not sidecar_devices.reserved_registry_id(r.sidecar_id)]
     result: dict[str, list[dict[str, Any]]] = {}
     for device in rows:
         if not sidecar_devices.reserved_registry_id(device.sidecar_id):
             continue
-        matches = [_describe(legacy) for legacy in legacy_rows if _same_machine(legacy, device)]
+        matches = [
+            _describe(legacy)
+            for legacy in legacy_rows
+            if _same_machine(legacy, device, enrolled_at)
+        ]
         if matches:
             result[device.sidecar_id] = matches
     return result
@@ -100,15 +123,20 @@ def _describe(row: SidecarRegistry) -> dict[str, Any]:
     }
 
 
-def replaced_by(rows: list[SidecarRegistry]) -> dict[str, list[dict[str, Any]]]:
+def replaced_by(
+    rows: list[SidecarRegistry], enrolled_at: dict[str, datetime] | None = None
+) -> dict[str, list[dict[str, Any]]]:
     """The inverse of ``adoptable_legacy``: map each legacy row to the enrolled device(s) that
     replaced it, so the old entry's card can offer the same merge."""
+    enrolled_at = enrolled_at or {}
     devices = [r for r in rows if sidecar_devices.reserved_registry_id(r.sidecar_id)]
     result: dict[str, list[dict[str, Any]]] = {}
     for legacy in rows:
         if sidecar_devices.reserved_registry_id(legacy.sidecar_id):
             continue
-        matches = [_describe(device) for device in devices if _same_machine(legacy, device)]
+        matches = [
+            _describe(device) for device in devices if _same_machine(legacy, device, enrolled_at)
+        ]
         if matches:
             result[legacy.sidecar_id] = matches
     return result
@@ -157,7 +185,9 @@ def _check(
         raise SidecarNotFoundError(f"Sidecar '{legacy_id}' not found")
     if not sidecar_devices.reserved_registry_id(device_id):
         raise ValueError("Only an enrolled device can adopt a legacy sidecar")
-    candidates = adoptable_legacy(list(rows.values())).get(device_id, [])
+    candidates = adoptable_legacy(list(rows.values()), load_enrollment_times(session)).get(
+        device_id, []
+    )
     if legacy_id not in {c["sidecar_id"] for c in candidates}:
         raise ValueError(f"'{legacy_id}' is not a legacy sidecar this device can adopt")
     return legacy, device

@@ -73,6 +73,7 @@ from app.services.maintenance.sidecar_adopt import (
     SidecarNotFoundError,
     adoptable_legacy,
     apply_adopt_sidecar,
+    load_enrollment_times,
     plan_adopt_sidecar,
     replaced_by,
 )
@@ -2943,8 +2944,9 @@ async def list_sidecars(
         select(SidecarRegistry).order_by(col(SidecarRegistry.last_seen).desc())
     ).all()
     channel, auto_update = _fleet_update_defaults(session)
-    adoptable = adoptable_legacy(list(rows))
-    replaced = replaced_by(list(rows))
+    enrolled_at = load_enrollment_times(session)
+    adoptable = adoptable_legacy(list(rows), enrolled_at)
+    replaced = replaced_by(list(rows), enrolled_at)
     return {
         "sidecars": [
             {

@@ -29,7 +29,12 @@ const deviceEntry: SidecarDescriptor = {
 
 // The paired device's card knows the old entry; the old entry's card knows the device.
 const onDevice: Sidecar = { sidecar_id: DEVICE, adoptable_legacy: [legacyEntry] };
-const onLegacy: Sidecar = { sidecar_id: 'macbook', replaced_by: [deviceEntry] };
+const onLegacy: Sidecar = {
+  sidecar_id: 'macbook',
+  hostname: 'macbook',
+  custom_name: 'Office Mac',
+  replaced_by: [deviceEntry],
+};
 
 const summary = (dry_run: boolean): SidecarAdoptSummary => ({
   dry_run,
@@ -112,5 +117,32 @@ describe('MergeSidecarNotice', () => {
 
     expect(await screen.findByText('not a legacy sidecar')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Merge into paired device' })).toBeDisabled();
+  });
+
+  it('names the entry that goes away in the confirmation, from either card', async () => {
+    const user = userEvent.setup();
+    // On the old entry's card the entry that moves is this card ("Office Mac"), not the device.
+    const { unmount } = renderWithProviders(<MergeSidecarNotice sidecar={onLegacy} />);
+    await user.click(screen.getByRole('button', { name: /review merge/i }));
+    await user.click(await screen.findByRole('button', { name: 'Merge into paired device' }));
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith('Merged Office Mac into the paired device'),
+    );
+    unmount();
+    vi.mocked(toast.success).mockClear();
+
+    // On the paired device's card it is the old entry the card points at.
+    renderWithProviders(<MergeSidecarNotice sidecar={onDevice} />);
+    await user.click(screen.getByRole('button', { name: /review merge/i }));
+    await user.click(await screen.findByRole('button', { name: 'Merge into paired device' }));
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith('Merged macbook into the paired device'));
+  });
+
+  it('keeps a pair dismissed under the earlier "adopt" key dismissed', () => {
+    window.localStorage.setItem(`runway.fleet.adopt-dismissed.${DEVICE}.macbook`, '1');
+
+    renderWithProviders(<MergeSidecarNotice sidecar={onDevice} />);
+
+    expect(screen.queryByText(/Same machine as the old entry/)).not.toBeInTheDocument();
   });
 });
