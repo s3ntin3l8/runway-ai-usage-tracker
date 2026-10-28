@@ -25,6 +25,7 @@ from sqlmodel.pool import StaticPool
 from app.core.db import configure_sqlite_engine
 from app.models.db import UsageEvent, UsageWindow
 from app.services.maintenance.windows import (
+    _replay,
     rebuild_windows_for_providers,
     rebuild_windows_overlapping,
 )
@@ -388,3 +389,66 @@ def test_rebuild_windows_overlapping_waits_for_competing_writer():
 
     assert count == 1
     assert duration >= 0.9, f"Should have waited on busy_timeout, completed in {duration:.2f}s"
+
+
+def test_replay_with_commit_read_waits_for_competing_writer():
+    """Verify that _replay with commit_read=True honors SQLite busy_timeout against a 1.0s writer."""
+    with tempfile.NamedTemporaryFile(suffix=".db") as f:
+        db_path = f.name
+
+    engine = create_engine(f"sqlite:///{db_path}", connect_args={"timeout": 30.0})
+    configure_sqlite_engine(engine)
+    SQLModel.metadata.create_all(engine)
+
+    with Session(engine) as s:
+        ev = UsageEvent(
+            provider_id="minimax",
+            account_id="alice@example.com",
+            sidecar_id="dev-01",
+            event_id="msg_1",
+            ts=datetime(2026, 8, 28, tzinfo=UTC),
+            kind="message",
+            tokens_input=100,
+            tokens_output=20,
+            cost_usd=0.05,
+        )
+        s.add(ev)
+        s.commit()
+
+    index = {
+        (
+            "minimax",
+            "alice@example.com",
+            "weekly",
+            datetime(2026, 8, 25, tzinfo=UTC),
+            datetime(2026, 9, 1, tzinfo=UTC),
+            "",
+            "",
+        ): (None, None)
+    }
+
+    ready_evt = threading.Event()
+
+    def hold_writer():
+        raw_conn = sqlite3.connect(db_path, isolation_level=None)
+        raw_conn.execute("BEGIN IMMEDIATE")
+        ready_evt.set()
+        time.sleep(1.0)
+        raw_conn.execute("COMMIT")
+        raw_conn.close()
+
+    t = threading.Thread(target=hold_writer)
+    t.start()
+    ready_evt.wait()
+
+    start = time.time()
+    with Session(engine) as s:
+        _replay(s, index)
+
+    duration = time.time() - start
+    t.join()
+
+    assert duration >= 0.9, f"Should have waited on busy_timeout, completed in {duration:.2f}s"
+    with Session(engine) as s:
+        rows = list(s.exec(select(UsageWindow)))
+        assert len(rows) > 0

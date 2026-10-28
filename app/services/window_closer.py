@@ -37,7 +37,7 @@ WINDOW_DURATION: dict[str, timedelta] = {
 }
 
 
-def close_window(  # noqa: PLR0913
+def close_window(  # noqa: PLR0913 -- window closer aggregates across all grain dimensions and scrape metadata
     session: Session,
     *,
     provider_id: str,
@@ -63,6 +63,9 @@ def close_window(  # noqa: PLR0913
     If `commit_read` is True, commits the session immediately after the summary SELECT
     to release SQLite's SHARED read lock before writing begins, avoiding read-then-write
     lock escalation and allowing SQLite busy_timeout to wait safely under concurrent writers.
+    Because `commit_read=True` commits the session, any prior work staged by the caller is
+    committed as well; callers holding pending uncommitted modifications (such as
+    `_maybe_close_previous_window` during live upserts) must keep `commit_read=False`.
     """
     # Summarize the smallest grain in SQLite. Loading every UsageEvent also
     # materializes raw_json and ORM state: a busy monthly window can otherwise
@@ -135,7 +138,8 @@ def close_window(  # noqa: PLR0913
             totals["cost_usd"] += cost
 
     # Write rows — one per grain, idempotent via SAVEPOINT + IntegrityError catch.
-    # Caller owns commit; we must not commit or rollback the outer session.
+    # Caller owns commit for inserted rows. If commit_read=True was set, the preceding
+    # summary read was committed; the inserted rows remain pending for the caller to commit.
     inserted = 0
     for (model_id, sidecar_id), totals in agg.items():
         row = UsageWindow(
