@@ -12,6 +12,7 @@ from app.core.db import engine
 from app.models.schemas import LimitCard
 from app.services.accumulator import upsert_latest_usage
 from app.services.collector_manager import LOCAL_SIDECAR_ID, manager
+from app.services.credential_sources import KEYCHAIN_GOVERNED_KINDS
 from app.services.token_cache import TokenCache
 
 logger = logging.getLogger(__name__)
@@ -60,11 +61,13 @@ def _missing_collector_reason(session: Session, provider_id: str, account_id: st
     host = session.get(SidecarRegistry, newest.sidecar_id)
     name = (host.custom_name or host.hostname) if host else None
     reason = f"its credential from {name or newest.sidecar_id} stopped reporting"
-    # Pairing and Keychain consent only govern browser-cookie sources; a Mac's env or file
-    # credential going quiet has a different cause, so it gets no hint.
+    # Pairing and Keychain consent govern cookie and Keychain sources, and a source reported
+    # with no origin (an older sidecar build) is of unknown kind. A Mac's env or file
+    # credential going quiet has a different cause, and a kind nobody has classified yet
+    # gets no hint rather than possibly wrong advice.
     if (
         host is not None
-        and newest.source_type == "cookie"
+        and newest.source_type in KEYCHAIN_GOVERNED_KINDS
         and (host.os_platform or "").startswith("Darwin")
     ):
         # The registry id's shape says nothing about pairing: an unpaired machine keeps its
@@ -75,8 +78,9 @@ def _missing_collector_reason(session: Session, provider_id: str, account_id: st
             else None
         )
         if device is None or device.revoked:
-            # Since Keychain consent, a Mac only contributes browser cookies once it is paired
-            # and the operator has enabled the source on that machine.
+            # Since Keychain consent, a Mac only contributes its browser cookies and Keychain
+            # logins (and sources of unknown kind) once it is paired and the operator has
+            # enabled the source on that machine.
             reason += "; check this Mac is paired and its Keychain source is enabled"
     return reason
 

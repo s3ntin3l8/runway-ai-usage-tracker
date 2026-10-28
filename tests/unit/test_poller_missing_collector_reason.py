@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import inspect
+import re
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -9,6 +11,13 @@ from sqlmodel import Session, SQLModel, create_engine
 from sqlmodel.pool import StaticPool
 
 from app.models.db import CredentialSource, SidecarDevice, SidecarRegistry
+from app.services import credential_sources
+from app.services.credential_sources import (
+    KEYCHAIN_GOVERNED_KINDS,
+    KEYCHAIN_UNGOVERNED_KINDS,
+    ORIGIN_KINDS,
+    describe_origin,
+)
 from app.services.poller import _missing_collector_reason
 
 NOW = datetime.now(UTC)
@@ -139,9 +148,70 @@ def test_the_local_fallback_and_disabled_sources_are_not_blamed(session):
     )
 
 
-def test_a_silent_non_cookie_credential_on_a_mac_gets_no_keychain_hint(session):
+@pytest.mark.parametrize("kind", ["cookie", "keychain", "sidecar"])
+def test_a_silent_keychain_governed_or_unknown_kind_on_a_mac_gets_the_hint(session, kind):
     _host(session, "macbook", "Darwin/25.6.0")
-    _source(session, "macbook", timedelta(days=3), source_type="env")
+    _source(session, "macbook", timedelta(days=3), source_type=kind)
+
+    reason = _missing_collector_reason(session, "anthropic_console", "org")
+
+    assert reason.startswith("its credential from macbook stopped reporting; check this Mac")
+
+
+@pytest.mark.parametrize("kind", ["env", "file"])
+def test_a_silent_env_or_file_credential_on_a_mac_gets_no_keychain_hint(session, kind):
+    _host(session, "macbook", "Darwin/25.6.0")
+    _source(session, "macbook", timedelta(days=3), source_type=kind)
+
+    assert (
+        _missing_collector_reason(session, "anthropic_console", "org")
+        == "its credential from macbook stopped reporting"
+    )
+
+
+def test_origin_kinds_match_describe_origin():
+    # Read the kinds out of the function itself, so a new ``OriginDisplay("<kind>", ...)``
+    # branch fails here until it is added to ORIGIN_KINDS and classified.
+    #
+    # The scrape only sees a kind written as a literal first argument. If ``describe_origin_full``
+    # starts returning ``OriginDisplay(kind, ...)`` or ``OriginDisplay(kind="x", ...)``, ``produced``
+    # comes up short and this fails as if a kind were *missing*, not added: change the scrape to
+    # match, rather than hunting for a kind that is not there.
+    source = inspect.getsource(credential_sources.describe_origin_full)
+    produced = set(re.findall(r'OriginDisplay\(\s*"(\w+)"', source))
+
+    assert produced == ORIGIN_KINDS
+    assert KEYCHAIN_UNGOVERNED_KINDS <= ORIGIN_KINDS
+    assert KEYCHAIN_GOVERNED_KINDS | KEYCHAIN_UNGOVERNED_KINDS == ORIGIN_KINDS
+
+
+@pytest.mark.parametrize(
+    "origin",
+    [
+        None,
+        "env:ANTHROPIC_API_KEY",
+        "path:/home/u/.claude/.credentials.json",
+        "file:///home/u/.codex/auth.json",
+        "cookie:anthropic_console/Chrome/Default/Cookies#abc",
+        "cookie:opencode/session",
+        "keychain:Claude Desktop/oauth/abc",
+    ],
+)
+def test_every_origin_describes_as_a_known_kind(origin):
+    kind, _label = describe_origin(origin)
+
+    assert kind in ORIGIN_KINDS
+
+
+def test_a_source_with_no_origin_is_of_unknown_kind_and_keeps_the_hint():
+    kind, _label = describe_origin(None)
+
+    assert kind == "sidecar" and kind in KEYCHAIN_GOVERNED_KINDS
+
+
+def test_a_kind_nobody_has_classified_gets_no_hint(session):
+    _host(session, "macbook", "Darwin/25.6.0")
+    _source(session, "macbook", timedelta(days=3), source_type="brand-new-kind")
 
     assert (
         _missing_collector_reason(session, "anthropic_console", "org")
