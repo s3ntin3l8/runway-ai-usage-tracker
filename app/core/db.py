@@ -225,6 +225,7 @@ def init_db() -> None:
 
 _DEFERRED_COLUMNS: list[tuple[str, str, str]] = [
     ("sidecar_devices", "platform", "TEXT"),
+    ("sidecar_devices", "last_source_sync_at", "DATETIME"),
     # (table, column, sql_type_with_default)
     ("sidecar_registry", "collection_enabled", "BOOLEAN NOT NULL DEFAULT 1"),
     ("sidecar_registry", "self_update_capable", "BOOLEAN"),

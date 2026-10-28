@@ -37,6 +37,7 @@ import { StatusDot } from '@/components/ui/StatusDot';
 import { timeAgo } from '@/lib/format';
 import { AddSidecarCard } from './AddSidecarCard';
 import { MergeSidecarNotice } from './MergeSidecarNotice';
+import { SourceSyncNotice } from './SourceSyncNotice';
 import { SidecarSettingsDialog, useSidecarKeepAlive } from './SidecarSettingsDialog';
 import { UntaggedCredentialsDialog } from './UntaggedCredentialsDialog';
 import { buildSidecarNameMap, sidecarLabel } from './queries';
@@ -508,6 +509,7 @@ function SidecarCard({
           {sidecar.adoptable_legacy?.length || sidecar.replaced_by?.length ? (
             <MergeSidecarNotice sidecar={sidecar} />
           ) : null}
+          <SourceSyncNotice sidecar={sidecar} online={online} />
           <SidecarSourceNotice sidecarId={sidecar.sidecar_id} osPlatform={sidecar.os_platform} onOpen={onSettings} />
           <div className="mt-3 flex items-center gap-2">
             <Button size="sm" variant="secondary" onClick={onSettings}>

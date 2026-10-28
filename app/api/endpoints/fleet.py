@@ -33,7 +33,7 @@ from app.models.db import (
     UsageEvent,
 )
 from app.models.schemas import IngestRequest, UsageEventPush
-from app.services import audit_log, pairing
+from app.services import audit_log, pairing, sidecar_devices
 from app.services.account_identity import (
     FINGERPRINTED_ORIGIN_PROVIDERS,
     account_config_provider_id,
@@ -2933,6 +2933,15 @@ def _fleet_update_defaults(session: Session) -> tuple[str, bool]:
     )
 
 
+def _source_sync_fields(
+    entry: tuple[sidecar_devices.SourceSyncState, datetime | None] | None,
+) -> dict[str, Any]:
+    """The source-sync pair for a sidecar entry; both null for a legacy (unenrolled) sidecar,
+    which has no source sync to miss."""
+    state, last_at = entry or (None, None)
+    return {"source_sync_state": state, "source_sync_last_at": last_at}
+
+
 @router.get("/sidecars", dependencies=[Depends(require_admin_key)])
 @limiter.limit("30/minute")
 async def list_sidecars(
@@ -2947,12 +2956,14 @@ async def list_sidecars(
     enrolled_at = load_enrollment_times(session, [row.sidecar_id for row in rows])
     adoptable = adoptable_legacy(list(rows), enrolled_at)
     replaced = replaced_by(list(rows), enrolled_at)
+    sync_states = sidecar_devices.source_sync_states(session, [row.sidecar_id for row in rows])
     return {
         "sidecars": [
             {
                 **fleet_registry.to_dict(row, channel, auto_update),
                 "adoptable_legacy": adoptable.get(row.sidecar_id, []),
                 "replaced_by": replaced.get(row.sidecar_id, []),
+                **_source_sync_fields(sync_states.get(row.sidecar_id)),
             }
             for row in rows
         ]
@@ -2971,7 +2982,11 @@ async def get_sidecar(
     if not row:
         raise HTTPException(status_code=404, detail=f"Sidecar '{sidecar_id}' not found")
     channel, auto_update = _fleet_update_defaults(session)
-    return fleet_registry.to_dict(row, channel, auto_update)
+    sync_states = sidecar_devices.source_sync_states(session, [sidecar_id])
+    return {
+        **fleet_registry.to_dict(row, channel, auto_update),
+        **_source_sync_fields(sync_states.get(sidecar_id)),
+    }
 
 
 class SidecarAdoptRequest(BaseModel):

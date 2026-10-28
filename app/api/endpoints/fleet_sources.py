@@ -58,6 +58,7 @@ async def sync_sources(
         for ack in body.acknowledgments:
             source_controls.acknowledge(session, device_id, ack.id, ack.status)
         source_controls.prune_commands(session, device_id)
+        sidecar_devices.record_source_sync(session, device_id)
         session.commit()
     except ValueError:
         session.rollback()

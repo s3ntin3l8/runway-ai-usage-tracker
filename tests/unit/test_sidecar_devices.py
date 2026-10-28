@@ -125,3 +125,62 @@ async def test_device_signature_cannot_cross_endpoints(session):
             request, signature, timestamp, session=session, purpose="source-sync"
         )
     assert result.value.status_code == 401
+
+
+def test_source_sync_state_is_pending_never_or_ok(session):
+    from datetime import UTC, datetime, timedelta
+
+    device, _ = sidecar_devices.enroll(session, "mac")
+    registry = sidecar_devices.registry_id(device.device_id)
+    now = datetime.now(UTC)
+
+    def state(at):
+        return sidecar_devices.source_sync_states(session, [registry], now=at)[registry]
+
+    # Inside the grace period a missing sync is not yet worth a notice.
+    assert state(now)[0] == "pending"
+    # Past it, a device that never synced reads "never" (e.g. a proxy redirecting the route).
+    later = now + sidecar_devices.SOURCE_SYNC_GRACE + timedelta(seconds=1)
+    assert state(later) == ("never", None)
+    # A recorded sync wins, whatever the age.
+    sidecar_devices.record_source_sync(session, device.device_id)
+    session.commit()
+    session.refresh(device)
+    result = state(later)
+    assert result[0] == "ok" and result[1] == device.last_source_sync_at
+
+
+def test_source_sync_state_skips_legacy_and_revoked(session):
+    device, _ = sidecar_devices.enroll(session, "mac")
+    device.revoked = True
+    session.add(device)
+    session.commit()
+    registry = sidecar_devices.registry_id(device.device_id)
+    assert sidecar_devices.source_sync_states(session, ["desktop", registry]) == {}
+
+
+def test_source_sync_state_goes_stale_when_syncing_stops(session):
+    from datetime import UTC, datetime, timedelta
+
+    device, _ = sidecar_devices.enroll(session, "mac")
+    registry = sidecar_devices.registry_id(device.device_id)
+    now = datetime.now(UTC)
+    device.last_source_sync_at = now - timedelta(minutes=59)
+    session.add(device)
+    session.commit()
+
+    def state():
+        return sidecar_devices.source_sync_states(session, [registry], now=now)[registry][0]
+
+    assert state() == "ok"
+    device.last_source_sync_at = now - sidecar_devices.SOURCE_SYNC_STALE - timedelta(seconds=1)
+    session.add(device)
+    session.commit()
+    # A device that synced days ago must not read as healthy: the route broke afterwards.
+    assert state() == "stale"
+
+
+def test_deferred_columns_includes_last_source_sync_at():
+    from app.core.db import _DEFERRED_COLUMNS
+
+    assert ("sidecar_devices", "last_source_sync_at", "DATETIME") in _DEFERRED_COLUMNS

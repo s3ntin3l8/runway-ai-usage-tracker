@@ -16,6 +16,7 @@ from app.api.endpoints.fleet_sources import router
 from app.core.config import settings
 from app.core.db import get_session
 from app.core.encryption import EncryptionService
+from app.models.db import SidecarDevice
 from app.services import sidecar_devices, source_controls
 from scripts.sidecar_pkg.source_catalog import catalog
 
@@ -159,3 +160,14 @@ def test_status_loads_credential_health_once_for_multiple_sources(protocol):
         event.remove(session.get_bind(), "before_cursor_execute", capture)
     assert sum("from credential_sources" in sql for sql in statements) == 1
     assert sum("from sidecar_source_contributions" in sql for sql in statements) == 1
+
+
+def test_only_an_accepted_sync_stamps_the_device(protocol):
+    client, session, device_id, secret = protocol
+    # A rejected request (wrong key) must not count as a completed sync.
+    assert sync(client, device_id, "synthetic-shared", {"sources": [report()]}).status_code == 401
+    session.expire_all()
+    assert session.get(SidecarDevice, device_id).last_source_sync_at is None
+    assert sync(client, device_id, secret, {"sources": [report()]}).status_code == 200
+    session.expire_all()
+    assert session.get(SidecarDevice, device_id).last_source_sync_at is not None
