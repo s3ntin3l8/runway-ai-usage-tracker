@@ -37,7 +37,7 @@ WINDOW_DURATION: dict[str, timedelta] = {
 }
 
 
-def close_window(
+def close_window(  # noqa: PLR0913
     session: Session,
     *,
     provider_id: str,
@@ -49,6 +49,7 @@ def close_window(
     series_variant: str = "",
     limit_value: float | None = None,
     pct_used: float | None = None,
+    commit_read: bool = False,
 ) -> int:
     """Aggregate usage_events in [window_start, window_end) and write usage_windows rows.
 
@@ -58,33 +59,41 @@ def close_window(
     `kind="error"` events are skipped — they represent provider failures, not
     billable usage. This matches event_ingestor, which also excludes them from
     period rollups, keeping window totals consistent with rollup sums.
+
+    If `commit_read` is True, commits the session immediately after the summary SELECT
+    to release SQLite's SHARED read lock before writing begins, avoiding read-then-write
+    lock escalation and allowing SQLite busy_timeout to wait safely under concurrent writers.
     """
     # Summarize the smallest grain in SQLite. Loading every UsageEvent also
     # materializes raw_json and ORM state: a busy monthly window can otherwise
     # consume hundreds of MiB just to sum a few numeric columns.
     model = func.coalesce(UsageEvent.model_id, "")
     sidecar = func.coalesce(UsageEvent.sidecar_id, "")
-    groups = session.execute(
-        select(  # type: ignore[call-overload]
-            model,
-            sidecar,
-            func.count(),
-            func.sum(UsageEvent.tokens_input),
-            func.sum(UsageEvent.tokens_output),
-            func.sum(UsageEvent.tokens_cache_read),
-            func.sum(UsageEvent.tokens_cache_create),
-            func.sum(UsageEvent.tokens_reasoning),
-            func.sum(UsageEvent.cost_usd),
+    groups = list(
+        session.execute(
+            select(  # type: ignore[call-overload]
+                model,
+                sidecar,
+                func.count(),
+                func.sum(UsageEvent.tokens_input),
+                func.sum(UsageEvent.tokens_output),
+                func.sum(UsageEvent.tokens_cache_read),
+                func.sum(UsageEvent.tokens_cache_create),
+                func.sum(UsageEvent.tokens_reasoning),
+                func.sum(UsageEvent.cost_usd),
+            )
+            .where(
+                UsageEvent.provider_id == provider_id,
+                UsageEvent.account_id == account_id,
+                UsageEvent.ts >= window_start,
+                UsageEvent.ts < window_end,
+                UsageEvent.kind != "error",
+            )
+            .group_by(model, sidecar)
         )
-        .where(
-            UsageEvent.provider_id == provider_id,
-            UsageEvent.account_id == account_id,
-            UsageEvent.ts >= window_start,
-            UsageEvent.ts < window_end,
-            UsageEvent.kind != "error",
-        )
-        .group_by(model, sidecar)
     )
+    if commit_read:
+        session.commit()
 
     # Aggregate at the different grains
     # grain_key: (model_id, sidecar_id) -> {msgs, tokens_input, ...}

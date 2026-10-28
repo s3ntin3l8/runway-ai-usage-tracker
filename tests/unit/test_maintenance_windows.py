@@ -11,6 +11,10 @@ all-grains row (`model_id="" and sidecar_id=""`) for the preserved
 
 from __future__ import annotations
 
+import sqlite3
+import tempfile
+import threading
+import time
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
@@ -18,6 +22,7 @@ from sqlalchemy.exc import OperationalError
 from sqlmodel import Session, SQLModel, create_engine, select
 from sqlmodel.pool import StaticPool
 
+from app.core.db import configure_sqlite_engine
 from app.models.db import UsageEvent, UsageWindow
 from app.services.maintenance.windows import (
     rebuild_windows_for_providers,
@@ -229,10 +234,8 @@ def test_rebuild_windows_for_providers_drops_a_window_with_no_supporting_events(
     assert list(session.exec(select(UsageWindow))) == []  # nothing survives
 
 
-def test_rebuild_windows_batches_without_losing_windows(monkeypatch):
-    """Exercise the _WINDOW_BATCH commit/expunge cycling with more windows
-    than one batch, without needing hundreds of real rows in the test."""
-    monkeypatch.setattr("app.services.maintenance.windows._WINDOW_BATCH", 2)
+def test_rebuild_windows_replays_multiple_windows_without_loss():
+    """Exercise rebuild_windows_for_providers across multiple windows ensuring all survive."""
     session = _session()
     base_ts = datetime(2026, 8, 1, tzinfo=UTC)
     for i in range(5):
@@ -319,3 +322,69 @@ def test_rebuild_windows_retries_on_lock_contention_during_replay():
     row = _all_grains_row(session, provider_id="minimax", account_id="alice@example.com")
     assert row is not None
     assert row.msgs == 1
+
+
+def test_rebuild_windows_overlapping_waits_for_competing_writer():
+    """Verify that rebuild_windows_overlapping honors SQLite busy_timeout against a 1s competing writer."""
+    with tempfile.NamedTemporaryFile(suffix=".db") as f:
+        db_path = f.name
+
+    engine = create_engine(f"sqlite:///{db_path}", connect_args={"timeout": 30.0})
+    configure_sqlite_engine(engine)
+    SQLModel.metadata.create_all(engine)
+
+    with Session(engine) as s:
+        ev = UsageEvent(
+            provider_id="minimax",
+            account_id="alice@example.com",
+            sidecar_id="dev-01",
+            event_id="msg_1",
+            ts=datetime(2026, 8, 28, tzinfo=UTC),
+            kind="message",
+            tokens_input=100,
+            tokens_output=20,
+            cost_usd=0.05,
+        )
+        s.add(ev)
+        w = UsageWindow(
+            provider_id="minimax",
+            account_id="alice@example.com",
+            window_type="weekly",
+            window_start=datetime(2026, 8, 25, tzinfo=UTC),
+            window_end=datetime(2026, 9, 1, tzinfo=UTC),
+            model_id="",
+            sidecar_id="",
+            msgs=1,
+        )
+        s.add(w)
+        s.commit()
+
+    ready_evt = threading.Event()
+
+    def hold_writer():
+        raw_conn = sqlite3.connect(db_path, isolation_level=None)
+        raw_conn.execute("BEGIN IMMEDIATE")
+        ready_evt.set()
+        time.sleep(1.0)
+        raw_conn.execute("COMMIT")
+        raw_conn.close()
+
+    t = threading.Thread(target=hold_writer)
+    t.start()
+    ready_evt.wait()
+
+    start = time.time()
+    with Session(engine) as s:
+        count = rebuild_windows_overlapping(
+            s,
+            provider_id="minimax",
+            account_ids=["alice@example.com"],
+            ts_min=datetime(2026, 8, 28, tzinfo=UTC),
+            ts_max=datetime(2026, 8, 28, tzinfo=UTC),
+        )
+
+    duration = time.time() - start
+    t.join()
+
+    assert count == 1
+    assert duration >= 0.9, f"Should have waited on busy_timeout, completed in {duration:.2f}s"

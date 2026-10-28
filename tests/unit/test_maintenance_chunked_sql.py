@@ -15,11 +15,11 @@ from sqlmodel.pool import StaticPool
 
 from app.models.db import UsageEvent
 from app.services.maintenance._chunked_sql import (
-    _is_sqlite_locked_or_busy,
     _next_batch_ids,
     chunked_delete,
     chunked_update,
 )
+from app.services.maintenance._retry import _is_sqlite_locked_or_busy
 
 
 def _session() -> Session:

@@ -17,15 +17,8 @@ from datetime import datetime
 from sqlmodel import Session, delete, select
 
 from app.models.db import UsageWindow
-from app.services.maintenance._chunked_sql import _INITIAL_BACKOFF, _MAX_RETRIES, _retry_on_lock
+from app.services.maintenance._retry import _INITIAL_BACKOFF, _MAX_RETRIES, _retry_on_lock
 from app.services.window_closer import close_window
-
-# Bounds the SQLAlchemy identity map during a large replay — commit and
-# expunge every this-many windows rather than holding the whole rebuild in
-# one transaction (recost_events.py's phase D handled ~90k events / ~11k
-# windows for a single heavy account; without this an all-provider rebuild
-# is O(n^2) in identity-map bookkeeping).
-_WINDOW_BATCH = 200
 
 _WindowKey = tuple[str, str, str, datetime, datetime, str, str]
 _WindowMeta = tuple[float | None, float | None]
@@ -73,6 +66,7 @@ def _replay(
                 series_variant=series_variant,
                 limit_value=lv,
                 pct_used=pu,
+                commit_read=True,
             )
             session.commit()
             session.expunge_all()
