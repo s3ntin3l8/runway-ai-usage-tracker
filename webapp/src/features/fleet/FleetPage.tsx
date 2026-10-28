@@ -39,7 +39,7 @@ import { AddSidecarCard } from './AddSidecarCard';
 import { AdoptLegacyNotice } from './AdoptLegacyNotice';
 import { SidecarSettingsDialog, useSidecarKeepAlive } from './SidecarSettingsDialog';
 import { UntaggedCredentialsDialog } from './UntaggedCredentialsDialog';
-import { buildSidecarNameMap } from './queries';
+import { buildSidecarNameMap, sidecarLabel } from './queries';
 import { PendingUsageEventsCard } from './PendingUsageEventsCard';
 import { SidecarSourceNotice } from './SidecarSources';
 
@@ -680,10 +680,10 @@ function UntaggedBanner({
                       className="rounded-md border border-warning/40 bg-surface-1 px-2 py-0.5 text-[11px] font-medium text-fg hover:border-warning"
                       aria-label={`${count} untagged credential${
                         count === 1 ? '' : 's'
-                      } on sidecar ${sidecarId} — click to resolve`}
-                      title={`${names.get(sidecarId) ?? sidecarId}: ${count} pending`}
+                      } on sidecar ${sidecarLabel(names, sidecarId)} — click to resolve`}
+                      title={`${sidecarLabel(names, sidecarId)}: ${count} pending`}
                     >
-                      <span className="font-mono">{names.get(sidecarId) ?? sidecarId}</span> · {count}
+                      <span className="font-mono">{sidecarLabel(names, sidecarId)}</span> · {count}
                     </button>
                   </li>
                 );

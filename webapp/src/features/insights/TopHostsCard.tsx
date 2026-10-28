@@ -16,7 +16,7 @@ import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Skeleton, SkeletonRegion } from '@/components/ui/Skeleton';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
-import { buildSidecarNameMap, useSidecars } from '@/features/fleet/queries';
+import { buildSidecarNameMap, sidecarLabel, useSidecars } from '@/features/fleet/queries';
 import { useExcludeCache } from '@/hooks/useExcludeCache';
 import { formatAxisCost, formatAxisNumber, formatCost, formatTokens } from '@/lib/format';
 import { formatRangeLabel, type DateRangeValue } from '@/lib/timeRange';
@@ -36,7 +36,7 @@ function hostRow(
     `${h.sessions} ${h.sessions === 1 ? 'session' : 'sessions'}`,
     ...(h.providers.length ? [`via ${h.providers.join(', ')}`] : []),
   ].join(' · ');
-  const label = hostNames.get(h.sidecar_id) ?? h.sidecar_id;
+  const label = sidecarLabel(hostNames, h.sidecar_id);
 
   if (metric === 'cost') {
     const segments = costSegments(h, series, excludeCache);

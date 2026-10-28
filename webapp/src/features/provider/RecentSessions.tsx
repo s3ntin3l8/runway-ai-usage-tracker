@@ -7,7 +7,7 @@ import { TokenBar } from '@/components/charts/TokenBar';
 import { Badge } from '@/components/ui/Badge';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Skeleton } from '@/components/ui/Skeleton';
-import { buildSidecarNameMap, useSidecars } from '@/features/fleet/queries';
+import { buildSidecarNameMap, sidecarLabel, useSidecars } from '@/features/fleet/queries';
 import { formatCost, formatCount, formatDuration, formatTokens, timeAgo } from '@/lib/format';
 import { useProviderRecentSessions, type DateRange } from './queries';
 import { sessionCachePct, sessionCost, sessionTokens } from './sessionMetrics';
@@ -98,7 +98,7 @@ export function RecentSessions({
   const sidecars = useSidecars().data?.sidecars ?? [];
   const sidecarNames = sidecars.length > 1 ? buildSidecarNameMap(sidecars) : null;
   const labelFor = (s: SessionEntry): string | null =>
-    sidecarNames && s.sidecar_id ? (sidecarNames.get(s.sidecar_id) ?? s.sidecar_id) : null;
+    sidecarNames && s.sidecar_id ? sidecarLabel(sidecarNames, s.sidecar_id) : null;
 
   return (
     <div className="flex flex-col gap-2">

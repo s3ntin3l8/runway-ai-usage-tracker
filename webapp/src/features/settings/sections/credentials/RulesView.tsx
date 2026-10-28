@@ -15,7 +15,7 @@ import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
 import { Skeleton } from '@/components/ui/Skeleton';
-import { buildSidecarNameMap, useSidecars } from '@/features/fleet/queries';
+import { buildSidecarNameMap, sidecarLabel, useSidecars } from '@/features/fleet/queries';
 import { useInvalidateCredentialViews } from '@/hooks/useInvalidateCredentialViews';
 import { maskAccountId } from '@/lib/accountDisplay';
 import { originTitleWithApp, originTitleWithDetail } from '@/lib/credentialOrigin';
@@ -119,7 +119,7 @@ export function RulesView({ providerNames }: { providerNames?: Record<string, st
   const all = rules.data?.items ?? [];
   const providerName = (t: CredentialTag) => providerNames?.[t.provider_id] ?? t.provider_id;
   const machineName = (t: CredentialTag) =>
-    t.sidecar_id ? (names.get(t.sidecar_id) ?? t.sidecar_id) : 'All machines';
+    t.sidecar_id ? sidecarLabel(names, t.sidecar_id) : 'All machines';
 
   const groups = (() => {
     const needle = query.trim().toLowerCase();
@@ -234,7 +234,7 @@ export function RulesView({ providerNames }: { providerNames?: Record<string, st
                           </p>
                           <p className="truncate text-[11px] text-fg-subtle">
                             {t.sidecar_id
-                              ? `on ${names.get(t.sidecar_id) ?? t.sidecar_id}`
+                              ? `on ${sidecarLabel(names, t.sidecar_id)}`
                               : 'on all machines'}
                           </p>
                           {t.stale ? (
@@ -249,7 +249,7 @@ export function RulesView({ providerNames }: { providerNames?: Record<string, st
                         <Button
                           variant="danger-ghost"
                           size="icon-sm"
-                          aria-label={`Remove rule ${originTitle(t)} → ${maskAccountId(t.account_id)}, ${t.sidecar_id ? (names.get(t.sidecar_id) ?? t.sidecar_id) : 'all machines'}`}
+                          aria-label={`Remove rule ${originTitle(t)} → ${maskAccountId(t.account_id)}, ${t.sidecar_id ? sidecarLabel(names, t.sidecar_id) : 'all machines'}`}
                           onClick={() => setRemoving(t)}
                         >
                           <Trash2 className="size-3.5" aria-hidden />

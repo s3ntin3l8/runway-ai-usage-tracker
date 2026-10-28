@@ -56,7 +56,11 @@ export function relabelSidecarSplit<T>(
   for (const [, label] of labels) taken.set(label, (taken.get(label) ?? 0) + 1);
   const out: Record<string, T> = {};
   for (const [id, label] of labels) {
-    const key = (taken.get(label) ?? 0) > 1 ? `${label} (${shortSidecarId(id)})` : label;
+    const base = (taken.get(label) ?? 0) > 1 ? `${label} (${shortSidecarId(id)})` : label;
+    // Short ids can collide too (two ids that share their first four characters), and a clash
+    // here would drop a bucket and understate the total. Number the final key until it is free.
+    let key = base;
+    for (let n = 2; key in out; n += 1) key = `${base} (${n})`;
     out[key] = split[id];
   }
   return out;

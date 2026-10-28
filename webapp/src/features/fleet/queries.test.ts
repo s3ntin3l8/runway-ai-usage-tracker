@@ -82,6 +82,30 @@ describe('relabelSidecarSplit', () => {
     expect(Object.values(out).map((b) => b.tokens_input).sort()).toEqual([3, 4]);
   });
 
+  it('never drops a bucket when the short ids collide as well', () => {
+    // Same name, and the ids share their first four characters, so the suffix alone would clash.
+    const names = new Map([
+      ['device-720faaaa', 'desktop'],
+      ['device-720fbbbb', 'desktop'],
+      ['macbook', 'macbook'],
+      ['macbook-old', 'macbook'],
+    ]);
+    const split = {
+      'device-720faaaa': bucket(1),
+      'device-720fbbbb': bucket(2),
+      macbook: bucket(3),
+      'macbook-old': bucket(4),
+    };
+
+    const out = relabelSidecarSplit(split, names);
+
+    expect(Object.keys(out)).toHaveLength(4);
+    expect(Object.values(out).reduce((sum, b) => sum + (b.tokens_input ?? 0), 0)).toBe(10);
+    expect(Object.keys(out)).toEqual(
+      expect.arrayContaining(['desktop (720f)', 'desktop (720f) (2)', 'macbook (macb)', 'macbook (macb) (2)']),
+    );
+  });
+
   it('returns an empty split unchanged', () => {
     expect(relabelSidecarSplit({}, new Map())).toEqual({});
   });

@@ -11,7 +11,7 @@ import { TokenBar } from '@/components/charts/TokenBar';
 import { Badge } from '@/components/ui/Badge';
 import { buttonVariants } from '@/components/ui/Button';
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/Table';
-import { buildSidecarNameMap, useSidecars } from '@/features/fleet/queries';
+import { buildSidecarNameMap, sidecarLabel, useSidecars } from '@/features/fleet/queries';
 import { cn } from '@/lib/cn';
 import { formatCost, formatCount, formatDuration, formatTokens } from '@/lib/format';
 import { DetailSection, Stat } from './detailPrimitives';
@@ -343,7 +343,7 @@ export function SessionsTable({
   const colSpan =
     ALWAYS_VISIBLE_COL_COUNT + 1 /* Cost */ + (showSidecar ? 1 : 0) + (showProject ? 1 : 0);
   const labelFor = (s: SessionEntry): string | null =>
-    nameMap ? (s.sidecar_id ? (nameMap.get(s.sidecar_id) ?? s.sidecar_id) : '') : null;
+    nameMap ? (s.sidecar_id ? sidecarLabel(nameMap, s.sidecar_id) : '') : null;
 
   return (
     <Table>
