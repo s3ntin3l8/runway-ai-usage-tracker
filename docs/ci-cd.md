@@ -95,7 +95,12 @@ Workflows live in `.github/workflows/`.
     dependencies at any severity and the whole tree, build tooling included, at
     moderate and up: a low-severity finding with no patched release that is
     reachable only through a dev-only package would otherwise keep the job, and
-    with it the edge image, red (#1033).
+    with it the edge image, red (#1033). So that finding does not vanish with the
+    job log, the weekly `npm-audit-weekly.yml` audits the whole tree at every
+    severity, writes the list to its job summary and keeps it in one tracking
+    issue labelled `npm-audit` (edited, closed when clean, reopened on
+    findings). It is advisory: nothing depends on it and it is not a required
+    check (#1035).
 
     Moving the repositories to an organization would enable the queue, but
     that is not only a settings change: the workflows that produce the
