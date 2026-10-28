@@ -41,6 +41,7 @@ const summary = (dry_run: boolean): SidecarAdoptSummary => ({
   events: 44741,
   pending_events: 0,
   credential_tags: 19,
+  source_prefs: 3,
   settings: [],
   from: legacyEntry,
   into: deviceEntry,
@@ -79,6 +80,7 @@ describe('MergeSidecarNotice', () => {
     expect(screen.getByText('Paired device')).toBeInTheDocument();
     expect(screen.getByText(/44,741 usage events move to the paired device/)).toBeInTheDocument();
     expect(screen.getByText(/19 credential tags/)).toBeInTheDocument();
+    expect(screen.getByText(/3 source settings/)).toBeInTheDocument();
     // Both entries are named "macbook"; the pushes line says exactly what the card becomes.
     expect(screen.getByText(/Pushes: 10 \+ 54,985 =/)).toBeInTheDocument();
     expect(screen.getByText('54,995')).toBeInTheDocument();

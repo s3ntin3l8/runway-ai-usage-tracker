@@ -144,6 +144,9 @@ export function MergeSidecarNotice({ sidecar }: { sidecar: Sidecar }) {
                 <li>{plural(data.events, 'usage event')} move to the paired device</li>
                 {data.pending_events > 0 ? <li>{plural(data.pending_events, 'unassigned event')}</li> : null}
                 {data.credential_tags > 0 ? <li>{plural(data.credential_tags, 'credential tag')}</li> : null}
+                {(data.source_prefs ?? 0) > 0 ? (
+                  <li>{plural(data.source_prefs ?? 0, 'source setting')} (enabled, priority)</li>
+                ) : null}
                 {data.settings.length > 0 ? <li>Settings carried over: {data.settings.join(', ')}</li> : null}
                 <li>
                   Pushes: {formatCount(data.into.ingest_count)} + {formatCount(data.from.ingest_count)} ={' '}

@@ -3036,6 +3036,7 @@ def _adopt_summary(value: AdoptPlan | AdoptResult) -> dict[str, Any]:
         "events": value.events,
         "pending_events": value.pending_events,
         "credential_tags": value.credential_tags,
+        "source_prefs": value.source_prefs,
         "settings": value.settings,
     }
     if isinstance(value, AdoptResult):

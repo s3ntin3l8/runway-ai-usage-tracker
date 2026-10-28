@@ -614,6 +614,8 @@ export interface SidecarAdoptSummary {
   events: number;
   pending_events: number;
   credential_tags: number;
+  /** Per-source enabled/priority choices copied onto the device's matching credential sources. */
+  source_prefs?: number;
   settings: string[];
   /** Dry run only: the old entry, the paired device, and the device's push count after the merge. */
   from?: SidecarDescriptor;

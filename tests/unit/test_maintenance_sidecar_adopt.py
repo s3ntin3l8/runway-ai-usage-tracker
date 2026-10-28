@@ -493,3 +493,94 @@ def test_nothing_is_logged_when_every_requested_device_has_a_record(caplog):
         load_enrollment_times(session, [DEVICE, "desktop"])  # a legacy id is not a device
 
     assert not [r for r in caplog.records if "enrollment record" in r.getMessage()]
+
+
+def _source(session, sidecar_id, origin, *, account="me@example.com", provider="anthropic", **kw):
+    from app.models.db import CredentialSource
+
+    row = CredentialSource(
+        provider_id=provider,
+        account_id=account,
+        source_id=f"{sidecar_id}:{origin}",
+        source_type="sidecar",
+        source_label=origin,
+        credential_origin=origin,
+        sidecar_id=sidecar_id,
+        **kw,
+    )
+    session.add(row)
+    session.commit()
+    return row
+
+
+def _prefs(session, sidecar_id):
+    from app.models.db import CredentialSource
+
+    return {
+        row.credential_origin: (row.enabled, row.priority)
+        for row in session.exec(
+            select(CredentialSource).where(CredentialSource.sidecar_id == sidecar_id)
+        )
+    }
+
+
+def test_a_disabled_source_and_a_custom_priority_survive_the_merge():
+    session = _session()
+    _pair(session)
+    _source(session, "desktop", "cli", enabled=False, priority=0)
+    _source(session, "desktop", "browser", enabled=True, priority=5)
+    _source(session, DEVICE, "cli")  # rediscovered with defaults
+    _source(session, DEVICE, "browser")
+
+    preview = plan_adopt_sidecar(session, legacy_id="desktop", device_id=DEVICE)
+    result = apply_adopt_sidecar(session, legacy_id="desktop", device_id=DEVICE)
+
+    assert preview.source_prefs == result.source_prefs == 2
+    assert _prefs(session, DEVICE) == {"cli": (False, 0), "browser": (True, 5)}
+
+
+def test_unmatched_and_ambiguous_sources_are_left_alone():
+    session = _session()
+    _pair(session)
+    _source(session, "desktop", "gone", enabled=False)  # the device never found it
+    _source(session, "desktop", "cli", enabled=False, account="a@example.com")
+    _source(session, DEVICE, "cli", account="b@example.com")  # same origin, different account
+    # Two device rows for one (provider, account, origin) key: guessing would be wrong.
+    _source(session, "desktop", "dup", enabled=False)
+    _source(session, DEVICE, "dup")
+    twin = _source(session, DEVICE, "dup2")
+    twin.credential_origin = "dup"
+    session.add(twin)
+    session.commit()
+
+    result = apply_adopt_sidecar(session, legacy_id="desktop", device_id=DEVICE)
+
+    assert result.source_prefs == 0
+    assert _prefs(session, DEVICE).get("gone") is None  # not created
+    assert all(enabled for enabled, _ in _prefs(session, DEVICE).values())
+
+
+def test_a_retry_after_a_failed_delete_applies_the_source_preferences_once(monkeypatch):
+    session = _session()
+    _pair(session)
+    _source(session, "desktop", "cli", enabled=False, priority=3)
+    _source(session, DEVICE, "cli")
+
+    from app.services import fleet_registry as registry
+
+    real = registry.fleet_registry.delete_sidecar
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("delete interrupted")
+
+    monkeypatch.setattr(registry.fleet_registry, "delete_sidecar", boom)
+    with pytest.raises(RuntimeError):
+        apply_adopt_sidecar(session, legacy_id="desktop", device_id=DEVICE)
+    # The copy rode the failed transaction, so nothing changed yet.
+    assert _prefs(session, DEVICE) == {"cli": (True, 0)}
+
+    monkeypatch.setattr(registry.fleet_registry, "delete_sidecar", real)
+    result = apply_adopt_sidecar(session, legacy_id="desktop", device_id=DEVICE)
+
+    assert result.source_prefs == 1
+    assert _prefs(session, DEVICE) == {"cli": (False, 3)}
