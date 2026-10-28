@@ -22,11 +22,11 @@ concurrency:
 jobs:
   audit:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: read
       issues: write
     env:
-      GH_TOKEN: ${{ github.token }}
       ISSUE_TITLE: 'chore(deps): npm audit findings in the frontend tree'
       ISSUE_LABEL: npm-audit
     steps:
@@ -58,18 +58,28 @@ jobs:
             .map((v) => ({
               name: v.name,
               severity: v.severity,
-              direct: v.isDirect ? 'direct' : 'transitive',
+              // A transitive package is traced up to what pulls it in, so a row can be followed to
+              // the direct dependency without opening the log.
+              direct: v.isDirect ? 'direct' : `transitive → ${(v.effects ?? []).join(', ') || '?'}`,
               advisories: v.via
                 .filter((x) => typeof x === 'object')
                 .map((x) => `[${x.title}](${x.url})`)
                 .join(', ') || 'via ' + v.via.join(', '),
-              fix: v.fixAvailable === false ? 'none' : v.fixAvailable ? 'available' : 'none',
+              // `fixAvailable` is `true` only for a plain `npm audit fix`. The object form names a
+              // parent package to move to, often a semver-major change (here the vite-plugin-pwa
+              // downgrade ci-cd.yml refuses), so it is printed as that and never as "available".
+              fix:
+                v.fixAvailable === true
+                  ? 'npm audit fix'
+                  : v.fixAvailable
+                    ? `${v.fixAvailable.name}@${v.fixAvailable.version}${v.fixAvailable.isSemVerMajor ? ' (major)' : ''}`
+                    : 'none',
             }))
             .sort((a, b) => order.indexOf(a.severity) - order.indexOf(b.severity) || a.name.localeCompare(b.name))
           const out = []
           out.push(`${rows.length} vulnerable package(s) in \`webapp/\` (all severities, build tooling included).`, '')
           if (rows.length) {
-            out.push('| Package | Severity | Reached | Advisory | npm fix |', '| --- | --- | --- | --- | --- |')
+            out.push('| Package | Severity | Reached | Advisory | Suggested fix |', '| --- | --- | --- | --- | --- |')
             for (const r of rows) out.push(`| \`${r.name}\` | ${r.severity} | ${r.direct} | ${r.advisories} | ${r.fix} |`)
           }
           console.log(out.join('\n'))
@@ -77,6 +87,10 @@ jobs:
           cat "$RUNNER_TEMP/report.md" >> "$GITHUB_STEP_SUMMARY"
           echo "FINDINGS=$(jq '.vulnerabilities | length' "$RUNNER_TEMP/audit.json")" >> "$GITHUB_ENV"
       - name: Update the tracking issue
+        # The token is scoped to this step: `npm ci` above runs the whole tree's install scripts
+        # and must not see an `issues: write` token.
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           gh label create "$ISSUE_LABEL" --color FBCA04 \
             --description 'Scheduled npm audit tracking issue' 2>/dev/null || true

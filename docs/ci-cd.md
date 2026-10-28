@@ -108,6 +108,10 @@ Workflows live in `.github/workflows/`.
     would need to skip that event so the queue does not wait on the Windows
     runner. Neither is in place, because neither could be exercised here —
     an untested conditional path in CI is worse than no path at all.
+- **`npm-audit-weekly.yml`** — Mondays 05:17 UTC (and `workflow_dispatch`): audits
+  the whole `webapp/` tree at every severity and keeps the list in its job
+  summary and in one tracking issue labelled `npm-audit`. Advisory: not a
+  required check, and nothing depends on it (#1035).
 - **`windows-native-suite.yml`** — the whole pytest suite on a native Windows
     runner, in four parallel shards, on `main` pushes and nightly. It used to
     run on every pull request, where it cost ~11 runner-minutes — the largest
