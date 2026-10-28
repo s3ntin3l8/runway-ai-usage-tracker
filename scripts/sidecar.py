@@ -421,7 +421,7 @@ __REGISTRY__: dict[str, Any] = {
                 },
                 {
                     "type": "windows_credential",
-                    "target": "github.com",
+                    "target": "git:https://github.com",
                     "mapping": {
                         "value": "api_key",
                     },

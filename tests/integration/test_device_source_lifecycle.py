@@ -329,7 +329,7 @@ def test_nonmac_cookie_lifecycle_keeps_mapping_and_rejects_replay_after_revoke(s
 @pytest.mark.parametrize(
     "provider,origin",
     [
-        ("github", "keychain:github.com"),
+        ("github", "keychain:git:https://github.com"),
         ("antigravity", "keychain:gemini:antigravity"),
     ],
 )
@@ -402,7 +402,10 @@ def test_known_windows_credentials_keep_existing_collection_without_mac_consent(
 
 @pytest.mark.parametrize(
     "provider,origin",
-    [("github", "keychain:github.com"), ("antigravity", "keychain:gemini:antigravity")],
+    [
+        ("github", "keychain:git:https://github.com"),
+        ("antigravity", "keychain:gemini:antigravity"),
+    ],
 )
 @pytest.mark.asyncio
 async def test_windows_idle_heartbeat_keeps_source_freshness_separate_from_collection(

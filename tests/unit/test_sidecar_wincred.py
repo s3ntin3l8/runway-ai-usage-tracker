@@ -40,6 +40,7 @@ _AGY_BLOB = {
 }
 
 _TARGET = "gemini:antigravity"
+GITHUB_CREDENTIAL_TARGET = "git:https://github.com"
 
 
 def _blob(expires_at: datetime) -> dict:
@@ -332,6 +333,18 @@ class TestWindowsCredentialJsonRule:
             return {k: v for k, v in meta.items() if k not in ("credential_origin", "provider_id")}
 
         assert shape(win) == shape(posix)
+
+
+class TestWindowsGitHubCredentialRule:
+    """GitHub's Credential Manager entry is a Git Credential Manager target."""
+
+    def test_the_rule_targets_the_git_credential_manager_entry(self):
+        rule = next(
+            rule
+            for rule in sidecar.__REGISTRY__["providers"]["github"]["rules"]
+            if rule["type"] == "windows_credential"
+        )
+        assert rule["target"] == GITHUB_CREDENTIAL_TARGET
 
 
 class TestKeepAliveWindowsSource:

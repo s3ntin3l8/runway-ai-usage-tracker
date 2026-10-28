@@ -862,7 +862,7 @@ restore withdrawn credentials. An explicit proof, when present, is always
 validated. The paired platform is a device assertion, not OS attestation;
 local Keychain permission is enforced by the sidecar, and server lifecycle
 eligibility is enforced independently of platform. Known Windows Credential Manager
-origins (`github` / `keychain:github.com` and `antigravity` /
+origins (`github` / `keychain:git:https://github.com` and `antigravity` /
 `keychain:gemini:antigravity`) retain existing collection on Windows without
 macOS consent. They have stable Fleet lifecycle IDs (`github.windows-credential`
 and `antigravity.windows-credential`), state rows, server-owned generations and
