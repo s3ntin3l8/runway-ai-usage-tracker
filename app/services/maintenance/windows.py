@@ -17,6 +17,7 @@ from datetime import datetime
 from sqlmodel import Session, delete, select
 
 from app.models.db import UsageWindow
+from app.services.maintenance._chunked_sql import _INITIAL_BACKOFF, _MAX_RETRIES, _retry_on_lock
 from app.services.window_closer import close_window
 
 # Bounds the SQLAlchemy identity map during a large replay — commit and
@@ -51,27 +52,38 @@ def _index_by_identity(rows: list[UsageWindow]) -> dict[_WindowKey, _WindowMeta]
     return index
 
 
-def _replay(session: Session, index: dict[_WindowKey, _WindowMeta]) -> None:
-    for i, ((pid, aid, wtype, start, end, series_model_id, series_variant), (lv, pu)) in enumerate(
-        index.items(), 1
-    ):
-        close_window(
-            session,
-            provider_id=pid,
-            account_id=aid,
-            window_type=wtype,
-            window_start=start,
-            window_end=end,
-            series_model_id=series_model_id,
-            series_variant=series_variant,
-            limit_value=lv,
-            pct_used=pu,
-        )
-        if i % _WINDOW_BATCH == 0:
+def _replay(
+    session: Session,
+    index: dict[_WindowKey, _WindowMeta],
+    *,
+    max_retries: int = _MAX_RETRIES,
+    initial_backoff: float = _INITIAL_BACKOFF,
+) -> None:
+    for (pid, aid, wtype, start, end, series_model_id, series_variant), (lv, pu) in index.items():
+
+        def _close_single() -> None:
+            close_window(
+                session,
+                provider_id=pid,
+                account_id=aid,
+                window_type=wtype,
+                window_start=start,
+                window_end=end,
+                series_model_id=series_model_id,
+                series_variant=series_variant,
+                limit_value=lv,
+                pct_used=pu,
+            )
             session.commit()
             session.expunge_all()
-    session.commit()
-    session.expunge_all()
+
+        _retry_on_lock(
+            _close_single,
+            session=session,
+            action_desc=f"rebuild window {pid}/{aid} {wtype} {start}",
+            max_retries=max_retries,
+            initial_backoff=initial_backoff,
+        )
 
 
 def count_windows_for_providers(session: Session, providers: list[str] | None) -> int:
@@ -84,7 +96,13 @@ def count_windows_for_providers(session: Session, providers: list[str] | None) -
     return len(_index_by_identity(list(session.exec(stmt).all())))
 
 
-def rebuild_windows_for_providers(session: Session, providers: list[str] | None) -> int:
+def rebuild_windows_for_providers(
+    session: Session,
+    providers: list[str] | None,
+    *,
+    max_retries: int = _MAX_RETRIES,
+    initial_backoff: float = _INITIAL_BACKOFF,
+) -> int:
     """Rebuild every closed window for the given providers (`None` = all).
 
     Deletes and replays every `UsageWindow` row in scope. Caller commits
@@ -100,10 +118,19 @@ def rebuild_windows_for_providers(session: Session, providers: list[str] | None)
     session.commit()
     session.expunge_all()  # drop identity-mapped rows the SELECT above loaded
 
-    session.exec(del_stmt)  # type: ignore[call-overload]
-    session.commit()
+    def _delete() -> None:
+        session.exec(del_stmt)  # type: ignore[call-overload]
+        session.commit()
 
-    _replay(session, index)
+    _retry_on_lock(
+        _delete,
+        session=session,
+        action_desc="delete provider windows for rebuild",
+        max_retries=max_retries,
+        initial_backoff=initial_backoff,
+    )
+
+    _replay(session, index, max_retries=max_retries, initial_backoff=initial_backoff)
     return len(index)
 
 
@@ -114,6 +141,8 @@ def rebuild_windows_overlapping(
     account_ids: list[str],
     ts_min: datetime,
     ts_max: datetime,
+    max_retries: int = _MAX_RETRIES,
+    initial_backoff: float = _INITIAL_BACKOFF,
 ) -> int:
     """Rebuild only the closed windows overlapping `[ts_min, ts_max]` for one
     provider across the given accounts (e.g. a source and a target account
@@ -121,22 +150,29 @@ def rebuild_windows_overlapping(
     only a bounded slice of history moved. Returns the number of window
     identities rebuilt.
     """
-    rows = list(
-        session.exec(
-            select(UsageWindow).where(
-                UsageWindow.provider_id == provider_id,
-                UsageWindow.account_id.in_(account_ids),  # type: ignore[attr-defined]
-                UsageWindow.window_start <= ts_max,
-                UsageWindow.window_end > ts_min,
-            )
-        ).all()
+    where = (
+        UsageWindow.provider_id == provider_id,
+        UsageWindow.account_id.in_(account_ids),  # type: ignore[attr-defined]
+        UsageWindow.window_start <= ts_max,
+        UsageWindow.window_end > ts_min,
     )
+    del_stmt = delete(UsageWindow).where(*where)  # type: ignore[arg-type]
+    rows = list(session.exec(select(UsageWindow).where(*where)).all())
     index = _index_by_identity(rows)
     session.commit()
+    session.expunge_all()
 
-    for row in rows:
-        session.delete(row)
-    session.commit()
+    def _delete() -> None:
+        session.exec(del_stmt)  # type: ignore[call-overload]
+        session.commit()
 
-    _replay(session, index)
+    _retry_on_lock(
+        _delete,
+        session=session,
+        action_desc="delete overlapping windows for rebuild",
+        max_retries=max_retries,
+        initial_backoff=initial_backoff,
+    )
+
+    _replay(session, index, max_retries=max_retries, initial_backoff=initial_backoff)
     return len(index)

@@ -70,10 +70,13 @@ def _is_sqlite_locked_or_busy(exc: OperationalError) -> bool:
     orig = getattr(exc, "orig", None)
     if orig is not None:
         errorname = getattr(orig, "sqlite_errorname", None)
-        if errorname in ("SQLITE_BUSY", "SQLITE_LOCKED"):
+        if errorname and (
+            errorname in ("SQLITE_BUSY", "SQLITE_LOCKED")
+            or errorname.startswith(("SQLITE_BUSY_", "SQLITE_LOCKED_"))
+        ):
             return True
         errorcode = getattr(orig, "sqlite_errorcode", None)
-        if errorcode in (5, 6):  # SQLITE_BUSY=5, SQLITE_LOCKED=6
+        if errorcode is not None and (errorcode & 0xFF) in (5, 6):  # SQLITE_BUSY=5, SQLITE_LOCKED=6
             return True
         msg = str(orig).lower()
         if "database is locked" in msg or "database is busy" in msg:
@@ -87,9 +90,14 @@ def _retry_on_lock[T](
     *,
     session: Session,
     action_desc: str,
-    max_retries: int,
-    initial_backoff: float,
+    max_retries: int = _MAX_RETRIES,
+    initial_backoff: float = _INITIAL_BACKOFF,
 ) -> T:
+    """Execute `fn`, rolling back and retrying with exponential backoff on SQLite lock contention."""
+    if max_retries <= 0:
+        raise ValueError(f"max_retries must be positive, got {max_retries}")
+    if initial_backoff < 0:
+        raise ValueError(f"initial_backoff must be non-negative, got {initial_backoff}")
     for attempt in range(max_retries):
         try:
             return fn()
@@ -171,6 +179,10 @@ def chunked_update(
     initial_backoff: float = _INITIAL_BACKOFF,
 ) -> int:
     """UPDATE `model` rows matching `where`, `batch_size` at a time."""
+    if max_retries <= 0:
+        raise ValueError(f"max_retries must be positive, got {max_retries}")
+    if initial_backoff < 0:
+        raise ValueError(f"initial_backoff must be non-negative, got {initial_backoff}")
     id_col = col(model.id)  # type: ignore[attr-defined]
     cursor = 0
     total = 0
@@ -210,6 +222,10 @@ def chunked_delete(
     initial_backoff: float = _INITIAL_BACKOFF,
 ) -> int:
     """DELETE `model` rows matching `where`, `batch_size` at a time."""
+    if max_retries <= 0:
+        raise ValueError(f"max_retries must be positive, got {max_retries}")
+    if initial_backoff < 0:
+        raise ValueError(f"initial_backoff must be non-negative, got {initial_backoff}")
     id_col = col(model.id)  # type: ignore[attr-defined]
     cursor = 0
     total = 0

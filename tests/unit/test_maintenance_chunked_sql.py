@@ -301,3 +301,58 @@ def test_is_sqlite_locked_or_busy_discriminates_error_origin():
     # Real lock error
     lock_exc = OperationalError("UPDATE ...", {}, Exception("database is locked"))
     assert _is_sqlite_locked_or_busy(lock_exc)
+
+
+def test_is_sqlite_locked_or_busy_handles_extended_codes_and_names():
+    """Extended error codes (SQLITE_BUSY_SNAPSHOT, etc.) must be identified as lock contention."""
+
+    class FakeOrigError(Exception):
+        def __init__(self, errorcode: int, errorname: str):
+            self.sqlite_errorcode = errorcode
+            self.sqlite_errorname = errorname
+
+    # 517 = SQLITE_BUSY_SNAPSHOT (517 & 0xFF == 5)
+    exc_snapshot = OperationalError("SELECT ...", {}, FakeOrigError(517, "SQLITE_BUSY_SNAPSHOT"))
+    assert _is_sqlite_locked_or_busy(exc_snapshot)
+
+    # 261 = SQLITE_BUSY_RECOVERY (261 & 0xFF == 5)
+    exc_recovery = OperationalError("SELECT ...", {}, FakeOrigError(261, "SQLITE_BUSY_RECOVERY"))
+    assert _is_sqlite_locked_or_busy(exc_recovery)
+
+    # 262 = SQLITE_LOCKED_SHAREDCACHE (262 & 0xFF == 6)
+    exc_shared = OperationalError("SELECT ...", {}, FakeOrigError(262, "SQLITE_LOCKED_SHAREDCACHE"))
+    assert _is_sqlite_locked_or_busy(exc_shared)
+
+    # Unrelated code: 1 = SQLITE_ERROR
+    exc_other = OperationalError("SELECT ...", {}, FakeOrigError(1, "SQLITE_ERROR"))
+    assert not _is_sqlite_locked_or_busy(exc_other)
+
+
+def test_chunked_operations_validate_retry_knobs():
+    """chunked_update and chunked_delete must reject max_retries <= 0 with ValueError."""
+    session = _session()
+    with pytest.raises(ValueError, match="max_retries must be positive"):
+        chunked_update(
+            session,
+            UsageEvent,
+            [col(UsageEvent.provider_id) == "minimax"],
+            {"account_id": "alice@example.com"},
+            max_retries=0,
+        )
+
+    with pytest.raises(ValueError, match="max_retries must be positive"):
+        chunked_delete(
+            session,
+            UsageEvent,
+            [col(UsageEvent.provider_id) == "minimax"],
+            max_retries=0,
+        )
+
+    with pytest.raises(ValueError, match="initial_backoff must be non-negative"):
+        chunked_update(
+            session,
+            UsageEvent,
+            [col(UsageEvent.provider_id) == "minimax"],
+            {"account_id": "alice@example.com"},
+            initial_backoff=-1.0,
+        )

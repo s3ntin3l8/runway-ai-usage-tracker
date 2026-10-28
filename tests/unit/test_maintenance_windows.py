@@ -12,7 +12,9 @@ all-grains row (`model_id="" and sidecar_id=""`) for the preserved
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from unittest.mock import patch
 
+from sqlalchemy.exc import OperationalError
 from sqlmodel import Session, SQLModel, create_engine, select
 from sqlmodel.pool import StaticPool
 
@@ -155,6 +157,8 @@ def test_rebuild_windows_overlapping_only_touches_the_overlapping_window():
     session = _session()
     _event(session, event_id="1", ts=datetime(2026, 8, 28, tzinfo=UTC))
     overlapping = _window(session)
+    overlapping_start = overlapping.window_start
+    overlapping_limit = overlapping.limit_value
     _window(
         session,
         window_start=datetime(2026, 9, 1, tzinfo=UTC),
@@ -172,9 +176,9 @@ def test_rebuild_windows_overlapping_only_touches_the_overlapping_window():
     assert count == 1
     non_overlapping = _all_grains_row(session, window_start=datetime(2026, 9, 1, tzinfo=UTC))
     assert non_overlapping is not None  # untouched
-    rebuilt = _all_grains_row(session, window_start=overlapping.window_start)
+    rebuilt = _all_grains_row(session, window_start=overlapping_start)
     assert rebuilt is not None
-    assert rebuilt.limit_value == overlapping.limit_value
+    assert rebuilt.limit_value == overlapping_limit
 
 
 def test_rebuild_windows_overlapping_preserves_metadata_per_account():
@@ -245,3 +249,73 @@ def test_rebuild_windows_batches_without_losing_windows(monkeypatch):
         )
     )
     assert len(rows) == 5
+
+
+def test_rebuild_windows_overlapping_retries_on_lock_contention_during_delete():
+    """Simulates transient SQLite lock contention during the bulk DELETE phase of rebuild_windows_overlapping."""
+    session = _session()
+    _event(session, event_id="1", ts=datetime(2026, 8, 28, tzinfo=UTC))
+    _window(session)
+
+    original_exec = session.exec
+    attempts = 0
+
+    def mock_exec(*args, **kwargs):
+        nonlocal attempts
+        stmt = args[0] if args else kwargs.get("statement")
+        # Fail the delete statement on first attempt
+        if hasattr(stmt, "is_delete") and stmt.is_delete:
+            attempts += 1
+            if attempts == 1:
+                raise OperationalError("DELETE ...", {}, Exception("database is locked"))
+        return original_exec(*args, **kwargs)
+
+    with patch.object(session, "exec", side_effect=mock_exec):
+        count = rebuild_windows_overlapping(
+            session,
+            provider_id="minimax",
+            account_ids=["alice@example.com"],
+            ts_min=datetime(2026, 8, 28, tzinfo=UTC),
+            ts_max=datetime(2026, 8, 28, tzinfo=UTC),
+            initial_backoff=0.001,
+        )
+
+    assert count == 1
+    assert attempts == 2
+    row = _all_grains_row(session, provider_id="minimax", account_id="alice@example.com")
+    assert row is not None
+    assert row.msgs == 1
+
+
+def test_rebuild_windows_retries_on_lock_contention_during_replay():
+    """Simulates transient SQLite lock contention during close_window replay."""
+    session = _session()
+    _event(session, event_id="1", ts=datetime(2026, 8, 28, tzinfo=UTC))
+    _window(session)
+
+    original_execute = session.execute
+    attempts = 0
+
+    def mock_execute(*args, **kwargs):
+        nonlocal attempts
+        # close_window runs a SELECT on UsageEvent before inserting UsageWindow
+        attempts += 1
+        if attempts == 1:
+            raise OperationalError("SELECT ...", {}, Exception("database is locked"))
+        return original_execute(*args, **kwargs)
+
+    with patch.object(session, "execute", side_effect=mock_execute):
+        count = rebuild_windows_overlapping(
+            session,
+            provider_id="minimax",
+            account_ids=["alice@example.com"],
+            ts_min=datetime(2026, 8, 28, tzinfo=UTC),
+            ts_max=datetime(2026, 8, 28, tzinfo=UTC),
+            initial_backoff=0.001,
+        )
+
+    assert count == 1
+    assert attempts >= 2
+    row = _all_grains_row(session, provider_id="minimax", account_id="alice@example.com")
+    assert row is not None
+    assert row.msgs == 1
