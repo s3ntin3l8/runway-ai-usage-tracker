@@ -149,10 +149,10 @@ def test_deployment_intro_counts_the_bullets_under_it():
         for line in lines[index + 1 :]:
             if line.startswith("- "):
                 bullets += 1
-            elif bullets and line.strip():
-                break  # the first non-bullet line after the list ends it
-            elif bullets and not line.strip():
-                continue  # blank lines between bullets do not
+            elif not line.strip() or line.startswith((" ", "\t")):
+                continue  # blank lines, wrapped continuations and sub-bullets stay in the list
+            elif bullets:
+                break  # the first unindented line that is not a bullet ends the list
         assert word in _NUMBER_WORDS, f"unknown number word {word!r}"
         assert _NUMBER_WORDS.index(word) == bullets, (
             f"deployment.md says '{word} things to know' but lists {bullets} bullets"
