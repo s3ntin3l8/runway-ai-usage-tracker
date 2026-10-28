@@ -650,7 +650,7 @@ def test_known_windows_origin_retains_lifecycle(session):
     from scripts.sidecar_pkg.source_catalog import control_catalog
 
     descriptor = control_catalog()["github.windows-credential"]
-    origin = "keychain:github.com"
+    origin = "keychain:git:https://github.com"
     device, _ = sidecar_devices.enroll(session, "synthetic", platform="Windows")
     session.commit()
     proof = source_controls.contribution_proof(session, device.device_id, "github", origin, None)
