@@ -170,7 +170,17 @@ jobs:
       - name: Audit frontend including build dependencies
         run: |
           npm --prefix webapp ci
-          npm --prefix webapp audit
+          # What ships to the browser: any severity.
+          npm --prefix webapp audit --omit=dev
+          # The whole tree, build tooling included: moderate and up. The one low finding
+          # there is deepmerge (GHSA-gcqx-w48m-w2h4), reached only through the dev-only
+          # vite-plugin-pwa -> workbox-build chain. It has no patched release (4.3.1 is
+          # the latest and is in range) and `npm audit fix` would downgrade the PWA plugin
+          # to 0.2.1, so a bare `npm audit` here would stay red until upstream moves.
+          # Drop `--audit-level` once it does:
+          # https://github.com/advisories/GHSA-gcqx-w48m-w2h4
+          # Low findings in the dev tree are not reported here; see #1035.
+          npm --prefix webapp audit --audit-level=moderate
 
   installer-check:
     # Compile the Windows NSIS installer on every PR (placeholder exe — the real

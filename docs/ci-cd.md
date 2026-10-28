@@ -91,7 +91,11 @@ Workflows live in `.github/workflows/`.
     approval — which the release pull request deliberately requires — is the
     gate. No release is cut from a broken `main`. The `:edge` image is gated the same way:
     `build-docker` needs `test-python`, `test-frontend` and
-    `dependency-audit` to pass on `main`.
+    `dependency-audit` to pass on `main`. It audits the shipped (non-dev) frontend
+    dependencies at any severity and the whole tree, build tooling included, at
+    moderate and up: a low-severity finding with no patched release that is
+    reachable only through a dev-only package would otherwise keep the job, and
+    with it the edge image, red (#1033).
 
     Moving the repositories to an organization would enable the queue, but
     that is not only a settings change: the workflows that produce the
