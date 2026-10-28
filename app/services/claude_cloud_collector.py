@@ -86,7 +86,6 @@ class CycleReport:
     events: int = 0
     regressions: int = 0
     notes: list[str] = field(default_factory=list)
-    attempts: list[str] = field(default_factory=list)
 
 
 def session_digest(session_id: str) -> str:
@@ -425,8 +424,8 @@ async def collect_all(client: httpx.AsyncClient) -> dict[str, CycleReport]:
         # Two logins of one account see the same sessions: the first usable one is enough.
         for source_id, kind in sorted(sources):
             report = await collect_account(account, source_id, client)
-            attempts.append(f"{kind}:{report.outcome}")
-            report.attempts = list(attempts)
+            # A short one-way digest tells two logins of one kind apart without naming either.
+            attempts.append(f"{kind}#{session_digest(source_id)[:6]}:{report.outcome}")
             if report.outcome in ("ok", "truncated"):
                 reports[account] = report
                 break

@@ -437,10 +437,10 @@ async def test_every_login_outcome_is_logged_by_kind_without_ids(environment, ca
     upstream, _ = listing([[row(usage=block())]])
     async with httpx.AsyncClient(transport=httpx.MockTransport(upstream)) as client:
         reports = await collector.collect_all(client)
-    assert reports[ACCOUNT].attempts[0].startswith("keychain:")
-    assert reports[ACCOUNT].attempts[-1].endswith(":ok")
+    assert reports[ACCOUNT].outcome == "ok"
     assert "aaa-desktop" not in caplog.text and "desktop-access" not in caplog.text
-    assert "logins=keychain:" in caplog.text
+    assert "logins=keychain#" in caplog.text and ":ok" in caplog.text
+    assert collector.session_digest("aaa-desktop")[:6] in caplog.text
 
 
 @pytest.mark.asyncio
@@ -466,5 +466,31 @@ async def test_an_account_whose_logins_are_all_rejected_still_logs_them(
     async with httpx.AsyncClient() as client:
         reports = await collector.collect_all(client)
     assert reports[ACCOUNT].outcome == "unsupported_source"
-    assert "logins=keychain:unsupported_source," in caplog.text
-    assert ":source_ineligible" in caplog.text
+    assert ":unsupported_source," in caplog.text and ":source_ineligible" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_login_kinds_use_the_origin_vocabulary(environment, caplog, monkeypatch):
+    for source_id, origin in (
+        ("bbb-path", "path:/fixture/.claude/.credentials.json"),
+        ("ccc-bare", None),
+    ):
+        await probe.token_cache.store(
+            "anthropic",
+            {"oauth_token": "x-access", "refresh_token": "unused"},
+            account_id=ACCOUNT,
+            source_id=source_id,
+            source_metadata={"credential_origin": origin} if origin else {},
+        )
+
+    async def rejected(account, source_id, client):
+        report = collector.CycleReport()
+        report.outcome = "source_ineligible"
+        return report
+
+    monkeypatch.setattr(collector, "collect_account", rejected)
+    caplog.set_level(logging.INFO)
+    async with httpx.AsyncClient() as client:
+        await collector.collect_all(client)
+    assert "file#" in caplog.text and "sidecar#" in caplog.text
+    assert "path#" not in caplog.text
