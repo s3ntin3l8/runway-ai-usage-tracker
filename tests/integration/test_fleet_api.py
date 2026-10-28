@@ -205,3 +205,40 @@ def test_update_now_unregistered_sidecar_404s(client):
     # rather than silently queuing for an id that may never check in.
     response = client.post("/api/v1/fleet/sidecars/never-seen/update")
     assert response.status_code == 404
+
+
+def test_source_sync_state_on_list_and_detail(client, session):
+    from datetime import timedelta
+
+    from app.models.db import SidecarDevice
+
+    now = datetime.now(UTC)
+    device_id = "a" * 32
+    device_entry = f"device-{device_id}"
+    session.add(
+        SidecarDevice(
+            device_id=device_id,
+            secret_encrypted="x",
+            created_at=now - timedelta(days=1),
+            last_source_sync_at=now - timedelta(minutes=2),
+        )
+    )
+    for sidecar_id in (device_entry, "legacy-host"):
+        session.add(
+            SidecarRegistry(
+                sidecar_id=sidecar_id, hostname=sidecar_id, last_seen=now, first_seen=now
+            )
+        )
+    session.commit()
+
+    by_id = {
+        row["sidecar_id"]: row for row in client.get("/api/v1/fleet/sidecars").json()["sidecars"]
+    }
+    assert by_id[device_entry]["source_sync_state"] == "ok"
+    assert by_id[device_entry]["source_sync_last_at"] is not None
+    # A legacy sidecar has no source sync to miss.
+    assert by_id["legacy-host"]["source_sync_state"] is None
+
+    detail = client.get(f"/api/v1/fleet/sidecars/{device_entry}").json()
+    assert detail["source_sync_state"] == "ok"
+    assert client.get("/api/v1/fleet/sidecars/legacy-host").json()["source_sync_state"] is None

@@ -3,9 +3,10 @@ import type { Sidecar } from '@/api/types';
 import { SourceSyncNotice } from './SourceSyncNotice';
 
 const DEVICE = `device-${'a'.repeat(32)}`;
-const sidecar = (state: Sidecar['source_sync_state']): Sidecar => ({
+const sidecar = (state: Sidecar['source_sync_state'], last?: string): Sidecar => ({
   sidecar_id: DEVICE,
   source_sync_state: state,
+  source_sync_last_at: last ?? null,
 });
 
 describe('SourceSyncNotice', () => {
@@ -26,6 +27,13 @@ describe('SourceSyncNotice', () => {
       expect(container).toBeEmptyDOMElement();
     },
   );
+
+  it('says how long ago a device last synced when it stopped syncing', () => {
+    const threeDaysAgo = new Date(Date.now() - 3 * 24 * 3600 * 1000).toISOString();
+    render(<SourceSyncNotice sidecar={sidecar('stale', threeDaysAgo)} online />);
+    expect(screen.getByText(/last synced its sources 3d ago/i)).toBeInTheDocument();
+    expect(screen.getByText(/POST \/api\/v1\/fleet\/source-sync/)).toBeInTheDocument();
+  });
 
   it('stays hidden for a device that is offline', () => {
     const { container } = render(<SourceSyncNotice sidecar={sidecar('never')} online={false} />);

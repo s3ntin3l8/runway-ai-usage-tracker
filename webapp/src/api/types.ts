@@ -632,8 +632,8 @@ export interface Sidecar {
   /** On an old shared-key entry: the paired device(s) that replaced it. */
   replaced_by?: SidecarDescriptor[];
   /** Paired devices only (null/absent on a legacy sidecar). `never` = past the grace period
-   *  without a completed `POST /fleet/source-sync`. */
-  source_sync_state?: 'ok' | 'never' | 'pending' | null;
+   *  without a completed `POST /fleet/source-sync`; `stale` = it synced once, not for an hour. */
+  source_sync_state?: 'ok' | 'never' | 'pending' | 'stale' | null;
   source_sync_last_at?: string | null;
   login_dirs_desired?: LoginDirectorySettings;
   login_dirs_report?: LoginDirectoryReport | null;

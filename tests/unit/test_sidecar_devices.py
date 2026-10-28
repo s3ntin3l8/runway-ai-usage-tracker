@@ -157,3 +157,30 @@ def test_source_sync_state_skips_legacy_and_revoked(session):
     session.commit()
     registry = sidecar_devices.registry_id(device.device_id)
     assert sidecar_devices.source_sync_states(session, ["desktop", registry]) == {}
+
+
+def test_source_sync_state_goes_stale_when_syncing_stops(session):
+    from datetime import UTC, datetime, timedelta
+
+    device, _ = sidecar_devices.enroll(session, "mac")
+    registry = sidecar_devices.registry_id(device.device_id)
+    now = datetime.now(UTC)
+    device.last_source_sync_at = now - timedelta(minutes=59)
+    session.add(device)
+    session.commit()
+
+    def state():
+        return sidecar_devices.source_sync_states(session, [registry], now=now)[registry][0]
+
+    assert state() == "ok"
+    device.last_source_sync_at = now - sidecar_devices.SOURCE_SYNC_STALE - timedelta(seconds=1)
+    session.add(device)
+    session.commit()
+    # A device that synced days ago must not read as healthy: the route broke afterwards.
+    assert state() == "stale"
+
+
+def test_deferred_columns_includes_last_source_sync_at():
+    from app.core.db import _DEFERRED_COLUMNS
+
+    assert ("sidecar_devices", "last_source_sync_at", "DATETIME") in _DEFERRED_COLUMNS

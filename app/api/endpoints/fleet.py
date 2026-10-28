@@ -2933,6 +2933,13 @@ def _fleet_update_defaults(session: Session) -> tuple[str, bool]:
     )
 
 
+def _source_sync_fields(entry: tuple[Any, Any] | None) -> dict[str, Any]:
+    """The source-sync pair for a sidecar entry; both null for a legacy (unenrolled) sidecar,
+    which has no source sync to miss."""
+    state, last_at = entry or (None, None)
+    return {"source_sync_state": state, "source_sync_last_at": last_at}
+
+
 @router.get("/sidecars", dependencies=[Depends(require_admin_key)])
 @limiter.limit("30/minute")
 async def list_sidecars(
@@ -2954,9 +2961,7 @@ async def list_sidecars(
                 **fleet_registry.to_dict(row, channel, auto_update),
                 "adoptable_legacy": adoptable.get(row.sidecar_id, []),
                 "replaced_by": replaced.get(row.sidecar_id, []),
-                # null for a legacy (unenrolled) sidecar: it has no source sync to miss.
-                "source_sync_state": sync_states.get(row.sidecar_id, (None, None))[0],
-                "source_sync_last_at": sync_states.get(row.sidecar_id, (None, None))[1],
+                **_source_sync_fields(sync_states.get(row.sidecar_id)),
             }
             for row in rows
         ]
@@ -2975,7 +2980,11 @@ async def get_sidecar(
     if not row:
         raise HTTPException(status_code=404, detail=f"Sidecar '{sidecar_id}' not found")
     channel, auto_update = _fleet_update_defaults(session)
-    return fleet_registry.to_dict(row, channel, auto_update)
+    sync_states = sidecar_devices.source_sync_states(session, [sidecar_id])
+    return {
+        **fleet_registry.to_dict(row, channel, auto_update),
+        **_source_sync_fields(sync_states.get(sidecar_id)),
+    }
 
 
 class SidecarAdoptRequest(BaseModel):

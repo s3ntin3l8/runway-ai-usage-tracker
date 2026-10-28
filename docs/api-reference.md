@@ -157,7 +157,7 @@ groups it left out.
 | Method | Route | Auth | Description |
 |--------|-------|------|-------------|
 | `POST` | `/api/v1/fleet/ingest` | HMAC | Push metrics + events from a sidecar (HMAC-SHA256 signed, 600/min/IP) |
-| `GET` | `/api/v1/fleet/sidecars` | Admin | List all registered sidecars An enrolled `device-<hex>` entry also carries `source_sync_state`: `ok`, `pending` (enrolled under 10 minutes ago) or `never` (older, and no accepted `POST /fleet/source-sync` yet), with the time of the last accepted sync in `source_sync_last_at`. Both are `null` for a legacy sidecar and a revoked device. Ingest does not count, only a real `source-sync` request, so a proxy redirecting that route shows up as `never` (see [forward-auth.md](forward-auth.md#verify-the-bypass)) |
+| `GET` | `/api/v1/fleet/sidecars` | Admin | List all registered sidecars; an enrolled device also carries `source_sync_state` / `source_sync_last_at` (see [Source sync state](#source-sync-state)) |
 | `GET` | `/api/v1/fleet/sidecars/{sidecar_id}` | Admin | Single sidecar details |
 | `PATCH` | `/api/v1/fleet/sidecars/{sidecar_id}` | Admin | Update custom name or tags |
 | `DELETE` | `/api/v1/fleet/sidecars/{sidecar_id}` | Admin | Remove sidecar from registry |
@@ -582,6 +582,19 @@ it publishes — is described under
 [Automatically discovered Claude accounts](#automatically-discovered-claude-accounts).
 
 ## Behaviour notes
+
+### Source sync state
+
+`GET /api/v1/fleet/sidecars` (and `GET /api/v1/fleet/sidecars/{id}`) report, on an enrolled `device-<hex>` entry, whether the device is completing `POST /api/v1/fleet/source-sync`:
+
+| `source_sync_state` | Meaning |
+| --- | --- |
+| `ok` | An accepted sync in the last hour. |
+| `pending` | Enrolled under 10 minutes ago and not synced yet. |
+| `never` | Older than that and no accepted sync, ever. |
+| `stale` | Synced before, but not for over an hour. The sidecar syncs every push cycle, so an online device in this state usually means the route started failing afterwards. |
+
+`source_sync_last_at` is the time of the last accepted sync (`null` for `pending` and `never`). Both fields are `null` for a legacy sidecar and a revoked device. Only an accepted `source-sync` request counts; ingest does not. A proxy redirecting that route therefore shows up as `never` or `stale` (see [forward-auth.md](forward-auth.md#verify-the-bypass)). The Fleet card shows a notice for an online device in either state.
 
 ### Signed fleet request retries
 

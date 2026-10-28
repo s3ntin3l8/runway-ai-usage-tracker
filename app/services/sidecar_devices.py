@@ -26,7 +26,11 @@ def reserved_registry_id(value: str) -> bool:
 # How long a freshly enrolled device may go without a source sync before that is worth a notice.
 SOURCE_SYNC_GRACE = timedelta(minutes=10)
 
-SourceSyncState = Literal["ok", "never", "pending"]
+# The sidecar syncs on every push cycle (minutes), so an hour of silence from a device that is
+# still ingesting means the route started failing after it once worked (a proxy change).
+SOURCE_SYNC_STALE = timedelta(hours=1)
+
+SourceSyncState = Literal["ok", "never", "pending", "stale"]
 
 
 def record_source_sync(session: Session, device_id: str) -> None:
@@ -44,7 +48,9 @@ def source_sync_states(
 
     ``never`` means the device is past its grace period and has not completed a ``source-sync``
     (a forward-auth proxy redirecting that route looks exactly like this); ``pending`` is the
-    same inside the grace period. Legacy (unenrolled) and revoked devices are left out."""
+    same inside the grace period; ``stale`` means it synced once but not for an hour, so the
+    route broke afterwards. Whether the device is still online is the caller's to judge: an
+    offline device is stale too. Legacy (unenrolled) and revoked devices are left out."""
     wanted = [
         registry_id.removeprefix("device-")
         for registry_id in registry_ids
@@ -61,7 +67,7 @@ def source_sync_states(
             continue
         state: SourceSyncState
         if device.last_source_sync_at is not None:
-            state = "ok"
+            state = "ok" if current - device.last_source_sync_at < SOURCE_SYNC_STALE else "stale"
         elif current - device.created_at < SOURCE_SYNC_GRACE:
             state = "pending"
         else:
