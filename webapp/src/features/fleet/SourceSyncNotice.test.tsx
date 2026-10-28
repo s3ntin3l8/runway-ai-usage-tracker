@@ -32,6 +32,8 @@ describe('SourceSyncNotice', () => {
     const threeDaysAgo = new Date(Date.now() - 3 * 24 * 3600 * 1000).toISOString();
     render(<SourceSyncNotice sidecar={sidecar('stale', threeDaysAgo)} online />);
     expect(screen.getByText(/last synced its sources 3d ago/i)).toBeInTheDocument();
+    // It did deliver credentials on its earlier syncs, so the "keeps credentials" line is never-only.
+    expect(screen.queryByText(/keeps its Keychain credentials/i)).not.toBeInTheDocument();
     expect(screen.getByText(/POST \/api\/v1\/fleet\/source-sync/)).toBeInTheDocument();
   });
 

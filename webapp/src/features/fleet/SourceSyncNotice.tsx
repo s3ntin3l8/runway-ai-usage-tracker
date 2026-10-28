@@ -27,9 +27,10 @@ export function SourceSyncNotice({ sidecar, online }: { sidecar: Sidecar; online
           : 'This device has not synced its sources'}
       </p>
       <p className="text-xs text-fg-muted">
-        Check that your proxy lets <code>POST /api/v1/fleet/source-sync</code> through. Until it
-        does, this device keeps its Keychain credentials to itself and cannot receive pause or
-        revoke commands.{' '}
+        Check that your proxy lets <code>POST /api/v1/fleet/source-sync</code> through.{' '}
+        {state === 'stale'
+          ? 'Until it does, this device cannot report changes to its sources or receive pause and revoke commands.'
+          : 'Until it does, this device keeps its Keychain credentials to itself and cannot receive pause or revoke commands.'}{' '}
         <a
           href={VERIFY_URL}
           target="_blank"

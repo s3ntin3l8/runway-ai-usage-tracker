@@ -28,6 +28,8 @@ SOURCE_SYNC_GRACE = timedelta(minutes=10)
 
 # The sidecar syncs on every push cycle (minutes), so an hour of silence from a device that is
 # still ingesting means the route started failing after it once worked (a proxy change).
+# This equals ``fleet_registry.STALE_THRESHOLD_MINUTES`` (what decides "online") on purpose: a
+# device that has not pushed for that long reads as offline and gets no notice. Move them together.
 SOURCE_SYNC_STALE = timedelta(hours=1)
 
 SourceSyncState = Literal["ok", "never", "pending", "stale"]

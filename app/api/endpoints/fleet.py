@@ -2933,7 +2933,9 @@ def _fleet_update_defaults(session: Session) -> tuple[str, bool]:
     )
 
 
-def _source_sync_fields(entry: tuple[Any, Any] | None) -> dict[str, Any]:
+def _source_sync_fields(
+    entry: tuple[sidecar_devices.SourceSyncState, datetime | None] | None,
+) -> dict[str, Any]:
     """The source-sync pair for a sidecar entry; both null for a legacy (unenrolled) sidecar,
     which has no source sync to miss."""
     state, last_at = entry or (None, None)
