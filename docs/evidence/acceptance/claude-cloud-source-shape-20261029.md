@@ -101,15 +101,48 @@ All 36 bridge rows with token counters were matched to a local transcript throug
   the side model's input, as in `c34a2b` (22 plus 1,204 Haiku). Local transcripts do not record
   side-model calls.
 
+### Why a cloud session's totals differ between sources (turn-level view)
+
+One cloud session (`eeee6b`, 21 turns) split at its `result` records, comparing the main-loop messages,
+`result.usage`, and the per-turn `modelUsage` delta (all models):
+- Per turn, the summed assistant messages equal `result.usage` exactly for cache reads in 19 of 21
+  turns. `result.usage` is the main loop only.
+- `modelUsage` is larger than both in 13 of 21 turns, by a recurring 240-280k cache reads and about
+  10-20 output tokens per turn from the second turn on. That is one extra call per turn that reads the
+  whole cached context and writes a few tokens, which matches the `prompt_suggestion` and
+  `post_turn_summary` records in the history. Those calls are not assistant messages.
+- Totals for the session: cache reads 30.36M (messages), 28.16M (`result.usage`), 33.71M (`modelUsage`);
+  output 4,883 (messages), 56,336 (`result.usage`), 71,181 (`modelUsage`). The output undercount of the
+  message stream costs more than the side-call cache reads (about 1.3 USD against 0.7 USD here).
+- The list block equals the final `modelUsage` for this session, so `modelUsage` is the complete
+  accounting; messages are a lower bound that omit side calls, subagent-only output and thinking output.
+
+Other checks (same capture):
+- **Output per message.** Across the 143 compared bridge messages the cloud stream's output is never
+  higher than the final local value and equals it for 95; the mismatches occur with and without
+  thinking, tool use and multiple records, with no usable rule. Per-message output from the stream is a
+  lower bound.
+- **Timestamps.** `created_at` minus `payload.timestamp`: median 0.27 s, p90 0.38 s, max 103 s, 0.2%
+  over 60 s, never negative. `created_at` is a good fallback when `payload.timestamp` is absent.
+- **Project.** In 19 of 21 cloud rows the `cwd` of the history is `/home/user/<repo>` with the repo name
+  from the list row; one session (3 repositories) has a bare `/home/user`, one has no `cwd` records.
+- **Local duplicates.** None of about 290 assistant message ids from the 21 cloud sessions occurs in the
+  local transcripts.
+- **Completeness.** Sequence numbers start at 1 and are contiguous with no duplicates or reordering in
+  every session read (up to 5,000 records); the largest session exceeds 100 pages.
+- **Change detection.** The list row's `updated_at` is unrelated to usage (on one row it is 67 days
+  after the last event); `last_event_at` tracks the last event.
+- **Effort.** Every cloud row has `effort_level: medium`; it does not explain the sessions whose block
+  differs from `modelUsage`.
+
 ### What this supports
 
 1. For input, cache read and cache write, per-message cloud events reproduce what local scraping
-   records, exactly. No reconstruction of "how it is billed" is needed: Runway prices tokens per model
-   with its own table, and `costUSD` is itself a list-price estimate.
-2. Output tokens must come from somewhere other than the assistant stream: `result.usage` /
-   `result.modelUsage` for cloud-runner sessions.
-3. The list block is only a coarse cross-check, because its construction differs between sessions.
-4. Side models (Haiku) appear in `modelUsage` only; they are a few percent of a session's cost.
+   records, exactly. Runway prices tokens per model with its own table, and `costUSD` is itself a
+   list-price estimate, so billing does not need to be reconstructed.
+2. Complete per-turn totals (side calls, subagent output, thinking output, Haiku) come from the
+   `modelUsage` delta per result, not from messages. Output is a lower bound in the message stream.
+3. The list block is a coarse cross-check only: its construction differs between sessions.
 
 ## Not established yet
 
