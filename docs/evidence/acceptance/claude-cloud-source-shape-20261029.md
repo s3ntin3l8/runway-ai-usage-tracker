@@ -59,39 +59,64 @@ subdirectory), which is the same shape `project_label` already derives a project
 `canonicalModel`. The values grow monotonically across the results of one session. `system`
 `task_progress` records carry `usage.total_tokens` and `tool_uses` (subagent tasks).
 
-## Accounting: what this capture can and cannot say
+## Accounting
 
-The capture kept only the **first five** `result` records of each session (median session: 5 of 13;
-largest: 5 of 111; the smallest session has 2 and both were kept). Any `modelUsage` figure below for
-the median session is therefore **result 5 of 13, not the final total**, and no conclusion about the
-`modelUsage` total or about which source matches billing can be drawn from it.
+Two further captures (numbers and model names only, 312 read-only GETs in total; data in
+[`claude-cloud-accounting-capture-20261029.json`](claude-cloud-accounting-capture-20261029.json))
+keep **every** `result` record and compare against the owner's local transcripts. The first version of
+this note compared the median session against result 5 of 13 and drew conclusions from that; those are
+withdrawn and replaced by the following.
 
-| Session | Source | Input | Output | Cache read | Cache write |
-|---|---|---:|---:|---:|---:|
-| median | list block (`cost_usd` 8.5278) | 4,850 | 62,876 | 25,790,004 | 285,294 |
-| median | assistant messages, last record per `message.id` (138 messages) | 294 | 2,883 | 23,526,585 | 277,736 |
-| median | `result.modelUsage` of result 5 of 13 (not the final one) | 1,249 | 59,794 | 18,244,329 | 267,604 |
-| smallest | list block (only `cost_usd` 3.3098; no token counters) | n/a | n/a | n/a | n/a |
-| smallest | assistant messages (61 messages) | 412 | 570 | 4,906,696 | 243,527 |
-| smallest | `result.modelUsage` of the last (2nd) result | 918 | 34,688 | 5,006,052 | 273,114 |
-| largest | list block (`cost_usd` 752.70) | 184,208 | 5,487,271 | 2,173,590,630 | 37,427,708 |
+### Cloud-runner sessions (full histories of 5 sessions)
 
-The largest session's history was cut at 15,000 records (300 pages), so it is not comparable.
+| Session | List block | Final `modelUsage` (sum over models) | Other readings |
+|---|---|---|---|
+| `c34272` | in 9,677, out 23,168, cr 9,599,834, cw 111,547, 3.3144 USD | identical on every field; `costUSD` sum 3.3144 | |
+| `eeee6b` | in 6,964, out 71,181, cr 33,712,500, cw 695,707, 11.0964 USD | identical on every field; `costUSD` sum 11.0964 (Haiku 4.5 included: 353,899 cache writes, 0.447 USD) | assistant messages: cr 30.36M, cw 0.34M |
+| `c34a2b` | in 1,226, out 5,034, cr 1,009,882, cw 59,901, 0.7829 USD | in 2,238, out 5,059, cr 1,201,570, cw 61,328, 0.8360 USD | block equals the sum of each result's per-turn `usage` plus the Haiku model's `modelUsage` (22+1,204; 5,017+17; cr and cw exactly) |
+| `ce832f` | in 21,371, out 583,604, cr 269,603,543, cw 4,742,629, 93.257 USD | in 10,628, out 275,817, cr 135,210,766, 47.538 USD (monotonic over 34 results) | block is about 2x the final `modelUsage`, not a clean multiple; unexplained |
+| `145eca` | `cost_usd` 11.4059 only | 12 results; `modelUsage` restarts between results (11.41, 1.74, 0.81, ...) | block equals result 1 alone; the 11 later results (7.74 USD) are not in it |
 
-What the data does support:
-1. **Assistant `output_tokens` are streaming placeholders** (2,883 against about 60,000 in
-   `modelUsage`), so per-message output cannot be summed. Input and cache counts per message are real.
-2. `modelUsage` values are monotonically increasing across the results of one session, per model.
-3. One `cost_usd` is not enough to reconstruct billing: with Runway's rates the median session's block
-   tokens price to 7.86 USD (all cache writes at the 5-minute rate) or 8.72 USD (all at the 1-hour
-   rate) against 8.53 USD reported, and the rates, the write-TTL share and the model split are all
-   unknown. This needs a capture that keeps every result record and its `costUSD`.
+So the list block is **not one consistent quantity** across cloud sessions: it equals the final
+`modelUsage` in two, a different construction in one, about twice it in one, and the first run only in
+one. `modelUsage` is cumulative per process: it restarts when a process restarts (`145eca`).
+`costUSD` is a **list-price estimate** (`costBasis: list`, `provider: firstParty`), not what was billed.
+`modelUsage` carries a second model (Haiku 4.5) whose tokens are not in the assistant-message stream.
+
+### Bridge (local CLI) sessions against the local transcripts
+
+All 36 bridge rows with token counters were matched to a local transcript through shared assistant
+`message.id`; 8 of them were compared in full (143 shared messages).
+- **Per message, cloud history and local transcript agree exactly on input, cache read and cache
+  write for all 143 shared messages.** Output agrees on 95 of 143: the cloud stream carries streaming
+  placeholders (for example 2,253 against 4,200 in one session), the local transcript carries the final
+  count.
+- The list block's cache read and write equal the local per-message sums exactly in 5 of 8 sessions;
+  in two it is 3.7% and 8% higher; in one the local transcript holds 560 messages (129M cache reads) while the cloud history has only
+  10 and the block is of that order (1.18M cache reads against 0.78M in the 10 messages; cache writes
+  equal).
+- The block's output matches the local output (703 and 703; 10,324 and 10,324; 6,440 and 6,384; 10,985
+  and 10,973; 13,687 and 13,624; 2,470 and 2,344; 5,113 and 4,200), not the placeholders.
+- The block's input is larger than the local input (3,755 against 24, and similar): the difference is
+  the side model's input, as in `c34a2b` (22 plus 1,204 Haiku). Local transcripts do not record
+  side-model calls.
+
+### What this supports
+
+1. For input, cache read and cache write, per-message cloud events reproduce what local scraping
+   records, exactly. No reconstruction of "how it is billed" is needed: Runway prices tokens per model
+   with its own table, and `costUSD` is itself a list-price estimate.
+2. Output tokens must come from somewhere other than the assistant stream: `result.usage` /
+   `result.modelUsage` for cloud-runner sessions.
+3. The list block is only a coarse cross-check, because its construction differs between sessions.
+4. Side models (Haiku) appear in `modelUsage` only; they are a few percent of a session's cost.
 
 ## Not established yet
 
-- Every `result` record's `modelUsage` (token fields and `costUSD`), so the final per-model totals and
-  the effective rates cannot yet be compared with the block and its `cost_usd`.
-- The largest session's full history (about 5,800+ assistant records seen in the first 15,000).
-- Whether the sources differ at all once the final `modelUsage` is used, and if they do, whether the
-  difference is subagent usage (`task_progress` / `task_notification` `usage.total_tokens`).
+- Why `ce832f`'s block is about twice its final `modelUsage`, and why `145eca`'s block stops at the
+  first run. Both suggest the block is accumulated by the runner in a way that depends on restarts.
+- Whether `modelUsage` deltas per result, with restart detection, reproduce the per-message cache
+  counts for every cloud session (they do for `c34272` and `c34a2b`; `eeee6b` and `ce832f` have
+  subagent and side-model usage outside the assistant stream).
+- The largest session's full history.
 - Whether `updated_at` moves with usage: moot for these 21 (all archived), open for a live session.
