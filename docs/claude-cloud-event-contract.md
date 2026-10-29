@@ -217,8 +217,12 @@ cross-check result. No content, no ids. The coarse-collector tables are replaced
 
 A `app/services/maintenance/` plan/apply pair, offered as a Data Health fix, removes the events of the
 first (coarse) collector (`entrypoint = "cloud"`, `event_id LIKE 'cloud:%'`, not `LIKE 'cloud:%:m:%'` and
-not `LIKE 'cloud:%:r:%'`) and the rows of its two state tables (the tables themselves stay, unused), then
-rebuilds the affected rollups and windows. Plan shows counts and sums; apply is idempotent.
+not `LIKE 'cloud:%:r:%'`), then rebuilds the Anthropic rollups (on every apply, so an interrupted run is
+finished by applying again) and the closed windows that overlapped the removed events (only in the run
+that removed them; the script prints the range and can replay it). The first collector's two state
+tables are left alone: they are unused once the replacement is in place, and clearing them under a
+still-scheduled first collector would reset its baseline and bill every session again. Plan shows
+counts, sums and the windows it would rebuild; apply is idempotent.
 
 **Guard:** while events of the old form exist, the new collector writes nothing and reports the outcome
 `migration_required`, so the order of deploy, migration and enabling cannot double count. The new

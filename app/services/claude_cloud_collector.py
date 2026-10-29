@@ -52,6 +52,7 @@ from app.services.claude_cloud_events import (
 )
 from app.services.credential_sources import describe_origin_full
 from app.services.event_ingestor import EventIngestor
+from app.services.maintenance.cloud_coarse_events import coarse_event_where
 from app.services.probe_mode import probing
 
 logger = logging.getLogger(__name__)
@@ -201,20 +202,10 @@ def _sequence(record: dict[str, Any]) -> int:
 
 
 def _migration_pending() -> bool:
-    """Whether events of the first (coarse) collector still exist (they carry ids ``cloud:<d>:<n>``)."""
+    """Whether events of the first (coarse) collector still exist (ids ``cloud:<digest>:<n>``)."""
     with Session(engine) as session:
         return (
-            session.exec(
-                select(UsageEvent.id)
-                .where(
-                    col(UsageEvent.provider_id) == PROVIDER_ID,
-                    col(UsageEvent.entrypoint) == "cloud",
-                    col(UsageEvent.event_id).like("cloud:%"),
-                    col(UsageEvent.event_id).not_like("cloud:%:m:%"),
-                    col(UsageEvent.event_id).not_like("cloud:%:r:%"),
-                )
-                .limit(1)
-            ).first()
+            session.exec(select(UsageEvent.id).where(*coarse_event_where()).limit(1)).first()
             is not None
         )
 
