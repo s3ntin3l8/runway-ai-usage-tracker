@@ -59,6 +59,16 @@ def _count(value: object) -> int:
     return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else 0
 
 
+def _strict_count(data: dict[str, Any], key: str) -> int:
+    """A saved counter that ids or prices depend on: a bad value fails loudly instead of resetting."""
+    value = data.get(key, 0)
+    if isinstance(value, str) and value.isdigit():
+        value = int(value)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"invalid reducer state: {key}")
+    return value
+
+
 def _text(value: object) -> str | None:
     return value if isinstance(value, str) and value else None
 
@@ -118,12 +128,12 @@ class ReducerState:
         }
         return cls(
             previous_model_usage=previous,
-            result_ordinal=_count(data.get("result_ordinal")),
+            result_ordinal=_strict_count(data, "result_ordinal"),
             cwd=_text(data.get("cwd")),
             branch=_text(data.get("branch")),
             app_version=_text(data.get("app_version")),
-            ttl_1h=_count(data.get("ttl_1h")),
-            ttl_5m=_count(data.get("ttl_5m")),
+            ttl_1h=_strict_count(data, "ttl_1h"),
+            ttl_5m=_strict_count(data, "ttl_5m"),
             seen_messages=[
                 item for item in data.get("seen_messages") or [] if isinstance(item, str)
             ],
@@ -295,11 +305,18 @@ class ClaudeCloudHistoryReducer:
             **self._base(held),
         )
 
-    def _model_deltas(self, model_usage: object) -> dict[str, dict[str, int]]:
-        """Per normalized model, how far the result's cumulative usage moved since the last one."""
+    def _model_deltas(
+        self, model_usage: object
+    ) -> tuple[dict[str, dict[str, int]], dict[str, dict[str, int]]]:
+        """How far each normalized model's cumulative usage moved since the last result.
+
+        Also returns the new cumulative values per raw model key. The state is not touched: a turn
+        that cannot be dated is skipped, and its usage must then still count at the next result.
+        """
         deltas: dict[str, dict[str, int]] = {}
+        latest: dict[str, dict[str, int]] = {}
         if not isinstance(model_usage, dict):
-            return deltas
+            return deltas, latest
         for raw_model, values in model_usage.items():
             if not isinstance(values, dict) or raw_model == SYNTHETIC_MODEL:
                 continue
@@ -313,8 +330,8 @@ class ClaudeCloudHistoryReducer:
             bucket = deltas.setdefault(slug, dict(_ZERO))
             for name in _MODEL_FIELDS:
                 bucket[name] += current[name] - previous[name]
-            self.state.previous_model_usage[str(raw_model)] = current
-        return deltas
+            latest[str(raw_model)] = current
+        return deltas, latest
 
     def _close_turn(self, event: dict[str, Any], inner: dict[str, Any]) -> list[UsageEventPush]:
         self.state.result_ordinal += 1
@@ -346,11 +363,12 @@ class ClaudeCloudHistoryReducer:
         stamp = _timestamp(inner.get("timestamp"), event.get("created_at")) or (
             events[-1].ts if events else None
         )
-        deltas = self._model_deltas(inner.get("modelUsage"))
+        deltas, latest = self._model_deltas(inner.get("modelUsage"))
         self._tail = {}
         if stamp is None:
             self.stats["bad_timestamp"] += 1
             return events
+        self.state.previous_model_usage.update(latest)
         for slug, delta in deltas.items():
             gap = {name: delta[name] - have.get(slug, _ZERO)[name] for name in _MODEL_FIELDS}
             if any(value < 0 for value in gap.values()) and slug in have_main:
@@ -365,7 +383,12 @@ class ClaudeCloudHistoryReducer:
                 continue
             create = rest["cacheCreationInputTokens"]
             seen = self.state.ttl_1h + self.state.ttl_5m
-            create_1h = create if seen == 0 else round(create * self.state.ttl_1h / seen)
+            if not self.state.seen_messages:
+                create_1h = create  # no message yet to learn the split from: the observed norm
+            elif seen == 0:
+                create_1h = 0  # messages reported no split at all: unknown, as theirs is
+            else:
+                create_1h = round(create * self.state.ttl_1h / seen)
             event_id = f"cloud:{self.facts.digest}:r:{ordinal}:{slug}"
             self.stats["remainders"] += 1
             events.append(

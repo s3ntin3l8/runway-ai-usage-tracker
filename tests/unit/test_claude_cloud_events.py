@@ -550,6 +550,56 @@ def test_subagent_calls_inside_model_usage_are_part_of_it():
     }
 
 
+def test_a_turn_that_cannot_be_dated_is_counted_at_the_next_result():
+    undated = result(1, {OPUS: {"outputTokens": 500}})
+    undated["created_at"] = undated["payload"]["timestamp"] = "bad"
+    reducer = ClaudeCloudHistoryReducer(facts())
+    assert reducer.feed(undated) == []
+    assert reducer.stats["bad_timestamp"] == 1
+    later = reducer.feed(result(2, {OPUS: {"outputTokens": 700}}))
+    assert [e.tokens_output for e in later] == [700]  # the skipped 500 are not lost
+
+
+@pytest.mark.parametrize("bad", ["x", -1, None, True, 1.5])
+def test_a_saved_counter_that_is_not_a_count_fails_loudly(bad):
+    state = ReducerState(result_ordinal=3).to_dict()
+    state["result_ordinal"] = bad
+    with pytest.raises(ValueError, match="result_ordinal"):
+        ReducerState.from_dict(state)
+
+
+def test_a_fresh_state_has_no_counters_to_restore():
+    assert ReducerState.from_dict({}).result_ordinal == 0
+
+
+def test_a_numeric_string_counter_is_read_as_a_number():
+    state = ReducerState(result_ordinal=3).to_dict()
+    state["result_ordinal"] = "7"
+    assert ReducerState.from_dict(state).result_ordinal == 7
+
+
+def test_a_remainder_after_messages_without_a_split_is_unknown_not_one_hour():
+    history = turn(
+        1,
+        [msg(message_id="m1", write_1h=200, split=False)],
+        {OPUS: {"cacheCreationInputTokens": 500}},
+    )
+    events, _ = run(history)
+    remainder = events[-1]
+    assert remainder.tokens_cache_create == 300
+    assert (remainder.tokens_cache_create_1h, remainder.tokens_cache_create_5m) == (0, 300)
+
+
+def test_the_message_count_is_the_same_whether_a_turn_closed_or_went_quiet():
+    quiet = ClaudeCloudHistoryReducer(facts())
+    quiet.feed(assistant(1, "m1", out=1))
+    quiet.tail_events()
+    closed = ClaudeCloudHistoryReducer(facts())
+    closed.feed(assistant(1, "m1", out=1))
+    closed.feed(result(2, {OPUS: {"outputTokens": 1}}))
+    assert quiet.stats["messages"] == closed.stats["messages"] == 1
+
+
 def test_malformed_records_are_ignored():
     reducer = ClaudeCloudHistoryReducer(facts())
     for record in (
