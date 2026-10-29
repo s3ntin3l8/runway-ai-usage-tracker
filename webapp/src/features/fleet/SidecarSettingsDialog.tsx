@@ -105,6 +105,8 @@ function SettingsTabs({
   const maintenance =
     (sidecar.update_available ? 1 : 0) + [drift.auto, drift.channel, logLevelLagging(sidecar)].filter(Boolean).length;
   const attention = useSourcesNeedingAttention(sidecar.sidecar_id, sidecar.os_platform);
+  // A directory the sidecar has not applied yet lives on the General tab.
+  const general = loginDirsPending(sidecar) ? 1 : 0;
 
   return (
     <div className="flex flex-col gap-4">
@@ -122,7 +124,10 @@ function SettingsTabs({
       </div>
       <Tabs defaultValue="general">
         <TabsList>
-          <TabsTrigger value="general">General</TabsTrigger>
+          <TabsTrigger value="general">
+            General{' '}
+            {general > 0 ? <Badge variant="warning">{general}</Badge> : null}
+          </TabsTrigger>
           <TabsTrigger value="credentials">
             Credentials{' '}
             {attention > 0 ? <Badge variant="warning">{attention}</Badge> : null}

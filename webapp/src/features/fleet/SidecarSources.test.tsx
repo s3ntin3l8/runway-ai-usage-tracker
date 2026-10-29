@@ -162,6 +162,26 @@ describe('Keychain sources (macOS)', () => {
       expect(api.commandSidecarSource).toHaveBeenCalledWith(sidecarId, id, 'request_setup');
   });
 
+  it('does not ask the Mac to set up a source the server revoked', async () => {
+    const user = userEvent.setup();
+    respond([
+      src('anthropic.claude-code', 'Claude Code', need),
+      src('anthropic.desktop-session', 'Claude Desktop session', { revoked: true, state: 'Action required' }),
+    ]);
+    renderMac();
+    await user.click(await screen.findByRole('button', { name: 'Ask Mac to set up 1' }));
+    await waitFor(() => expect(api.commandSidecarSource).toHaveBeenCalledTimes(1));
+    expect(api.commandSidecarSource).toHaveBeenCalledWith(sidecarId, 'anthropic.claude-code', 'request_setup');
+  });
+
+  it('says a withdrawal the server has not acknowledged in text, not only in a tooltip', async () => {
+    const user = userEvent.setup();
+    respond([src('github.gh-cli', 'GitHub CLI', { ...off, state: 'Withdrawal pending' })]);
+    renderMac();
+    await user.click(await screen.findByRole('button', { name: 'Show 1 source that is off' }));
+    expect(screen.getByText('Withdrawing')).toBeInTheDocument();
+  });
+
   it('pauses and resumes only sources that can be paused or resumed', async () => {
     const user = userEvent.setup();
     respond([
@@ -193,7 +213,7 @@ describe('Keychain sources (macOS)', () => {
     const user = userEvent.setup();
     respond([src('github.gh-cli', 'GitHub CLI', { ...off, remote_paused: true })]);
     renderMac();
-    await user.click(await screen.findByRole('button', { name: /Show 1 source that is off|Show 1 source that are off/ }));
+    await user.click(await screen.findByRole('button', { name: 'Show 1 source that is off' }));
     await user.click(screen.getByRole('button', { name: 'Actions for GitHub CLI' }));
     expect(await screen.findByRole('menuitem', { name: 'Resume server pause' })).toHaveAttribute('aria-disabled', 'true');
   });

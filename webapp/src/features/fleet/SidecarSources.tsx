@@ -1,7 +1,7 @@
 // The Keychain (macOS) / credential (Windows) sources card in a sidecar's settings: a read-and-steer
 // view. Permission itself is only ever granted on the device; nothing here grants consent.
 
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronDown, ChevronRight, Ellipsis, Info, TriangleAlert } from 'lucide-react';
@@ -47,8 +47,15 @@ const HEALTH_VARIANT = {
 
 function MacBadge({ status, device, source }: { status: MacStatus; device: string; source?: FleetSourceStatus }) {
   const s = STATUS[status];
-  const label = source?.revoked ? 'Revoked' : s.label === 'Setup on Mac' ? `Setup on ${device}` : s.label;
-  const note = source?.state === 'Withdrawal pending' ? 'Off · server withdrawal pending' : undefined;
+  const withdrawing = source?.state === 'Withdrawal pending';
+  const label = source?.revoked
+    ? 'Revoked'
+    : withdrawing
+      ? 'Withdrawing'
+      : s.label === 'Setup on Mac'
+        ? `Setup on ${device}`
+        : s.label;
+  const note = withdrawing ? 'Off on this device; the server has not acknowledged the withdrawal yet' : undefined;
   return (
     <Badge variant={s.variant} title={note} className="justify-center">
       {label}
@@ -175,8 +182,10 @@ function SourceDetails({
       {pending.length ? (
         <>
           <dt className="text-fg-subtle">Pending</dt>
-          <dd role="status">
-            Awaiting local acknowledgment: {pending.map((c) => c.action.replaceAll('_', ' ')).join(', ')}
+          <dd>
+            <span role="status">
+              Awaiting local acknowledgment: {pending.map((c) => c.action.replaceAll('_', ' ')).join(', ')}
+            </span>
           </dd>
         </>
       ) : null}
@@ -318,21 +327,26 @@ export function SidecarSources({ sidecarId, osPlatform }: { sidecarId: string; o
         'bg-surface-2 px-3 py-1.5 text-[10px] font-semibold tracking-wide text-fg-subtle uppercase',
       )}
     >
-      <span role="columnheader" aria-label="Details" />
+      <span role="columnheader">
+        <span className="sr-only">Details</span>
+      </span>
       <span role="columnheader">Source</span>
       <span role="columnheader">On the {device}</span>
       <span role="columnheader" className="max-sm:hidden">
         Server
       </span>
-      <span role="columnheader" aria-label="Actions" />
+      <span role="columnheader">
+        <span className="sr-only">Actions</span>
+      </span>
     </div>
   );
 
-  const sourceRow = (source: FleetSourceStatus, indent: boolean) => {
+  // One source: its row, and the details row under it when it is open. Callers own the rowgroup.
+  const sourceRows = (source: FleetSourceStatus, indent: boolean) => {
     const isOpen = open.has(source.source_id);
     return (
-      <div key={source.source_id} role="rowgroup" className="border-t border-edge">
-        <div role="row" className={cn(GRID, 'px-3 py-1.5 text-[13px]')}>
+      <Fragment key={source.source_id}>
+        <div role="row" className={cn(GRID, 'px-3 py-1.5 text-[13px]', indent && 'border-t border-edge bg-surface-1')}>
           <span role="cell">
             <Caret open={isOpen} />
           </span>
@@ -358,8 +372,14 @@ export function SidecarSources({ sidecarId, osPlatform }: { sidecarId: string; o
             <SourceMenu source={source} actions={actions} />
           </span>
         </div>
-        {isOpen ? <SourceDetails source={source} commands={commands} macOS={macOS} actions={actions} /> : null}
-      </div>
+        {isOpen ? (
+          <div role="row">
+            <div role="cell">
+              <SourceDetails source={source} commands={commands} macOS={macOS} actions={actions} />
+            </div>
+          </div>
+        ) : null}
+      </Fragment>
     );
   };
 
@@ -402,7 +422,7 @@ export function SidecarSources({ sidecarId, osPlatform }: { sidecarId: string; o
           </span>
           <span role="cell" />
         </div>
-        {isOpen ? <div className="bg-surface-1">{group.sources.map((s) => sourceRow(s, true))}</div> : null}
+        {isOpen ? group.sources.map((s) => sourceRows(s, true)) : null}
       </div>
     );
   };
@@ -514,7 +534,11 @@ export function SidecarSources({ sidecarId, osPlatform }: { sidecarId: string; o
             {shownApps.length ? (
               <>
                 {headers}
-                {shownApps.map((s) => sourceRow(s, false))}
+                {shownApps.map((s) => (
+                  <div key={s.source_id} role="rowgroup" className="border-t border-edge">
+                    {sourceRows(s, false)}
+                  </div>
+                ))}
               </>
             ) : null}
             {shownServices.length ? (
@@ -526,13 +550,17 @@ export function SidecarSources({ sidecarId, osPlatform }: { sidecarId: string; o
                     'border-t border-edge bg-surface-2 px-3 py-1.5 text-[10px] font-semibold tracking-wide text-fg-subtle uppercase',
                   )}
                 >
-                  <span role="columnheader" aria-label="Details" />
+                  <span role="columnheader">
+                    <span className="sr-only">Details</span>
+                  </span>
                   <span role="columnheader">Web sessions</span>
                   <span role="columnheader">On the {device}</span>
                   <span role="columnheader" className="max-sm:hidden">
                     Server
                   </span>
-                  <span role="columnheader" aria-label="Actions" />
+                  <span role="columnheader">
+                    <span className="sr-only">Actions</span>
+                  </span>
                 </div>
                 {shownServices.map(serviceRow)}
               </>
@@ -553,7 +581,9 @@ export function SidecarSources({ sidecarId, osPlatform }: { sidecarId: string; o
                     onClick={() => setShowOff((v) => !v)}
                     className="w-full cursor-pointer px-3 py-1.5 text-left text-xs text-fg-muted hover:bg-surface-2 hover:text-fg"
                   >
-                    {showOff ? 'Hide sources that are off' : `Show ${counts.off} source${counts.off === 1 ? '' : 's'} that are off`}
+                    {showOff
+                      ? 'Hide sources that are off'
+                      : `Show ${counts.off} ${counts.off === 1 ? 'source that is' : 'sources that are'} off`}
                   </button>
                 </div>
               </div>

@@ -40,7 +40,6 @@ describe('macStatus', () => {
     [{ state: 'Ready' as const }, 'ok'],
     [{ state: 'Limited' as const }, 'ok'],
     [{ state: 'Setup required' as const }, 'need'],
-    [{ state: 'Off' as const }, 'need'],
     [{ state: 'Connecting' as const }, 'busy'],
     [{ state: 'Action required' as const }, 'err'],
     [{ state: 'Ready' as const, revoked: true }, 'err'],
@@ -100,6 +99,13 @@ describe('filters', () => {
 
   it('knows which sources still need authorization on the device', () => {
     expect(sources.filter(needsAuthorization).map((s) => s.source_id)).toEqual(['a.two', 'a.four']);
+  });
+
+  it('does not count a revoked source: authorizing locally does not undo a revocation', () => {
+    const revoked = src('a.seven', { revoked: true, state: 'Action required' });
+    expect(macStatus(revoked)).toBe('err');
+    expect(matches('attention', revoked)).toBe(true);
+    expect(needsAuthorization(revoked)).toBe(false);
   });
 });
 

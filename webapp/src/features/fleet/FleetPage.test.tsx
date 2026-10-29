@@ -1320,6 +1320,21 @@ describe('Fleet settings dialog shell', () => {
     expect(dialog.getByRole('button', { name: 'Update now' })).toBeInTheDocument();
   });
 
+  it('badges General when a login directory has not been applied yet, and nothing else', async () => {
+    vi.mocked(api.fetchSidecars).mockResolvedValue({
+      sidecars: [
+        mac({
+          login_dirs_report: { applied: { claude_config_dirs: [], codex_home: [] }, searched: {} },
+          login_dirs_desired: { claude_config_dirs: ['~/new'], codex_home: [] },
+        }),
+      ],
+    });
+    const dialog = await open();
+    expect(dialog.getByRole('tab', { name: 'General 1' })).toBeInTheDocument();
+    expect(dialog.getByRole('tab', { name: /^updates & logs$/i })).toBeInTheDocument();
+    expect(dialog.getByTestId('settings-pending')).toHaveTextContent('1 setting waiting');
+  });
+
   it('shows no Keychain card for a Linux device that reports no sources', async () => {
     vi.mocked(api.fetchSidecars).mockResolvedValue({
       sidecars: [sidecar({ sidecar_id: deviceId, os_platform: 'Linux/7.0' })],

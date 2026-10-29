@@ -16,7 +16,7 @@ export function macStatus(s: FleetSourceStatus): MacStatus {
   if (!s.read) return 'off';
   if (s.revoked || s.state === 'Action required') return 'err';
   if (s.state === 'Connecting') return 'busy';
-  if (s.state === 'Setup required' || s.state === 'Off') return 'need';
+  if (s.state === 'Setup required') return 'need';
   return 'ok'; // Ready, Limited: usable, renewal may still be limited
 }
 
@@ -44,10 +44,13 @@ export function matches(filter: SourceFilter, s: FleetSourceStatus): boolean {
   }
 }
 
-/** Sources that are on but cannot be read until someone authorizes them on the Mac. */
+/**
+ * Sources that are on but cannot be read until someone authorizes them on the Mac. A source the
+ * server revoked is not one: authorizing locally does not undo a revocation.
+ */
 export function needsAuthorization(s: FleetSourceStatus): boolean {
   const status = macStatus(s);
-  return status === 'need' || status === 'err';
+  return !s.revoked && (status === 'need' || status === 'err');
 }
 
 export interface SourceCounts {
