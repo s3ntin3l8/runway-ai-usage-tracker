@@ -1008,6 +1008,35 @@ class ClaudeCloudVerificationArchive(SQLModel, table=True):  # type: ignore[call
     archived_at: float
 
 
+class ClaudeCloudSessionCheckpoint(SQLModel, table=True):  # type: ignore[call-arg]
+    """Where the history sync of one Claude cloud-runner session stands.
+
+    The session is held as a one-way digest. ``committed_sequence`` and the cursor of the page that
+    holds it mark the last *closed turn*: the history is read again from there, so the open tail
+    after the last result is simply re-read. The cursor is opaque to us and is stored encrypted.
+    ``reducer_state_json`` is the serialisable state of ``claude_cloud_events``.
+    """
+
+    __tablename__ = "claude_cloud_session_checkpoint"
+    __table_args__ = (
+        UniqueConstraint("account_id", "session_digest", name="uq_claude_cloud_checkpoint"),
+    )
+    id: int | None = Field(default=None, primary_key=True)
+    account_id: str = Field(index=True)
+    session_digest: str
+    last_event_at: str | None = None
+    committed_sequence: int = 0
+    committed_cursor_encrypted: str | None = None
+    reducer_state_json: str = "{}"
+    open_tail: bool = False
+    stalls: int = 0
+    turns: int = 0
+    message_events: int = 0
+    remainder_events: int = 0
+    last_crosscheck: str | None = None
+    last_seen: float = 0.0
+
+
 class ClaudeCloudSessionUsage(SQLModel, table=True):  # type: ignore[call-arg]
     """Last usage block observed for one Claude cloud-runner session.
 
