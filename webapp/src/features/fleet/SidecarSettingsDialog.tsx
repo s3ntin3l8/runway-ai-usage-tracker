@@ -1,18 +1,23 @@
-// Per-sidecar settings: name/tags, keep-alive (sidecar-wide and per login), updates, logging and removal.
-// The Fleet card stays a summary; everything you can change lives here.
+// Per-sidecar settings in three tabs: General (name, tags, login directories), Credentials (keep-alive and the
+// Keychain sources) and Updates & logs. The Fleet card stays a summary; everything you can change lives here.
+// A status line under the title says what the sidecar has not applied yet, once, for every section.
 
 import { useState } from 'react';
 import { SidecarSources } from './SidecarSources';
+import { useSourcesNeedingAttention } from './sourceQueries';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CircleArrowUp } from 'lucide-react';
+import { CircleArrowUp, TriangleAlert } from 'lucide-react';
 import { toast } from 'sonner';
 import { fetchAppConfig, patchSidecar, setSidecarKeepAlive, setSidecarSettings } from '@/api/endpoints';
 import type { Sidecar, SidecarChannel, SidecarLogLevel } from '@/api/types';
+import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
+import { Callout } from '@/components/ui/Callout';
 import { Input, Label } from '@/components/ui/Input';
 import { ResponsiveDialog } from '@/components/ui/ResponsiveDialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/Select';
 import { Switch } from '@/components/ui/Switch';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/Tabs';
 import {
   KEEP_ALIVE_PROVIDER_LABELS,
   type KeepAliveProvider,
@@ -20,6 +25,14 @@ import {
   keepAliveState,
   useKeepAliveFleetDefault,
 } from '@/lib/keepAlive';
+import { timeAgo } from '@/lib/format';
+import {
+  type FleetUpdateDefaults,
+  logLevelLagging,
+  loginDirsPending,
+  pendingSettings,
+  updateDrift,
+} from './settingsSync';
 
 /** What the sidecar runs now vs. what Runway asked for; shared by the card and the dialog. */
 export function useSidecarKeepAlive(sidecar: Sidecar, online: boolean) {
@@ -45,7 +58,6 @@ export function SidecarSettingsDialog({
   onUpdate: (s: Sidecar) => void;
   onDelete: (s: Sidecar) => void;
 }) {
-  const queryClient = useQueryClient();
   return (
     <ResponsiveDialog
       open={sidecar !== null}
@@ -53,6 +65,7 @@ export function SidecarSettingsDialog({
         if (!open) onClose();
       }}
       title="Sidecar settings"
+      width="max-w-2xl"
       description={
         sidecar
           ? [sidecar.custom_name || sidecar.hostname || sidecar.sidecar_id, sidecar.os_platform, sidecar.sidecar_version && `v${sidecar.sidecar_version}`]
@@ -62,68 +75,133 @@ export function SidecarSettingsDialog({
       }
     >
       {sidecar ? (
-        <div className="flex flex-col gap-5">
-          <GeneralForm
-            key={sidecar.sidecar_id}
-            sidecar={sidecar}
-            onSaved={() => {
-              queryClient.invalidateQueries({ queryKey: ['fleet', 'sidecars'] });
-              onClose();
-            }}
-          />
-          <LoginDirectoriesSection key={`${sidecar.sidecar_id}-dirs`} sidecar={sidecar} online={online} onUpdate={() => onUpdate(sidecar)} />
-          <SidecarSources sidecarId={sidecar.sidecar_id} osPlatform={sidecar.os_platform} />
-          <KeepAliveSection sidecar={sidecar} online={online} onUpdate={() => onUpdate(sidecar)} />
-          <UpdatesSection sidecar={sidecar} online={online} onUpdate={() => onUpdate(sidecar)} />
-          <LoggingSection sidecar={sidecar} online={online} onUpdate={() => onUpdate(sidecar)} />
-          <section className="flex items-center justify-between gap-3 border-t border-edge pt-4">
-            <p className="text-[12px] text-fg-muted">
-              Removes the registry entry; collected usage stays.
-            </p>
-            <Button size="sm" variant="danger" onClick={() => onDelete(sidecar)}>
-              Remove sidecar
-            </Button>
-          </section>
-        </div>
+        <SettingsTabs
+          sidecar={sidecar}
+          online={online}
+          onUpdate={() => onUpdate(sidecar)}
+          onDelete={() => onDelete(sidecar)}
+        />
       ) : null}
     </ResponsiveDialog>
   );
 }
 
-function GeneralForm({ sidecar, onSaved }: { sidecar: Sidecar; onSaved: () => void }) {
+function SettingsTabs({
+  sidecar,
+  online,
+  onUpdate,
+  onDelete,
+}: {
+  sidecar: Sidecar;
+  online: boolean;
+  onUpdate: () => void;
+  onDelete: () => void;
+}) {
+  const fleet = useFleetUpdateDefaults();
+  const ka = useSidecarKeepAlive(sidecar, online);
+  const pending = pendingSettings(sidecar, fleet, ka.pending);
+  const drift = updateDrift(sidecar, fleet);
+  // What on the Updates tab wants a look: a newer build, a drifted setting, a level that has not landed.
+  const maintenance =
+    (sidecar.update_available ? 1 : 0) + [drift.auto, drift.channel, logLevelLagging(sidecar)].filter(Boolean).length;
+  const attention = useSourcesNeedingAttention(sidecar.sidecar_id, sidecar.os_platform);
+  // A directory the sidecar has not applied yet lives on the General tab.
+  const general = loginDirsPending(sidecar) ? 1 : 0;
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md bg-surface-2 px-3 py-2 text-xs text-fg-muted">
+        <span aria-hidden className={`size-1.5 rounded-full ${online ? 'bg-ok' : 'bg-unknown'}`} />
+        <span className="font-semibold text-fg">{online ? 'Online' : 'Offline'}</span>
+        {sidecar.last_seen ? <span>last seen {timeAgo(sidecar.last_seen)}</span> : null}
+        {sidecar.update_available ? <Badge variant="accent">update available</Badge> : null}
+        {pending > 0 ? (
+          <span className="ml-auto text-warning" data-testid="settings-pending">
+            {pending} setting{pending === 1 ? '' : 's'}{' '}
+            {online ? "waiting for the sidecar's next check-in" : 'will apply when it reconnects'}
+          </span>
+        ) : null}
+      </div>
+      <Tabs defaultValue="general">
+        <TabsList>
+          <TabsTrigger value="general">
+            General{' '}
+            {general > 0 ? <Badge variant="warning">{general}</Badge> : null}
+          </TabsTrigger>
+          <TabsTrigger value="credentials">
+            Credentials{' '}
+            {attention > 0 ? <Badge variant="warning">{attention}</Badge> : null}
+          </TabsTrigger>
+          <TabsTrigger value="maintenance">
+            Updates &amp; logs{' '}
+            {maintenance > 0 ? <Badge variant="warning">{maintenance}</Badge> : null}
+          </TabsTrigger>
+        </TabsList>
+        <TabsContent value="general" className="flex flex-col gap-4">
+          <GeneralForm key={sidecar.sidecar_id} sidecar={sidecar} />
+          <LoginDirectoriesSection key={`${sidecar.sidecar_id}-dirs`} sidecar={sidecar} online={online} onUpdate={onUpdate} />
+        </TabsContent>
+        <TabsContent value="credentials" className="flex flex-col gap-4">
+          <KeepAliveSection sidecar={sidecar} online={online} onUpdate={onUpdate} />
+          <SidecarSources sidecarId={sidecar.sidecar_id} osPlatform={sidecar.os_platform} />
+        </TabsContent>
+        <TabsContent value="maintenance" className="flex flex-col gap-4">
+          <UpdatesSection sidecar={sidecar} online={online} onUpdate={onUpdate} />
+          <LoggingSection sidecar={sidecar} online={online} onUpdate={onUpdate} />
+        </TabsContent>
+      </Tabs>
+      <section className="flex items-center justify-between gap-3 border-t border-edge pt-4">
+        <p className="text-[12px] text-fg-muted">Removes the registry entry; collected usage stays.</p>
+        <Button size="sm" variant="danger" onClick={onDelete}>
+          Remove sidecar
+        </Button>
+      </section>
+    </div>
+  );
+}
+
+function GeneralForm({ sidecar }: { sidecar: Sidecar }) {
+  const queryClient = useQueryClient();
   const [name, setName] = useState(sidecar.custom_name ?? '');
   const [tags, setTags] = useState((sidecar.tags ?? []).join(', '));
+  const parseTags = (text: string) =>
+    text
+      .split(',')
+      .map((t) => t.trim())
+      .filter(Boolean);
 
   const save = useMutation({
-    mutationFn: () =>
-      patchSidecar(sidecar.sidecar_id, {
-        custom_name: name.trim(),
-        tags: tags
-          .split(',')
-          .map((t) => t.trim())
-          .filter(Boolean),
-      }),
+    mutationFn: () => patchSidecar(sidecar.sidecar_id, { custom_name: name.trim(), tags: parseTags(tags) }),
     onSuccess: () => {
       toast.success('Sidecar updated');
-      onSaved();
+      queryClient.invalidateQueries({ queryKey: ['fleet', 'sidecars'] });
     },
     onError: (err) => toast.error(err.message),
   });
+  // Saved on blur (or Enter) when something actually changed; there is no Save button.
+  const commit = () => {
+    const unchanged =
+      name.trim() === (sidecar.custom_name ?? '') &&
+      JSON.stringify(parseTags(tags)) === JSON.stringify(sidecar.tags ?? []);
+    if (!unchanged && !save.isPending) save.mutate();
+  };
 
   return (
     <form
       onSubmit={(e) => {
         e.preventDefault();
-        save.mutate();
+        commit();
       }}
-      className="flex flex-col gap-3"
+      className="flex flex-col gap-3 rounded-lg border border-edge p-4"
     >
+      <h3 className="text-[13px] font-semibold">Identity</h3>
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="sidecar-name">Display name</Label>
         <Input
           id="sidecar-name"
           value={name}
           onChange={(e) => setName(e.target.value)}
+          onBlur={commit}
           placeholder={sidecar.hostname}
         />
       </div>
@@ -133,12 +211,11 @@ function GeneralForm({ sidecar, onSaved }: { sidecar: Sidecar; onSaved: () => vo
           id="sidecar-tags"
           value={tags}
           onChange={(e) => setTags(e.target.value)}
+          onBlur={commit}
           placeholder="work, laptop"
         />
       </div>
-      <Button type="submit" variant="primary" className="mt-1" loading={save.isPending}>
-        Save
-      </Button>
+      <p className="text-[11px] text-fg-subtle">Saved when you leave a field.</p>
     </form>
   );
 }
@@ -198,10 +275,10 @@ function KeepAliveSection({
   const id = `keep-alive-${sidecar.sidecar_id}`;
 
   return (
-    <section className="rounded-md border border-edge bg-surface-2 p-2.5">
+    <section className="rounded-lg border border-edge p-4">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <label htmlFor={id} className="text-[12px] font-medium">
+          <label htmlFor={id} className="text-[13px] font-semibold">
             Keep logins alive
           </label>
           <p className="mt-0.5 text-[11px] text-fg-subtle">
@@ -303,9 +380,10 @@ function KeepAliveSection({
 
 const CHANNELS: SidecarChannel[] = ['stable', 'beta', 'edge'];
 const onOff = (v: boolean) => (v ? 'on' : 'off');
+const sentence = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 
 /** The fleet-wide auto-update flag and channel from Settings → System (shares the cached query). */
-function useFleetUpdateDefaults(): { autoUpdate: boolean; channel: SidecarChannel } {
+function useFleetUpdateDefaults(): FleetUpdateDefaults {
   const { data } = useQuery({ queryKey: ['system', 'app-config'], queryFn: fetchAppConfig });
   return {
     autoUpdate: data?.sidecar_auto_update === true,
@@ -337,23 +415,36 @@ function UpdatesSection({
     onError: (err) => toast.error(err.message),
   });
 
-  const effectiveAuto = sidecar.effective_auto_update ?? fleet.autoUpdate;
-  const effectiveChannel = sidecar.effective_update_channel ?? fleet.channel;
+  const drift = updateDrift(sidecar, fleet);
+  const { effectiveAuto, effectiveChannel } = drift;
   const autoValue =
     sidecar.auto_update_desired == null ? 'default' : sidecar.auto_update_desired ? 'on' : 'off';
   const channelValue = sidecar.update_channel_desired ?? 'default';
   const canSelfUpdate = sidecar.self_update_capable !== false;
   // The sidecar says it uses something other than what Runway asks for: either the request has
   // not landed yet, or its own config.json / RUNWAY_UPDATE_CHANNEL wins over the dashboard.
-  const autoDiffers = sidecar.auto_update != null && sidecar.auto_update !== effectiveAuto;
-  const channelDiffers = sidecar.update_channel != null && sidecar.update_channel !== effectiveChannel;
+  const autoDiffers = drift.auto;
+  const channelDiffers = drift.channel;
 
   return (
-    <section className="rounded-md border border-edge bg-surface-2 p-2.5">
-      <p className="text-[12px] font-medium">Updates</p>
+    <section className="rounded-lg border border-edge p-4">
+      <h3 className="text-[13px] font-semibold">Updates</h3>
       <p className="mt-0.5 text-[11px] text-fg-subtle">
         Overrides for this sidecar only; by default it follows Settings → System.
       </p>
+      {sidecar.update_available ? (
+        <Callout
+          className="mt-3"
+          icon={<CircleArrowUp className="size-4" />}
+          action={
+            <Button size="sm" variant="secondary" onClick={onUpdate}>
+              Update now
+            </Button>
+          }
+        >
+          A newer sidecar build is available.
+        </Callout>
+      ) : null}
       <div className="mt-2 flex flex-col gap-1.5">
         <div className="flex items-center justify-between gap-2">
           <span className="text-[12px]">Auto-update</span>
@@ -408,28 +499,23 @@ function UpdatesSection({
         </p>
       ) : null}
       {canSelfUpdate && (autoDiffers || channelDiffers) ? (
-        <p className="mt-1.5 text-[11px] text-warning" data-testid="update-differs">
-          {[
-            autoDiffers
-              ? `reports auto-update ${onOff(sidecar.auto_update === true)} (Runway asks for ${onOff(effectiveAuto)})`
-              : null,
-            channelDiffers
-              ? `reports the ${sidecar.update_channel} channel (Runway asks for ${effectiveChannel})`
-              : null,
-          ]
-            .filter(Boolean)
-            .join('; ')}
-          . Either the change {when}, or this sidecar&apos;s own config.json or
-          RUNWAY_UPDATE_CHANNEL overrides the dashboard.
-        </p>
-      ) : null}
-      {sidecar.update_available ? (
-        <div className="mt-2.5 flex items-center justify-between gap-3 border-t border-edge pt-2.5">
-          <p className="text-[12px] text-fg-muted">A newer sidecar build is available.</p>
-          <Button size="sm" variant="secondary" onClick={onUpdate}>
-            <CircleArrowUp className="size-3.5" aria-hidden />
-            Update now
-          </Button>
+        <div className="mt-3" data-testid="update-differs">
+          <Callout tone="warning" icon={<TriangleAlert className="size-4" />}>
+            {sentence(
+              [
+                autoDiffers
+                  ? `reports auto-update ${onOff(sidecar.auto_update === true)} (Runway asks for ${onOff(effectiveAuto)})`
+                  : null,
+                channelDiffers
+                  ? `reports the ${sidecar.update_channel} channel (Runway asks for ${effectiveChannel})`
+                  : null,
+              ]
+                .filter(Boolean)
+                .join('; '),
+            )}
+            . Either the change {when}, or this sidecar&apos;s own config.json or RUNWAY_UPDATE_CHANNEL overrides the
+            dashboard.
+          </Callout>
         </div>
       ) : null}
     </section>
@@ -465,11 +551,11 @@ function LoggingSection({
   const supported = sidecar.log_level != null;
   const desired = sidecar.log_level_desired ?? null;
   const raised = desired === 'DEBUG';
-  const lagging = desired !== null && supported && sidecar.log_level !== desired;
+  const lagging = logLevelLagging(sidecar);
 
   return (
-    <section className="rounded-md border border-edge bg-surface-2 p-2.5">
-      <p className="text-[12px] font-medium">Logging</p>
+    <section className="rounded-lg border border-edge p-4">
+      <h3 className="text-[13px] font-semibold">Logging</h3>
       <p className="mt-0.5 text-[11px] text-fg-subtle">
         Raise the level while debugging; read the output with Logs on the card. The sidecar&apos;s
         own level applies again when you reset it.
@@ -516,9 +602,11 @@ function LoggingSection({
             </Select>
           </div>
           {lagging ? (
-            <p className="mt-1.5 text-[11px] text-warning" data-testid="log-level-pending">
-              Requested {desired}; the sidecar still logs at {sidecar.log_level} — it {when}.
-            </p>
+            <div className="mt-3" data-testid="log-level-pending">
+              <Callout tone="warning" icon={<TriangleAlert className="size-4" />}>
+                Requested {desired}; the sidecar still logs at {sidecar.log_level}. It {when}.
+              </Callout>
+            </div>
           ) : null}
           {raised ? (
             <p className="mt-1.5 text-[11px] text-fg-muted">
@@ -560,11 +648,10 @@ function LoginDirectoriesSection({ sidecar, online, onUpdate }: {
     onError: err => toast.error(err.message),
   });
   const report = sidecar.login_dirs_report;
-  const pending = report && (JSON.stringify(report.applied.claude_config_dirs) !== JSON.stringify(desired.claude_config_dirs)
-    || JSON.stringify(report.applied.codex_home) !== JSON.stringify(desired.codex_home));
+  const pending = loginDirsPending(sidecar);
   return (
-    <section className="rounded-md border border-edge bg-surface-2 p-2.5">
-      <h3 className="text-[12px] font-medium">Login directories</h3>
+    <section className="rounded-lg border border-edge p-4">
+      <h3 className="text-[13px] font-semibold">Login directories</h3>
       <p className="mt-1 text-[11px] text-fg-subtle">
         Extra Claude Code and Codex directories on this machine, one per line. Standard locations,
         environment variables and the sidecar's local configuration are also searched. Use directories,
@@ -578,11 +665,17 @@ function LoginDirectoriesSection({ sidecar, online, onUpdate }: {
       ) : (
         <form className="mt-3 flex flex-col gap-2" onSubmit={e => { e.preventDefault(); save.mutate(false); }}>
           {([['claude', 'Claude Code directories', claude, setClaude], ['codex', 'Codex directories', codex, setCodex]] as const).map(([key, label, value, update]) => (
-            <div key={key} className="flex flex-col gap-1">
-              <Label htmlFor={`${sidecar.sidecar_id}-${key}-dirs`}>{label}</Label>
-              <textarea id={`${sidecar.sidecar_id}-${key}-dirs`} rows={3} value={value} onChange={e => update(e.target.value)} disabled={save.isPending}
-                className="w-full rounded-sm border border-edge bg-surface-1 p-2 text-sm text-fg focus:border-accent" />
-            </div>
+            // Most devices add none, so the field stays folded until it has content or is opened.
+            <details key={key} open={value.trim() !== '' || undefined} className="text-xs">
+              <summary className="cursor-pointer text-accent-text">
+                {label} · {split(value).length ? `${split(value).length} added` : 'none added'}
+              </summary>
+              <div className="mt-1.5 flex flex-col gap-1">
+                <Label htmlFor={`${sidecar.sidecar_id}-${key}-dirs`}>{label}</Label>
+                <textarea id={`${sidecar.sidecar_id}-${key}-dirs`} rows={3} value={value} onChange={e => update(e.target.value)} disabled={save.isPending}
+                  className="w-full rounded-sm border border-edge bg-surface-1 p-2 text-sm text-fg focus:border-accent" />
+              </div>
+            </details>
           ))}
           <p className="text-[11px] text-fg-muted" role="status">
             {!online ? 'Sidecar is offline — applies when it reconnects.' : pending ? 'Requested directories — waiting for the sidecar to confirm.' : 'Fleet directories confirmed by the sidecar.'}

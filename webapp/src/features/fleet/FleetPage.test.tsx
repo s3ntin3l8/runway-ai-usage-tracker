@@ -171,6 +171,7 @@ describe('FleetPage', () => {
       if (!screen.queryByRole('dialog')) {
         await userEvent.click(await screen.findByRole('button', { name: /^settings$/i }));
       }
+      await userEvent.click(await screen.findByRole('tab', { name: /^credentials/i }));
       return screen.findByRole('switch', { name: /keep logins alive/i });
     };
     const dlg = () => within(screen.getByRole('dialog'));
@@ -293,8 +294,12 @@ describe('FleetPage', () => {
 
         expect(await screen.findByText(/doesn't report per-login keep-alive yet/)).toBeVisible();
         expect(screen.queryByRole('combobox', { name: /keep-alive/ })).not.toBeInTheDocument();
-        // Keep-alive, logging and login directories each explain the older build.
-        expect(screen.getAllByText(/Update it to a newer build/)).toHaveLength(3);
+        // Keep-alive, logging and login directories each explain the older build, on their own tab.
+        expect(screen.getAllByText(/Update it to a newer build/)).toHaveLength(1);
+        await userEvent.click(screen.getByRole('tab', { name: /^updates & logs/i }));
+        expect(screen.getAllByText(/Update it to a newer build/)).toHaveLength(1);
+        await userEvent.click(screen.getByRole('tab', { name: /^general/i }));
+        expect(screen.getAllByText(/Update it to a newer build/)).toHaveLength(1);
       });
 
       it('is not offered for a sidecar that cannot do keep-alive at all', async () => {
@@ -684,7 +689,7 @@ describe('FleetPage', () => {
     expect(screen.queryByRole('button', { name: /^logs$/i })).not.toBeInTheDocument();
   });
 
-  it('edits name and tags, then patches the sidecar and closes', async () => {
+  it('saves name and tags when a field is left, without a Save button or closing the dialog', async () => {
     vi.mocked(api.fetchSidecars).mockResolvedValue({
       sidecars: [sidecar({ custom_name: 'Old', tags: ['a'] })],
     });
@@ -693,26 +698,31 @@ describe('FleetPage', () => {
 
     await userEvent.click(await screen.findByRole('button', { name: /^settings$/i }));
     const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).queryByRole('button', { name: /^save$/i })).not.toBeInTheDocument();
 
     const nameInput = within(dialog).getByLabelText(/display name/i);
     await userEvent.clear(nameInput);
     await userEvent.type(nameInput, 'New Name');
-
     const tagsInput = within(dialog).getByLabelText(/tags/i);
     await userEvent.clear(tagsInput);
     await userEvent.type(tagsInput, ' work , ,  laptop ');
+    await userEvent.tab();
 
-    await userEvent.click(within(dialog).getByRole('button', { name: /^save$/i }));
-
-    await waitFor(() =>
-      expect(api.patchSidecar).toHaveBeenCalledWith('laptop', {
-        custom_name: 'New Name',
-        tags: ['work', 'laptop'],
-      }),
-    );
+    await waitFor(() => expect(api.patchSidecar).toHaveBeenCalledWith('laptop', { custom_name: 'New Name', tags: ['work', 'laptop'] }));
     await waitFor(() => expect(toast.success).toHaveBeenCalledWith('Sidecar updated'));
-    // Successful save closes the dialog (open=false → data-state closed).
-    await waitFor(() => expect(dialog).toHaveAttribute('data-state', 'closed'));
+    expect(dialog).toHaveAttribute('data-state', 'open');
+  });
+
+  it('does not save when a field is left unchanged', async () => {
+    vi.mocked(api.fetchSidecars).mockResolvedValue({ sidecars: [sidecar({ custom_name: 'Old', tags: ['a'] })] });
+    renderWithProviders(<FleetPage />);
+
+    await userEvent.click(await screen.findByRole('button', { name: /^settings$/i }));
+    const dialog = await screen.findByRole('dialog');
+    await userEvent.click(within(dialog).getByLabelText(/display name/i));
+    await userEvent.tab();
+    await userEvent.tab();
+    expect(api.patchSidecar).not.toHaveBeenCalled();
   });
 
   it('toasts an error when saving the edit fails', async () => {
@@ -722,7 +732,8 @@ describe('FleetPage', () => {
 
     await userEvent.click(await screen.findByRole('button', { name: /^settings$/i }));
     const dialog = await screen.findByRole('dialog');
-    await userEvent.click(within(dialog).getByRole('button', { name: /^save$/i }));
+    await userEvent.type(within(dialog).getByLabelText(/display name/i), 'Renamed');
+    await userEvent.tab();
 
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith('save failed'));
   });
@@ -987,7 +998,9 @@ describe('FleetPage', () => {
   describe('update settings', () => {
     const openSettings = async () => {
       await userEvent.click(await screen.findByRole('button', { name: /^settings$/i }));
-      return within(await screen.findByRole('dialog'));
+      const dialog = within(await screen.findByRole('dialog'));
+      await userEvent.click(await dialog.findByRole('tab', { name: /^updates & logs/i }));
+      return dialog;
     };
     const choose = async (name: RegExp, option: string) => {
       await userEvent.click(await screen.findByRole('combobox', { name }));
@@ -1063,7 +1076,7 @@ describe('FleetPage', () => {
 
       const dialog = await openSettings();
       const note = await dialog.findByTestId('update-differs');
-      expect(note).toHaveTextContent(/reports auto-update off \(Runway asks for on\)/);
+      expect(note).toHaveTextContent(/Reports auto-update off \(Runway asks for on\)/);
       expect(note).not.toHaveTextContent(/channel/);
       expect(note).toHaveTextContent(/config\.json/);
     });
@@ -1105,7 +1118,9 @@ describe('FleetPage', () => {
   describe('logging', () => {
     const openSettings = async () => {
       await userEvent.click(await screen.findByRole('button', { name: /^settings$/i }));
-      return within(await screen.findByRole('dialog'));
+      const dialog = within(await screen.findByRole('dialog'));
+      await userEvent.click(await dialog.findByRole('tab', { name: /^updates & logs/i }));
+      return dialog;
     };
     const saved = (level: 'DEBUG' | null) =>
       vi.mocked(api.setSidecarSettings).mockResolvedValue({
@@ -1203,5 +1218,144 @@ describe('Fleet login directories', () => {
     await screen.findByRole('dialog');
     expect(screen.queryByLabelText('Claude Code directories')).not.toBeInTheDocument();
     expect(screen.getByText(/This sidecar does not report login directories yet/)).toBeVisible();
+  });
+});
+
+describe('Fleet settings dialog shell', () => {
+  const deviceId = 'device-' + 'b'.repeat(32);
+  const mac = (o: Partial<Sidecar> = {}) =>
+    sidecar({ sidecar_id: deviceId, hostname: 'macbook', os_platform: 'Darwin/25.6.0', ...o });
+  const open = async () => {
+    renderWithProviders(<FleetPage />, { route: `/fleet?settings=${deviceId}` });
+    return within(await screen.findByRole('dialog'));
+  };
+  const source = (source_id: string, state: 'Ready' | 'Setup required' | 'Action required', read = true) => ({
+    source_id,
+    provider_id: 'anthropic',
+    label: source_id,
+    revision: 'r',
+    generation: 1,
+    read,
+    state,
+    renewal_requested: false,
+    renewal_supported: false,
+    renewal_capable: false,
+    new: false,
+    remote_paused: false,
+    revoked: false,
+    report_at: new Date().toISOString(),
+    report_stale: false,
+    announcement: false,
+    collection_health: 'untried' as const,
+    last_collection_at: null,
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(api.fetchAppConfig).mockReset().mockResolvedValue({ env_timezone: 'UTC' });
+    vi.mocked(api.fetchProviderConfigs).mockReset().mockResolvedValue({ providers: [] });
+    vi.mocked(api.fetchSidecarSources).mockReset().mockResolvedValue({ protocol: 1, sources: [], commands: [] });
+  });
+
+  it('opens on General with a status line and three tabs', async () => {
+    vi.mocked(api.fetchSidecars).mockResolvedValue({ sidecars: [mac({ sidecar_version: '3.0.0' })] });
+    const dialog = await open();
+    expect(dialog.getByRole('tab', { name: /^general/i })).toHaveAttribute('data-state', 'active');
+    expect(dialog.getByRole('tab', { name: /^credentials/i })).toBeInTheDocument();
+    expect(dialog.getByRole('tab', { name: /^updates & logs/i })).toBeInTheDocument();
+    expect(dialog.getByText('Online')).toBeInTheDocument();
+    expect(dialog.getByText(/last seen just now/)).toBeInTheDocument();
+    // The version is in the dialog description, not repeated in the status line.
+    expect(dialog.getAllByText(/3\.0\.0/)).toHaveLength(1);
+    expect(dialog.getByLabelText(/display name/i)).toBeInTheDocument();
+    expect(dialog.queryByTestId('settings-pending')).not.toBeInTheDocument();
+    expect(dialog.getByRole('button', { name: 'Remove sidecar' })).toBeInTheDocument();
+  });
+
+  it('says offline and when the sidecar was last seen', async () => {
+    vi.mocked(api.fetchSidecars).mockResolvedValue({
+      sidecars: [mac({ stale: true, last_seen: new Date(Date.now() - 3 * 3_600_000).toISOString() })],
+    });
+    const dialog = await open();
+    expect(dialog.getByText('Offline')).toBeInTheDocument();
+    expect(dialog.getByText(/last seen 3h ago/)).toBeInTheDocument();
+  });
+
+  it('counts settings the sidecar has not applied yet once, for every section', async () => {
+    vi.mocked(api.fetchSidecars).mockResolvedValue({
+      sidecars: [mac({ keep_alive: false, keep_alive_desired: true, log_level: 'INFO', log_level_desired: 'DEBUG' })],
+    });
+    const dialog = await open();
+    expect(dialog.getByTestId('settings-pending')).toHaveTextContent("2 settings waiting for the sidecar's next check-in");
+  });
+
+  it('words the pending count for an offline sidecar', async () => {
+    vi.mocked(api.fetchSidecars).mockResolvedValue({
+      sidecars: [mac({ stale: true, keep_alive: false, keep_alive_desired: true })],
+    });
+    const dialog = await open();
+    expect(dialog.getByTestId('settings-pending')).toHaveTextContent('1 setting will apply when it reconnects');
+  });
+
+  it('badges the Credentials tab with the sources that need authorization on the Mac', async () => {
+    vi.mocked(api.fetchSidecars).mockResolvedValue({ sidecars: [mac()] });
+    vi.mocked(api.fetchSidecarSources).mockResolvedValue({
+      protocol: 1,
+      sources: [source('a.one', 'Setup required'), source('a.two', 'Action required'), source('a.three', 'Ready')],
+      commands: [],
+    });
+    const dialog = await open();
+    expect(await dialog.findByRole('tab', { name: 'Credentials 2' })).toBeInTheDocument();
+  });
+
+  it('shows the update tag on every tab and the Update now button on Updates & logs', async () => {
+    vi.mocked(api.fetchSidecars).mockResolvedValue({ sidecars: [mac({ update_available: true })] });
+    vi.mocked(api.triggerSidecarUpdate).mockResolvedValue({ status: 'ok' } as never);
+    const dialog = await open();
+    expect(dialog.getByText('update available')).toBeInTheDocument();
+    expect(dialog.queryByRole('button', { name: 'Update now' })).not.toBeInTheDocument();
+    await userEvent.click(dialog.getByRole('tab', { name: /^updates & logs 1/i }));
+    expect(dialog.getByText('update available')).toBeInTheDocument();
+    expect(dialog.getByText('A newer sidecar build is available.')).toBeInTheDocument();
+    expect(dialog.getByRole('button', { name: 'Update now' })).toBeInTheDocument();
+  });
+
+  it('badges General when a login directory has not been applied yet, and nothing else', async () => {
+    vi.mocked(api.fetchSidecars).mockResolvedValue({
+      sidecars: [
+        mac({
+          login_dirs_report: { applied: { claude_config_dirs: [], codex_home: [] }, searched: {} },
+          login_dirs_desired: { claude_config_dirs: ['~/new'], codex_home: [] },
+        }),
+      ],
+    });
+    const dialog = await open();
+    expect(dialog.getByRole('tab', { name: 'General 1' })).toBeInTheDocument();
+    expect(dialog.getByRole('tab', { name: /^updates & logs$/i })).toBeInTheDocument();
+    expect(dialog.getByTestId('settings-pending')).toHaveTextContent('1 setting waiting');
+  });
+
+  it('shows no Keychain card for a Linux device that reports no sources', async () => {
+    vi.mocked(api.fetchSidecars).mockResolvedValue({
+      sidecars: [sidecar({ sidecar_id: deviceId, os_platform: 'Linux/7.0' })],
+    });
+    const dialog = await open();
+    await userEvent.click(dialog.getByRole('tab', { name: /^credentials/i }));
+    await waitFor(() => expect(api.fetchSidecarSources).toHaveBeenCalled());
+    expect(dialog.queryByRole('region', { name: /sources/i })).not.toBeInTheDocument();
+    expect(dialog.queryByText(/Keychain/)).not.toBeInTheDocument();
+  });
+
+  it('shows the Keychain card for a Mac on the Credentials tab only', async () => {
+    vi.mocked(api.fetchSidecars).mockResolvedValue({ sidecars: [mac()] });
+    vi.mocked(api.fetchSidecarSources).mockResolvedValue({
+      protocol: 1,
+      sources: [source('anthropic.claude-code', 'Ready')],
+      commands: [],
+    });
+    const dialog = await open();
+    expect(dialog.queryByRole('region', { name: 'Keychain sources' })).not.toBeInTheDocument();
+    await userEvent.click(dialog.getByRole('tab', { name: /^credentials/i }));
+    expect(await dialog.findByRole('region', { name: 'Keychain sources' })).toBeInTheDocument();
   });
 });

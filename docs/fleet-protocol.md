@@ -185,6 +185,10 @@ over sidecar polling.
 A setup request creates a **notice**. It never opens a permission prompt on the
 operator's machine. See [`source-consent.md`](source-consent.md).
 
+In the dashboard these live on the **Credentials** tab of a sidecar's settings: a ⋯ menu per
+source (pause or resume, ask the Mac to set up, revoke after a confirmation), and bulk
+**Ask Mac to set up N**, **Pause all** and **Resume all**. Every one of them only sends the commands above.
+
 ## Source lifecycle
 
 `GET /fleet/sidecars/{id}/sources` reports the sources on one machine, and
