@@ -5,7 +5,7 @@ read of an underscore-prefixed member is the coupling this refactor removed, so
 this guard fails if one reappears.
 """
 
-import re
+import ast
 from pathlib import Path
 
 import pytest
@@ -19,28 +19,82 @@ CLUSTER = sorted(
     ]
 )
 
-# Another module's private member, read through the module alias it is imported as.
-PRIVATE_ATTRIBUTE = re.compile(r"\b(?:probe|authority|support)\._[A-Za-z]\w*")
-# A private member imported by name from another cluster module.
-PRIVATE_IMPORT = re.compile(
-    r"^from\s+app\.services\.claude_(?:cloud_\w+|chat_fixture)\s+import\s+([^\n(]+)$",
-    re.MULTILINE,
-)
+
+def bound_names(tree: ast.Module) -> set[str]:
+    """The names this module binds itself, so a private read of them is local."""
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            names.add(node.id)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(node.name)
+        elif isinstance(node, ast.arg):
+            names.add(node.arg)
+        elif isinstance(node, ast.alias):
+            names.add(node.asname or node.name.split(".")[0])
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            names.add(node.name)
+        elif isinstance(node, (ast.Global, ast.Nonlocal)):
+            names.update(node.names)
+    return names
 
 
-def imported_names(statement: str) -> list[str]:
-    return [name.strip().split(" as ")[0] for name in statement.split(",")]
+def private_imports(tree: ast.Module) -> list[str]:
+    """A private name imported from another module of this app."""
+    found = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ImportFrom) or not node.module:
+            continue
+        if not node.module.startswith("app."):
+            continue
+        for alias in node.names:
+            if alias.name.startswith("_"):
+                found.append(f"{node.module}.{alias.name}")
+    return found
+
+
+def is_module(module: str, name: str) -> bool:
+    """True when ``from module import name`` binds a module, not an attribute."""
+    base = ROOT.joinpath(*module.split("."))
+    return (base / f"{name}.py").is_file() or (base / name / "__init__.py").is_file()
+
+
+def module_handles(tree: ast.Module) -> set[str]:
+    """The aliases that name another module, so their privates are another module's."""
+    handles: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            handles.update(alias.asname for alias in node.names if alias.asname)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            for alias in node.names:
+                if alias.asname and is_module(node.module, alias.name):
+                    handles.add(alias.asname)
+                elif not alias.asname and is_module(node.module, alias.name):
+                    handles.add(alias.name)
+    return handles
+
+
+def private_reads(tree: ast.Module) -> list[str]:
+    """A private member read on another module: an unbound name or a module alias."""
+    local = bound_names(tree)
+    handles = module_handles(tree)
+    found = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Attribute) or not node.attr.startswith("_"):
+            continue
+        base = node.value
+        if isinstance(base, ast.Name) and (base.id not in local or base.id in handles):
+            found.append(f"{base.id}.{node.attr}")
+    return found
 
 
 @pytest.mark.parametrize("path", CLUSTER, ids=lambda path: path.name)
 def test_the_cluster_reads_no_private_member_of_another_module(path: Path):
-    source = path.read_text()
-    assert not PRIVATE_ATTRIBUTE.search(source), (
-        f"{path.relative_to(ROOT)} reads another module's private member"
-    )
-    for statement in PRIVATE_IMPORT.findall(source):
-        private = [name for name in imported_names(statement) if name.startswith("_")]
-        assert not private, f"{path.relative_to(ROOT)} imports the private {private}"
+    tree = ast.parse(path.read_text())
+    imported = private_imports(tree)
+    assert not imported, f"{path.relative_to(ROOT)} imports the private {imported}"
+    read = private_reads(tree)
+    assert not read, f"{path.relative_to(ROOT)} reads the private {read}"
 
 
 def test_the_cluster_is_not_empty():
