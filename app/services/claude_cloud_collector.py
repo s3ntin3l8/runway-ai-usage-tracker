@@ -161,27 +161,6 @@ class _CollectorProbe(probe.Probe):
             return await super().get(*args, **kwargs)
 
 
-def _list_page(payload: object) -> tuple[list[dict[str, Any]], str | None]:
-    """One list page, where an omitted terminal ``next_cursor`` means the end of the list.
-
-    The shared parser requires the key on every page, but the real list drops it on the last
-    one (the verifier tolerates that too). A declared ``has_more`` must agree with the cursor.
-    """
-    if isinstance(payload, dict):
-        if "has_more" in payload and type(payload["has_more"]) is not bool:
-            raise probe.ProbeError("unsupported_contract")
-        if "next_cursor" not in payload:
-            payload = {**payload, "next_cursor": None}
-    rows, cursor = probe.page(payload, PAGE_LIMIT)
-    if (
-        isinstance(payload, dict)
-        and "has_more" in payload
-        and payload["has_more"] != (cursor is not None)
-    ):
-        raise probe.ProbeError("unsupported_contract")
-    return rows, cursor
-
-
 async def _sweep(
     attempt: _CollectorProbe, high_water: datetime | None, full: bool, report: CycleReport
 ) -> tuple[list[SessionObservation], datetime | None, bool, bool]:
@@ -205,7 +184,7 @@ async def _sweep(
         attempt.report["stage"] = "page_get"
         payload = await attempt.get("/v1/code/sessions", headers, params)
         attempt.report["stage"] = "page_shape"
-        rows, cursor = _list_page(payload)
+        rows, cursor = probe.page_with_terminal_omission(payload, PAGE_LIMIT)
         report.pages += 1
         report.listed += len(rows)
         already_processed = bool(rows) and high_water is not None
@@ -235,6 +214,10 @@ async def _sweep(
             if usage is not None:
                 observed.append(SessionObservation(sid, usage, read_model(row), updated))
         if cursor is None:
+            if len(rows) == PAGE_LIMIT:
+                # A full last page is ambiguous: the end of the list, or paging that stopped
+                # emitting cursors. The note lets the cycle log tell the two apart.
+                report.notes.append("full_last_page")
             return observed, newest, True, ordered
         # An early stop needs the pages read so far to be newest-first. Pages not yet read can
         # still disagree; the periodic full sweep (FULL_SWEEP_EVERY) is the backstop for that.

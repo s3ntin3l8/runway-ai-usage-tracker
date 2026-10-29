@@ -569,3 +569,47 @@ async def test_has_more_must_agree_with_the_cursor(environment):
 
     report = await sweep(upstream)
     assert report.outcome == "unsupported_contract" and report.detail == "page_shape"
+
+
+@pytest.mark.asyncio
+async def test_has_more_false_with_a_cursor_is_a_contract_failure(environment):
+    def upstream(request):
+        if request.url.path.endswith("/profile"):
+            return httpx.Response(200, json=profile())
+        return httpx.Response(
+            200, json={"data": [row(usage=block())], "next_cursor": "x", "has_more": False}
+        )
+
+    report = await sweep(upstream)
+    assert report.outcome == "unsupported_contract" and report.detail == "page_shape"
+
+
+@pytest.mark.asyncio
+async def test_has_more_with_a_cursor_requests_the_next_page(environment):
+    def upstream(request):
+        if request.url.path.endswith("/profile"):
+            return httpx.Response(200, json=profile())
+        if request.url.params.get("cursor"):
+            return httpx.Response(200, json={"data": [], "has_more": False})
+        return httpx.Response(
+            200,
+            json={"data": [row(usage=block())], "next_cursor": "page-2", "has_more": True},
+        )
+
+    report = await sweep(upstream)
+    assert report.outcome == "ok" and report.pages == 2 and report.cloud_sessions == 1
+
+
+@pytest.mark.asyncio
+async def test_a_full_last_page_without_a_cursor_is_noted(environment):
+    page = [row(f"cse_full{index:02d}", usage=block()) for index in range(collector.PAGE_LIMIT)]
+
+    def upstream(request):
+        if request.url.path.endswith("/profile"):
+            return httpx.Response(200, json=profile())
+        return httpx.Response(200, json={"data": page})
+
+    report = await sweep(upstream)
+    assert report.outcome == "ok" and report.notes == ["full_last_page"]
+    short = await sweep(listing([[row(usage=block())]])[0])
+    assert short.notes == []

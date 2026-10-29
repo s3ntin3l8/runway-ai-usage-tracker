@@ -58,24 +58,7 @@ UNSAFE_OUTCOMES = {
 
 
 def _verification_page(payload: object, limit: int) -> tuple[list[dict[str, Any]], str | None]:
-    """Follow supplied continuation, including optional terminal omission.
-
-    Page length never signals completion. A declared has_more must agree with
-    continuation; the legacy sample parser and diagnostic-v1 policy stay frozen.
-    """
-    if isinstance(payload, dict):
-        if "has_more" in payload and type(payload["has_more"]) is not bool:
-            raise probe.ProbeError("unsupported_contract")
-        if "next_cursor" not in payload:
-            payload = {**payload, "next_cursor": None}
-    rows, cursor = probe.page(payload, limit)
-    if (
-        isinstance(payload, dict)
-        and "has_more" in payload
-        and payload["has_more"] != (cursor is not None)
-    ):
-        raise probe.ProbeError("unsupported_contract")
-    return rows, cursor
+    return probe.page_with_terminal_omission(payload, limit)
 
 
 def source_digest(key: bytes, source: tuple[Any, ...]) -> str:
