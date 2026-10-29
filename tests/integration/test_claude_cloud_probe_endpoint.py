@@ -164,10 +164,10 @@ async def test_client_disconnect_is_clean_without_publishing_or_logging_body(cli
 
 
 def test_explicit_v2_returns_structure_while_default_v1_is_unchanged(client):
-    from app.services.claude_cloud_probe import _empty_report
+    from app.services.claude_cloud_probe import empty_report
 
     http, service = client
-    service.return_value = _empty_report(2)
+    service.return_value = empty_report(2)
     response = http.post(
         PATH, json={**BODY, "report_version": 2}, headers={"X-Admin-Key": "probe-test-admin"}
     )
@@ -176,7 +176,7 @@ def test_explicit_v2_returns_structure_while_default_v1_is_unchanged(client):
     assert response.json()["structure"]["events"] == 0
     assert service.call_args.args[0].report_version == 2
     limiter.reset()
-    service.return_value = _empty_report()
+    service.return_value = empty_report()
     response = http.post(PATH, json=BODY, headers={"X-Admin-Key": "probe-test-admin"})
     assert response.status_code == 200 and response.json()["format_version"] == 1
     assert "structure" not in response.json()

@@ -82,7 +82,7 @@ def test_archive_gate_prevents_mutation_and_errors_stay_sanitized(client, monkey
     http, endpoint, advance = client
     store = SimpleNamespace(archive=lambda *args: pytest.fail("unexpected_mutation"))
     monkeypatch.setattr(endpoint, "checkpoint_store", lambda: store)
-    monkeypatch.setattr(endpoint.probe, "_gate", SimpleNamespace(locked=lambda: True))
+    monkeypatch.setattr(endpoint.support, "gate", SimpleNamespace(locked=lambda: True))
     response = http.post(
         PATH, json={"action": "archive", "job_handle": HANDLE, "revision": 0}, headers=AUTH
     )

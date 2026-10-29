@@ -10,8 +10,9 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.models.claude_cloud_probe import ClaudeCloudProbeRequest
 from app.models.claude_cloud_verification import VerificationState
 from app.services import claude_cloud_probe as probe
+from app.services import claude_cloud_support as support
 from app.services.claude_cloud_checkpoints import CheckpointError, CheckpointStore
-from app.services.claude_cloud_verification import _source_digest
+from app.services.claude_cloud_verification import source_digest
 from scripts.claude_cloud_list_boundary import (
     BoundaryDecodeError,
     decode_boundary_json,
@@ -21,7 +22,7 @@ from scripts.claude_cloud_list_boundary import (
 TOTAL_TIMEOUT = 20
 
 
-class _BoundaryProbe(probe._Probe):
+class _BoundaryProbe(probe.Probe):
     def __init__(
         self,
         handle: str,
@@ -66,7 +67,7 @@ class _BoundaryProbe(probe._Probe):
         if path == "/api/oauth/profile" and isinstance(value, dict):
             account = value.get("account")
             self.profile_subject = (
-                probe._uuid(account.get("uuid")) if isinstance(account, dict) else None
+                support.strict_uuid(account.get("uuid")) if isinstance(account, dict) else None
             )
         return value
 
@@ -115,11 +116,11 @@ async def inspect_list_boundary(
 ) -> dict[str, Any]:
     """A separately requested diagnostic; state remains stopped and byte-for-byte unchanged."""
     report = _empty()
-    if probe._gate.locked():
+    if support.gate.locked():
         report["outcome"] = "busy"
         return report
     attempt = None
-    async with probe._gate:
+    async with support.gate:
         try:
             with probe.probing():
                 async with asyncio.timeout(TOTAL_TIMEOUT):
@@ -141,13 +142,13 @@ async def inspect_list_boundary(
                     )
                     report["stage"] = "source"
                     try:
-                        source = await probe._load_source(state.account_id, state.source_id)
+                        source = await probe.load_source(state.account_id, state.source_id)
                     except probe.ProbeError as exc:
                         if str(exc) == "expired":
                             raise
                         raise probe.ProbeError("source_changed") from None
                     if not hmac.compare_digest(
-                        _source_digest(bytes.fromhex(state.job_key), source), state.source_digest
+                        source_digest(bytes.fromhex(state.job_key), source), state.source_digest
                     ):
                         raise probe.ProbeError("source_changed")
                     attempt = _BoundaryProbe(handle, store, state, client)

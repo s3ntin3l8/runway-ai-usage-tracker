@@ -7,7 +7,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from app.services import claude_cloud_probe as probe
+from app.services import claude_cloud_support as support
 from app.services.claude_cloud_checkpoints import CheckpointError, CheckpointStore
 from tests.unit import test_claude_cloud_probe as source_fixtures
 from tests.unit.test_claude_cloud_probe import ACCOUNT, ORG, SOURCE, SUBJECT, profile, usage
@@ -18,7 +18,7 @@ source_environment = source_fixtures.environment
 def store_for(environment):
     engine, _ = environment
     return CheckpointStore(
-        Path(engine.url.database), probe.encryption_service, clock=lambda: 1000.0
+        Path(engine.url.database), support.encryption_service, clock=lambda: 1000.0
     )
 
 

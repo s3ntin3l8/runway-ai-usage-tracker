@@ -146,9 +146,9 @@ def test_v2_model_preserves_payload_observation_and_v1_rejects_it():
     from pydantic import ValidationError
 
     from app.models.claude_cloud_probe import ClaudeCloudProbeReport, ClaudeCloudProbeReportV2
-    from app.services.claude_cloud_probe import _empty_report
+    from app.services.claude_cloud_probe import empty_report
 
-    report = _empty_report(2)
+    report = empty_report(2)
     report["observations"] = [{"location": "payload", "report": {}}]
     validated = ClaudeCloudProbeReportV2.model_validate(report)
     assert validated.model_dump()["observations"][0]["location"] == "payload"

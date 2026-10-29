@@ -152,4 +152,4 @@ def test_diagnostic_and_page_reader_share_the_same_session_id_validator():
     from app.services import claude_cloud_probe as probe
     from scripts.claude_cloud_list_boundary import SESSION_ID
 
-    assert probe._SESSION_ID is SESSION_ID
+    assert probe.SESSION_ID is SESSION_ID

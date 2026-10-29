@@ -16,6 +16,7 @@ from app.models.db import (
 )
 from app.services import claude_cloud_collector as collector
 from app.services import claude_cloud_probe as probe
+from app.services import claude_cloud_support as support
 from app.services.token_cache import TokenCache
 
 ACCOUNT = "holder@example.com"
@@ -59,8 +60,8 @@ async def environment(monkeypatch, tmp_path):
         poolclass=StaticPool,
     )
     SQLModel.metadata.create_all(engine)
-    monkeypatch.setattr(probe, "Session", Session)
-    monkeypatch.setattr(probe, "engine", engine)
+    monkeypatch.setattr(support, "Session", Session)
+    monkeypatch.setattr(support, "engine", engine)
     monkeypatch.setattr(collector, "engine", engine)
     monkeypatch.setattr("app.services.source_controls._ENABLED", False)
     from cryptography.fernet import Fernet
@@ -69,7 +70,7 @@ async def environment(monkeypatch, tmp_path):
     from app.core.encryption import EncryptionService
 
     monkeypatch.setattr(settings, "DB_ENCRYPTION_KEY", Fernet.generate_key().decode())
-    monkeypatch.setattr(probe, "encryption_service", EncryptionService())
+    monkeypatch.setattr(support, "encryption_service", EncryptionService())
     cache = TokenCache()
     monkeypatch.setattr(probe, "token_cache", cache)
     with Session(engine) as session:
@@ -235,7 +236,7 @@ async def test_an_unexpected_apply_failure_is_contained(environment, monkeypatch
 @pytest.mark.asyncio
 async def test_a_busy_endpoint_gate_skips_the_sweep_without_requests(environment):
     upstream, calls = listing([[row(usage=block())]])
-    async with probe._gate:
+    async with support.gate:
         report = await sweep(upstream)
     assert report.outcome == "busy" and calls == [] and events(environment) == []
 
@@ -287,7 +288,7 @@ async def test_a_replayed_increase_is_a_duplicate_not_a_second_event(environment
 
 @pytest.mark.asyncio
 async def test_a_source_change_mid_sweep_discards_the_results(environment, monkeypatch):
-    real = probe._load_source
+    real = probe.load_source
     calls = []
 
     async def changed(account, source_id):
@@ -297,7 +298,7 @@ async def test_a_source_change_mid_sweep_discards_the_results(environment, monke
             tokens = {**tokens, "oauth_token": "someone-else"}
         return tokens, org, authority
 
-    monkeypatch.setattr(probe, "_load_source", changed)
+    monkeypatch.setattr(probe, "load_source", changed)
     report = await sweep(listing([[row(usage=block())]])[0])
     assert report.outcome == "source_changed" and events(environment) == []
     with Session(environment) as session:

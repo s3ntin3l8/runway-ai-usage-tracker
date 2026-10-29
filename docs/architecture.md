@@ -589,6 +589,15 @@ The read layer was split out of what used to be a single 1979-line
 operator-triggered server diagnostic for the Claude cloud accounting path.
 See [evidence](evidence/README.md) for the acceptance records.
 
+`app/services/claude_cloud_support.py` holds the pieces the Claude cloud
+diagnostics share: the single-flight worker gate, the read-only source-authority
+read and the strict JSON/UUID helpers. The cloud probe, the chat fixture
+(`claude_chat_fixture.py`), the verification and list-boundary services, the
+collector and the verification endpoint all take the **same** gate, so one
+diagnostic in flight makes the others report `busy` instead of starting their
+own work. These are public names on purpose: no module in the cluster reads
+another module's private member.
+
 `app/services/claude_cloud_collector.py` is the one server-side API collector that writes
 `usage_events` itself (all other collectors return cards): for Claude Code cloud-runner
 sessions only, behind `CLAUDE_CLOUD_COLLECTOR_ENABLED` (default off). It subclasses the
