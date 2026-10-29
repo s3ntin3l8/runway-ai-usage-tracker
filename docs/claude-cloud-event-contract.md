@@ -123,10 +123,11 @@ Per closed turn and model `m`:
 2. `msgs_m` = the sums over the turn's message events of model `m`, field by field. A message id that
    was already emitted in an earlier turn is skipped (`repeated_message`): a resumed runner replays
    earlier messages, which were not new calls. The state keeps a short digest of every emitted id.
-3. `remainder_m` = `max(delta_m - msgs_m, 0)` per field. Where that would be negative for some field,
-   the subagent messages are taken out of `msgs_m` and the comparison is repeated against the main loop
-   only (`subagent_outside_model_usage`): older runners leave subagent calls out of `modelUsage`, so
-   those messages are real calls on top of it. A difference still negative is clamped to zero and
+3. `remainder_m` = `max(delta_m - msgs_m, 0)` per field. Where that would be negative for some field
+   and the main loop alone (the messages without a subagent marker) fits within `delta_m` in every
+   field, the overshoot is the subagent messages': older runners leave subagent calls out of
+   `modelUsage`, so those are real calls on top of it, and the comparison is repeated against the main
+   loop only (`subagent_outside_model_usage`). Any other negative difference is clamped to zero and
    counted (`negative_remainder`); it never produces a negative event. Messages can thus exceed the
    delta (a subagent call outside `modelUsage`, or counters lost to a runner restart), and the events
    then carry that excess.

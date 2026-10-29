@@ -531,6 +531,33 @@ def test_subagent_calls_outside_model_usage_are_extra_not_subtracted():
     }
 
 
+def test_a_plain_clamp_is_not_blamed_on_subagents():
+    history = turn(
+        1,
+        [msg(message_id="m1", inp=10, out=50, read=100)],
+        {OPUS: {"inputTokens": 10, "outputTokens": 20, "cacheReadInputTokens": 100}},
+    )
+    _, reducer = run(history)
+    assert reducer.stats["negative_remainder"] == 1
+    assert reducer.stats["subagent_outside_model_usage"] == 0
+
+
+def test_subagents_are_set_aside_only_when_the_main_loop_fits_modelusage():
+    # The main loop alone already exceeds the delta, so the subagent message is not the cause.
+    history = turn(
+        1,
+        [
+            msg(message_id="main", inp=30, read=1000),
+            msg(message_id="sub", inp=7, read=900, parent="toolu_x", subagent="Explore"),
+        ],
+        {OPUS: {"inputTokens": 20, "cacheReadInputTokens": 1500}},
+    )
+    events, reducer = run(history)
+    assert reducer.stats["subagent_outside_model_usage"] == 0
+    assert reducer.stats["negative_remainder"] == 1
+    assert [e.event_id for e in events] == [f"cloud:{DIGEST}:m:main", f"cloud:{DIGEST}:m:sub"]
+
+
 def test_subagent_calls_inside_model_usage_are_part_of_it():
     history = turn(
         1,
@@ -587,7 +614,7 @@ def test_a_remainder_after_messages_without_a_split_is_unknown_not_one_hour():
     events, _ = run(history)
     remainder = events[-1]
     assert remainder.tokens_cache_create == 300
-    assert (remainder.tokens_cache_create_1h, remainder.tokens_cache_create_5m) == (0, 300)
+    assert (remainder.tokens_cache_create_1h, remainder.tokens_cache_create_5m) == (0, 0)
 
 
 def test_the_message_count_is_the_same_whether_a_turn_closed_or_went_quiet():

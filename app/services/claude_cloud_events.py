@@ -181,7 +181,13 @@ class ClaudeCloudHistoryReducer:
         return []
 
     def tail_events(self) -> list[UsageEventPush]:
-        """Message events of the open turn (no remainders): for a session that went quiet."""
+        """Message events of the open turn (no remainders): for a session that went quiet.
+
+        This deliberately does not add to ``_seen``: when the turn does close, ``_close_turn`` emits
+        these messages again and needs their tokens for the remainder. The id dedupe is only for
+        messages emitted by an earlier *closed* turn; recording them here would corrupt the
+        remainders of an open turn.
+        """
         return [
             push
             for message_id, held in self._tail.items()
@@ -370,23 +376,33 @@ class ClaudeCloudHistoryReducer:
             return events
         self.state.previous_model_usage.update(latest)
         for slug, delta in deltas.items():
-            gap = {name: delta[name] - have.get(slug, _ZERO)[name] for name in _MODEL_FIELDS}
-            if any(value < 0 for value in gap.values()) and slug in have_main:
-                # Some runner versions leave subagent calls out of `modelUsage`: those messages
-                # are real calls on top of it, so only the main loop is measured against it.
+            everything = have.get(slug, _ZERO)
+            main = have_main.get(slug, _ZERO)
+            gap = {name: delta[name] - everything[name] for name in _MODEL_FIELDS}
+            if (
+                any(value < 0 for value in gap.values())
+                and main != everything
+                and all(main[name] <= delta[name] for name in _MODEL_FIELDS)
+            ):
+                # Some runner versions leave subagent calls out of `modelUsage`: those messages are
+                # real calls on top of it. Only when the main loop alone fits within it is the
+                # overshoot theirs, so only the main loop is measured against it.
                 self.stats["subagent_outside_model_usage"] += 1
-                gap = {name: delta[name] - have_main[slug][name] for name in _MODEL_FIELDS}
-            if any(value < 0 for value in gap.values()):
+                gap = {name: delta[name] - main[name] for name in _MODEL_FIELDS}
+            elif any(value < 0 for value in gap.values()):
                 self.stats["negative_remainder"] += 1
             rest = {name: max(value, 0) for name, value in gap.items()}
             if not any(rest.values()):
                 continue
             create = rest["cacheCreationInputTokens"]
             seen = self.state.ttl_1h + self.state.ttl_5m
+            create_5m: int | None = None
             if not self.state.seen_messages:
                 create_1h = create  # no message yet to learn the split from: the observed norm
             elif seen == 0:
-                create_1h = 0  # messages reported no split at all: unknown, as theirs is
+                create_1h = create_5m = (
+                    0  # messages reported no split at all: unknown, as theirs is
+                )
             else:
                 create_1h = round(create * self.state.ttl_1h / seen)
             event_id = f"cloud:{self.facts.digest}:r:{ordinal}:{slug}"
@@ -402,7 +418,7 @@ class ClaudeCloudHistoryReducer:
                     tokens_cache_read=rest["cacheReadInputTokens"],
                     tokens_cache_create=create,
                     tokens_cache_create_1h=create_1h,
-                    tokens_cache_create_5m=create - create_1h,
+                    tokens_cache_create_5m=create - create_1h if create_5m is None else create_5m,
                     **self._base(None),
                 )
             )
