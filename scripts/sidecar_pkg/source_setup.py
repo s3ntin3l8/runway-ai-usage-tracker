@@ -341,7 +341,12 @@ class SetupController:
                     # the rest, and nothing about the failure is exposed.
                     with self._lock:
                         for source_id, ticket in members:
-                            if consent.POLICY.current(ticket):
+                            # Only sources still waiting: a sibling already finished (authorized)
+                            # before the failing member keeps its result.
+                            if (
+                                consent.POLICY.current(ticket)
+                                and self._states.get(source_id, (None, ""))[1] == "Connecting"
+                            ):
                                 self._states[source_id] = (ticket, "Action required")
                 with self._lock:
                     batch["done"] += 1
