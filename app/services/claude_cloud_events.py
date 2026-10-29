@@ -42,6 +42,19 @@ def session_digest(session_id: str) -> str:
     return hashlib.sha256(session_id.encode()).hexdigest()[:32]
 
 
+def _slug(raw_model: str) -> str:
+    """The normalized model id, without a context-window suffix.
+
+    `modelUsage` keys a long-context run as `claude-opus-4-8[1m]`; the shared normalizer reads that as
+    a different model (`opus-4`), so the messages and their usage would never meet.
+    """
+    return normalize_anthropic_model(raw_model.split("[", 1)[0])
+
+
+def _message_key(message_id: str) -> str:
+    return hashlib.sha256(message_id.encode()).hexdigest()[:12]
+
+
 def _count(value: object) -> int:
     return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else 0
 
@@ -89,6 +102,9 @@ class ReducerState:
     app_version: str | None = None
     ttl_1h: int = 0
     ttl_5m: int = 0
+    # Short digests of the message ids already emitted: a resumed runner replays earlier assistant
+    # messages in later turns, and those were not new calls.
+    seen_messages: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -108,6 +124,9 @@ class ReducerState:
             app_version=_text(data.get("app_version")),
             ttl_1h=_count(data.get("ttl_1h")),
             ttl_5m=_count(data.get("ttl_5m")),
+            seen_messages=[
+                item for item in data.get("seen_messages") or [] if isinstance(item, str)
+            ],
         )
 
 
@@ -133,6 +152,7 @@ class ClaudeCloudHistoryReducer:
         self.state = state or ReducerState()
         self.stats: Counter[str] = Counter()
         self._tail: dict[str, _Message] = {}
+        self._seen = set(self.state.seen_messages)
 
     # -- input -------------------------------------------------------------------------------
 
@@ -152,7 +172,12 @@ class ClaudeCloudHistoryReducer:
 
     def tail_events(self) -> list[UsageEventPush]:
         """Message events of the open turn (no remainders): for a session that went quiet."""
-        return [push for push in (self._message_event(m) for m in self._tail.values()) if push]
+        return [
+            push
+            for message_id, held in self._tail.items()
+            if _message_key(message_id) not in self._seen
+            if (push := self._message_event(held))
+        ]
 
     # -- records -----------------------------------------------------------------------------
 
@@ -255,7 +280,7 @@ class ClaudeCloudHistoryReducer:
         return UsageEventPush(
             event_id=f"cloud:{self.facts.digest}:m:{message['id']}",
             ts=stamp,
-            model_id=normalize_anthropic_model(raw_model),
+            model_id=_slug(raw_model),
             subagent_type=subagent,
             tool_names=tools or None,
             tool_calls=len(tools),
@@ -284,7 +309,7 @@ class ClaudeCloudHistoryReducer:
                 # The runner process restarted: its counters began again from zero.
                 self.stats["restarts"] += 1
                 previous = _ZERO
-            slug = normalize_anthropic_model(str(raw_model))
+            slug = _slug(str(raw_model))
             bucket = deltas.setdefault(slug, dict(_ZERO))
             for name in _MODEL_FIELDS:
                 bucket[name] += current[name] - previous[name]
@@ -296,17 +321,25 @@ class ClaudeCloudHistoryReducer:
         ordinal = self.state.result_ordinal
         self.stats["turns"] += 1
         events: list[UsageEventPush] = []
-        have: dict[str, dict[str, int]] = {}
-        for entry in self._tail.values():
+        have: dict[str, dict[str, int]] = {}  # every emitted message
+        have_main: dict[str, dict[str, int]] = {}  # the same without subagent messages
+        for message_id, entry in self._tail.items():
+            key = _message_key(message_id)
+            if key in self._seen:
+                self.stats["repeated_message"] += 1
+                continue
             push = self._message_event(entry)
             if push is None:
                 continue
+            self._seen.add(key)
+            self.state.seen_messages.append(key)
             events.append(push)
-            total = have.setdefault(push.model_id or "", dict(_ZERO))
-            total["inputTokens"] += push.tokens_input
-            total["outputTokens"] += push.tokens_output
-            total["cacheReadInputTokens"] += push.tokens_cache_read
-            total["cacheCreationInputTokens"] += push.tokens_cache_create
+            for bucket in (have, have_main) if push.subagent_type is None else (have,):
+                total = bucket.setdefault(push.model_id or "", dict(_ZERO))
+                total["inputTokens"] += push.tokens_input
+                total["outputTokens"] += push.tokens_output
+                total["cacheReadInputTokens"] += push.tokens_cache_read
+                total["cacheCreationInputTokens"] += push.tokens_cache_create
             self.state.ttl_1h += push.tokens_cache_create_1h
             self.state.ttl_5m += push.tokens_cache_create_5m
         last_message_id = events[-1].event_id if events else None
@@ -319,8 +352,12 @@ class ClaudeCloudHistoryReducer:
             self.stats["bad_timestamp"] += 1
             return events
         for slug, delta in deltas.items():
-            seen_here = have.get(slug, _ZERO)
-            gap = {name: delta[name] - seen_here[name] for name in _MODEL_FIELDS}
+            gap = {name: delta[name] - have.get(slug, _ZERO)[name] for name in _MODEL_FIELDS}
+            if any(value < 0 for value in gap.values()) and slug in have_main:
+                # Some runner versions leave subagent calls out of `modelUsage`: those messages
+                # are real calls on top of it, so only the main loop is measured against it.
+                self.stats["subagent_outside_model_usage"] += 1
+                gap = {name: delta[name] - have_main[slug][name] for name in _MODEL_FIELDS}
             if any(value < 0 for value in gap.values()):
                 self.stats["negative_remainder"] += 1
             rest = {name: max(value, 0) for name, value in gap.items()}

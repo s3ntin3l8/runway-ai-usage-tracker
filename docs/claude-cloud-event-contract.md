@@ -120,9 +120,16 @@ Per closed turn and model `m`:
 1. `delta_m` = the turn's `modelUsage[m]` minus the previous result's `modelUsage[m]` (field by field:
    input, output, cache read, cache write, thinking). If any field of `m` decreased the process
    restarted, so `delta_m` is the new value itself (a restart is not an error).
-2. `msgs_m` = the sums over the turn's message events of model `m`, field by field.
-3. `remainder_m` = `max(delta_m - msgs_m, 0)` per field. A negative difference is clamped to zero and
-   counted in the cycle log (`negative_remainder`); it never produces a negative event.
+2. `msgs_m` = the sums over the turn's message events of model `m`, field by field. A message id that
+   was already emitted in an earlier turn is skipped (`repeated_message`): a resumed runner replays
+   earlier messages, which were not new calls. The state keeps a short digest of every emitted id.
+3. `remainder_m` = `max(delta_m - msgs_m, 0)` per field. Where that would be negative for some field,
+   the subagent messages are taken out of `msgs_m` and the comparison is repeated against the main loop
+   only (`subagent_outside_model_usage`): older runners leave subagent calls out of `modelUsage`, so
+   those messages are real calls on top of it. A difference still negative is clamped to zero and
+   counted (`negative_remainder`); it never produces a negative event. Messages can thus exceed the
+   delta (a subagent call outside `modelUsage`, or counters lost to a runner restart), and the events
+   then carry that excess.
 4. Cache-write TTL split of the remainder: proportional to the 1h/5m split of the session's message
    events so far; with no message events yet, all 1h (the observed norm). The split of a remainder is
    an estimate and is documented as such.
@@ -138,8 +145,10 @@ Subagent messages count towards `msgs_m` of their model. A model that appears on
 
 ### 5.4 Normalization
 
-Model ids go through `normalize_anthropic_model` (`app/services/model_normalization.py`); an
-unrecognized id stays as reported and shows in the existing unpriced-models check. Timestamps are
+Model ids go through `normalize_anthropic_model` (`app/services/model_normalization.py`) after a
+context-window suffix is cut off: `modelUsage` keys a long-context run `claude-opus-4-8[1m]`, which the
+shared normalizer would read as a different model (`opus-4`). An unrecognized id stays as reported and
+shows in the existing unpriced-models check. Timestamps are
 ISO 8601 UTC.
 
 ### 5.5 Project, branch, working directory
@@ -182,15 +191,17 @@ cross-check result. No content, no ids. The coarse-collector tables are replaced
 
 ## 7. Acceptance criteria (checked on prod, read-only SQL plus the cycle log)
 
-1. **Totals per turn.** For every settled session, per model, the sum of its events' tokens equals the
-   final `modelUsage` (with restarts summed), field for field, except where a remainder was clamped
-   (reported).
+1. **Totals per turn.** For every settled session, per model, the sum of its events' tokens is never
+   below the final `modelUsage` (with restarts summed) and equals it field for field wherever the
+   messages do not exceed it; an excess is explained by subagent calls outside `modelUsage` or a
+   runner restart and is counted in the cycle log (`subagent_outside_model_usage`,
+   `negative_remainder`).
 2. **Messages.** Input, cache read and cache write of each message event equal the history record; the
    count of message events equals the count of distinct assistant `message.id` (excluding synthetic).
 3. **Models.** Every event has a normalized `model_id`; no event carries a model it did not use; Haiku
    appears as remainder events.
-4. **Time.** No event is dated at the sweep time; ordering by `ts` follows `sequence_num` within a
-   session.
+4. **Time.** No event is dated at the sweep time, and no message event is dated after the result of
+   its turn.
 5. **Project.** Every event of a session with a single repository has that `project_ref`; sessions with
    none have NULL, not a guess.
 6. **Replay.** Running the collector again adds zero rows, and the cycle log reports zero new events.
@@ -214,6 +225,10 @@ collector then backfills from history.
 
 ## 9. Known limits and open items
 
+- `modelUsage` can be smaller than the messages of a turn (subagent calls it leaves out in older
+  runners, counters lost when a runner restarts). The events then carry the messages' excess, so a
+  session's total can exceed the client's own `modelUsage` figure. In the 21 sessions checked, 12 match
+  it exactly and 9 carry such an excess, each with a counted cause.
 - Remainder events are separate rows, and most rollups, top models, source apps and history count every
   row as one message, so for cloud sessions those global message counts run about 10-25% high (one
   extra row per turn and model). The sessions view and top sessions, hosts and projects collapse

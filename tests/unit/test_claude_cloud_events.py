@@ -446,6 +446,110 @@ def test_resuming_from_the_saved_state_equals_one_pass():
     assert [e.model_dump() for e in first + second] == [e.model_dump() for e in one_pass]
 
 
+def test_a_long_context_model_key_meets_its_messages():
+    history = turn(
+        1,
+        [msg(message_id="m1", model="claude-opus-4-8", inp=10, out=2, read=100)],
+        {
+            "claude-opus-4-8[1m]": {
+                "inputTokens": 12,
+                "outputTokens": 50,
+                "cacheReadInputTokens": 100,
+            }
+        },
+    )
+    events, reducer = run(history)
+    assert {e.model_id for e in events} == {"opus-4.8"}
+    assert dict(totals(events)["opus-4.8"]) == {
+        "tokens_input": 12,
+        "tokens_output": 50,
+        "tokens_cache_read": 100,
+        "tokens_cache_create": 0,
+    }
+    assert reducer.stats["negative_remainder"] == 0
+
+
+def test_a_message_replayed_in_a_later_turn_is_not_counted_again():
+    first = {OPUS: {"inputTokens": 10, "outputTokens": 30, "cacheReadInputTokens": 100}}
+    second = {OPUS: {"inputTokens": 25, "outputTokens": 80, "cacheReadInputTokens": 250}}
+    history = [
+        *turn(1, [msg(message_id="m1", inp=10, out=2, read=100)], first, at=10),
+        # A resumed runner sends m1 again before its new message.
+        *turn(
+            20,
+            [
+                msg(message_id="m1", inp=10, out=2, read=100),
+                msg(message_id="m2", inp=15, out=3, read=150),
+            ],
+            second,
+            at=30,
+        ),
+    ]
+    events, reducer = run(history)
+    ids = [e.event_id for e in events]
+    assert ids.count(f"cloud:{DIGEST}:m:m1") == 1 and len(set(ids)) == len(ids)
+    assert reducer.stats["repeated_message"] == 1 and reducer.stats["negative_remainder"] == 0
+    assert dict(totals(events)["opus-5.5"]) == {
+        "tokens_input": 25,
+        "tokens_output": 80,
+        "tokens_cache_read": 250,
+        "tokens_cache_create": 0,
+    }
+
+
+def test_the_repeat_memory_survives_a_resume():
+    history = [
+        *turn(1, [msg(message_id="m1", inp=1)], {OPUS: {"inputTokens": 1}}),
+        *turn(10, [msg(message_id="m1", inp=1)], {OPUS: {"inputTokens": 1}}),
+    ]
+    head = ClaudeCloudHistoryReducer(facts())
+    for record in history[:2]:
+        head.feed(record)
+    tail = ClaudeCloudHistoryReducer(facts(), ReducerState.from_dict(head.state.to_dict()))
+    assert [e for record in history[2:] for e in tail.feed(record)] == []
+    assert tail.stats["repeated_message"] == 1
+
+
+def test_subagent_calls_outside_model_usage_are_extra_not_subtracted():
+    # `modelUsage` measures the main loop only (older runners); the subagent message is a real call.
+    history = turn(
+        1,
+        [
+            msg(message_id="main", inp=10, out=5, read=1000),
+            msg(message_id="sub", inp=7, out=3, read=9000, parent="toolu_x", subagent="Explore"),
+        ],
+        {OPUS: {"inputTokens": 10, "outputTokens": 40, "cacheReadInputTokens": 1000}},
+    )
+    events, reducer = run(history)
+    assert reducer.stats["subagent_outside_model_usage"] == 1
+    assert reducer.stats["negative_remainder"] == 0
+    assert dict(totals(events)["opus-5.5"]) == {
+        "tokens_input": 17,
+        "tokens_output": 43,
+        "tokens_cache_read": 10000,
+        "tokens_cache_create": 0,
+    }
+
+
+def test_subagent_calls_inside_model_usage_are_part_of_it():
+    history = turn(
+        1,
+        [
+            msg(message_id="main", inp=10, out=5, read=1000),
+            msg(message_id="sub", inp=7, out=3, read=9000, parent="toolu_x", subagent="Explore"),
+        ],
+        {OPUS: {"inputTokens": 20, "outputTokens": 40, "cacheReadInputTokens": 10500}},
+    )
+    events, reducer = run(history)
+    assert reducer.stats["subagent_outside_model_usage"] == 0
+    assert dict(totals(events)["opus-5.5"]) == {
+        "tokens_input": 20,
+        "tokens_output": 40,
+        "tokens_cache_read": 10500,
+        "tokens_cache_create": 0,
+    }
+
+
 def test_malformed_records_are_ignored():
     reducer = ClaudeCloudHistoryReducer(facts())
     for record in (
