@@ -120,8 +120,10 @@ class _Checkpoint:
     known: bool = False
 
 
-# Sessions a cycle did not finish, per account, so catch-up cycles skip the list pass. Lost on a
-# restart or a failed cycle, which only costs one extra list pass; the checkpoints are the truth.
+# Sessions a cycle did not finish, per account, so catch-up cycles skip the list pass. It is only
+# replaced or dropped once a cycle has succeeded, so a failed cycle (a rate limit, a rotated login)
+# keeps it; a restart loses it, which costs one extra list pass at the next interval. The
+# checkpoints are the truth.
 _PENDING: dict[str, list[_Row]] = {}
 
 
@@ -544,7 +546,7 @@ async def _read_session(
 
 
 async def _sync(attempt: _CollectorProbe, headers: dict[str, str], report: CycleReport) -> None:
-    rows = _PENDING.pop(attempt.account, None)
+    rows = _PENDING.get(attempt.account)
     if rows is None:
         rows = await _list_rows(attempt, headers, report)
     else:
@@ -561,15 +563,15 @@ async def _sync(attempt: _CollectorProbe, headers: dict[str, str], report: Cycle
     )
     pages_used = 0
     for index, (row, checkpoint) in enumerate(due):
+        left = REQUESTS_PER_CYCLE - int(attempt.report["requests"])
         if checkpoint.stalls:
-            # A session that could not close a turn within the usual budget gets a larger one.
-            left = _page_budget(checkpoint)
+            # A session that could not close a turn within the usual budget gets a larger one,
+            # but never more than the cycle's request cap.
+            left = min(_page_budget(checkpoint), left)
+            if checkpoint.stalls >= MAX_STALL_FACTOR - 1:
+                report.notes.append("stalled_turn")
         else:
-            left = min(
-                _page_budget(checkpoint),
-                HISTORY_PAGES_PER_CYCLE - pages_used,
-                REQUESTS_PER_CYCLE - int(attempt.report["requests"]),
-            )
+            left = min(_page_budget(checkpoint), HISTORY_PAGES_PER_CYCLE - pages_used, left)
         if left <= 0:
             report.backlog = True
             _PENDING[attempt.account] = [item[0] for item in due[index:]]
@@ -587,6 +589,8 @@ async def _sync(attempt: _CollectorProbe, headers: dict[str, str], report: Cycle
             _PENDING[attempt.account] = [item[0] for item in due[index:]]
             return
         report.sessions_read += 1
+    # Everything due was read: nothing is left to resume.
+    _PENDING.pop(attempt.account, None)
 
 
 async def _read(attempt: _CollectorProbe, source_id: str, report: CycleReport) -> bool:
@@ -624,15 +628,26 @@ async def _read(attempt: _CollectorProbe, source_id: str, report: CycleReport) -
     return False
 
 
-async def collect_account(account: str, source_id: str, client: httpx.AsyncClient) -> CycleReport:
-    """One bounded cycle for one account through one exact cached source."""
+async def collect_account(
+    account: str,
+    source_id: str,
+    client: httpx.AsyncClient,
+    *,
+    migration_pending: bool | None = None,
+) -> CycleReport:
+    """One bounded cycle for one account through one exact cached source.
+
+    ``migration_pending`` lets a caller that runs several accounts check once; None checks here.
+    """
     report = CycleReport()
     if support.gate.locked():
         # An operator-triggered probe or verification holds the endpoint: add no load.
         report.outcome = "busy"
         return report
     try:
-        if await asyncio.to_thread(_migration_pending):
+        if migration_pending is None:
+            migration_pending = await asyncio.to_thread(_migration_pending)
+        if migration_pending:
             report.outcome = "migration_required"
             return report
     except SQLAlchemyError:
@@ -664,11 +679,17 @@ async def collect_all(client: httpx.AsyncClient) -> dict[str, CycleReport]:
             kind = describe_origin_full(origin if isinstance(origin, str) else None).kind
             by_account.setdefault(slot, []).append((source_id, kind))
     logins: dict[str, list[str]] = {}
+    pending: bool | None = None
+    if by_account:
+        try:
+            pending = await asyncio.to_thread(_migration_pending)
+        except SQLAlchemyError:
+            pending = None  # each account's cycle then reports the storage error itself
     for account, sources in by_account.items():
         attempts = logins.setdefault(account, [])
         # Two logins of one account see the same sessions: the first usable one is enough.
         for source_id, kind in sorted(sources):
-            report = await collect_account(account, source_id, client)
+            report = await collect_account(account, source_id, client, migration_pending=pending)
             # A short one-way digest tells two logins of one kind apart without naming either.
             detail = f"/{report.detail}" if report.detail else ""
             attempts.append(f"{kind}#{session_digest(source_id)[:6]}:{report.outcome}{detail}")

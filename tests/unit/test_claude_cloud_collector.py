@@ -479,6 +479,81 @@ async def test_a_turn_longer_than_the_budget_gets_a_larger_one(environment, monk
     assert checkpoint(environment).stalls == 0
 
 
+@pytest.mark.asyncio
+async def test_a_stalled_session_never_exceeds_the_request_cap(environment, monkeypatch):
+    records = [system(1)]
+    for index in range(2, 42):
+        records.append(assistant(index, f"long{index}", inp=1, out=1, read=10))
+    records.append(
+        result(42, {OPUS: {"inputTokens": 40, "outputTokens": 40, "cacheReadInputTokens": 400}})
+    )
+    monkeypatch.setattr(collector, "HISTORY_PAGES_PER_CYCLE", 2)
+    monkeypatch.setattr(collector, "REQUESTS_PER_CYCLE", 20)
+    server = Server([cloud_row()], {SECRET_ID: records}, page=3)
+    finished = False
+    for _ in range(12):
+        server.calls.clear()
+        report = await cycle(server)
+        # Identity (profile) is not counted in `calls`; the cap counts every request of the cycle.
+        assert len(server.calls) + 1 <= collector.REQUESTS_PER_CYCLE
+        if report.outcome == "ok":
+            finished = True
+            break
+    assert finished  # the escalation still gets the long turn closed within the cap
+
+
+@pytest.mark.asyncio
+async def test_a_failed_cycle_keeps_the_unfinished_sessions_for_the_next_one(
+    environment, monkeypatch
+):
+    history = [system(1, cwd="/home/user/the-repo")]
+    seq = 2
+    for number in range(4):
+        history += turn(seq, [f"t{number}"], {"inputTokens": 5 * (number + 1)})
+        seq += 2
+    monkeypatch.setattr(collector, "HISTORY_PAGES_PER_CYCLE", 2)
+    server = Server([cloud_row()], {SECRET_ID: history}, page=3)
+    assert (await cycle(server)).backlog
+    assert collector._PENDING[ACCOUNT]
+
+    class RateLimited(Server):
+        def __call__(self, request):
+            if request.url.path.endswith("/events"):
+                return httpx.Response(429, json={})
+            return super().__call__(request)
+
+    failed = await cycle(RateLimited(server.rows, server.histories, page=3))
+    assert failed.outcome == "rate_limited"
+    assert collector._PENDING[ACCOUNT]  # the failure did not lose the catch-up list
+    listed = sum(1 for path, _ in server.calls if path == "/v1/code/sessions")
+    again = await cycle(server)
+    assert "backlog_resumed" in again.notes
+    assert sum(1 for path, _ in server.calls if path == "/v1/code/sessions") == listed
+
+
+@pytest.mark.asyncio
+async def test_the_migration_check_runs_once_per_collect_all(environment, monkeypatch):
+    for index in range(2):
+        await probe.token_cache.store(
+            "anthropic",
+            {"oauth_token": f"access-{index}", "refresh_token": "unused"},
+            account_id=f"other{index}@example.com",
+            source_id=f"other-source-{index}",
+            source_metadata={"credential_origin": "file:/fixture/.claude/.credentials.json"},
+        )
+    calls = []
+    real = collector._migration_pending
+
+    def counted():
+        calls.append(1)
+        return real()
+
+    monkeypatch.setattr(collector, "_migration_pending", counted)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(Server([], {}))) as client:
+        reports = await collector.collect_all(client)
+    assert len(reports) == 3 and len(calls) == 1
+
+
 # -- cross-check --------------------------------------------------------------------------------
 
 
@@ -713,7 +788,7 @@ async def test_an_account_whose_logins_are_all_rejected_still_logs_them(
         source_metadata={"credential_origin": "keychain:Claude Desktop/oauth/abc"},
     )
 
-    async def rejected(account, source_id, client):
+    async def rejected(account, source_id, client, **kwargs):
         report = collector.CycleReport()
         report.outcome = "unsupported_source" if source_id == "aaa-desktop" else "source_ineligible"
         return report
@@ -740,7 +815,7 @@ async def test_login_kinds_use_the_origin_vocabulary(environment, caplog, monkey
             source_metadata={"credential_origin": origin} if origin else {},
         )
 
-    async def rejected(account, source_id, client):
+    async def rejected(account, source_id, client, **kwargs):
         report = collector.CycleReport()
         report.outcome = "source_ineligible"
         return report
