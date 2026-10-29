@@ -11,6 +11,7 @@ import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from scripts.sidecar_pkg import source_consent as consent
 from scripts.sidecar_pkg.keychain_protocol import KeychainError, keychain_reason
@@ -232,6 +233,8 @@ class SetupController:
         self._lock = threading.RLock()
         self._thread: threading.Thread | None = None
         self._states: dict[str, tuple[consent.ConsentTicket, str]] = {}
+        # The running (or last) authorize-all: groups of sources behind one Keychain item.
+        self._batch: dict[str, Any] | None = None
 
     def state(self, source_id: str) -> str:
         with self._lock:
@@ -266,6 +269,9 @@ class SetupController:
             )
         except Exception:
             pass  # Never expose native/subprocess diagnostic text.
+        self._finish(source_id, ticket, success)
+
+    def _finish(self, source_id: str, ticket: consent.ConsentTicket, success: bool) -> None:
         with self._lock:
             if success and consent.POLICY.current(ticket):
                 from scripts.sidecar_pkg import macos_cookies
@@ -284,6 +290,109 @@ class SetupController:
                             macos_cookies._KEY_STATUS.pop(service, None)
             if consent.POLICY.current(ticket):
                 self._states[source_id] = (ticket, "Limited" if success else "Action required")
+
+    def start_all(self, source_ids: list[str]) -> dict[str, Any]:
+        """Authorize every given source that is on and not authorized yet, one Keychain item at a time.
+
+        Sources that read the same Keychain item are grouped, so the child that asks macOS for
+        consent runs once per item and each source behind it is then verified on its own. It is
+        single-flight with ``start``: while a run is active this changes nothing and reports it.
+        """
+        with self._lock:
+            if self._thread is not None and self._thread.is_alive():
+                return self.run_report()
+            descriptors = catalog()
+            groups: dict[str, list[tuple[str, consent.ConsentTicket]]] = {}
+            for source_id in source_ids:
+                descriptor = descriptors.get(source_id)
+                ticket = consent.POLICY.ticket(source_id)
+                if descriptor is None or ticket is None or self.state(source_id) == "Limited":
+                    continue
+                groups.setdefault(descriptor.item_key, []).append((source_id, ticket))
+            if not groups:
+                self._batch = None
+                return self.run_report()
+            self._batch = {
+                "groups": list(groups.values()),
+                "index": 0,
+                "done": 0,
+                "cancelled": False,
+            }
+            self._thread = threading.Thread(
+                target=self._run_batch, name="KeychainSetupBatch", daemon=True
+            )
+            self._thread.start()
+            return self.run_report()
+
+    def _run_batch(self) -> None:
+        batch = self._batch
+        if batch is None:
+            return
+        for index, members in enumerate(batch["groups"]):
+            with self._lock:
+                if batch["cancelled"]:
+                    break
+                batch["index"] = index
+                # A source turned off since the run started is skipped, not authorized.
+                live = [(i, t) for i, t in members if consent.POLICY.current(t)]
+                for source_id, ticket in live:
+                    self._states[source_id] = (ticket, "Connecting")
+            if not live:
+                batch["done"] += 1
+                continue
+            launched = False
+            try:
+                launched = self._launch(live[0][0])
+            except Exception:
+                pass  # Never expose native/subprocess diagnostic text.
+            for source_id, ticket in live:
+                success = False
+                try:
+                    success = (
+                        launched
+                        and consent.POLICY.current(ticket)
+                        and self._verify(source_id, ticket)
+                    )
+                except Exception:
+                    pass
+                self._finish(source_id, ticket, success)
+            with self._lock:
+                batch["done"] += 1
+        with self._lock:
+            batch["finished"] = True
+
+    def cancel(self) -> None:
+        """Stop after the Keychain item being authorized now; sources still queued stay as they were."""
+        with self._lock:
+            if self._batch is not None:
+                self._batch["cancelled"] = True
+
+    def run_report(self) -> dict[str, Any]:
+        """Secret-free progress of the authorize-all run, for the settings page."""
+        with self._lock:
+            batch = self._batch
+            if batch is None:
+                return {
+                    "active": False,
+                    "total": 0,
+                    "done": 0,
+                    "current": [],
+                    "queued": [],
+                    "cancelled": False,
+                }
+            groups, index = batch["groups"], batch["index"]
+            active = not batch.get("finished", False)
+            cancelled = batch["cancelled"]
+            return {
+                "active": active,
+                "total": len(groups),
+                "done": batch["done"],
+                "current": [i for i, _ in groups[index]] if active else [],
+                "queued": []
+                if cancelled or not active
+                else [i for g in groups[index + 1 :] for i, _ in g],
+                "cancelled": cancelled,
+            }
 
     def wait(self, timeout: float) -> None:
         thread = self._thread

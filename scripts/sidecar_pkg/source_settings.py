@@ -5,7 +5,7 @@ from __future__ import annotations
 import sys
 from typing import Any
 
-from scripts.sidecar_pkg.source_catalog import catalog
+from scripts.sidecar_pkg.source_catalog import BROWSERS, catalog
 from scripts.sidecar_pkg.source_consent import SourcePolicy
 
 
@@ -35,6 +35,11 @@ def report(config: dict[str, Any]) -> dict[str, Any]:
                 "id": source.id,
                 "compatible": sys.platform in source.platforms,
                 "label": source.label,
+                # How the page groups it: apps and CLIs one row each, cookie sources one row per
+                # service. Sources with the same ``item`` read the same Keychain item.
+                "group": source.browser_key or "app",
+                "service": source.service,
+                "item": source.item_key,
                 "revision": source.revision,
                 "read": policy.ticket(source.id) is not None,
                 "state": _authorization_state(source.id, source.services, SETUP.state(source.id))
@@ -56,6 +61,8 @@ def report(config: dict[str, Any]) -> dict[str, Any]:
             }
             for source in catalog().values()
         ],
+        "browsers": browsers(config),
+        "run": SETUP.run_report(),
         "forwarding_supported": bool(client and client.accepted),
         "re_pair_required": bool(
             (client and client.re_pair_required)
@@ -69,13 +76,53 @@ def report(config: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def browsers(config: dict[str, Any]) -> dict[str, bool]:
+    """Which browsers' cookie stores may be read; every browser is selected until it is unticked."""
+    saved = config.get("keychain_browsers")
+    saved = saved if isinstance(saved, dict) else {}
+    return {key: saved.get(key) is not False for key in BROWSERS}
+
+
 def update(config: dict[str, Any], command: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(command, dict):
         raise ValueError("Invalid source action")
     source_id, action = command.get("source_id"), command.get("action")
     updated = dict(config)
     if action == "enable_all":
-        return SourcePolicy.enable_all(config)
+        selected = browsers(config)
+        for source_id, descriptor in catalog().items():
+            if descriptor.browser_key is None or selected[descriptor.browser_key]:
+                updated = SourcePolicy.change(updated, source_id, read=True)
+        return updated
+    if action == "set_sources":
+        ids, value = command.get("source_ids"), command.get("value")
+        if (
+            not isinstance(ids, list)
+            or not ids
+            or any(not isinstance(i, str) or i not in catalog() for i in ids)
+            or type(value) is not bool
+        ):
+            raise ValueError("Invalid source selection")
+        for source_id in dict.fromkeys(ids):
+            updated = update(
+                updated, {"source_id": source_id, "action": "enable" if value else "disable"}
+            )
+        return updated
+    if action == "set_browsers":
+        value = command.get("value")
+        if (
+            not isinstance(value, dict)
+            or not value
+            or any(key not in BROWSERS or type(flag) is not bool for key, flag in value.items())
+        ):
+            raise ValueError("Invalid browser selection")
+        updated["keychain_browsers"] = {**browsers(config), **value}
+        # A browser that is no longer read must not keep its sources on.
+        for source_id, descriptor in catalog().items():
+            if descriptor.browser_key and value.get(descriptor.browser_key) is False:
+                if SourcePolicy(updated).ticket(source_id) is not None:
+                    updated = update(updated, {"source_id": source_id, "action": "disable"})
+        return updated
     if action == "disable_all":
         for source_id in catalog():
             updated = update(updated, {"source_id": source_id, "action": "disable"})

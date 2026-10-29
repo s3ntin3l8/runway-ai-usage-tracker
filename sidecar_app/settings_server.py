@@ -199,7 +199,60 @@ _HTML = Template(r"""<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Runway Sidecar — Settings</title>
 <style>
-$css</style>
+$css
+/* ---- Keychain scrapers ---- */
+.kc-summary { display: flex; gap: 1rem; flex-wrap: wrap; font-size: 0.75rem; color: #a1a1aa; margin-top: 0.9rem;
+  padding: 0.6rem 0.75rem; background: rgba(9,9,11,0.6); border: 1px solid rgba(63,63,70,0.5); border-radius: 0.6rem; }
+.kc-summary strong { color: #f4f4f5; }
+.kc-warn { color: #fcd34d; } .kc-warn strong { color: #fcd34d; } .kc-bad { color: #fca5a5; } .kc-bad strong { color: #fca5a5; }
+.kc-group { margin-top: 1.1rem; }
+.kc-group-label { font-size: 0.62rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: #52525b;
+  margin-bottom: 0.35rem; display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.kc-rows { border: 1px solid rgba(63,63,70,0.45); border-radius: 0.6rem; overflow: hidden; }
+.kc-row { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 0.7rem; padding: 0.5rem 0.75rem; font-size: 0.8rem; }
+.kc-row + .kc-row, .kc-more { border-top: 1px solid rgba(63,63,70,0.35); }
+.kc-name { display: flex; align-items: center; gap: 0.45rem; flex-wrap: wrap; min-width: 0; }
+.kc-info { color: #3f3f46; cursor: help; font-size: 0.75rem; }
+.kc-tag { font-size: 0.58rem; font-weight: 800; letter-spacing: 0.06em; color: #a78bfa; border: 1px solid rgba(167,139,250,0.5); border-radius: 4px; padding: 0 4px; }
+.kc-switch { position: relative; width: 30px; height: 17px; display: inline-block; }
+.kc-switch input { opacity: 0; width: 100%; height: 100%; position: absolute; inset: 0; margin: 0; cursor: pointer; z-index: 1; }
+.kc-switch span { position: absolute; inset: 0; background: #3f3f46; border-radius: 999px; transition: .15s; }
+.kc-switch span::before { content: ""; position: absolute; width: 13px; height: 13px; left: 2px; top: 2px; background: #a1a1aa; border-radius: 50%; transition: .15s; }
+.kc-switch input:checked + span { background: #7c3aed; } .kc-switch input:checked + span::before { transform: translateX(13px); background: #fff; }
+.kc-switch.mixed input + span { background: #5b21b6; } .kc-switch.mixed input + span::before { transform: translateX(6.5px); background: #ddd6fe; }
+.kc-switch input:disabled { cursor: not-allowed; } .kc-switch input:disabled + span { opacity: .35; }
+.kc-switch input:focus-visible + span { box-shadow: 0 0 0 2px rgba(124,58,237,0.5); }
+.kc-chip { display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.68rem; font-weight: 600; padding: 0.12rem 0.55rem; border-radius: 999px; white-space: nowrap; border: 1px solid transparent; }
+.kc-chip::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.kc-ok { color: #86efac; background: rgba(34,197,94,.1); border-color: rgba(34,197,94,.25); }
+.kc-need { color: #fcd34d; background: rgba(245,158,11,.1); border-color: rgba(245,158,11,.25); }
+.kc-err { color: #fca5a5; background: rgba(239,68,68,.1); border-color: rgba(239,68,68,.3); }
+.kc-busy { color: #93c5fd; background: rgba(59,130,246,.12); border-color: rgba(59,130,246,.3); } .kc-busy::before { animation: kcpulse .9s infinite alternate; }
+.kc-wait { color: #a1a1aa; background: rgba(63,63,70,.3); border-color: rgba(63,63,70,.6); }
+.kc-off { color: #71717a; border-color: rgba(63,63,70,.6); } .kc-off::before { background: transparent; border: 1px solid currentColor; }
+@keyframes kcpulse { from { opacity: .3; } to { opacity: 1; } }
+.kc-pill { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.64rem; color: #a1a1aa; border: 1px solid rgba(63,63,70,.6); border-radius: 999px; padding: 0.05rem 0.45rem; }
+.kc-pill i { width: 6px; height: 6px; border-radius: 50%; display: inline-block; }
+.kc-d-ok { background: #22c55e; } .kc-d-need { background: #f59e0b; } .kc-d-err { background: #ef4444; } .kc-d-busy { background: #3b82f6; } .kc-d-wait, .kc-d-off { border: 1px solid #71717a; }
+.kc-bsel { display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap; text-transform: none; letter-spacing: 0; font-weight: 500; }
+.kc-bsel label { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.7rem; color: #a1a1aa; border: 1px solid rgba(63,63,70,.7); border-radius: 999px; padding: 0.12rem 0.55rem; cursor: pointer; font-weight: 500; }
+.kc-bsel label.sel { color: #e4e4e7; border-color: #7c3aed; background: rgba(124,58,237,.12); }
+.kc-bsel input { position: absolute; opacity: 0; width: 0; height: 0; }
+.kc-bsel label:focus-within { box-shadow: 0 0 0 2px rgba(124,58,237,0.5); }
+.kc-more { font-size: 0.72rem; color: #71717a; padding: 0.45rem 0.75rem; cursor: pointer; background: none; border-left: 0; border-right: 0; border-bottom: 0; width: 100%; text-align: left; font-family: inherit; }
+.kc-more:hover { color: #e4e4e7; }
+.kc-renewal { margin-top: 1rem; display: flex; gap: .55rem; align-items: flex-start; font-size: .75rem; color: #a1a1aa; }
+.kc-renewal input { margin-top: 2px; accent-color: #7c3aed; }
+.kc-batch { margin-top: 1.1rem; padding-top: 1rem; border-top: 1px solid rgba(63,63,70,.5); }
+.kc-progress { height: 3px; background: #27272a; border-radius: 3px; margin-top: .75rem; overflow: hidden; } .kc-progress div { height: 100%; background: #7c3aed; transition: width .3s; }
+.kc-banner { margin-top: .9rem; font-size: .75rem; line-height: 1.5; border-radius: .6rem; padding: .65rem .8rem; }
+.kc-b-warn { color: #fcd34d; background: rgba(245,158,11,.08); border: 1px solid rgba(245,158,11,.25); }
+.kc-b-err { color: #fca5a5; background: rgba(239,68,68,.08); border: 1px solid rgba(239,68,68,.3); }
+.kc-b-new { color: #c4b5fd; background: rgba(124,58,237,.08); border: 1px solid rgba(124,58,237,.3); display: flex; justify-content: space-between; gap: .5rem; align-items: center; }
+.kc-b-new button { background: none; border: none; color: #a78bfa; font: inherit; font-weight: 700; cursor: pointer; }
+.kc-banner a { color: inherit; font-weight: 700; }
+#sources-error { font-size: .72rem; color: #fca5a5; margin-top: .6rem; }
+</style>
 </head>
 <body>
 <div class="page">
@@ -262,17 +315,10 @@ $css</style>
     </div>
   </form>
 
-  <section class="card" aria-labelledby="sources-heading">
+  <section class="card" id="sources-card" aria-labelledby="sources-heading" hidden>
     <h2 class="section-label" id="sources-heading">Keychain scrapers</h2>
-    <p class="field-hint">Choose which scrapers may use your Mac’s Keychain. File and environment sources continue normally. Access credentials may be sent to your paired server; refresh tokens remain local.</p>
-    <p id="sources-announcement" role="status" hidden>New Keychain scraper — opt in now. Review the sources below.</p>
-    <div class="actions" style="margin-top:1rem">
-      <button type="button" class="btn btn-ghost" id="sources-enable-all" onclick="sourceAction('enable_all')">Enable all</button>
-      <button type="button" class="btn btn-ghost" onclick="sourceAction('disable_all')">Disable all</button>
-    </div>
-    <div id="sources-list"></div>
-    <label class="field" style="margin-top:1rem"><span><input type="checkbox" id="keychain-renewal" onchange="sourceAction('renewal', null, this.checked)"> Allow Claude Code Keychain renewal/write-back</span></label>
-    <p class="field-hint">Renewal also requires keep-alive and a verified compatible Keychain policy. <span id="sources-compatibility">Checking authenticated server source controls.</span></p>
+    <p class="field-hint">Choose which scrapers may read this Mac’s Keychain. File and environment sources continue normally. Access credentials may be sent to your paired server; refresh tokens stay on this Mac.</p>
+    <div id="sources-body"></div>
     <p id="sources-error" role="alert"></p>
   </section>
 
@@ -334,54 +380,230 @@ async function pollStatus() {
 pollStatus();
 setInterval(pollStatus, 5000);
 
-async function sourceAction(action, source_id, value) {
+async function sourceAction(action, source_id, value, extra) {
   try {
-    const response = await fetch('/sources', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({action, source_id, value})});
+    const response = await fetch('/sources', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(Object.assign({action, source_id, value}, extra || {}))});
     if (!response.ok) throw new Error('Could not apply source action');
     document.getElementById('sources-error').textContent = '';
-    await refreshSources();
+    await refreshSources(true);
   } catch (error) { document.getElementById('sources-error').textContent = error.message; }
 }
 
-let lastSourceReport = null;
+// ---- Keychain scrapers: one row per source, web sessions one row per service ----
+const KC_LABEL = {ok: 'Authorized', need: 'Needs authorization', err: 'Action required', busy: 'Connecting…', wait: 'Waiting', off: 'Off'};
+const KC_RANK = {off: 0, ok: 1, wait: 2, busy: 3, need: 4, err: 5};
+const KC_BROWSERS = [['chrome', 'Chrome'], ['edge', 'Edge'], ['chromium', 'Chromium']];
+let lastSourceReport = null, showOffApps = false, showOffWeb = false;
 
-async function refreshSources() {
+function kcEl(tag, cls, text) {
+  const node = document.createElement(tag);
+  if (cls) node.className = cls;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+function kcStatus(source, run) {
+  if (!source.read) return 'off';
+  if (source.revoked) return 'err';
+  if (run.current.includes(source.id) || source.state === 'Connecting') return 'busy';
+  if (run.queued.includes(source.id)) return 'wait';
+  if (source.state === 'Action required') return 'err';
+  if (source.state === 'Setup required' || source.state === 'Off') return 'need';
+  return 'ok';
+}
+
+function kcChip(status, source) {
+  const chip = kcEl('span', 'kc-chip kc-' + status, source && source.revoked ? 'Revoked' : KC_LABEL[status]);
+  if (source && source.read && source.remote_paused) chip.textContent += ' · paused';
+  if (source && status === 'need' && source.setup_requested) chip.textContent += ' · requested';
+  if (source && source.state === 'Withdrawal pending') chip.title = 'Off · server withdrawal pending';
+  return chip;
+}
+
+function kcSwitch(label, checked, disabled, mixed, onchange) {
+  const wrap = kcEl('label', 'kc-switch' + (mixed ? ' mixed' : ''));
+  const box = document.createElement('input');
+  box.type = 'checkbox'; box.checked = checked; box.disabled = disabled; box.setAttribute('aria-label', label);
+  box.onchange = () => onchange(box.checked);
+  wrap.append(box, document.createElement('span'));
+  return wrap;
+}
+
+function kcRow(toggle, name, chip) {
+  const row = kcEl('div', 'kc-row');
+  row.append(toggle, name, chip);
+  return row;
+}
+
+function kcInfo(text) {
+  const info = kcEl('span', 'kc-info', 'ⓘ');
+  info.title = text; info.setAttribute('role', 'img'); info.setAttribute('aria-label', text);
+  return info;
+}
+
+function kcBanner(cls, text, link) {
+  const banner = kcEl('div', 'kc-banner ' + cls);
+  banner.append(document.createTextNode(text));
+  if (link) { const a = kcEl('a', '', link[0]); a.href = link[1]; banner.append(document.createTextNode(' '), a); }
+  return banner;
+}
+
+function renderSources(report) {
+  const card = document.getElementById('sources-card');
+  // Keychain scrapers exist on macOS only; elsewhere there is nothing to show or to consent to.
+  card.hidden = !report.compatible;
+  const body = document.getElementById('sources-body');
+  body.replaceChildren();
+  if (!report.compatible) return;
+  const run = report.run, selected = report.browsers;
+  const live = report.sources.filter(s => s.compatible && (s.group === 'app' || selected[s.group]));
+  const status = s => kcStatus(s, run);
+  const blocked = report.re_pair_required || !report.forwarding_supported;
+
+  if (report.re_pair_required) body.append(kcBanner('kc-b-err', 'Device authentication is unavailable, so Keychain credentials are withheld.', ['Re-pair this sidecar…', '/pair']));
+  else if (!report.forwarding_supported) body.append(kcBanner('kc-b-warn', 'Your paired server does not support authenticated source controls yet, so Keychain credentials are withheld. You can still choose sources now.'));
+
+  const fresh = live.filter(s => s.new);
+  if (fresh.length) {
+    const note = kcEl('div', 'kc-banner kc-b-new'); note.setAttribute('role', 'status');
+    const dismiss = kcEl('button', '', 'Dismiss'); dismiss.type = 'button';
+    dismiss.onclick = async () => { for (const s of fresh) await sourceAction('dismiss', s.id); };
+    const names = new Set(fresh.map(s => s.service)).size;
+    note.append(kcEl('span', '', names + ' new Keychain scraper' + (names > 1 ? 's' : '') + ' available — off until you opt in.'), dismiss);
+    body.append(note);
+  }
+
+  const enabled = live.filter(s => s.read);
+  const authorized = enabled.filter(s => status(s) === 'ok');
+  const waiting = enabled.filter(s => status(s) === 'need');
+  const failed = enabled.filter(s => status(s) === 'err');
+  const summary = kcEl('div', 'kc-summary'); summary.setAttribute('aria-live', 'polite');
+  const part = (cls, n, text) => { const span = kcEl('span', cls); span.append(kcEl('strong', '', String(n)), document.createTextNode(' ' + text)); return span; };
+  summary.append(part('', enabled.length, 'of ' + live.length + ' on'), part('', authorized.length, 'authorized'));
+  if (waiting.length) summary.append(part('kc-warn', waiting.length, 'need authorization'));
+  if (failed.length) summary.append(part('kc-bad', failed.length, 'action required'));
+  body.append(summary);
+
+  // Apps and CLIs
+  const apps = live.filter(s => s.group === 'app');
+  const shownApps = apps.filter(s => s.read || showOffApps);
+  const appGroup = kcEl('div', 'kc-group'), appRows = kcEl('div', 'kc-rows');
+  appGroup.append(kcEl('div', 'kc-group-label', 'Apps & CLIs'), appRows);
+  for (const s of shownApps) {
+    const name = kcEl('span', 'kc-name', s.service);
+    if (s.new) name.append(kcEl('span', 'kc-tag', 'NEW'));
+    name.append(kcInfo(s.dependency));
+    appRows.append(kcRow(kcSwitch('Use Keychain: ' + s.label, s.read, !!run.active, false, on => sourceAction('set_sources', null, on, {source_ids: [s.id]})), name, kcChip(status(s), s)));
+  }
+  const offApps = apps.length - apps.filter(s => s.read).length;
+  if (offApps) {
+    const more = kcEl('button', 'kc-more', showOffApps ? '▴ Hide sources that are off' : '▾ ' + offApps + ' more off (' + apps.filter(s => !s.read).map(s => s.service).join(', ') + ')');
+    more.type = 'button'; more.onclick = () => { showOffApps = !showOffApps; renderSources(report); };
+    appRows.append(more);
+  }
+  if (apps.length) body.append(appGroup);
+
+  // Web sessions: one row per service, the browsers chosen above it
+  const webGroup = kcEl('div', 'kc-group'), webRows = kcEl('div', 'kc-rows');
+  const label = kcEl('div', 'kc-group-label'), picker = kcEl('span', 'kc-bsel');
+  picker.title = 'Only the browsers you use are read; each one is one Keychain item';
+  picker.append(document.createTextNode('Read from '));
+  for (const [key, name] of KC_BROWSERS) {
+    const choice = kcEl('label', selected[key] ? 'sel' : '');
+    const box = document.createElement('input'); box.type = 'checkbox'; box.checked = selected[key]; box.disabled = !!run.active;
+    box.onchange = () => sourceAction('set_browsers', null, {[key]: box.checked});
+    choice.append(box, document.createTextNode((selected[key] ? '✓ ' : '') + name));
+    picker.append(choice);
+  }
+  label.append(kcEl('span', '', 'Web sessions (browser cookies)'), picker);
+  webGroup.append(label, webRows);
+  const services = new Map();
+  for (const s of live) if (s.group !== 'app') { if (!services.has(s.service)) services.set(s.service, []); services.get(s.service).push(s); }
+  let offServices = [];
+  const browserOrder = key => KC_BROWSERS.findIndex(b => b[0] === key);
+  for (const [service, children] of services) {
+    children.sort((x, y) => browserOrder(x.group) - browserOrder(y.group));
+    const ons = children.filter(s => s.read);
+    if (!ons.length && !showOffWeb) { offServices.push(service); continue; }
+    const mixed = ons.length > 0 && ons.length < children.length;
+    const name = kcEl('span', 'kc-name', service);
+    if (children.some(s => s.new)) name.append(kcEl('span', 'kc-tag', 'NEW'));
+    for (const child of children) {
+      const pill = kcEl('span', 'kc-pill'); const dot = kcEl('i', 'kc-d-' + status(child));
+      pill.title = child.label + ': ' + KC_LABEL[status(child)];
+      pill.append(dot, document.createTextNode(KC_BROWSERS.find(b => b[0] === child.group)[1]));
+      name.append(pill);
+    }
+    const worst = children.map(status).reduce((a, b) => KC_RANK[b] > KC_RANK[a] ? b : a, 'off');
+    webRows.append(kcRow(kcSwitch('Read ' + service + ' cookies', ons.length > 0, !!run.active, mixed, on => sourceAction('set_sources', null, on, {source_ids: children.map(c => c.id)})), name, kcChip(worst, children.length === 1 ? children[0] : null)));
+  }
+  if (offServices.length || (showOffWeb && services.size)) {
+    const more = kcEl('button', 'kc-more', showOffWeb ? '▴ Hide services that are off' : '▾ ' + offServices.length + ' more off (' + offServices.join(', ') + ')');
+    more.type = 'button'; more.onclick = () => { showOffWeb = !showOffWeb; renderSources(report); };
+    webRows.append(more);
+  }
+  if (services.size) body.append(webGroup);
+
+  // Claude Code renewal stays a per-source local choice
+  const code = report.sources.find(s => s.id === 'anthropic.claude-code');
+  if (code && code.compatible) {
+    const renewal = kcEl('label', 'kc-renewal'), box = document.createElement('input');
+    box.type = 'checkbox'; box.id = 'keychain-renewal'; box.checked = code.renewal_requested; box.disabled = !code.read;
+    box.onchange = () => sourceAction('renewal', null, box.checked);
+    const text = kcEl('span', '', 'Allow Claude Code Keychain renewal / write-back');
+    text.append(document.createElement('br'), kcEl('span', 'field-hint', 'Also needs keep-alive and a verified compatible Keychain policy.'));
+    renewal.append(box, text);
+    body.append(renewal);
+  }
+
+  // Batch bar
+  const batch = kcEl('div', 'kc-batch'), actions = kcEl('div', 'actions');
+  const todo = enabled.filter(s => ['need', 'err'].includes(status(s)));
+  const items = new Set(todo.map(s => s.item)).size;
+  const button = (cls, text, onclick) => { const b = kcEl('button', 'btn ' + cls, text); b.type = 'button'; b.onclick = onclick; return b; };
+  if (run.active) {
+    actions.append(kcEl('button', 'btn btn-primary', 'Authorizing ' + Math.min(run.done + 1, run.total) + ' of ' + run.total + '…'));
+    actions.firstChild.disabled = true;
+    actions.append(button('btn-ghost', run.cancelled ? 'Stopping after this prompt…' : 'Cancel', () => sourceAction('authorize_cancel')));
+  } else {
+    if (todo.length) {
+      const go = button('btn-primary', 'Authorize ' + todo.length + ' enabled · ' + items + ' Keychain item' + (items > 1 ? 's' : ''), () => sourceAction('authorize_all'));
+      go.id = 'authorize-all';
+      go.disabled = !report.setup_available || blocked;
+      if (!report.setup_available) go.title = 'Authorization requires the packaged macOS app';
+      else if (blocked) go.title = 'Keychain credentials are withheld until the issue above is fixed';
+      actions.append(go);
+    } else if (enabled.length && !failed.length) {
+      const done = kcEl('span', '', '✓ Every enabled source is authorized'); done.style.cssText = 'font-size:.75rem;color:#86efac';
+      actions.append(done);
+    }
+    const enableAll = button('btn-ghost', 'Enable all', () => sourceAction('enable_all'));
+    enableAll.id = 'sources-enable-all'; enableAll.disabled = !report.compatible;
+    actions.append(enableAll, button('btn-ghost', 'Disable all', () => sourceAction('disable_all')));
+  }
+  batch.append(actions);
+  if (failed.length && !run.active) batch.append(kcEl('p', 'field-hint', failed.length + ' source' + (failed.length > 1 ? 's' : '') + ' cannot read the Keychain item yet (access blocked or revoked). Authorize again, or turn the source off and on to reset it.'));
+  if (run.active) {
+    const bar = kcEl('div', 'kc-progress'), fill = document.createElement('div');
+    fill.style.width = (run.total ? run.done / run.total * 100 : 0) + '%'; bar.append(fill); batch.append(bar);
+    batch.append(kcEl('p', 'field-hint', 'Approve the macOS Keychain prompt, then choose Always Allow so it does not ask again.'));
+  }
+  body.append(batch);
+}
+
+async function refreshSources(force) {
   const response = await fetch('/sources');
   if (!response.ok) return;
   const report = await response.json();
   const serialized = JSON.stringify(report);
-  if (serialized === lastSourceReport) return;
-  lastSourceReport = serialized;
-  document.getElementById("sources-enable-all").disabled = !report.compatible;
-  document.getElementById('sources-compatibility').textContent = report.re_pair_required ? 'Action required: device authentication is unavailable. Re-pair this sidecar with your server in Connection settings. Keychain credentials are withheld.' : !report.compatible ? 'Keychain scrapers are available on macOS only.' : report.forwarding_supported ? 'Authenticated source controls are available on your paired server.' : 'Limited: pair with a server that supports authenticated source controls before sharing Keychain credentials.';
-  const focusedId = document.activeElement && document.activeElement.id;
-  const list = document.getElementById('sources-list');
-  list.replaceChildren();
-  document.getElementById('sources-announcement').hidden = !report.sources.some(source => source.new);
-  for (const source of report.sources) {
-    const row = document.createElement('div'); row.className = 'field'; row.style.marginTop = '1rem';
-    const label = document.createElement('label');
-    const checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.id = 'source-' + source.id; checkbox.checked = source.read; checkbox.disabled = !source.compatible;
-    checkbox.onchange = () => sourceAction(checkbox.checked ? 'enable' : 'disable', source.id);
-    label.append(checkbox, document.createTextNode(' Use Keychain: ' + source.label));
-    const detail = document.createElement('p'); detail.className = 'field-hint'; detail.textContent = (source.revoked ? 'Action required · contribution revoked; disable and re-enable locally to reconnect' : source.state === 'Withdrawal pending' ? 'Off · server withdrawal pending' : source.state) + (source.remote_paused ? ' · Paused by server' : '') + (source.setup_requested ? ' · Setup requested: authorize locally' : '') + ' · ' + source.dependency;
-    row.append(label, detail);
-    if (source.read) {
-      const authorize = document.createElement('button'); authorize.type = 'button'; authorize.className = 'btn btn-ghost'; authorize.textContent = 'Authorize'; authorize.id = 'authorize-' + source.id; authorize.setAttribute('aria-label', 'Authorize ' + source.label);
-      authorize.disabled = !report.setup_available || report.sources.some(item => item.state === 'Connecting');
-      if (!report.setup_available) authorize.title = 'Authorization requires the packaged macOS app';
-      authorize.onclick = () => sourceAction('authorize', source.id); row.append(authorize);
-    }
-    if (source.new) {
-      const dismiss = document.createElement('button'); dismiss.type = 'button'; dismiss.className = 'btn btn-ghost'; dismiss.textContent = 'Dismiss new scraper notice'; dismiss.id = 'dismiss-' + source.id;
-      dismiss.onclick = () => sourceAction('dismiss', source.id); row.append(dismiss);
-    }
-    if (source.id === 'anthropic.claude-code') {
-      const renewal = document.getElementById('keychain-renewal'); renewal.checked = source.renewal_requested; renewal.disabled = !source.compatible || !source.read;
-    }
-    list.append(row);
+  if (serialized !== lastSourceReport || force) {
+    lastSourceReport = serialized;
+    const focusedId = document.activeElement && document.activeElement.id;
+    renderSources(report);
+    if (focusedId) document.getElementById(focusedId)?.focus();
   }
-  if (focusedId) document.getElementById(focusedId)?.focus();
+  // A run is in flight: follow it closely, otherwise the slow poll is enough.
+  if (report.run && report.run.active) setTimeout(() => refreshSources().catch(() => {}), 1500);
 }
 refreshSources().catch(() => {});
 setInterval(() => refreshSources().catch(() => {}), 5000);
@@ -684,6 +906,23 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send_json(
                     {"ok": state != "Off", "state": state}, 200 if state != "Off" else 409
                 )
+                return
+            if isinstance(command, dict) and command.get("action") == "authorize_all":
+                import sys
+
+                from scripts.sidecar_pkg.source_catalog import catalog
+                from scripts.sidecar_pkg.source_setup import SETUP
+
+                # Every source that is on here and belongs to this platform; the controller
+                # skips what is already authorized and groups what shares a Keychain item.
+                ids = [i for i, d in catalog().items() if sys.platform in d.platforms]
+                self._send_json({"ok": True, "run": SETUP.start_all(ids)})
+                return
+            if isinstance(command, dict) and command.get("action") == "authorize_cancel":
+                from scripts.sidecar_pkg.source_setup import SETUP
+
+                SETUP.cancel()
+                self._send_json({"ok": True, "run": SETUP.run_report()})
                 return
             updated = update(self.server.get_config(), command)
             self.server.save_config(updated)
