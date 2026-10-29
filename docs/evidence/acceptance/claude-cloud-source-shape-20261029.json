@@ -1,0 +1,4087 @@
+{
+ "captured_at": "2026-10-29T16:37Z",
+ "list": {
+  "enums": {
+   "anthropic_cloud:config.origin": {
+    "android": 10,
+    "desktop_app": 8,
+    "web_claude_ai": 3
+   },
+   "anthropic_cloud:environment_kind": {
+    "anthropic_cloud": 21
+   },
+   "anthropic_cloud:status": {
+    "archived": 21
+   },
+   "bridge:config.origin": {
+    "None": 700,
+    "android": 1,
+    "claude_code_cli": 843
+   },
+   "bridge:environment_kind": {
+    "bridge": 1544
+   },
+   "bridge:status": {
+    "active": 16,
+    "archived": 1528
+   }
+  },
+  "page_envelope": {
+   "top_keys:": 1,
+   "top_keys:next_cursor": 77,
+   "top_keys:next_cursor,resume_token": 1
+  },
+  "pages": 79,
+  "row_paths_anthropic_cloud": {
+   ".": {
+    "dict": 21
+   },
+   "config": {
+    "dict": 21
+   },
+   "config.effort_level": {
+    "str": 13
+   },
+   "config.mcp_connector_ids": {
+    "list": 21
+   },
+   "config.model": {
+    "str": 21
+   },
+   "config.origin": {
+    "str": 21
+   },
+   "config.outcomes": {
+    "list": 21
+   },
+   "config.outcomes[]": {
+    "dict": 23
+   },
+   "config.outcomes[].git_info": {
+    "dict": 23
+   },
+   "config.outcomes[].git_info.branches": {
+    "list": 23
+   },
+   "config.outcomes[].git_info.host": {
+    "str": 23
+   },
+   "config.outcomes[].git_info.ref": {
+    "null": 23
+   },
+   "config.outcomes[].git_info.repo": {
+    "str": 23
+   },
+   "config.outcomes[].git_info.type": {
+    "str": 23
+   },
+   "config.outcomes[].type": {
+    "str": 23
+   },
+   "config.permission_mode": {
+    "str": 17
+   },
+   "config.sources": {
+    "list": 21
+   },
+   "config.sources[]": {
+    "dict": 23
+   },
+   "config.sources[].revision": {
+    "str": 8
+   },
+   "config.sources[].sparse_checkout_exclude_patterns": {
+    "list": 23
+   },
+   "config.sources[].sparse_checkout_paths": {
+    "list": 23
+   },
+   "config.sources[].type": {
+    "str": 23
+   },
+   "config.sources[].url": {
+    "str": 23
+   },
+   "connection_status": {
+    "str": 21
+   },
+   "created_at": {
+    "str": 21
+   },
+   "environment_id": {
+    "str": 21
+   },
+   "environment_kind": {
+    "str": 21
+   },
+   "external_metadata": {
+    "dict": 21
+   },
+   "external_metadata.archive_container_stop_pending_epoch": {
+    "int": 2
+   },
+   "external_metadata.container_cc_version": {
+    "str": 15
+   },
+   "external_metadata.context_usage": {
+    "dict": 12
+   },
+   "external_metadata.context_usage.after_boundary": {
+    "str": 1
+   },
+   "external_metadata.context_usage.max_tokens": {
+    "int": 12
+   },
+   "external_metadata.context_usage.used_tokens": {
+    "int": 12
+   },
+   "external_metadata.cross_session_inbound": {
+    "str": 12
+   },
+   "external_metadata.current_branches": {
+    "dict": 19
+   },
+   "external_metadata.current_branches.<key>": {
+    "null": 2,
+    "str": 17
+   },
+   "external_metadata.effort_level": {
+    "str": 1
+   },
+   "external_metadata.effort_request_id": {
+    "str": 1
+   },
+   "external_metadata.flag_settings": {
+    "dict": 1
+   },
+   "external_metadata.flag_settings.effortLevel": {
+    "str": 1
+   },
+   "external_metadata.flag_settings.ultracode": {
+    "bool": 1
+   },
+   "external_metadata.flag_settings_origin": {
+    "str": 1
+   },
+   "external_metadata.flag_settings_seq": {
+    "str": 1
+   },
+   "external_metadata.goal": {
+    "dict": 3
+   },
+   "external_metadata.goal.condition": {
+    "str": 3
+   },
+   "external_metadata.goal.iterations": {
+    "int": 3
+   },
+   "external_metadata.goal.last_reason": {
+    "null": 3
+   },
+   "external_metadata.goal.met": {
+    "bool": 3
+   },
+   "external_metadata.goal.set_at": {
+    "int": 3
+   },
+   "external_metadata.last_served_model": {
+    "str": 18
+   },
+   "external_metadata.model": {
+    "str": 2
+   },
+   "external_metadata.permission_mode": {
+    "str": 17
+   },
+   "external_metadata.permission_mode_device_proof": {
+    "str": 1
+   },
+   "external_metadata.permission_mode_seq": {
+    "str": 14
+   },
+   "external_metadata.post_turn_summary": {
+    "dict": 20
+   },
+   "external_metadata.post_turn_summary.needs_action": {
+    "str": 20
+   },
+   "external_metadata.post_turn_summary.recent_action": {
+    "str": 12
+   },
+   "external_metadata.post_turn_summary.status_category": {
+    "str": 20
+   },
+   "external_metadata.post_turn_summary.status_detail": {
+    "str": 20
+   },
+   "external_metadata.rate_limit_info": {
+    "dict": 12
+   },
+   "external_metadata.rate_limit_info.isUsingOverage": {
+    "bool": 12
+   },
+   "external_metadata.rate_limit_info.rateLimitType": {
+    "str": 12
+   },
+   "external_metadata.rate_limit_info.resetsAt": {
+    "int": 12
+   },
+   "external_metadata.rate_limit_info.status": {
+    "str": 12
+   },
+   "external_metadata.task_summary": {
+    "null": 1
+   },
+   "external_metadata.turn_handoff": {
+    "dict": 12
+   },
+   "external_metadata.turn_handoff.no_query_first": {
+    "bool": 12
+   },
+   "external_metadata.turn_handoff.shared_message_id": {
+    "bool": 2
+   },
+   "external_metadata.turn_handoff.staged_files": {
+    "bool": 12
+   },
+   "external_metadata.turn_handoff.tools": {
+    "list": 12
+   },
+   "external_metadata.turn_handoff.tools[]": {
+    "str": 36
+   },
+   "external_metadata.turn_handoff.v": {
+    "int": 12
+   },
+   "external_metadata.turn_handoff.worker_epoch": {
+    "int": 12
+   },
+   "external_metadata.usage": {
+    "dict": 14
+   },
+   "external_metadata.usage.cache_read_tokens": {
+    "int": 12
+   },
+   "external_metadata.usage.cache_write_tokens": {
+    "int": 12
+   },
+   "external_metadata.usage.cost_usd": {
+    "float": 14
+   },
+   "external_metadata.usage.input_tokens": {
+    "int": 12
+   },
+   "external_metadata.usage.output_tokens": {
+    "int": 12
+   },
+   "external_metadata.user_switched_model": {
+    "str": 1
+   },
+   "id": {
+    "str": 21
+   },
+   "last_event_at": {
+    "str": 21
+   },
+   "participants": {
+    "list": 21
+   },
+   "relations": {
+    "list": 21
+   },
+   "status": {
+    "str": 21
+   },
+   "status_bucket": {
+    "str": 21
+   },
+   "tags": {
+    "list": 21
+   },
+   "tags[]": {
+    "str": 16
+   },
+   "title": {
+    "str": 21
+   },
+   "unread": {
+    "bool": 21
+   },
+   "updated_at": {
+    "str": 21
+   },
+   "user_message_count": {
+    "str": 21
+   },
+   "worker_status": {
+    "str": 21
+   }
+  },
+  "rows_by_environment_kind": {
+   "anthropic_cloud": 21,
+   "bridge": 1544
+  },
+  "timestamp_shapes": {
+   "created_at": {
+    "9999-99-w:99:99.w": 1565
+   },
+   "updated_at": {
+    "9999-99-w:99:99.w": 1565
+   }
+  }
+ },
+ "requests_made": 404,
+ "sessions": [
+  {
+   "assistant_models": {
+    "claude-sonnet-5": 144
+   },
+   "assistant_stop_reasons": {
+    "None": 144
+   },
+   "event_pages": 8,
+   "event_top_level_keys": {
+    "created_at": {
+     "str": 353
+    },
+    "device_attestation_status": {
+     "str": 353
+    },
+    "event_id": {
+     "str": 353
+    },
+    "event_type": {
+     "str": 353
+    },
+    "payload": {
+     "dict": 353
+    },
+    "processed_at": {
+     "str": 6
+    },
+    "processing_at": {
+     "str": 6
+    },
+    "received_at": {
+     "str": 6
+    },
+    "sent_by_account_id": {
+     "null": 353
+    },
+    "sequence_num": {
+     "str": 353
+    },
+    "source": {
+     "str": 353
+    }
+   },
+   "list_block": {
+    "cost_usd": 3.30981735
+   },
+   "list_last_served_model_present": false,
+   "list_updated_at_vs_last_event_created_at": [
+    "9999-99-w:99:99.w",
+    "9999-99-w:99:99.w"
+   ],
+   "payload_subtypes": {
+    "result/success": 2,
+    "system/background_tasks_changed": 4,
+    "system/commands_changed": 1,
+    "system/hook_progress": 2,
+    "system/hook_response": 7,
+    "system/hook_started": 7,
+    "system/init": 2,
+    "system/notification": 1,
+    "system/post_turn_summary": 3,
+    "system/task_notification": 4,
+    "system/task_progress": 47,
+    "system/task_started": 4,
+    "system/task_updated": 3
+   },
+   "payload_types": {
+    "active_goal": 2,
+    "assistant": 144,
+    "control_request": 7,
+    "control_response": 5,
+    "env_manager_log": 21,
+    "prompt_suggestion": 2,
+    "rate_limit_event": 1,
+    "result": 2,
+    "system": 85,
+    "user": 84
+   },
+   "records": 353,
+   "result_records": [
+    {
+     "modelUsage_models": 1,
+     "modelUsage_sum": {
+      "cacheCreationInputTokens": 224626,
+      "cacheReadInputTokens": 2934765,
+      "inputTokens": 374,
+      "outputTokens": 14399
+     },
+     "usage": {
+      "cache_creation": {
+       "ephemeral_1h_input_tokens": 99356,
+       "ephemeral_5m_input_tokens": 0
+      },
+      "cache_creation_input_tokens": 99356,
+      "cache_read_input_tokens": 2013115,
+      "inference_geo": "not_available",
+      "input_tokens": 47,
+      "iterations": [
+       {
+        "cache_creation": {
+         "ephemeral_1h_input_tokens": 564,
+         "ephemeral_5m_input_tokens": 0
+        },
+        "cache_creation_input_tokens": 564,
+        "cache_read_input_tokens": 98792,
+        "input_tokens": 2,
+        "output_tokens": 44,
+        "type": "message"
+       }
+      ],
+      "output_tokens": 7442,
+      "server_tool_use": {
+       "web_fetch_requests": 0,
+       "web_search_requests": 0
+      },
+      "service_tier": "standard",
+      "speed": "standard"
+     }
+    },
+    {
+     "modelUsage_models": 1,
+     "modelUsage_sum": {
+      "cacheCreationInputTokens": 273114,
+      "cacheReadInputTokens": 5006052,
+      "inputTokens": 918,
+      "outputTokens": 34688
+     },
+     "usage": {
+      "cache_creation": {
+       "ephemeral_1h_input_tokens": 16489,
+       "ephemeral_5m_input_tokens": 0
+      },
+      "cache_creation_input_tokens": 16489,
+      "cache_read_input_tokens": 312389,
+      "inference_geo": "not_available",
+      "input_tokens": 6,
+      "iterations": [
+       {
+        "cache_creation": {
+         "ephemeral_1h_input_tokens": 6133,
+         "ephemeral_5m_input_tokens": 0
+        },
+        "cache_creation_input_tokens": 6133,
+        "cache_read_input_tokens": 109756,
+        "input_tokens": 2,
+        "output_tokens": 525,
+        "type": "message"
+       }
+      ],
+      "output_tokens": 11483,
+      "server_tool_use": {
+       "web_fetch_requests": 0,
+       "web_search_requests": 0
+      },
+      "service_tier": "standard",
+      "speed": "standard"
+     }
+    }
+   ],
+   "scrubbed_values": {
+    "event.created_at": {
+     "9999-99-w:99:99.w": 353
+    },
+    "payload.timestamp": {
+     "9999-99-w:99:99.w": 227
+    },
+    "system.cwd": {
+     "/home/user/w-w-w": 2
+    }
+   },
+   "session": "smallest",
+   "sum_last_record_per_message": {
+    "cache_creation_input_tokens": 243527,
+    "cache_read_input_tokens": 4906696,
+    "input_tokens": 412,
+    "output_tokens": 570
+   },
+   "sum_max_output_per_message": 570,
+   "truncated": false,
+   "unique_message_ids": 61
+  },
+  {
+   "assistant_models": {
+    "claude-opus-5-5": 275
+   },
+   "assistant_stop_reasons": {
+    "None": 275
+   },
+   "event_pages": 16,
+   "event_top_level_keys": {
+    "created_at": {
+     "str": 760
+    },
+    "device_attestation_status": {
+     "str": 760
+    },
+    "event_id": {
+     "str": 760
+    },
+    "event_type": {
+     "str": 760
+    },
+    "payload": {
+     "dict": 760
+    },
+    "processed_at": {
+     "str": 40
+    },
+    "processing_at": {
+     "str": 40
+    },
+    "received_at": {
+     "str": 40
+    },
+    "sent_by_account_id": {
+     "null": 760
+    },
+    "sequence_num": {
+     "str": 760
+    },
+    "source": {
+     "str": 760
+    }
+   },
+   "list_block": {
+    "cache_read_tokens": 25790004,
+    "cache_write_tokens": 285294,
+    "cost_usd": 8.5278048,
+    "input_tokens": 4850,
+    "output_tokens": 62876
+   },
+   "list_last_served_model_present": false,
+   "list_updated_at_vs_last_event_created_at": [
+    "9999-99-w:99:99.w",
+    "9999-99-w:99:99.w"
+   ],
+   "payload_paths": {
+    "assistant": {
+     ".": {
+      "dict": 275
+     },
+     "message": {
+      "dict": 275
+     },
+     "message.container": {
+      "null": 275
+     },
+     "message.content": {
+      "list": 275
+     },
+     "message.content[]": {
+      "dict": 275
+     },
+     "message.content[].id": {
+      "str": 139
+     },
+     "message.content[].name": {
+      "str": 139
+     },
+     "message.content[].signature": {
+      "str": 88
+     },
+     "message.content[].text": {
+      "str": 48
+     },
+     "message.content[].thinking": {
+      "str": 88
+     },
+     "message.content[].type": {
+      "str": 275
+     },
+     "message.context_management": {
+      "null": 275
+     },
+     "message.diagnostics": {
+      "null": 275
+     },
+     "message.id": {
+      "str": 275
+     },
+     "message.input_transformations": {
+      "list": 275
+     },
+     "message.model": {
+      "str": 275
+     },
+     "message.role": {
+      "str": 275
+     },
+     "message.stop_details": {
+      "null": 275
+     },
+     "message.stop_reason": {
+      "null": 275
+     },
+     "message.stop_sequence": {
+      "null": 275
+     },
+     "message.type": {
+      "str": 275
+     },
+     "message.usage": {
+      "dict": 275
+     },
+     "message.usage.cache_creation": {
+      "dict": 275
+     },
+     "message.usage.cache_creation.ephemeral_1h_input_tokens": {
+      "int": 275
+     },
+     "message.usage.cache_creation.ephemeral_5m_input_tokens": {
+      "int": 275
+     },
+     "message.usage.cache_creation_input_tokens": {
+      "int": 275
+     },
+     "message.usage.cache_read_input_tokens": {
+      "int": 275
+     },
+     "message.usage.inference_geo": {
+      "str": 275
+     },
+     "message.usage.input_tokens": {
+      "int": 275
+     },
+     "message.usage.output_tokens": {
+      "int": 275
+     },
+     "message.usage.service_tier": {
+      "str": 275
+     },
+     "narration_block_indexes": {
+      "list": 16
+     },
+     "narration_block_indexes[]": {
+      "int": 16
+     },
+     "parent_tool_use_id": {
+      "null": 272,
+      "str": 3
+     },
+     "request_id": {
+      "str": 275
+     },
+     "session_id": {
+      "str": 275
+     },
+     "subagent_type": {
+      "str": 3
+     },
+     "task_description": {
+      "str": 3
+     },
+     "timestamp": {
+      "str": 275
+     },
+     "tool_use_meta": {
+      "list": 11
+     },
+     "tool_use_meta[]": {
+      "dict": 11
+     },
+     "tool_use_meta[].display_name": {
+      "str": 11
+     },
+     "tool_use_meta[].id": {
+      "str": 11
+     },
+     "tool_use_meta[].server_display_name": {
+      "str": 11
+     },
+     "type": {
+      "str": 275
+     },
+     "user_message_uuid": {
+      "str": 2
+     },
+     "user_message_uuids": {
+      "list": 2
+     },
+     "user_message_uuids[]": {
+      "str": 2
+     },
+     "uuid": {
+      "str": 275
+     },
+     "wire_ingest_context": {
+      "dict": 80
+     },
+     "wire_ingest_context.toolu_01113H8aBy77TsPsN3V5VgLu": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_01113H8aBy77TsPsN3V5VgLu.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_011fuhdAwqt9QPeP33gvkzwy": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_011fuhdAwqt9QPeP33gvkzwy.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_011qxXnjNbLxaHZtCqs3bZkW": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_011qxXnjNbLxaHZtCqs3bZkW.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_012PEDX6aV4GkM3ASfUnC4HL": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_012PEDX6aV4GkM3ASfUnC4HL.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_012pYFb91eSqepNjb3ZwBBPy": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_012pYFb91eSqepNjb3ZwBBPy.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_013Y6iLwNNc1vwkvzxocVdTf": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_013Y6iLwNNc1vwkvzxocVdTf.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_013wptCYEbo6DE8nVWdMS8Mi": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_013wptCYEbo6DE8nVWdMS8Mi.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_014HswTgFBfb1XURVtuCZvXk": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_014HswTgFBfb1XURVtuCZvXk.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_0155Y77kBtFyPsNkj39ZAvxH": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_0155Y77kBtFyPsNkj39ZAvxH.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_015WJamLxTWKVqZysxEU6CAc": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_015WJamLxTWKVqZysxEU6CAc.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_015Yd544pRgzgRtAtzfdeYDN": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_015Yd544pRgzgRtAtzfdeYDN.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_015qm1WVp3KMcqJbEzHe5DaG": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_015qm1WVp3KMcqJbEzHe5DaG.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_016Kt5m9aMfKnKNg7KitsiqG": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_016Kt5m9aMfKnKNg7KitsiqG.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_016RbpSmdGa1X3JBzhgYy7sV": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_016RbpSmdGa1X3JBzhgYy7sV.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_016Ur4pap5NnN6pmaE9ZHapL": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_016Ur4pap5NnN6pmaE9ZHapL.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_016rVZyP9EYdKHBbpZpJL3Ni": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_016rVZyP9EYdKHBbpZpJL3Ni.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_016xPQvJJti4Bto9w9qE4EXM": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_016xPQvJJti4Bto9w9qE4EXM.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_016zubnJnhXhWM8XdtAAmwYK": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_016zubnJnhXhWM8XdtAAmwYK.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_0175CiKom5mnotytFUQEv9Q8": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_0175CiKom5mnotytFUQEv9Q8.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_017hBfePaQ7z5nDhASdQW86b": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_017hBfePaQ7z5nDhASdQW86b.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_017oPf1cTQxDzeQyFx72rdkk": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_017oPf1cTQxDzeQyFx72rdkk.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_018az8HRatPh86eiDMAJoGm2": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_018az8HRatPh86eiDMAJoGm2.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_019nf6pHhE1nmqsxmrf8x5Xg": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_019nf6pHhE1nmqsxmrf8x5Xg.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_019pFWvAY1DuAbajWaJ1K5kp": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_019pFWvAY1DuAbajWaJ1K5kp.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_01Auy3UetWETQULPoJFjsUqs": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_01Auy3UetWETQULPoJFjsUqs.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_01BCJJa9CehXjhZo7tB6nx43": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_01BCJJa9CehXjhZo7tB6nx43.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_01C4UN3PmdjRf6mPrjFTKKqU": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_01C4UN3PmdjRf6mPrjFTKKqU.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_01CAspKmRzzc3sNUJPMEPk1M": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_01CAspKmRzzc3sNUJPMEPk1M.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_01Cafmnwj3kgrDzt6iBXDvB3": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_01Cafmnwj3kgrDzt6iBXDvB3.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_01Cj33jGt3bG1Qn5vjJGfjEA": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_01Cj33jGt3bG1Qn5vjJGfjEA.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_01DCemuV9itJCV3T96FDSbwz": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_01DCemuV9itJCV3T96FDSbwz.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_01Dnm8r4jiqBdMh8RsV2aRYi": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_01Dnm8r4jiqBdMh8RsV2aRYi.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_01DpmZa2dPHdGV17DuvvUVYp": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_01DpmZa2dPHdGV17DuvvUVYp.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_01ESbE4uizkKyJSnDWEDphYw": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_01ESbE4uizkKyJSnDWEDphYw.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_01EUodQKDJhFYM7oS8UNcw3m": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_01EUodQKDJhFYM7oS8UNcw3m.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_01EcTH8C47sqj1tHu3tidcx2": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_01EcTH8C47sqj1tHu3tidcx2.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_01Evo9qqKM59SuaQme3W5R5n": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_01Evo9qqKM59SuaQme3W5R5n.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_01FrjRfzYdWmQAh8g7EdmBYH": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_01FrjRfzYdWmQAh8g7EdmBYH.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_01GJikT49UWiJfeSHC1ewfRP": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_01GJikT49UWiJfeSHC1ewfRP.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_01Gn9121n3QFPzsqfSttdXnC": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_01Gn9121n3QFPzsqfSttdXnC.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_01HGP73BfpiPBA8n1o3N3VF2": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_01HGP73BfpiPBA8n1o3N3VF2.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_01HJiqkNkL298qdQoh2w8ifx": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_01HJiqkNkL298qdQoh2w8ifx.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_01HYJkXnKFC3GThfGBp1N8ky": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_01HYJkXnKFC3GThfGBp1N8ky.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_01Hk4MXAHXVdWDP6dNqoPyg8": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_01Hk4MXAHXVdWDP6dNqoPyg8.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_01HqJeXQC5gF78hcJFueWdY6": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_01HqJeXQC5gF78hcJFueWdY6.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_01J7ZGBEQtgbR9s5vXuPR596": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_01J7ZGBEQtgbR9s5vXuPR596.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_01JcDBHwwPXqbanLBGZhYzXh": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_01JcDBHwwPXqbanLBGZhYzXh.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_01JesnmSCkhHUvpX7psW8Shy": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_01JesnmSCkhHUvpX7psW8Shy.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_01JsRk2XBGybhvwqrebLqRrM": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_01JsRk2XBGybhvwqrebLqRrM.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_01KPmKvQ3e9TyftjvWsMU44Y": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_01KPmKvQ3e9TyftjvWsMU44Y.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_01KXcDk2R8YXwiu1RbyaKPF1": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_01KXcDk2R8YXwiu1RbyaKPF1.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_01L9Tr9hN49mxoKRRuF4hwcp": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_01L9Tr9hN49mxoKRRuF4hwcp.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_01LkbnWq4BUtrTz959Ugntaa": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_01LkbnWq4BUtrTz959Ugntaa.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_01LxZyDKiX2du7V6T2cUVNoW": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_01LxZyDKiX2du7V6T2cUVNoW.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_01MfAPRMws1MNDwUGhcQ3t1R": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_01MfAPRMws1MNDwUGhcQ3t1R.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_01NfZXFLLwxhk4uo26gdgfjB": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_01NfZXFLLwxhk4uo26gdgfjB.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_01P3QvhxLhVYZJft6WMgM3Kb": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_01P3QvhxLhVYZJft6WMgM3Kb.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_01PHFShchRyGnaB1MtC8DjgX": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_01PHFShchRyGnaB1MtC8DjgX.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_01QZXiwSrBysJTbFbk53VmDN": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_01QZXiwSrBysJTbFbk53VmDN.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_01R1WbXfwhHegAiNXkiyZgij": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_01R1WbXfwhHegAiNXkiyZgij.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_01R9djGTvvzjZ9K5Ke5HFSTm": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_01R9djGTvvzjZ9K5Ke5HFSTm.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_01RrKD2sn6vK6DF8yzMSR9z7": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_01RrKD2sn6vK6DF8yzMSR9z7.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_01RzTWGakgRouvnPqQv1ntv4": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_01RzTWGakgRouvnPqQv1ntv4.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_01TDoyHN94XmxssncUcFwYLC": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_01TDoyHN94XmxssncUcFwYLC.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_01TMDq9Zeyae8shYSJKqpzZP": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_01TMDq9Zeyae8shYSJKqpzZP.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_01TQ4pH51L7eVsPiCZNkSrQA": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_01TQ4pH51L7eVsPiCZNkSrQA.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_01TdfeHvWSmanvXUTV68Np4W": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_01TdfeHvWSmanvXUTV68Np4W.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_01U7mQUqy9eVhcePhMXWqTCg": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_01U7mQUqy9eVhcePhMXWqTCg.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_01UAshveBC532eVSz8xfKiii": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_01UAshveBC532eVSz8xfKiii.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_01ULwgr7kEqoCWhGvmX3AwQB": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_01ULwgr7kEqoCWhGvmX3AwQB.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_01VA1bqGhZEGpbq1XKBGXSW6": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_01VA1bqGhZEGpbq1XKBGXSW6.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_01VcxzyCUH7BfkL9AiAn23JC": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_01VcxzyCUH7BfkL9AiAn23JC.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_01VjoypyoHg5ACMe8hV3sLvr": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_01VjoypyoHg5ACMe8hV3sLvr.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_01Vtaqm4aFFENHX3MLHDczT6": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_01Vtaqm4aFFENHX3MLHDczT6.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_01Wp1SbNa2JMTh18XmX96fsJ": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_01Wp1SbNa2JMTh18XmX96fsJ.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_01WrwisV8NVRiQDT9ry8yndi": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_01WrwisV8NVRiQDT9ry8yndi.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_01XaUvwatAk8STZ4zyxGyEEj": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_01XaUvwatAk8STZ4zyxGyEEj.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_01XhSPDjCWRviawhosJd8Jzm": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_01XhSPDjCWRviawhosJd8Jzm.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_01Y7GGbQQ6K6RpRrNVJJHrEz": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_01Y7GGbQQ6K6RpRrNVJJHrEz.cwd": {
+      "str": 1
+     },
+     "wire_ingest_context.toolu_01YN21BRDuw8UX1C6wZGJESm": {
+      "dict": 1
+     },
+     "wire_ingest_context.toolu_01YN21BRDuw8UX1C6wZGJESm.cwd": {
+      "str": 1
+     },
+     "wire_tool_inputs": {
+      "dict": 136
+     },
+     "wire_tool_inputs.toolu_01113H8aBy77TsPsN3V5VgLu": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01113H8aBy77TsPsN3V5VgLu.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01113H8aBy77TsPsN3V5VgLu.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_011fuhdAwqt9QPeP33gvkzwy": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_011fuhdAwqt9QPeP33gvkzwy.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_011fuhdAwqt9QPeP33gvkzwy.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_011qxXnjNbLxaHZtCqs3bZkW": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_011qxXnjNbLxaHZtCqs3bZkW.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_011qxXnjNbLxaHZtCqs3bZkW.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_0121abkdQYpmk4AmSpiBmNxH": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_0121abkdQYpmk4AmSpiBmNxH.method": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_0121abkdQYpmk4AmSpiBmNxH.owner": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_0121abkdQYpmk4AmSpiBmNxH.pullNumber": {
+      "int": 1
+     },
+     "wire_tool_inputs.toolu_0121abkdQYpmk4AmSpiBmNxH.repo": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_012PEDX6aV4GkM3ASfUnC4HL": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_012PEDX6aV4GkM3ASfUnC4HL.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_012PEDX6aV4GkM3ASfUnC4HL.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_012pYFb91eSqepNjb3ZwBBPy": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_012pYFb91eSqepNjb3ZwBBPy.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_012pYFb91eSqepNjb3ZwBBPy.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_0131RCTa2xgc6g6DyEozbjkd": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_0131RCTa2xgc6g6DyEozbjkd.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_0131RCTa2xgc6g6DyEozbjkd.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_0131RCTa2xgc6g6DyEozbjkd.run_in_background": {
+      "bool": 1
+     },
+     "wire_tool_inputs.toolu_013XCyDa7rgzLDAjbMMDZg4n": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_013Y6iLwNNc1vwkvzxocVdTf": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_013Y6iLwNNc1vwkvzxocVdTf.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_013Y6iLwNNc1vwkvzxocVdTf.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_013Y6iLwNNc1vwkvzxocVdTf.timeout": {
+      "int": 1
+     },
+     "wire_tool_inputs.toolu_013qYmtjQDq74ZLAVh2MYoYo": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_013qYmtjQDq74ZLAVh2MYoYo.questions": {
+      "list": 1
+     },
+     "wire_tool_inputs.toolu_013qYmtjQDq74ZLAVh2MYoYo.questions[]": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_013qYmtjQDq74ZLAVh2MYoYo.questions[].header": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_013qYmtjQDq74ZLAVh2MYoYo.questions[].multiSelect": {
+      "bool": 1
+     },
+     "wire_tool_inputs.toolu_013qYmtjQDq74ZLAVh2MYoYo.questions[].options": {
+      "list": 1
+     },
+     "wire_tool_inputs.toolu_013qYmtjQDq74ZLAVh2MYoYo.questions[].question": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_013wptCYEbo6DE8nVWdMS8Mi": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_013wptCYEbo6DE8nVWdMS8Mi.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_013wptCYEbo6DE8nVWdMS8Mi.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_014HswTgFBfb1XURVtuCZvXk": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_014HswTgFBfb1XURVtuCZvXk.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_014HswTgFBfb1XURVtuCZvXk.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_014fkj7T5oNwBJWgpmzqDZkh": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_014iWo792WfdbjKVehFYNLMd": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_0155Y77kBtFyPsNkj39ZAvxH": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_0155Y77kBtFyPsNkj39ZAvxH.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_0155Y77kBtFyPsNkj39ZAvxH.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_0155Y77kBtFyPsNkj39ZAvxH.timeout": {
+      "int": 1
+     },
+     "wire_tool_inputs.toolu_015VDosfTZbmbYjuFDq4bQDm": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_015WJamLxTWKVqZysxEU6CAc": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_015WJamLxTWKVqZysxEU6CAc.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_015WJamLxTWKVqZysxEU6CAc.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_015Yd544pRgzgRtAtzfdeYDN": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_015Yd544pRgzgRtAtzfdeYDN.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_015Yd544pRgzgRtAtzfdeYDN.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_015Yd544pRgzgRtAtzfdeYDN.timeout": {
+      "int": 1
+     },
+     "wire_tool_inputs.toolu_015hCc3zvyhc6ygCLibwLJiT": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_015hCc3zvyhc6ygCLibwLJiT.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_015hCc3zvyhc6ygCLibwLJiT.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_015j3hochTSC2rEdNCWojJpZ": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_015j3hochTSC2rEdNCWojJpZ.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_015j3hochTSC2rEdNCWojJpZ.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_015qm1WVp3KMcqJbEzHe5DaG": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_015qm1WVp3KMcqJbEzHe5DaG.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_015qm1WVp3KMcqJbEzHe5DaG.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_015zfKPLQnseHiBga2UoBPwq": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_015zfKPLQnseHiBga2UoBPwq.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_015zfKPLQnseHiBga2UoBPwq.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_016Kt5m9aMfKnKNg7KitsiqG": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_016Kt5m9aMfKnKNg7KitsiqG.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_016Kt5m9aMfKnKNg7KitsiqG.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_016RbpSmdGa1X3JBzhgYy7sV": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_016RbpSmdGa1X3JBzhgYy7sV.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_016RbpSmdGa1X3JBzhgYy7sV.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_016Ur4pap5NnN6pmaE9ZHapL": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_016Ur4pap5NnN6pmaE9ZHapL.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_016Ur4pap5NnN6pmaE9ZHapL.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_016ZUoecyN17uL1yCvK6NxZD": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_016ZUoecyN17uL1yCvK6NxZD.max_results": {
+      "int": 1
+     },
+     "wire_tool_inputs.toolu_016ZUoecyN17uL1yCvK6NxZD.query": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_016rVZyP9EYdKHBbpZpJL3Ni": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_016rVZyP9EYdKHBbpZpJL3Ni.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_016rVZyP9EYdKHBbpZpJL3Ni.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_016xPQvJJti4Bto9w9qE4EXM": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_016xPQvJJti4Bto9w9qE4EXM.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_016xPQvJJti4Bto9w9qE4EXM.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_016zubnJnhXhWM8XdtAAmwYK": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_016zubnJnhXhWM8XdtAAmwYK.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_016zubnJnhXhWM8XdtAAmwYK.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_0175CiKom5mnotytFUQEv9Q8": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_0175CiKom5mnotytFUQEv9Q8.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_0175CiKom5mnotytFUQEv9Q8.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_017XPE6Jiz6Whe6G2Zb7haRT": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_017XPE6Jiz6Whe6G2Zb7haRT.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_017XPE6Jiz6Whe6G2Zb7haRT.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_017hBfePaQ7z5nDhASdQW86b": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_017hBfePaQ7z5nDhASdQW86b.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_017hBfePaQ7z5nDhASdQW86b.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_017oPf1cTQxDzeQyFx72rdkk": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_017oPf1cTQxDzeQyFx72rdkk.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_017oPf1cTQxDzeQyFx72rdkk.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_017uu6hGzmFrn2kmhJQFn4hT": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_017uu6hGzmFrn2kmhJQFn4hT.method": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_017uu6hGzmFrn2kmhJQFn4hT.owner": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_017uu6hGzmFrn2kmhJQFn4hT.pullNumber": {
+      "int": 1
+     },
+     "wire_tool_inputs.toolu_017uu6hGzmFrn2kmhJQFn4hT.repo": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_018az8HRatPh86eiDMAJoGm2": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_018az8HRatPh86eiDMAJoGm2.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_018az8HRatPh86eiDMAJoGm2.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_018uQjDSGHfU5d23cK4Nt64d": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_018uQjDSGHfU5d23cK4Nt64d.max_results": {
+      "int": 1
+     },
+     "wire_tool_inputs.toolu_018uQjDSGHfU5d23cK4Nt64d.query": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_018ydWQ5W1EKA5Z5dW7CiGSj": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_018ydWQ5W1EKA5Z5dW7CiGSj.max_results": {
+      "int": 1
+     },
+     "wire_tool_inputs.toolu_018ydWQ5W1EKA5Z5dW7CiGSj.query": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_018znC2LBQZuqzhGrCmpXiiK": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_018znC2LBQZuqzhGrCmpXiiK.body": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_018znC2LBQZuqzhGrCmpXiiK.commentId": {
+      "int": 1
+     },
+     "wire_tool_inputs.toolu_018znC2LBQZuqzhGrCmpXiiK.owner": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_018znC2LBQZuqzhGrCmpXiiK.pullNumber": {
+      "int": 1
+     },
+     "wire_tool_inputs.toolu_018znC2LBQZuqzhGrCmpXiiK.repo": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_019Qxyq1gWR1TDeXXkdrjYMB": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_019SzdhFJQF4bYpzhBiZfzKN": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_019SzdhFJQF4bYpzhBiZfzKN.max_results": {
+      "int": 1
+     },
+     "wire_tool_inputs.toolu_019SzdhFJQF4bYpzhBiZfzKN.query": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_019nf6pHhE1nmqsxmrf8x5Xg": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_019nf6pHhE1nmqsxmrf8x5Xg.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_019nf6pHhE1nmqsxmrf8x5Xg.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_019pFWvAY1DuAbajWaJ1K5kp": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_019pFWvAY1DuAbajWaJ1K5kp.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_019pFWvAY1DuAbajWaJ1K5kp.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_019xcMfbTfQkdnr7UrJsg5yR": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_019xcMfbTfQkdnr7UrJsg5yR.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_019xcMfbTfQkdnr7UrJsg5yR.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01ASJ6LiXmotHioH1fab6E4u": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01ASJ6LiXmotHioH1fab6E4u.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01ASJ6LiXmotHioH1fab6E4u.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01ASJ6LiXmotHioH1fab6E4u.run_in_background": {
+      "bool": 1
+     },
+     "wire_tool_inputs.toolu_01Auy3UetWETQULPoJFjsUqs": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01Auy3UetWETQULPoJFjsUqs.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01Auy3UetWETQULPoJFjsUqs.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01BCJJa9CehXjhZo7tB6nx43": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01BCJJa9CehXjhZo7tB6nx43.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01BCJJa9CehXjhZo7tB6nx43.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01BCJJa9CehXjhZo7tB6nx43.run_in_background": {
+      "bool": 1
+     },
+     "wire_tool_inputs.toolu_01BMMEa5yydp2GWzARASZA74": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01BMMEa5yydp2GWzARASZA74.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01BMMEa5yydp2GWzARASZA74.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01BXVPShTKPkxN3j89XowG1X": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01BXVPShTKPkxN3j89XowG1X.args": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01BXVPShTKPkxN3j89XowG1X.skill": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01BobH4QHGdBG5bnzZqk1QUT": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01Byn3vyaZg18hT2WKpS4TT7": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01C4UN3PmdjRf6mPrjFTKKqU": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01C4UN3PmdjRf6mPrjFTKKqU.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01C4UN3PmdjRf6mPrjFTKKqU.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01CAspKmRzzc3sNUJPMEPk1M": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01CAspKmRzzc3sNUJPMEPk1M.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01CAspKmRzzc3sNUJPMEPk1M.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01CKgoDZSk4GEuMnNZBrKTq6": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01CKgoDZSk4GEuMnNZBrKTq6.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01CKgoDZSk4GEuMnNZBrKTq6.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01Cafmnwj3kgrDzt6iBXDvB3": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01Cafmnwj3kgrDzt6iBXDvB3.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01Cafmnwj3kgrDzt6iBXDvB3.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01Cj33jGt3bG1Qn5vjJGfjEA": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01Cj33jGt3bG1Qn5vjJGfjEA.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01Cj33jGt3bG1Qn5vjJGfjEA.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01DCemuV9itJCV3T96FDSbwz": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01DCemuV9itJCV3T96FDSbwz.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01DCemuV9itJCV3T96FDSbwz.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01Dmti7QGs1PpST9vvgoGxag": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01Dnm8r4jiqBdMh8RsV2aRYi": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01Dnm8r4jiqBdMh8RsV2aRYi.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01Dnm8r4jiqBdMh8RsV2aRYi.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01DpmZa2dPHdGV17DuvvUVYp": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01DpmZa2dPHdGV17DuvvUVYp.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01DpmZa2dPHdGV17DuvvUVYp.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01DpmZa2dPHdGV17DuvvUVYp.timeout": {
+      "int": 1
+     },
+     "wire_tool_inputs.toolu_01ESbE4uizkKyJSnDWEDphYw": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01ESbE4uizkKyJSnDWEDphYw.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01ESbE4uizkKyJSnDWEDphYw.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01EUodQKDJhFYM7oS8UNcw3m": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01EUodQKDJhFYM7oS8UNcw3m.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01EUodQKDJhFYM7oS8UNcw3m.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01EXQBcgYRGJuZg2pnk4WPir": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01EXQBcgYRGJuZg2pnk4WPir.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01EXQBcgYRGJuZg2pnk4WPir.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01EcTH8C47sqj1tHu3tidcx2": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01EcTH8C47sqj1tHu3tidcx2.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01EcTH8C47sqj1tHu3tidcx2.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01Evo9qqKM59SuaQme3W5R5n": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01Evo9qqKM59SuaQme3W5R5n.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01Evo9qqKM59SuaQme3W5R5n.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01FrjRfzYdWmQAh8g7EdmBYH": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01FrjRfzYdWmQAh8g7EdmBYH.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01FrjRfzYdWmQAh8g7EdmBYH.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01Fz5LKnipk6J6xvTRe6jvMT": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01Fz5LKnipk6J6xvTRe6jvMT.file_path": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01Fz5LKnipk6J6xvTRe6jvMT.new_string": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01Fz5LKnipk6J6xvTRe6jvMT.old_string": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01GJikT49UWiJfeSHC1ewfRP": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01GJikT49UWiJfeSHC1ewfRP.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01GJikT49UWiJfeSHC1ewfRP.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01Gn9121n3QFPzsqfSttdXnC": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01Gn9121n3QFPzsqfSttdXnC.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01Gn9121n3QFPzsqfSttdXnC.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01HGP73BfpiPBA8n1o3N3VF2": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01HGP73BfpiPBA8n1o3N3VF2.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01HGP73BfpiPBA8n1o3N3VF2.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01HJiqkNkL298qdQoh2w8ifx": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01HJiqkNkL298qdQoh2w8ifx.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01HJiqkNkL298qdQoh2w8ifx.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01HYJkXnKFC3GThfGBp1N8ky": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01HYJkXnKFC3GThfGBp1N8ky.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01HYJkXnKFC3GThfGBp1N8ky.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01Hk4MXAHXVdWDP6dNqoPyg8": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01Hk4MXAHXVdWDP6dNqoPyg8.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01Hk4MXAHXVdWDP6dNqoPyg8.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01Hk4MXAHXVdWDP6dNqoPyg8.timeout": {
+      "int": 1
+     },
+     "wire_tool_inputs.toolu_01HqJeXQC5gF78hcJFueWdY6": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01HqJeXQC5gF78hcJFueWdY6.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01HqJeXQC5gF78hcJFueWdY6.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01HqJeXQC5gF78hcJFueWdY6.timeout": {
+      "int": 1
+     },
+     "wire_tool_inputs.toolu_01HymncpZTsBcGehkBDmwxer": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01HymncpZTsBcGehkBDmwxer.method": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01HymncpZTsBcGehkBDmwxer.owner": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01HymncpZTsBcGehkBDmwxer.pullNumber": {
+      "int": 1
+     },
+     "wire_tool_inputs.toolu_01HymncpZTsBcGehkBDmwxer.repo": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01J3JcE8gSiELikH2WwdhrDK": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01J3JcE8gSiELikH2WwdhrDK.delay_minutes": {
+      "int": 1
+     },
+     "wire_tool_inputs.toolu_01J3JcE8gSiELikH2WwdhrDK.message": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01J3JcE8gSiELikH2WwdhrDK.name": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01J7ZGBEQtgbR9s5vXuPR596": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01J7ZGBEQtgbR9s5vXuPR596.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01J7ZGBEQtgbR9s5vXuPR596.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01JcDBHwwPXqbanLBGZhYzXh": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01JcDBHwwPXqbanLBGZhYzXh.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01JcDBHwwPXqbanLBGZhYzXh.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01JesnmSCkhHUvpX7psW8Shy": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01JesnmSCkhHUvpX7psW8Shy.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01JesnmSCkhHUvpX7psW8Shy.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01JsRk2XBGybhvwqrebLqRrM": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01JsRk2XBGybhvwqrebLqRrM.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01JsRk2XBGybhvwqrebLqRrM.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01KPmKvQ3e9TyftjvWsMU44Y": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01KPmKvQ3e9TyftjvWsMU44Y.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01KPmKvQ3e9TyftjvWsMU44Y.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01KXcDk2R8YXwiu1RbyaKPF1": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01KXcDk2R8YXwiu1RbyaKPF1.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01KXcDk2R8YXwiu1RbyaKPF1.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01KXcDk2R8YXwiu1RbyaKPF1.timeout": {
+      "int": 1
+     },
+     "wire_tool_inputs.toolu_01KZMBCY1MstPnpRqZCm6w1T": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01KZMBCY1MstPnpRqZCm6w1T.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01KZMBCY1MstPnpRqZCm6w1T.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01KnxVrGfuJg9U1bWcjE8mLj": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01KnxVrGfuJg9U1bWcjE8mLj.owner": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01KnxVrGfuJg9U1bWcjE8mLj.pullNumber": {
+      "int": 1
+     },
+     "wire_tool_inputs.toolu_01KnxVrGfuJg9U1bWcjE8mLj.repo": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01L9Tr9hN49mxoKRRuF4hwcp": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01L9Tr9hN49mxoKRRuF4hwcp.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01L9Tr9hN49mxoKRRuF4hwcp.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01LcT8WiQC48LKy8Kw6vXUGM": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01LcT8WiQC48LKy8Kw6vXUGM.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01LcT8WiQC48LKy8Kw6vXUGM.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01LkbnWq4BUtrTz959Ugntaa": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01LkbnWq4BUtrTz959Ugntaa.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01LkbnWq4BUtrTz959Ugntaa.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01LxZyDKiX2du7V6T2cUVNoW": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01LxZyDKiX2du7V6T2cUVNoW.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01LxZyDKiX2du7V6T2cUVNoW.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01Mde49HoyaBvtA8pJxcu4jg": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01Mde49HoyaBvtA8pJxcu4jg.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01Mde49HoyaBvtA8pJxcu4jg.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01MfAPRMws1MNDwUGhcQ3t1R": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01MfAPRMws1MNDwUGhcQ3t1R.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01MfAPRMws1MNDwUGhcQ3t1R.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01MnSeP9Sq7fE73eUmfiMqer": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01MnSeP9Sq7fE73eUmfiMqer.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01MnSeP9Sq7fE73eUmfiMqer.timeout_ms": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01MnSeP9Sq7fE73eUmfiMqer.until": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01N5tJNfYJrkPjCvxps2G1GW": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01N5tJNfYJrkPjCvxps2G1GW.method": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01N5tJNfYJrkPjCvxps2G1GW.owner": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01N5tJNfYJrkPjCvxps2G1GW.pullNumber": {
+      "int": 1
+     },
+     "wire_tool_inputs.toolu_01N5tJNfYJrkPjCvxps2G1GW.repo": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01NKKgtujHHwK8ow36Z4ZZqx": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01NfZXFLLwxhk4uo26gdgfjB": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01NfZXFLLwxhk4uo26gdgfjB.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01NfZXFLLwxhk4uo26gdgfjB.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01P3QvhxLhVYZJft6WMgM3Kb": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01P3QvhxLhVYZJft6WMgM3Kb.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01P3QvhxLhVYZJft6WMgM3Kb.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01PF35nt2iLMShmr3dyBCvzT": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01PF35nt2iLMShmr3dyBCvzT.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01PF35nt2iLMShmr3dyBCvzT.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01PF35nt2iLMShmr3dyBCvzT.run_in_background": {
+      "bool": 1
+     },
+     "wire_tool_inputs.toolu_01PHFShchRyGnaB1MtC8DjgX": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01PHFShchRyGnaB1MtC8DjgX.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01PHFShchRyGnaB1MtC8DjgX.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01PPKRJTVGzwvYoq87idyDsd": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01PPKRJTVGzwvYoq87idyDsd.file_path": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01PPKRJTVGzwvYoq87idyDsd.new_string": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01PPKRJTVGzwvYoq87idyDsd.old_string": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01Pw9kSawbTtYrD8UsDiEQWv": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01Pw9kSawbTtYrD8UsDiEQWv.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01Pw9kSawbTtYrD8UsDiEQWv.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01QZXiwSrBysJTbFbk53VmDN": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01QZXiwSrBysJTbFbk53VmDN.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01QZXiwSrBysJTbFbk53VmDN.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01R1WbXfwhHegAiNXkiyZgij": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01R1WbXfwhHegAiNXkiyZgij.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01R1WbXfwhHegAiNXkiyZgij.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01R5RorueuLQ8yPZVwVZJkMV": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01R5RorueuLQ8yPZVwVZJkMV.trigger_id": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01R9djGTvvzjZ9K5Ke5HFSTm": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01R9djGTvvzjZ9K5Ke5HFSTm.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01R9djGTvvzjZ9K5Ke5HFSTm.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01RLyz7NEts7ySqq4pTtsCMo": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01RLyz7NEts7ySqq4pTtsCMo.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01RLyz7NEts7ySqq4pTtsCMo.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01RLyz7NEts7ySqq4pTtsCMo.run_in_background": {
+      "bool": 1
+     },
+     "wire_tool_inputs.toolu_01RY4iD7nZ5peHQxLN5fsKJB": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01RY4iD7nZ5peHQxLN5fsKJB.file_path": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01RY4iD7nZ5peHQxLN5fsKJB.new_string": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01RY4iD7nZ5peHQxLN5fsKJB.old_string": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01RrKD2sn6vK6DF8yzMSR9z7": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01RrKD2sn6vK6DF8yzMSR9z7.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01RrKD2sn6vK6DF8yzMSR9z7.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01RzTWGakgRouvnPqQv1ntv4": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01RzTWGakgRouvnPqQv1ntv4.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01RzTWGakgRouvnPqQv1ntv4.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01SRKjB3v5Qk5Q6cX8QPBo6c": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01SRKjB3v5Qk5Q6cX8QPBo6c.content": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01SRKjB3v5Qk5Q6cX8QPBo6c.file_path": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01T2CB8AoD4KukxeDTAA7U8U": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01T2CB8AoD4KukxeDTAA7U8U.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01T2CB8AoD4KukxeDTAA7U8U.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01TDoyHN94XmxssncUcFwYLC": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01TDoyHN94XmxssncUcFwYLC.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01TDoyHN94XmxssncUcFwYLC.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01TMDq9Zeyae8shYSJKqpzZP": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01TMDq9Zeyae8shYSJKqpzZP.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01TMDq9Zeyae8shYSJKqpzZP.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01TQ4pH51L7eVsPiCZNkSrQA": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01TQ4pH51L7eVsPiCZNkSrQA.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01TQ4pH51L7eVsPiCZNkSrQA.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01TdfeHvWSmanvXUTV68Np4W": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01TdfeHvWSmanvXUTV68Np4W.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01TdfeHvWSmanvXUTV68Np4W.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01TjUFSwgyvfML7bsGzdur52": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01TjUFSwgyvfML7bsGzdur52.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01TjUFSwgyvfML7bsGzdur52.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01TxhgV4sk99S1CwGMLym8zv": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01TzpgtoJSqt8gDZd5kummN7": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01TzpgtoJSqt8gDZd5kummN7.max_results": {
+      "int": 1
+     },
+     "wire_tool_inputs.toolu_01TzpgtoJSqt8gDZd5kummN7.query": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01U7mQUqy9eVhcePhMXWqTCg": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01U7mQUqy9eVhcePhMXWqTCg.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01U7mQUqy9eVhcePhMXWqTCg.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01U7mQUqy9eVhcePhMXWqTCg.timeout": {
+      "int": 1
+     },
+     "wire_tool_inputs.toolu_01UAshveBC532eVSz8xfKiii": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01UAshveBC532eVSz8xfKiii.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01UAshveBC532eVSz8xfKiii.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01UE4G3pJ2Y3bfezGHRTH423": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01UHCMKAKTyoWgyB93UQ7QuP": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01ULwgr7kEqoCWhGvmX3AwQB": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01ULwgr7kEqoCWhGvmX3AwQB.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01ULwgr7kEqoCWhGvmX3AwQB.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01Uo8qoTGCst4sLi5s3Zj7KB": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01Uo8qoTGCst4sLi5s3Zj7KB.prompt": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01Uo8qoTGCst4sLi5s3Zj7KB.title": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01Uo8qoTGCst4sLi5s3Zj7KB.tldr": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01VA1bqGhZEGpbq1XKBGXSW6": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01VA1bqGhZEGpbq1XKBGXSW6.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01VA1bqGhZEGpbq1XKBGXSW6.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01VcxzyCUH7BfkL9AiAn23JC": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01VcxzyCUH7BfkL9AiAn23JC.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01VcxzyCUH7BfkL9AiAn23JC.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01VjoypyoHg5ACMe8hV3sLvr": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01VjoypyoHg5ACMe8hV3sLvr.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01VjoypyoHg5ACMe8hV3sLvr.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01Vtaqm4aFFENHX3MLHDczT6": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01Vtaqm4aFFENHX3MLHDczT6.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01Vtaqm4aFFENHX3MLHDczT6.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01Wp1SbNa2JMTh18XmX96fsJ": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01Wp1SbNa2JMTh18XmX96fsJ.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01Wp1SbNa2JMTh18XmX96fsJ.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01WrwisV8NVRiQDT9ry8yndi": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01WrwisV8NVRiQDT9ry8yndi.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01WrwisV8NVRiQDT9ry8yndi.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01Wz7dTBi9DZoeBtdHdfJWvV": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01Wz7dTBi9DZoeBtdHdfJWvV.method": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01Wz7dTBi9DZoeBtdHdfJWvV.owner": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01Wz7dTBi9DZoeBtdHdfJWvV.pullNumber": {
+      "int": 1
+     },
+     "wire_tool_inputs.toolu_01Wz7dTBi9DZoeBtdHdfJWvV.repo": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01XCc2zNfUo9H8RRKoD7vQHB": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01XCc2zNfUo9H8RRKoD7vQHB.owner": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01XCc2zNfUo9H8RRKoD7vQHB.repo": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01XCc2zNfUo9H8RRKoD7vQHB.threadId": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01XFdTqYg4s2XCSzwSUEcDDW": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01XFdTqYg4s2XCSzwSUEcDDW.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01XFdTqYg4s2XCSzwSUEcDDW.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01XaUvwatAk8STZ4zyxGyEEj": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01XaUvwatAk8STZ4zyxGyEEj.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01XaUvwatAk8STZ4zyxGyEEj.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01Xb8PpSHLhfkoCcBQ1jVKzL": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01XhSPDjCWRviawhosJd8Jzm": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01XhSPDjCWRviawhosJd8Jzm.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01XhSPDjCWRviawhosJd8Jzm.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01Y7GGbQQ6K6RpRrNVJJHrEz": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01Y7GGbQQ6K6RpRrNVJJHrEz.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01Y7GGbQQ6K6RpRrNVJJHrEz.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01YN21BRDuw8UX1C6wZGJESm": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01YN21BRDuw8UX1C6wZGJESm.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01YN21BRDuw8UX1C6wZGJESm.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01YYUgvxu423XZkuBhdYVpUe": {
+      "dict": 1
+     },
+     "wire_tool_inputs.toolu_01YYUgvxu423XZkuBhdYVpUe.command": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01YYUgvxu423XZkuBhdYVpUe.description": {
+      "str": 1
+     },
+     "wire_tool_inputs.toolu_01YYUgvxu423XZkuBhdYVpUe.run_in_background": {
+      "bool": 1
+     }
+    },
+    "result": {
+     ".": {
+      "dict": 13
+     },
+     "api_error_status": {
+      "null": 13
+     },
+     "duration_api_ms": {
+      "int": 13
+     },
+     "duration_ms": {
+      "int": 13
+     },
+     "fast_mode_disabled_reason": {
+      "str": 13
+     },
+     "fast_mode_state": {
+      "str": 13
+     },
+     "first_content_frame_ms": {
+      "int": 13
+     },
+     "frame_enqueued_wall_ms": {
+      "int": 2
+     },
+     "frame_received_wall_ms": {
+      "int": 2
+     },
+     "is_error": {
+      "bool": 13
+     },
+     "modelUsage": {
+      "dict": 13
+     },
+     "modelUsage.<key>": {
+      "dict": 13
+     },
+     "modelUsage.<key>.cacheCreationInputTokens": {
+      "int": 13
+     },
+     "modelUsage.<key>.cacheReadInputTokens": {
+      "int": 13
+     },
+     "modelUsage.<key>.canonicalModel": {
+      "str": 13
+     },
+     "modelUsage.<key>.contextWindow": {
+      "int": 13
+     },
+     "modelUsage.<key>.costBasis": {
+      "str": 13
+     },
+     "modelUsage.<key>.costUSD": {
+      "float": 13
+     },
+     "modelUsage.<key>.inputTokens": {
+      "int": 13
+     },
+     "modelUsage.<key>.maxOutputTokens": {
+      "int": 13
+     },
+     "modelUsage.<key>.outputTokens": {
+      "int": 13
+     },
+     "modelUsage.<key>.provider": {
+      "str": 13
+     },
+     "modelUsage.<key>.thinkingTokens": {
+      "int": 13
+     },
+     "modelUsage.<key>.webSearchRequests": {
+      "int": 13
+     },
+     "num_turns": {
+      "int": 13
+     },
+     "origin": {
+      "dict": 12
+     },
+     "origin.kind": {
+      "str": 12
+     },
+     "permission_denials": {
+      "list": 13
+     },
+     "permission_denials[]": {
+      "dict": 1
+     },
+     "permission_denials[].tool_input": {
+      "dict": 1
+     },
+     "permission_denials[].tool_input.plan": {
+      "str": 1
+     },
+     "permission_denials[].tool_input.planFilePath": {
+      "str": 1
+     },
+     "permission_denials[].tool_name": {
+      "str": 1
+     },
+     "permission_denials[].tool_use_id": {
+      "str": 1
+     },
+     "queued_turn_count": {
+      "int": 13
+     },
+     "request_sent_wall_ms": {
+      "int": 2
+     },
+     "result": {
+      "str": 13
+     },
+     "result_index": {
+      "int": 13
+     },
+     "session_id": {
+      "str": 13
+     },
+     "stop_reason": {
+      "str": 13
+     },
+     "subagent_stats": {
+      "dict": 13
+     },
+     "subagent_stats.by_type": {
+      "dict": 13
+     },
+     "subagent_stats.completed": {
+      "int": 13
+     },
+     "subagent_stats.failed": {
+      "int": 13
+     },
+     "subagent_stats.killed": {
+      "dict": 13
+     },
+     "subagent_stats.killed.parent": {
+      "int": 13
+     },
+     "subagent_stats.killed.system": {
+      "int": 13
+     },
+     "subagent_stats.killed.user": {
+      "int": 13
+     },
+     "subagent_stats.max_depth": {
+      "int": 13
+     },
+     "subagent_stats.refused": {
+      "dict": 13
+     },
+     "subagent_stats.refused.budget": {
+      "int": 13
+     },
+     "subagent_stats.refused.concurrency_limit": {
+      "int": 13
+     },
+     "subagent_stats.refused.depth_limit": {
+      "int": 13
+     },
+     "subagent_stats.requested": {
+      "dict": 13
+     },
+     "subagent_stats.requested.background": {
+      "int": 13
+     },
+     "subagent_stats.requested.foreground": {
+      "int": 13
+     },
+     "subagent_stats.requested.unset": {
+      "int": 13
+     },
+     "subagent_stats.spawned": {
+      "int": 13
+     },
+     "subagent_stats.started_in_background": {
+      "int": 13
+     },
+     "subtype": {
+      "str": 13
+     },
+     "terminal_reason": {
+      "str": 13
+     },
+     "time_origin_ms": {
+      "float": 1
+     },
+     "time_to_request_from_spawn_ms": {
+      "int": 1
+     },
+     "time_to_request_ms": {
+      "int": 13
+     },
+     "total_cost_usd": {
+      "float": 13
+     },
+     "ttft_ms": {
+      "int": 13
+     },
+     "ttft_stream_ms": {
+      "int": 13
+     },
+     "turn_started_wall_ms": {
+      "int": 2
+     },
+     "type": {
+      "str": 13
+     },
+     "usage": {
+      "dict": 13
+     },
+     "usage.cache_creation": {
+      "dict": 13
+     },
+     "usage.cache_creation.ephemeral_1h_input_tokens": {
+      "int": 13
+     },
+     "usage.cache_creation.ephemeral_5m_input_tokens": {
+      "int": 13
+     },
+     "usage.cache_creation_input_tokens": {
+      "int": 13
+     },
+     "usage.cache_read_input_tokens": {
+      "int": 13
+     },
+     "usage.inference_geo": {
+      "str": 13
+     },
+     "usage.input_tokens": {
+      "int": 13
+     },
+     "usage.iterations": {
+      "list": 13
+     },
+     "usage.iterations[]": {
+      "dict": 13
+     },
+     "usage.iterations[].cache_creation": {
+      "dict": 13
+     },
+     "usage.iterations[].cache_creation.ephemeral_1h_input_tokens": {
+      "int": 13
+     },
+     "usage.iterations[].cache_creation.ephemeral_5m_input_tokens": {
+      "int": 13
+     },
+     "usage.iterations[].cache_creation_input_tokens": {
+      "int": 13
+     },
+     "usage.iterations[].cache_read_input_tokens": {
+      "int": 13
+     },
+     "usage.iterations[].input_tokens": {
+      "int": 13
+     },
+     "usage.iterations[].output_tokens": {
+      "int": 13
+     },
+     "usage.iterations[].type": {
+      "str": 13
+     },
+     "usage.output_tokens": {
+      "int": 13
+     },
+     "usage.output_tokens_details": {
+      "dict": 13
+     },
+     "usage.output_tokens_details.thinking_tokens": {
+      "int": 13
+     },
+     "usage.server_tool_use": {
+      "dict": 13
+     },
+     "usage.server_tool_use.web_fetch_requests": {
+      "int": 13
+     },
+     "usage.server_tool_use.web_search_requests": {
+      "int": 13
+     },
+     "usage.service_tier": {
+      "str": 13
+     },
+     "usage.speed": {
+      "str": 13
+     },
+     "user_message_uuid": {
+      "str": 2
+     },
+     "user_message_uuids": {
+      "list": 2
+     },
+     "user_message_uuids[]": {
+      "str": 3
+     },
+     "uuid": {
+      "str": 13
+     },
+     "warm_spare_claimed": {
+      "bool": 1
+     }
+    },
+    "system": {
+     ".": {
+      "dict": 119
+     },
+     "ambient": {
+      "bool": 2
+     },
+     "analytics_disabled": {
+      "bool": 13
+     },
+     "apiKeySource": {
+      "str": 13
+     },
+     "capabilities": {
+      "list": 13
+     },
+     "capabilities[]": {
+      "str": 39
+     },
+     "claude_code_version": {
+      "str": 13
+     },
+     "cwd": {
+      "str": 17
+     },
+     "description": {
+      "str": 23
+     },
+     "exit_code": {
+      "int": 14
+     },
+     "fast_mode_disabled_reason": {
+      "str": 13
+     },
+     "fast_mode_state": {
+      "str": 13
+     },
+     "hook_event": {
+      "str": 28
+     },
+     "hook_id": {
+      "str": 28
+     },
+     "hook_name": {
+      "str": 28
+     },
+     "is_backgrounded": {
+      "bool": 23
+     },
+     "kind": {
+      "str": 4
+     },
+     "messaging_socket_path": {
+      "str": 13
+     },
+     "model": {
+      "str": 13
+     },
+     "no_query_first": {
+      "bool": 1
+     },
+     "outcome": {
+      "str": 14
+     },
+     "output": {
+      "str": 14
+     },
+     "output_file": {
+      "str": 23
+     },
+     "output_style": {
+      "str": 13
+     },
+     "patch": {
+      "dict": 6
+     },
+     "patch.end_time": {
+      "int": 6
+     },
+     "patch.status": {
+      "str": 6
+     },
+     "per_turn_effort_active": {
+      "bool": 13
+     },
+     "permissionMode": {
+      "str": 15
+     },
+     "product_feedback_disabled": {
+      "bool": 13
+     },
+     "prompt": {
+      "str": 1
+     },
+     "scratchpad_path": {
+      "str": 13
+     },
+     "session_id": {
+      "str": 119
+     },
+     "skip_transcript": {
+      "bool": 2
+     },
+     "spawn_depth": {
+      "int": 1
+     },
+     "staged_files": {
+      "bool": 1
+     },
+     "startup_timing": {
+      "dict": 1
+     },
+     "startup_timing.entrypoint": {
+      "str": 1
+     },
+     "startup_timing.phase_start_ms": {
+      "dict": 1
+     },
+     "startup_timing.phase_start_ms.first_message_handle_ms": {
+      "int": 1
+     },
+     "startup_timing.phase_start_ms.first_message_read_from_spawn_ms": {
+      "int": 1
+     },
+     "startup_timing.phase_start_ms.first_message_read_ms": {
+      "int": 1
+     },
+     "startup_timing.phase_start_ms.growthbook_init_ms": {
+      "int": 1
+     },
+     "startup_timing.phase_start_ms.hooks_init_ms": {
+      "int": 1
+     },
+     "startup_timing.phase_start_ms.init_emit_ms": {
+      "int": 1
+     },
+     "startup_timing.phase_start_ms.input_ready_from_spawn_ms": {
+      "int": 1
+     },
+     "startup_timing.phase_start_ms.input_ready_ms": {
+      "int": 1
+     },
+     "startup_timing.phase_start_ms.node_boot_ms": {
+      "int": 1
+     },
+     "startup_timing.phase_start_ms.permission_context_ms": {
+      "int": 1
+     },
+     "startup_timing.phase_start_ms.plugin_state_refresh_inline_ms": {
+      "int": 1
+     },
+     "startup_timing.phase_start_ms.pre_action_ms": {
+      "int": 1
+     },
+     "startup_timing.phase_start_ms.prompt_submit_hooks_ms": {
+      "int": 1
+     },
+     "startup_timing.phase_start_ms.qe_system_prompt_ms": {
+      "int": 1
+     },
+     "startup_timing.phase_start_ms.resume_deserialize_ms": {
+      "int": 1
+     },
+     "startup_timing.phase_start_ms.resume_hydrate_fetch_ms": {
+      "int": 1
+     },
+     "startup_timing.phase_start_ms.resume_hydrate_ms": {
+      "int": 1
+     },
+     "startup_timing.phase_start_ms.resume_live_check_ms": {
+      "int": 1
+     },
+     "startup_timing.phase_start_ms.settings_load_ms": {
+      "int": 1
+     },
+     "startup_timing.phase_start_ms.setup_file_watcher_ms": {
+      "int": 1
+     },
+     "startup_timing.phase_start_ms.setup_hooks_snapshot_ms": {
+      "int": 1
+     },
+     "startup_timing.phase_start_ms.setup_import_ms": {
+      "int": 1
+     },
+     "startup_timing.phase_start_ms.setup_ms": {
+      "int": 1
+     },
+     "startup_timing.phase_start_ms.setup_release_notes_ms": {
+      "int": 1
+     },
+     "startup_timing.phase_start_ms.setup_uds_messaging_ms": {
+      "int": 1
+     },
+     "startup_timing.phase_start_ms.spawn_to_exec_ms": {
+      "int": 1
+     },
+     "startup_timing.phase_start_ms.sse_connect_ms": {
+      "int": 1
+     },
+     "startup_timing.phase_start_ms.tools_commands_load_ms": {
+      "int": 1
+     },
+     "startup_timing.phase_start_ms.worker_init_ms": {
+      "int": 1
+     },
+     "startup_timing.phases": {
+      "dict": 1
+     },
+     "startup_timing.phases.first_message_handle_cpu_ms": {
+      "int": 1
+     },
+     "startup_timing.phases.first_message_handle_loop_lag_ms": {
+      "int": 1
+     },
+     "startup_timing.phases.first_message_handle_ms": {
+      "int": 1
+     },
+     "startup_timing.phases.first_message_read_from_spawn_ms": {
+      "int": 1
+     },
+     "startup_timing.phases.first_message_read_ms": {
+      "int": 1
+     },
+     "startup_timing.phases.growthbook_init_ms": {
+      "int": 1
+     },
+     "startup_timing.phases.hooks_init_ms": {
+      "int": 1
+     },
+     "startup_timing.phases.init_emit_ms": {
+      "int": 1
+     },
+     "startup_timing.phases.input_ready_from_spawn_ms": {
+      "int": 1
+     },
+     "startup_timing.phases.input_ready_ms": {
+      "int": 1
+     },
+     "startup_timing.phases.node_boot_ms": {
+      "int": 1
+     },
+     "startup_timing.phases.permission_context_ms": {
+      "int": 1
+     },
+     "startup_timing.phases.plugin_state_refresh_inline_ms": {
+      "int": 1
+     },
+     "startup_timing.phases.pre_action_ms": {
+      "int": 1
+     },
+     "startup_timing.phases.prompt_submit_hooks_ms": {
+      "int": 1
+     },
+     "startup_timing.phases.qe_system_prompt_ms": {
+      "int": 1
+     },
+     "startup_timing.phases.resume_deserialize_ms": {
+      "int": 1
+     },
+     "startup_timing.phases.resume_hydrate_fetch_ms": {
+      "int": 1
+     },
+     "startup_timing.phases.resume_hydrate_ms": {
+      "int": 1
+     },
+     "startup_timing.phases.resume_live_check_ms": {
+      "int": 1
+     },
+     "startup_timing.phases.settings_load_ms": {
+      "int": 1
+     },
+     "startup_timing.phases.setup_file_watcher_ms": {
+      "int": 1
+     },
+     "startup_timing.phases.setup_hooks_snapshot_ms": {
+      "int": 1
+     },
+     "startup_timing.phases.setup_import_ms": {
+      "int": 1
+     },
+     "startup_timing.phases.setup_ms": {
+      "int": 1
+     },
+     "startup_timing.phases.setup_release_notes_ms": {
+      "int": 1
+     },
+     "startup_timing.phases.setup_uds_messaging_ms": {
+      "int": 1
+     },
+     "startup_timing.phases.spawn_to_exec_ms": {
+      "int": 1
+     },
+     "startup_timing.phases.sse_connect_ms": {
+      "int": 1
+     },
+     "startup_timing.phases.tools_commands_load_ms": {
+      "int": 1
+     },
+     "startup_timing.phases.worker_init_ms": {
+      "int": 1
+     },
+     "startup_timing.plugin_full_loads": {
+      "int": 1
+     },
+     "startup_timing.resume_hydrate_ccr_bytes": {
+      "int": 1
+     },
+     "startup_timing.resume_hydrate_ccr_events": {
+      "int": 1
+     },
+     "startup_timing.resume_hydrate_delta_events": {
+      "int": 1
+     },
+     "startup_timing.resume_hydrate_delta_fetch_attempted": {
+      "bool": 1
+     },
+     "startup_timing.resume_hydrate_on_disk_bytes": {
+      "int": 1
+     },
+     "startup_timing.resume_hydrate_prefetch": {
+      "str": 1
+     },
+     "startup_timing.time_origin_ms": {
+      "float": 1
+     },
+     "startup_timing.user_context_builds": {
+      "int": 1
+     },
+     "startup_timing.warm_spare_claimed": {
+      "bool": 1
+     },
+     "status": {
+      "null": 2,
+      "str": 23
+     },
+     "stderr": {
+      "str": 14
+     },
+     "stdout": {
+      "str": 14
+     },
+     "subagent_type": {
+      "str": 1
+     },
+     "subtype": {
+      "str": 119
+     },
+     "summary": {
+      "str": 23
+     },
+     "task_id": {
+      "str": 52
+     },
+     "task_type": {
+      "str": 23
+     },
+     "tasks": {
+      "list": 19
+     },
+     "tasks[]": {
+      "dict": 8
+     },
+     "tasks[].description": {
+      "str": 8
+     },
+     "tasks[].task_id": {
+      "str": 8
+     },
+     "tasks[].task_type": {
+      "str": 8
+     },
+     "tool_use_id": {
+      "str": 46
+     },
+     "tools": {
+      "list": 14
+     },
+     "type": {
+      "str": 119
+     },
+     "uuid": {
+      "str": 119
+     },
+     "v": {
+      "int": 1
+     },
+     "view_mode": {
+      "str": 13
+     },
+     "worker_epoch": {
+      "int": 1
+     }
+    },
+    "tool_progress": {
+     ".": {
+      "dict": 117
+     },
+     "elapsed_time_seconds": {
+      "int": 117
+     },
+     "heartbeat": {
+      "bool": 51
+     },
+     "parent_tool_use_id": {
+      "str": 117
+     },
+     "session_id": {
+      "str": 117
+     },
+     "task_id": {
+      "str": 66
+     },
+     "tool_name": {
+      "str": 117
+     },
+     "tool_use_id": {
+      "str": 117
+     },
+     "type": {
+      "str": 117
+     },
+     "uuid": {
+      "str": 117
+     }
+    },
+    "user": {
+     ".": {
+      "dict": 149
+     },
+     "client_platform": {
+      "str": 3
+     },
+     "isReplay": {
+      "bool": 6
+     },
+     "isSynthetic": {
+      "bool": 1
+     },
+     "message": {
+      "dict": 149
+     },
+     "message.content": {
+      "list": 140,
+      "str": 9
+     },
+     "message.content[]": {
+      "dict": 140
+     },
+     "message.content[].content": {
+      "list": 16,
+      "str": 123
+     },
+     "message.content[].content[]": {
+      "dict": 21
+     },
+     "message.content[].is_error": {
+      "bool": 105
+     },
+     "message.content[].text": {
+      "str": 1
+     },
+     "message.content[].tool_use_id": {
+      "str": 139
+     },
+     "message.content[].type": {
+      "str": 140
+     },
+     "message.role": {
+      "str": 149
+     },
+     "origin": {
+      "dict": 6
+     },
+     "origin.kind": {
+      "str": 6
+     },
+     "parent_tool_use_id": {
+      "null": 145,
+      "str": 4
+     },
+     "priority": {
+      "str": 1
+     },
+     "session_id": {
+      "str": 149
+     },
+     "subagent_type": {
+      "str": 4
+     },
+     "task_description": {
+      "str": 4
+     },
+     "timestamp": {
+      "str": 146
+     },
+     "tool_result_meta": {
+      "list": 1
+     },
+     "tool_result_meta[]": {
+      "dict": 1
+     },
+     "tool_result_meta[].id": {
+      "str": 1
+     },
+     "tool_result_meta[].non_execution_kind": {
+      "str": 1
+     },
+     "tool_use_result": {
+      "dict": 121,
+      "list": 11,
+      "str": 4
+     },
+     "tool_use_result.agentId": {
+      "str": 1
+     },
+     "tool_use_result.answers": {
+      "dict": 1
+     },
+     "tool_use_result.answers.<key>": {
+      "str": 1
+     },
+     "tool_use_result.backgroundCwdHint": {
+      "str": 5
+     },
+     "tool_use_result.backgroundTaskId": {
+      "str": 6
+     },
+     "tool_use_result.bashEditDiff": {
+      "dict": 20
+     },
+     "tool_use_result.bashEditDiff.changedFiles": {
+      "list": 20
+     },
+     "tool_use_result.bashEditDiff.changedFiles[]": {
+      "str": 27
+     },
+     "tool_use_result.bashEditDiff.files": {
+      "list": 20
+     },
+     "tool_use_result.bashEditDiff.files[]": {
+      "dict": 26
+     },
+     "tool_use_result.bashEditDiff.files[].filePath": {
+      "str": 26
+     },
+     "tool_use_result.bashEditDiff.files[].hunks": {
+      "list": 26
+     },
+     "tool_use_result.bashEditDiff.moreFiles": {
+      "int": 20
+     },
+     "tool_use_result.commandName": {
+      "str": 1
+     },
+     "tool_use_result.content": {
+      "str": 1
+     },
+     "tool_use_result.contentNotInModelContext": {
+      "bool": 2
+     },
+     "tool_use_result.filePath": {
+      "str": 5
+     },
+     "tool_use_result.gitDiff": {
+      "dict": 2
+     },
+     "tool_use_result.gitDiff.additions": {
+      "int": 2
+     },
+     "tool_use_result.gitDiff.changes": {
+      "int": 2
+     },
+     "tool_use_result.gitDiff.deletions": {
+      "int": 2
+     },
+     "tool_use_result.gitDiff.filename": {
+      "str": 2
+     },
+     "tool_use_result.gitDiff.patch": {
+      "str": 2
+     },
+     "tool_use_result.gitDiff.repository": {
+      "null": 2
+     },
+     "tool_use_result.gitDiff.status": {
+      "str": 2
+     },
+     "tool_use_result.gitOperation": {
+      "dict": 2
+     },
+     "tool_use_result.gitOperation.push": {
+      "dict": 2
+     },
+     "tool_use_result.gitOperation.push.branch": {
+      "str": 2
+     },
+     "tool_use_result.interrupted": {
+      "bool": 98
+     },
+     "tool_use_result.isAgent": {
+      "bool": 1
+     },
+     "tool_use_result.isImage": {
+      "bool": 98
+     },
+     "tool_use_result.matches": {
+      "list": 5
+     },
+     "tool_use_result.matches[]": {
+      "str": 10
+     },
+     "tool_use_result.newString": {
+      "str": 3
+     },
+     "tool_use_result.noOutputExpected": {
+      "bool": 98
+     },
+     "tool_use_result.notifications": {
+      "list": 11
+     },
+     "tool_use_result.notifications[]": {
+      "dict": 14
+     },
+     "tool_use_result.notifications[].content": {
+      "str": 14
+     },
+     "tool_use_result.notifications[].notification_id": {
+      "str": 14
+     },
+     "tool_use_result.notifications[].origin": {
+      "str": 14
+     },
+     "tool_use_result.notifications[].queued_at": {
+      "str": 14
+     },
+     "tool_use_result.oldString": {
+      "str": 3
+     },
+     "tool_use_result.originalFile": {
+      "null": 1,
+      "str": 3
+     },
+     "tool_use_result.plan": {
+      "str": 1
+     },
+     "tool_use_result.query": {
+      "str": 5
+     },
+     "tool_use_result.questions": {
+      "list": 1
+     },
+     "tool_use_result.questions[]": {
+      "dict": 1
+     },
+     "tool_use_result.questions[].header": {
+      "str": 1
+     },
+     "tool_use_result.questions[].multiSelect": {
+      "bool": 1
+     },
+     "tool_use_result.questions[].options": {
+      "list": 1
+     },
+     "tool_use_result.questions[].options[]": {
+      "dict": 3
+     },
+     "tool_use_result.questions[].question": {
+      "str": 1
+     },
+     "tool_use_result.remaining": {
+      "int": 11
+     },
+     "tool_use_result.replaceAll": {
+      "bool": 3
+     },
+     "tool_use_result.result": {
+      "str": 1
+     },
+     "tool_use_result.returnCodeInterpretation": {
+      "str": 1
+     },
+     "tool_use_result.staleReadFileStateHint": {
+      "str": 2
+     },
+     "tool_use_result.staleRecovered": {
+      "bool": 1
+     },
+     "tool_use_result.status": {
+      "str": 1
+     },
+     "tool_use_result.stderr": {
+      "str": 98
+     },
+     "tool_use_result.stdout": {
+      "str": 98
+     },
+     "tool_use_result.structuredPatch": {
+      "list": 4
+     },
+     "tool_use_result.structuredPatch[]": {
+      "dict": 3
+     },
+     "tool_use_result.structuredPatch[].lines": {
+      "list": 3
+     },
+     "tool_use_result.structuredPatch[].lines[]": {
+      "str": 9
+     },
+     "tool_use_result.structuredPatch[].newLines": {
+      "int": 3
+     },
+     "tool_use_result.structuredPatch[].newStart": {
+      "int": 3
+     },
+     "tool_use_result.structuredPatch[].oldLines": {
+      "int": 3
+     },
+     "tool_use_result.structuredPatch[].oldStart": {
+      "int": 3
+     },
+     "tool_use_result.success": {
+      "bool": 1
+     },
+     "tool_use_result.total_deferred_tools": {
+      "int": 5
+     },
+     "tool_use_result.type": {
+      "str": 1
+     },
+     "tool_use_result.userModified": {
+      "bool": 4
+     },
+     "tool_use_result[]": {
+      "dict": 11
+     },
+     "tool_use_result[].text": {
+      "str": 11
+     },
+     "tool_use_result[].type": {
+      "str": 11
+     },
+     "trace_context": {
+      "str": 3
+     },
+     "type": {
+      "str": 149
+     },
+     "uuid": {
+      "str": 149
+     }
+    }
+   },
+   "payload_subtypes": {
+    "result/success": 13,
+    "system/background_tasks_changed": 19,
+    "system/hook_response": 14,
+    "system/hook_started": 14,
+    "system/init": 13,
+    "system/status": 2,
+    "system/task_notification": 23,
+    "system/task_started": 23,
+    "system/task_updated": 6,
+    "system/turn_handoff_available": 1,
+    "system/vcs_state_changed": 4
+   },
+   "payload_types": {
+    "active_goal": 1,
+    "assistant": 275,
+    "autocompact_state": 1,
+    "control_request": 21,
+    "control_response": 20,
+    "env_manager_log": 9,
+    "mcp_auth_required": 1,
+    "prompt_suggestion": 10,
+    "queued_notification": 17,
+    "rate_limit_event": 7,
+    "result": 13,
+    "system": 119,
+    "tool_progress": 117,
+    "user": 149
+   },
+   "records": 760,
+   "result_records": [
+    {
+     "modelUsage_models": 1,
+     "modelUsage_sum": {
+      "cacheCreationInputTokens": 239087,
+      "cacheReadInputTokens": 14317821,
+      "inputTokens": 202,
+      "outputTokens": 54283
+     },
+     "usage": {
+      "cache_creation": {
+       "ephemeral_1h_input_tokens": 175931,
+       "ephemeral_5m_input_tokens": 0
+      },
+      "cache_creation_input_tokens": 175931,
+      "cache_read_input_tokens": 14149887,
+      "inference_geo": "not_available",
+      "input_tokens": 194,
+      "iterations": [
+       {
+        "cache_creation": {
+         "ephemeral_1h_input_tokens": 822,
+         "ephemeral_5m_input_tokens": 0
+        },
+        "cache_creation_input_tokens": 822,
+        "cache_read_input_tokens": 215126,
+        "input_tokens": 2,
+        "output_tokens": 1345,
+        "type": "message"
+       }
+      ],
+      "output_tokens": 53477,
+      "output_tokens_details": {
+       "thinking_tokens": 17742
+      },
+      "server_tool_use": {
+       "web_fetch_requests": 0,
+       "web_search_requests": 0
+      },
+      "service_tier": "standard",
+      "speed": "standard"
+     }
+    },
+    {
+     "modelUsage_models": 1,
+     "modelUsage_sum": {
+      "cacheCreationInputTokens": 241108,
+      "cacheReadInputTokens": 14968440,
+      "inputTokens": 714,
+      "outputTokens": 54873
+     },
+     "usage": {
+      "cache_creation": {
+       "ephemeral_1h_input_tokens": 676,
+       "ephemeral_5m_input_tokens": 0
+      },
+      "cache_creation_input_tokens": 676,
+      "cache_read_input_tokens": 434671,
+      "inference_geo": "not_available",
+      "input_tokens": 6,
+      "iterations": [
+       {
+        "cache_creation": {
+         "ephemeral_1h_input_tokens": 591,
+         "ephemeral_5m_input_tokens": 0
+        },
+        "cache_creation_input_tokens": 591,
+        "cache_read_input_tokens": 217378,
+        "input_tokens": 2,
+        "output_tokens": 270,
+        "type": "message"
+       }
+      ],
+      "output_tokens": 584,
+      "output_tokens_details": {
+       "thinking_tokens": 0
+      },
+      "server_tool_use": {
+       "web_fetch_requests": 0,
+       "web_search_requests": 0
+      },
+      "service_tier": "standard",
+      "speed": "standard"
+     }
+    },
+    {
+     "modelUsage_models": 1,
+     "modelUsage_sum": {
+      "cacheCreationInputTokens": 261560,
+      "cacheReadInputTokens": 17036159,
+      "inputTokens": 734,
+      "outputTokens": 59303
+     },
+     "usage": {
+      "cache_creation": {
+       "ephemeral_1h_input_tokens": 20452,
+       "ephemeral_5m_input_tokens": 0
+      },
+      "cache_creation_input_tokens": 20452,
+      "cache_read_input_tokens": 2067719,
+      "inference_geo": "not_available",
+      "input_tokens": 20,
+      "iterations": [
+       {
+        "cache_creation": {
+         "ephemeral_1h_input_tokens": 868,
+         "ephemeral_5m_input_tokens": 0
+        },
+        "cache_creation_input_tokens": 868,
+        "cache_read_input_tokens": 237553,
+        "input_tokens": 2,
+        "output_tokens": 437,
+        "type": "message"
+       }
+      ],
+      "output_tokens": 4430,
+      "output_tokens_details": {
+       "thinking_tokens": 792
+      },
+      "server_tool_use": {
+       "web_fetch_requests": 0,
+       "web_search_requests": 0
+      },
+      "service_tier": "standard",
+      "speed": "standard"
+     }
+    },
+    {
+     "modelUsage_models": 1,
+     "modelUsage_sum": {
+      "cacheCreationInputTokens": 266316,
+      "cacheReadInputTokens": 17513895,
+      "inputTokens": 737,
+      "outputTokens": 59622
+     },
+     "usage": {
+      "cache_creation": {
+       "ephemeral_1h_input_tokens": 4756,
+       "ephemeral_5m_input_tokens": 0
+      },
+      "cache_creation_input_tokens": 4756,
+      "cache_read_input_tokens": 477736,
+      "inference_geo": "not_available",
+      "input_tokens": 3,
+      "iterations": [
+       {
+        "cache_creation": {
+         "ephemeral_1h_input_tokens": 3862,
+         "ephemeral_5m_input_tokens": 0
+        },
+        "cache_creation_input_tokens": 3862,
+        "cache_read_input_tokens": 239315,
+        "input_tokens": 2,
+        "output_tokens": 289,
+        "type": "message"
+       }
+      ],
+      "output_tokens": 319,
+      "output_tokens_details": {
+       "thinking_tokens": 96
+      },
+      "server_tool_use": {
+       "web_fetch_requests": 0,
+       "web_search_requests": 0
+      },
+      "service_tier": "standard",
+      "speed": "standard"
+     }
+    },
+    {
+     "modelUsage_models": 1,
+     "modelUsage_sum": {
+      "cacheCreationInputTokens": 267604,
+      "cacheReadInputTokens": 18244329,
+      "inputTokens": 1249,
+      "outputTokens": 59794
+     },
+     "usage": {
+      "cache_creation": {
+       "ephemeral_1h_input_tokens": 999,
+       "ephemeral_5m_input_tokens": 0
+      },
+      "cache_creation_input_tokens": 999,
+      "cache_read_input_tokens": 487257,
+      "inference_geo": "not_available",
+      "input_tokens": 6,
+      "iterations": [
+       {
+        "cache_creation": {
+         "ephemeral_1h_input_tokens": 674,
+         "ephemeral_5m_input_tokens": 0
+        },
+        "cache_creation_input_tokens": 674,
+        "cache_read_input_tokens": 243791,
+        "input_tokens": 2,
+        "output_tokens": 132,
+        "type": "message"
+       }
+      ],
+      "output_tokens": 162,
+      "output_tokens_details": {
+       "thinking_tokens": 43
+      },
+      "server_tool_use": {
+       "web_fetch_requests": 0,
+       "web_search_requests": 0
+      },
+      "service_tier": "standard",
+      "speed": "standard"
+     }
+    }
+   ],
+   "scrubbed_values": {
+    "event.created_at": {
+     "9999-99-w:99:99.w": 760
+    },
+    "payload.timestamp": {
+     "9999-99-w:99:99.w": 421
+    },
+    "system.cwd": {
+     "/home/user/w-session-w": 17
+    }
+   },
+   "session": "median",
+   "sum_last_record_per_message": {
+    "cache_creation_input_tokens": 277736,
+    "cache_read_input_tokens": 23526585,
+    "input_tokens": 294,
+    "output_tokens": 2883
+   },
+   "sum_max_output_per_message": 2883,
+   "truncated": false,
+   "unique_message_ids": 138
+  },
+  {
+   "assistant_models": {
+    "<synthetic>": 27,
+    "claude-fable-5-1": 500,
+    "claude-opus-5-5": 5339
+   },
+   "assistant_stop_reasons": {
+    "None": 5839,
+    "end_turn": 1,
+    "stop_sequence": 26
+   },
+   "event_pages": 300,
+   "event_top_level_keys": {
+    "created_at": {
+     "str": 15000
+    },
+    "device_attestation_status": {
+     "str": 15000
+    },
+    "event_id": {
+     "str": 15000
+    },
+    "event_type": {
+     "str": 15000
+    },
+    "payload": {
+     "dict": 15000
+    },
+    "processed_at": {
+     "str": 334
+    },
+    "processing_at": {
+     "str": 334
+    },
+    "received_at": {
+     "str": 334
+    },
+    "sent_by_account_id": {
+     "null": 15000
+    },
+    "sequence_num": {
+     "str": 15000
+    },
+    "source": {
+     "str": 15000
+    }
+   },
+   "list_block": {
+    "cache_read_tokens": 2173590630,
+    "cache_write_tokens": 37427708,
+    "cost_usd": 752.69970133,
+    "input_tokens": 184208,
+    "output_tokens": 5487271
+   },
+   "list_last_served_model_present": false,
+   "list_updated_at_vs_last_event_created_at": [
+    "9999-99-w:99:99.w",
+    "9999-99-w:99:99.w"
+   ],
+   "payload_subtypes": {
+    "result/success": 111,
+    "system/background_tasks_changed": 114,
+    "system/compact_boundary": 2,
+    "system/hook_response": 89,
+    "system/hook_started": 89,
+    "system/init": 112,
+    "system/permission_check_status": 182,
+    "system/status": 8,
+    "system/task_notification": 488,
+    "system/task_progress": 2804,
+    "system/task_started": 488,
+    "system/task_updated": 53,
+    "system/turn_handoff_available": 9,
+    "system/vcs_state_changed": 51
+   },
+   "payload_types": {
+    "active_goal": 10,
+    "assistant": 5866,
+    "autocompact_state": 9,
+    "control_request": 40,
+    "control_response": 40,
+    "env_manager_log": 68,
+    "prompt_suggestion": 30,
+    "queued_notification": 289,
+    "rate_limit_event": 251,
+    "result": 111,
+    "system": 4489,
+    "tool_progress": 205,
+    "user": 3592
+   },
+   "records": 15000,
+   "result_records": [
+    {
+     "modelUsage_models": 2,
+     "modelUsage_sum": {
+      "cacheCreationInputTokens": 727879,
+      "cacheReadInputTokens": 6400185,
+      "inputTokens": 3208,
+      "outputTokens": 37461
+     },
+     "usage": {
+      "cache_creation": {
+       "ephemeral_1h_input_tokens": 71920,
+       "ephemeral_5m_input_tokens": 0
+      },
+      "cache_creation_input_tokens": 71920,
+      "cache_read_input_tokens": 1538149,
+      "fallback_credit": null,
+      "inference_geo": "global",
+      "input_tokens": 420,
+      "iterations": [
+       {
+        "cache_creation": {
+         "ephemeral_1h_input_tokens": 571,
+         "ephemeral_5m_input_tokens": 0
+        },
+        "cache_creation_input_tokens": 571,
+        "cache_read_input_tokens": 115133,
+        "input_tokens": 32,
+        "output_tokens": 333,
+        "type": "message"
+       }
+      ],
+      "output_tokens": 10723,
+      "output_tokens_details": {
+       "thinking_tokens": 1474
+      },
+      "server_tool_use": {
+       "web_fetch_requests": 0,
+       "web_search_requests": 0
+      },
+      "service_tier": "standard",
+      "speed": "standard"
+     }
+    },
+    {
+     "modelUsage_models": 2,
+     "modelUsage_sum": {
+      "cacheCreationInputTokens": 1366357,
+      "cacheReadInputTokens": 13931949,
+      "inputTokens": 4998,
+      "outputTokens": 90447
+     },
+     "usage": {
+      "cache_creation": {
+       "ephemeral_1h_input_tokens": 663,
+       "ephemeral_5m_input_tokens": 0
+      },
+      "cache_creation_input_tokens": 663,
+      "cache_read_input_tokens": 232436,
+      "fallback_credit": null,
+      "inference_geo": "global",
+      "input_tokens": 36,
+      "iterations": [
+       {
+        "cache_creation": {
+         "ephemeral_1h_input_tokens": 301,
+         "ephemeral_5m_input_tokens": 0
+        },
+        "cache_creation_input_tokens": 301,
+        "cache_read_input_tokens": 116399,
+        "input_tokens": 32,
+        "output_tokens": 40,
+        "type": "message"
+       }
+      ],
+      "output_tokens": 248,
+      "output_tokens_details": {
+       "thinking_tokens": 0
+      },
+      "server_tool_use": {
+       "web_fetch_requests": 0,
+       "web_search_requests": 0
+      },
+      "service_tier": "standard",
+      "speed": "standard"
+     }
+    },
+    {
+     "modelUsage_models": 2,
+     "modelUsage_sum": {
+      "cacheCreationInputTokens": 1890110,
+      "cacheReadInputTokens": 20831081,
+      "inputTokens": 5830,
+      "outputTokens": 139768
+     },
+     "usage": {
+      "cache_creation": {
+       "ephemeral_1h_input_tokens": 0,
+       "ephemeral_5m_input_tokens": 0
+      },
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "fallback_credit": null,
+      "inference_geo": "",
+      "input_tokens": 0,
+      "iterations": [],
+      "output_tokens": 0,
+      "output_tokens_details": {
+       "thinking_tokens": 0
+      },
+      "server_tool_use": {
+       "web_fetch_requests": 0,
+       "web_search_requests": 0
+      },
+      "service_tier": "standard",
+      "speed": "standard"
+     }
+    },
+    {
+     "modelUsage_models": 2,
+     "modelUsage_sum": {
+      "cacheCreationInputTokens": 2022889,
+      "cacheReadInputTokens": 21868209,
+      "inputTokens": 5894,
+      "outputTokens": 151097
+     },
+     "usage": {
+      "cache_creation": {
+       "ephemeral_1h_input_tokens": 0,
+       "ephemeral_5m_input_tokens": 0
+      },
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "fallback_credit": null,
+      "inference_geo": "",
+      "input_tokens": 0,
+      "iterations": [],
+      "output_tokens": 0,
+      "output_tokens_details": {
+       "thinking_tokens": 0
+      },
+      "server_tool_use": {
+       "web_fetch_requests": 0,
+       "web_search_requests": 0
+      },
+      "service_tier": "standard",
+      "speed": "standard"
+     }
+    },
+    {
+     "modelUsage_models": 2,
+     "modelUsage_sum": {
+      "cacheCreationInputTokens": 2022889,
+      "cacheReadInputTokens": 21868209,
+      "inputTokens": 5894,
+      "outputTokens": 151097
+     },
+     "usage": {
+      "cache_creation": {
+       "ephemeral_1h_input_tokens": 0,
+       "ephemeral_5m_input_tokens": 0
+      },
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "fallback_credit": null,
+      "inference_geo": "",
+      "input_tokens": 0,
+      "iterations": [],
+      "output_tokens": 0,
+      "output_tokens_details": {
+       "thinking_tokens": 0
+      },
+      "server_tool_use": {
+       "web_fetch_requests": 0,
+       "web_search_requests": 0
+      },
+      "service_tier": "standard",
+      "speed": "standard"
+     }
+    }
+   ],
+   "scrubbed_values": {
+    "event.created_at": {
+     "9999-99-w:99:99.w": 15000
+    },
+    "payload.timestamp": {
+     "9999-99-w:99:99.w": 9453
+    },
+    "system.branch": {
+     "w-w-w": 1
+    },
+    "system.cwd": {
+     "/home/user": 20,
+     "/home/user/w": 8,
+     "/home/user/w/w-w": 134,
+     "/home/user/w/w/src": 1
+    }
+   },
+   "session": "largest",
+   "sum_last_record_per_message": {
+    "cache_creation_input_tokens": 16191382,
+    "cache_read_input_tokens": 800505571,
+    "input_tokens": 10118,
+    "output_tokens": 46747
+   },
+   "sum_max_output_per_message": 46747,
+   "truncated": true,
+   "unique_message_ids": 3027
+  }
+ ]
+}
