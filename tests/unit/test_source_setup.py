@@ -457,3 +457,24 @@ def test_an_exception_while_finishing_a_group_ends_the_run_and_does_not_stop_the
     # A new run can start afterwards.
     assert controller.start_all(["anthropic.chromium"])["total"] == 1
     controller.wait(5)
+
+
+def test_a_failure_finishing_a_later_member_keeps_an_earlier_sibling_authorized(monkeypatch):
+    from scripts.sidecar_pkg.source_catalog import catalog
+
+    _enabled(monkeypatch)
+    # Two sources that read the same Keychain item, so they run as one group.
+    first, second = sorted(d.id for d in catalog().values() if d.browser_key == "chrome")[:2]
+    controller = SetupController(launch=Mock(return_value=True), verify=Mock(return_value=True))
+    real_finish = controller._finish
+
+    def finish(source_id, ticket, success):
+        if source_id == second:
+            raise RuntimeError("boom")
+        real_finish(source_id, ticket, success)
+
+    controller._finish = finish  # type: ignore[method-assign]
+    controller.start_all([first, second])
+    controller.wait(5)
+    assert controller.state(first) == "Limited"
+    assert controller.state(second) == "Action required"
