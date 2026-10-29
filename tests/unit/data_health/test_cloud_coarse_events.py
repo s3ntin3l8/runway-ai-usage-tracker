@@ -47,15 +47,14 @@ def test_detect_finds_the_first_collectors_events(session):
     assert report.total_count == 2
     group = report.groups[0]
     assert group.key == GROUP_KEY and group.fixable
-    assert group.detail == {"events": 2, "sessions": 1, "state_rows": 0}
+    assert group.detail == {"events": 2, "sessions": 1}
     assert {s.label for s in group.samples} == {f"cloud:{DIGEST}:1", f"cloud:{DIGEST}:2"}
 
 
-def test_detect_reports_leftover_state_rows_alone(session):
+def test_detect_ignores_the_old_state_tables(session):
     session.add(ClaudeCloudSessionUsage(account_id="holder@example.com", session_digest=DIGEST))
     session.commit()
-    report = CloudCoarseEventsCheck().detect(session)
-    assert report.total_count == 1 and report.groups[0].detail["state_rows"] == 1
+    assert CloudCoarseEventsCheck().detect(session).total_count == 0
 
 
 def test_plan_is_read_only_and_asks_for_confirmation(session):

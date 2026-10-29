@@ -7,11 +7,14 @@ remainder events (ids `cloud:{digest}:m:{message id}` and `cloud:{digest}:r:{ord
 coarse events must go before it runs or the usage would count twice. The new collector refuses to write
 while any of them exist.
 
-The rows of the collector's two state tables go too. The tables stay (they are create-only and there is
-no precedent for dropping one); nothing reads them any more.
+The collector's two state tables are deliberately left alone. They are create-only, nothing reads them
+once the replacement is in place, and clearing them while the first collector is still scheduled would
+reset its delta baseline and bill every session again.
 
-Every write is chunked and committed per batch (`_chunked_sql`), the affected rollups are rebuilt from
-the events that remain, and closed windows overlapping the removed events are rebuilt.
+Every write is chunked and committed per batch (`_chunked_sql`). The derived tables are then repaired
+*unconditionally*: apply rebuilds the Anthropic rollups and closed windows from the events that remain,
+whether or not this run deleted anything, so a run that died between the delete and the repair is
+finished by running apply again.
 """
 
 from __future__ import annotations
@@ -20,14 +23,13 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from sqlalchemy import ColumnElement, func
-from sqlmodel import Session, col, delete, select
+from sqlmodel import Session, col, select
 
 from app.core.date_utils import parse_iso8601_utc
-from app.models.db import ClaudeCloudCollectorState, ClaudeCloudSessionUsage, UsageEvent
+from app.models.db import UsageEvent, UsagePeriodRollup, UsageWindow
 from app.services.maintenance._chunked_sql import chunked_delete
-from app.services.maintenance._retry import _retry_on_lock
 from app.services.maintenance.rollups import rebuild_rollups_for_pairs
-from app.services.maintenance.windows import rebuild_windows_overlapping
+from app.services.maintenance.windows import rebuild_windows_for_providers
 
 PROVIDER_ID = "anthropic"
 ENTRYPOINT = "cloud"
@@ -52,17 +54,14 @@ class CoarsePlan:
     tokens_output: int = 0
     tokens_cache_read: int = 0
     tokens_cache_create: int = 0
-    state_rows: int = 0
     ts_min: datetime | None = None
     ts_max: datetime | None = None
-    pairs: list[tuple[str, str]] = field(default_factory=list)
     samples: list[str] = field(default_factory=list)
 
 
 @dataclass
 class CoarseResult:
     events_deleted: int = 0
-    state_rows_deleted: int = 0
     rollup_pairs_rebuilt: int = 0
     windows_rebuilt: int = 0
 
@@ -90,19 +89,8 @@ def plan_cloud_coarse_events(session: Session, *, sample_size: int = 5) -> Coars
     first, last = session.exec(
         select(func.min(UsageEvent.ts), func.max(UsageEvent.ts)).where(*where)
     ).one()
-    state_rows = (
-        session.exec(select(func.count()).select_from(ClaudeCloudSessionUsage)).one()
-        + session.exec(select(func.count()).select_from(ClaudeCloudCollectorState)).one()
-    )
-    pairs: list[tuple[str, str]] = []
     samples: list[str] = []
     if events:
-        pairs = [
-            (str(provider), str(account))
-            for provider, account in session.exec(
-                select(UsageEvent.provider_id, UsageEvent.account_id).where(*where).distinct()
-            )
-        ]
         samples = list(
             session.exec(
                 select(UsageEvent.event_id)
@@ -118,52 +106,43 @@ def plan_cloud_coarse_events(session: Session, *, sample_size: int = 5) -> Coars
         tokens_output=int(t_out),
         tokens_cache_read=int(t_read),
         tokens_cache_create=int(t_create),
-        state_rows=state_rows,
         ts_min=_moment(first),
         ts_max=_moment(last),
-        pairs=pairs,
         samples=samples,
     )
 
 
-def _clear_collector_state(session: Session) -> int:
-    """The old per-account state table has no `id`, so it is cleared in one retried statement."""
-    removed = chunked_delete(session, ClaudeCloudSessionUsage, [])
-
-    def _write() -> int:
-        count = session.exec(select(func.count()).select_from(ClaudeCloudCollectorState)).one()
-        session.exec(delete(ClaudeCloudCollectorState))  # type: ignore[call-overload]
-        session.commit()
-        return count
-
-    return removed + _retry_on_lock(
-        _write, session=session, action_desc="clearing the first cloud collector's state"
-    )
+def _derived_pairs(session: Session) -> set[tuple[str, str]]:
+    """Every Anthropic (provider, account) with events, rollup rows or closed windows."""
+    pairs: set[tuple[str, str]] = set()
+    for model in (UsageEvent, UsagePeriodRollup, UsageWindow):
+        pairs.update(
+            (str(provider), str(account))
+            for provider, account in session.exec(
+                select(model.provider_id, model.account_id)  # type: ignore[attr-defined]
+                .where(col(model.provider_id) == PROVIDER_ID)  # type: ignore[attr-defined]
+                .distinct()
+            )
+        )
+    return pairs
 
 
 def apply_cloud_coarse_events(session: Session) -> CoarseResult:
-    """Remove the coarse events and the old state rows, then repair what derives from them.
+    """Remove the coarse events, then repair what derives from them.
 
-    Idempotent: a second run finds nothing. Interrupted runs resume: only committed batches are gone.
+    The repair runs on every call, not only when events were deleted: apply is resumable, and a run
+    that stopped after the delete leaves rollups and windows that still count the removed events.
     """
     plan = plan_cloud_coarse_events(session)
     result = CoarseResult()
     if plan.events:
         result.events_deleted = chunked_delete(session, UsageEvent, coarse_event_where())
-        # Rollups are rebuilt for the pairs captured before the delete: a pair whose events are all
-        # gone would otherwise keep its rows as drift orphans.
-        rebuild_rollups_for_pairs(session, set(plan.pairs))
-        result.rollup_pairs_rebuilt = len(plan.pairs)
+    # Pairs come from every derived table too, so one whose events are all gone still has its
+    # rollup rows rebuilt (to nothing) instead of lingering as drift orphans.
+    pairs = _derived_pairs(session)
+    if pairs:
+        rebuild_rollups_for_pairs(session, pairs)
+        result.rollup_pairs_rebuilt = len(pairs)
         session.commit()
-        if plan.ts_min is not None and plan.ts_max is not None:
-            for provider in sorted({provider for provider, _ in plan.pairs}):
-                result.windows_rebuilt += rebuild_windows_overlapping(
-                    session,
-                    provider_id=provider,
-                    account_ids=sorted(a for p, a in plan.pairs if p == provider),
-                    ts_min=plan.ts_min,
-                    ts_max=plan.ts_max,
-                )
-    if plan.state_rows:
-        result.state_rows_deleted = _clear_collector_state(session)
+        result.windows_rebuilt = rebuild_windows_for_providers(session, [PROVIDER_ID])
     return result

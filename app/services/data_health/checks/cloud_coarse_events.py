@@ -50,14 +50,10 @@ class CloudCoarseEventsCheck(Check):
 
     def detect(self, session: Session) -> CheckReport:
         plan = plan_cloud_coarse_events(session, sample_size=5)
-        if not plan.events and not plan.state_rows:
+        if not plan.events:
             return CheckReport(check_id=self.id, severity=self.severity, total_count=0, groups=[])
-        count = plan.events or plan.state_rows
-        label = (
-            f"{plan.events} event(s) across {plan.sessions} session(s)"
-            if plan.events
-            else f"{plan.state_rows} leftover state row(s)"
-        )
+        count = plan.events
+        label = f"{plan.events} event(s) across {plan.sessions} session(s)"
         group = FindingGroup(
             key=GROUP_KEY,
             label=label,
@@ -69,7 +65,6 @@ class CloudCoarseEventsCheck(Check):
             detail={
                 "events": plan.events,
                 "sessions": plan.sessions,
-                "state_rows": plan.state_rows,
             },
         )
         return CheckReport(
@@ -82,13 +77,11 @@ class CloudCoarseEventsCheck(Check):
             check_id=self.id,
             group_key=group_key,
             summary=(
-                f"Remove {plan.events} coarse cloud usage event(s) and "
-                f"{plan.state_rows} state row(s); rollups and windows are rebuilt"
+                f"Remove {plan.events} coarse cloud usage event(s); rollups and windows are rebuilt"
             ),
             counts={
                 "events": plan.events,
                 "sessions": plan.sessions,
-                "state_rows": plan.state_rows,
                 "tokens_input": plan.tokens_input,
                 "tokens_output": plan.tokens_output,
                 "tokens_cache_read": plan.tokens_cache_read,
@@ -108,13 +101,9 @@ class CloudCoarseEventsCheck(Check):
             FixResult(
                 check_id=self.id,
                 group_key=group_key,
-                summary=(
-                    f"Removed {result.events_deleted} coarse cloud usage event(s) and "
-                    f"{result.state_rows_deleted} state row(s)"
-                ),
+                summary=f"Removed {result.events_deleted} coarse cloud usage event(s)",
                 counts={
                     "events_deleted": result.events_deleted,
-                    "state_rows_deleted": result.state_rows_deleted,
                     "rollup_pairs_rebuilt": result.rollup_pairs_rebuilt,
                     "windows_rebuilt": result.windows_rebuilt,
                 },

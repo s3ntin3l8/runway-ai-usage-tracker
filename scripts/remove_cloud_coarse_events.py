@@ -3,7 +3,9 @@
 
 That collector wrote one coarse event per sweep (ids `cloud:{digest}:{n}`, no project, one model per
 session). Its replacement rebuilds the same usage from each session's history and does not run while
-the coarse events exist, so remove them first. The rollups and closed windows they touched are rebuilt.
+the coarse events exist, so remove them first. The Anthropic rollups and closed windows are then
+rebuilt from what remains; every run repairs them, so an interrupted run is finished by running it
+again. The collector's two state tables are left alone.
 
 The repair itself lives in `app/services/maintenance/cloud_coarse_events.py`, which the
 `cloud_coarse_events` Data Health check uses as well, so the in-app fixer and this script cannot drift.
@@ -46,8 +48,7 @@ def main() -> None:
     with Session(engine) as session:
         plan = plan_cloud_coarse_events(session)
         print(
-            f"{plan.events:,} coarse event(s) across {plan.sessions:,} session(s), "
-            f"{plan.state_rows:,} state row(s)",
+            f"{plan.events:,} coarse event(s) across {plan.sessions:,} session(s)",
             flush=True,
         )
         if not args.apply:
@@ -55,9 +56,9 @@ def main() -> None:
             return
         result = apply_cloud_coarse_events(session)
     print(
-        f"\nDone: removed {result.events_deleted:,} event(s) and {result.state_rows_deleted:,} "
-        f"state row(s); rebuilt {result.rollup_pairs_rebuilt:,} rollup pair(s) and "
-        f"{result.windows_rebuilt:,} window(s).",
+        f"\nDone: removed {result.events_deleted:,} event(s); rebuilt "
+        f"{result.rollup_pairs_rebuilt:,} rollup pair(s) and {result.windows_rebuilt:,} window(s). "
+        "Run it again if it was interrupted: the repair runs every time.",
         flush=True,
     )
 

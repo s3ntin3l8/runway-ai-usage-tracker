@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlmodel import Session, SQLModel, create_engine, select
+from sqlmodel import Session, SQLModel, col, create_engine, delete, select
 from sqlmodel.pool import StaticPool
 
 from app.models.db import (
@@ -12,6 +12,7 @@ from app.models.db import (
     ClaudeCloudSessionUsage,
     UsageEvent,
     UsagePeriodRollup,
+    UsageWindow,
 )
 from app.services.maintenance.cloud_coarse_events import (
     apply_cloud_coarse_events,
@@ -75,7 +76,6 @@ def test_plan_counts_only_the_first_collectors_events():
     plan = plan_cloud_coarse_events(session)
     assert plan.events == 3 and plan.sessions == 2
     assert plan.tokens_output == 60 and plan.tokens_cache_read == 900
-    assert plan.pairs == [("anthropic", "holder@example.com")]
     assert (
         plan.ts_min
         == plan.ts_max
@@ -95,7 +95,7 @@ def test_apply_removes_only_those_events_and_repairs_the_rollups():
     session = _session()
     _seed(session)
     result = apply_cloud_coarse_events(session)
-    assert result.events_deleted == 3 and result.rollup_pairs_rebuilt == 1
+    assert result.events_deleted == 3 and result.rollup_pairs_rebuilt >= 1
     remaining = {e.event_id for e in session.exec(select(UsageEvent))}
     assert remaining == {
         f"cloud:{DIGEST}:m:msg_1",
@@ -119,25 +119,86 @@ def test_apply_is_idempotent():
     _seed(session)
     apply_cloud_coarse_events(session)
     again = apply_cloud_coarse_events(session)
-    assert (again.events_deleted, again.state_rows_deleted, again.windows_rebuilt) == (0, 0, 0)
+    assert again.events_deleted == 0
+    assert len(session.exec(select(UsageEvent)).all()) == 4
 
 
-def test_apply_clears_the_old_state_tables_but_keeps_them():
+def test_apply_leaves_the_old_state_tables_alone():
+    # Clearing them under a still-scheduled first collector would reset its baseline and re-bill.
     session = _session()
+    _seed(session)
     session.add(ClaudeCloudSessionUsage(account_id="holder@example.com", session_digest=DIGEST))
     session.add(ClaudeCloudCollectorState(account_id="holder@example.com"))
     session.commit()
-    plan = plan_cloud_coarse_events(session)
-    assert plan.events == 0 and plan.state_rows == 2
+    apply_cloud_coarse_events(session)
+    assert len(session.exec(select(ClaudeCloudSessionUsage)).all()) == 1
+    assert len(session.exec(select(ClaudeCloudCollectorState)).all()) == 1
+
+
+def _closed_window(session: Session, **overrides) -> UsageWindow:
+    base = {
+        "provider_id": "anthropic",
+        "account_id": "holder@example.com",
+        "window_type": "weekly",
+        "window_start": datetime(2026, 9, 21, tzinfo=UTC),
+        "window_end": datetime(2026, 9, 28, tzinfo=UTC),
+        "model_id": "",
+        "sidecar_id": "",
+        "msgs": 7,
+        "tokens_output": 140,
+        "limit_value": 100.0,
+        "pct_used": 42.0,
+    }
+    base.update(overrides)
+    window = UsageWindow(**base)
+    session.add(window)
+    session.commit()
+    return window
+
+
+def test_a_closed_window_follows_the_remaining_events_and_keeps_its_gauge():
+    session = _session()
+    _seed(session)
+    _closed_window(session)
     result = apply_cloud_coarse_events(session)
-    assert result.events_deleted == 0 and result.state_rows_deleted == 2
-    assert session.exec(select(ClaudeCloudSessionUsage)).all() == []
-    assert session.exec(select(ClaudeCloudCollectorState)).all() == []
+    assert result.windows_rebuilt >= 1
+    window = session.exec(
+        select(UsageWindow).where(UsageWindow.model_id == "", UsageWindow.sidecar_id == "")
+    ).one()
+    assert window.msgs == 3  # the three events left in that week
+    assert window.tokens_output == 60
+    assert window.limit_value == 100.0 and window.pct_used == 42.0
 
 
-def test_apply_with_nothing_to_remove_touches_nothing():
+def test_a_run_that_stopped_after_the_delete_is_finished_by_running_apply_again():
+    session = _session()
+    _seed(session)
+    _closed_window(session)
+    # Simulate the crash: the events are gone, the rollups and the window still count them.
+    coarse = [f"cloud:{DIGEST}:1", f"cloud:{DIGEST}:2", f"cloud:{'b' * 32}:1"]
+    session.exec(delete(UsageEvent).where(col(UsageEvent.event_id).in_(coarse)))  # type: ignore[call-overload]
+    session.commit()
+    assert plan_cloud_coarse_events(session).events == 0
+    result = apply_cloud_coarse_events(session)
+    assert result.events_deleted == 0 and result.rollup_pairs_rebuilt >= 1
+    lifetime = session.exec(
+        select(UsagePeriodRollup).where(
+            UsagePeriodRollup.provider_id == "anthropic",
+            UsagePeriodRollup.period_type == "lifetime",
+            UsagePeriodRollup.model_id == "",
+            UsagePeriodRollup.sidecar_id == "",
+        )
+    ).one()
+    assert lifetime.msgs == 3
+    window = session.exec(
+        select(UsageWindow).where(UsageWindow.model_id == "", UsageWindow.sidecar_id == "")
+    ).one()
+    assert window.msgs == 3
+
+
+def test_apply_with_nothing_to_remove_deletes_nothing():
     session = _session()
     _event(session, f"cloud:{DIGEST}:m:msg_1")
     result = apply_cloud_coarse_events(session)
-    assert result.events_deleted == result.state_rows_deleted == 0
+    assert result.events_deleted == 0
     assert len(session.exec(select(UsageEvent)).all()) == 1
