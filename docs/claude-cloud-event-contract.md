@@ -66,17 +66,18 @@ History is append-only and ordered, so a re-read produces the same ids and the u
 | `ts` | `payload.timestamp`, else the record's `created_at` (median 0.3 s later, 0.2% over 60 s) | `created_at` of the `result` record |
 | `model_id` | `normalize_anthropic_model(message.model)`; `<synthetic>` messages are skipped | model key of `modelUsage`, normalized the same way |
 | `session_id` | `digest` | `digest` |
-| `subagent_type` | `subagent_type` of the record when `parent_tool_use_id` is set, else None | None |
-| `turn_id` | None (like local Claude Code events) | `event_id` of the turn's last message event of that model, so `msgs` counts do not grow; the remainder's own `event_id` if the turn has none |
+| `subagent_type` | `subagent_type` of the record when `parent_tool_use_id` is set (`subagent` if the record names none), else None | None |
+| `turn_id` | None (like local Claude Code events) | `event_id` of the turn's last message event **of any model**, so the sessions view's `msgs` does not grow (a Haiku-only remainder included); the remainder's own `event_id` only if the turn has no message event at all |
 | `tokens_input`, `tokens_cache_read` | `usage.input_tokens`, `usage.cache_read_input_tokens` | remainder, per 5.3 |
 | `tokens_output` | `usage.output_tokens` (a lower bound) | remainder, per 5.3 (carries the real output) |
 | `tokens_cache_create`, `_1h`, `_5m` | `usage.cache_creation_input_tokens` with `cache_creation.ephemeral_{1h,5m}_input_tokens` | remainder, split per 5.3 |
-| `tokens_reasoning` | 0 (not present per message) | the `thinkingTokens` delta |
+| `tokens_reasoning` | 0 | 0: `thinkingTokens` is a part of `outputTokens`, and the ingestor prices reasoning on top of output, so adding it would count it twice |
 | `cwd` | the session's current `cwd` per 5.5 | same |
 | `project_ref` | repository name per 5.5 | same |
 | `git_branch` | session branch per 5.5 | same |
 | `tool_names`, `tool_calls` | names of `tool_use` blocks, their count | None, 0 |
-| `stop_reason`, `service_tier`, `app_version` | from the record when present | None |
+| `stop_reason`, `service_tier` | from the record when present | None |
+| `app_version` | the latest `system/init` `claude_code_version` | same |
 | `effort` | `config.effort_level` of the list row | same |
 | `account_id` | the collector's canonical account | same |
 | `raw_json` | None | None |
@@ -91,9 +92,14 @@ History is append-only and ordered, so a re-read produces the same ids and the u
    `page_with_terminal_omission`). Keep rows with `environment_kind == "anthropic_cloud"`.
 2. A session needs reading when its `last_event_at` is later than the stored one (the list's
    `updated_at` is unrelated to usage and is not used). New sessions are read from the start.
-3. Read `GET /v1/code/sessions/{id}/events` (`limit=50`, `sort_order=asc`, `cursor`), resuming after the
-   stored last `sequence_num`. `sequence_num` is a numeric string, starts at 1 and was contiguous with no
-   duplicates in every session read; a gap, duplicate or reorder fails the session's cycle
+3. Read `GET /v1/code/sessions/{id}/events` (`limit=50`, `sort_order=asc`, `cursor`). The API pages by
+   an opaque cursor only, so the checkpoint stores the last **closed turn** boundary: its
+   `committed_sequence` and the entry cursor of the page that holds it (encrypted, never logged).
+   Resuming requests that cursor and skips records with `sequence_num <= committed_sequence`; a rejected
+   cursor falls back to reading from the start with the same skip (log label `cursor_rejected`). The open
+   tail after the last result is read again each cycle; message ids make re-emission harmless.
+   `sequence_num` is a numeric string, starts at 1 and was contiguous with no duplicates in every
+   session read; a gap, duplicate or reorder fails the session's cycle
    (`unsupported_contract/sequence`) and writes nothing for it.
 4. A session is processed completely (its new turns) before its checkpoint advances. Failures isolate
    per session and per account.
@@ -114,34 +120,51 @@ Per closed turn and model `m`:
 1. `delta_m` = the turn's `modelUsage[m]` minus the previous result's `modelUsage[m]` (field by field:
    input, output, cache read, cache write, thinking). If any field of `m` decreased the process
    restarted, so `delta_m` is the new value itself (a restart is not an error).
-2. `msgs_m` = the sums over the turn's message events of model `m`, field by field.
-3. `remainder_m` = `max(delta_m - msgs_m, 0)` per field. A negative difference is clamped to zero and
-   counted in the cycle log (`negative_remainder`); it never produces a negative event.
+2. `msgs_m` = the sums over the turn's message events of model `m`, field by field. A message id that
+   was already emitted in an earlier turn is skipped (`repeated_message`): a resumed runner replays
+   earlier messages, which were not new calls. The state keeps a short digest of every emitted id.
+3. `remainder_m` = `max(delta_m - msgs_m, 0)` per field. Where that would be negative for some field
+   and the main loop alone (the messages without a subagent marker) fits within `delta_m` in every
+   field, the overshoot is the subagent messages': older runners leave subagent calls out of
+   `modelUsage`, so those are real calls on top of it, and the comparison is repeated against the main
+   loop only (`subagent_outside_model_usage`). Any other negative difference is clamped to zero and
+   counted (`negative_remainder`); it never produces a negative event. Messages can thus exceed the
+   delta (a subagent call outside `modelUsage`, or counters lost to a runner restart), and the events
+   then carry that excess.
 4. Cache-write TTL split of the remainder: proportional to the 1h/5m split of the session's message
    events so far; with no message events yet, all 1h (the observed norm). The split of a remainder is
    an estimate and is documented as such.
-5. Emit a remainder event only if some field is positive.
+5. Emit a remainder event only if some field is positive (the ingestor would otherwise store an
+   all-zero row and count it as a message).
+6. The reducer validates what the ingestor does not: token counts are non-negative integers (anything
+   else counts as 0); a timestamp that does not parse skips that message (its tokens are then covered by
+   the remainder, which is computed from the events actually emitted) and is counted (`bad_timestamp`);
+   a cache-write split that does not add up to the total is adjusted to it (`ttl_adjusted`).
 
 Subagent messages count towards `msgs_m` of their model. A model that appears only in `modelUsage`
 (Haiku) has `msgs_m = 0`, so its whole delta is a remainder event.
 
 ### 5.4 Normalization
 
-Model ids go through `normalize_anthropic_model` (`app/services/model_normalization.py`); an
-unrecognized id stays as reported and shows in the existing unpriced-models check. Timestamps are
+Model ids go through `normalize_anthropic_model` (`app/services/model_normalization.py`) after a
+context-window suffix is cut off: `modelUsage` keys a long-context run `claude-opus-4-8[1m]`, which the
+shared normalizer would read as a different model (`opus-4`). An unrecognized id stays as reported and
+shows in the existing unpriced-models check. Timestamps are
 ISO 8601 UTC.
 
 ### 5.5 Project, branch, working directory
 
-- `cwd`: the most recent `system` record's `cwd` before the message (init records carry it); else None.
-- `project_ref`: the last path segment of the repository named in the list row
-  (`config.outcomes[].git_info.repo`, else `config.sources[].url`) when exactly one repository is named
-  and it equals the `cwd`'s repo directory (19 of 21 sessions); with several repositories, the `cwd`
-  directory name when it is a repository name from the list, else None. Never a URL.
+- `cwd`: the most recent `system` record's `cwd` before the message (init records carry it). It is
+  only passed on together with a `project_ref`: with none, the ingestor would label the project with
+  the last path segment, and a bare `/home/user` would become the project `user`.
+- `project_ref`: a repository **name** (the last path segment of
+  `config.outcomes[].git_info.repo`, else `config.sources[].url`; never a URL or owner). With exactly
+  one repository named: that name when the `cwd` has a segment equal to it or no `cwd` was seen (19 of
+  21 sessions); with several: the one whose name is a segment of the `cwd`; otherwise None.
 - `git_branch`: `system.branch` when present, else the row's `external_metadata.current_branches` entry
   for the repository, else None.
-- A session whose `cwd` is a bare home directory and that names several repositories keeps
-  `project_ref` None: an unattributed session is better than a wrong project.
+- A session whose `cwd` is a bare home directory keeps `project_ref` and `cwd` None: an unattributed
+  session is better than a wrong project.
 
 ### 5.6 Cross-check, never a gate
 
@@ -154,8 +177,9 @@ rows), so a disagreement is information, not an error, and never blocks, deletes
 ### 5.7 Budgets and pacing
 
 One full sweep lists about 80 pages. Reading a session costs one request per 50 history records. Limits
-per cycle: 40 history pages and 200 total requests; a paused backfill resumes at the stored
-`sequence_num`. Pacing 0.25 s between requests, the endpoint lock held per request, a busy gate skips the
+per cycle: 40 history pages and 200 total requests; a paused backfill resumes at the stored turn
+boundary (5.1), and while a cycle ends with work left the next one runs after 120 s instead of the
+configured interval. Pacing 0.25 s between requests, the endpoint lock held per request, a busy gate skips the
 cycle, as in the shipped collector. The first backfill of the largest known session (above 100 pages) is
 spread over several cycles. Logs carry counts and fixed labels only: no ids, cursors, titles, cwd or
 branch values.
@@ -168,15 +192,17 @@ cross-check result. No content, no ids. The coarse-collector tables are replaced
 
 ## 7. Acceptance criteria (checked on prod, read-only SQL plus the cycle log)
 
-1. **Totals per turn.** For every settled session, per model, the sum of its events' tokens equals the
-   final `modelUsage` (with restarts summed), field for field, except where a remainder was clamped
-   (reported).
+1. **Totals per turn.** For every settled session, per model, the sum of its events' tokens is never
+   below the final `modelUsage` (with restarts summed) and equals it field for field wherever the
+   messages do not exceed it; an excess is explained by subagent calls outside `modelUsage` or a
+   runner restart and is counted in the cycle log (`subagent_outside_model_usage`,
+   `negative_remainder`).
 2. **Messages.** Input, cache read and cache write of each message event equal the history record; the
    count of message events equals the count of distinct assistant `message.id` (excluding synthetic).
 3. **Models.** Every event has a normalized `model_id`; no event carries a model it did not use; Haiku
    appears as remainder events.
-4. **Time.** No event is dated at the sweep time; ordering by `ts` follows `sequence_num` within a
-   session.
+4. **Time.** No event is dated at the sweep time, and no message event is dated after the result of
+   its turn.
 5. **Project.** Every event of a session with a single repository has that `project_ref`; sessions with
    none have NULL, not a guess.
 6. **Replay.** Running the collector again adds zero rows, and the cycle log reports zero new events.
@@ -189,13 +215,27 @@ cross-check result. No content, no ids. The coarse-collector tables are replaced
 
 ## 8. Migration
 
-A `app/services/maintenance/` plan/apply pair removes the events of the first (coarse) collector
-(`entrypoint = "cloud"` and `event_id LIKE 'cloud:%'` not matching the new `:m:`/`:r:` forms) and its two
-state tables' rows, before the new collector is enabled. Plan shows counts and sums; apply is
-idempotent. The new collector then backfills from history.
+A `app/services/maintenance/` plan/apply pair, offered as a Data Health fix, removes the events of the
+first (coarse) collector (`entrypoint = "cloud"`, `event_id LIKE 'cloud:%'`, not `LIKE 'cloud:%:m:%'` and
+not `LIKE 'cloud:%:r:%'`) and the rows of its two state tables (the tables themselves stay, unused), then
+rebuilds the affected rollups and windows. Plan shows counts and sums; apply is idempotent.
+
+**Guard:** while events of the old form exist, the new collector writes nothing and reports the outcome
+`migration_required`, so the order of deploy, migration and enabling cannot double count. The new
+collector then backfills from history.
 
 ## 9. Known limits and open items
 
+- `modelUsage` can be smaller than the messages of a turn (subagent calls it leaves out in older
+  runners, counters lost when a runner restarts). The events then carry the messages' excess, so a
+  session's total can exceed the client's own `modelUsage` figure. In the 21 sessions checked, 12 match
+  it exactly and 9 carry such an excess, each with a counted cause.
+- Remainder events are separate rows, and most rollups, top models, source apps and history count every
+  row as one message, so for cloud sessions those global message counts run about 10-25% high (one
+  extra row per turn and model). The sessions view and top sessions, hosts and projects collapse
+  remainders through `turn_id` and stay exact. Accepted trade-off; token and cost totals are exact.
+- `haiku-5.5` has no pricing row and is silently priced as Haiku 4.5; the real rate needs confirming
+  (tracked separately).
 - Per-message output is a lower bound; real output arrives in remainder events. Per-message output is
   therefore not attributable to a single message.
 - Remainder events have no tools and no per-message time; they are dated at the result.

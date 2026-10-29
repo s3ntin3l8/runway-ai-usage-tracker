@@ -605,6 +605,12 @@ probe's read-only client, so it inherits the exact-source, no-refresh and accoun
 keeps its per-session state in `claude_cloud_session_usage` and
 `claude_cloud_collector_state`. See [Claude cloud-runner sessions](collection_logic.md#claude-cloud-runner-sessions).
 
+`app/services/claude_cloud_events.py` is the pure half of the replacement collector described in
+[the cloud event contract](claude-cloud-event-contract.md): no network and no database, it turns a
+cloud session's ordered history records into `UsageEventPush` objects (one message event per assistant
+message, plus a per-turn, per-model remainder so each turn's totals equal what the result record
+reports). The history sync that feeds it is a separate change.
+
 ## CI/CD and releases
 
 The workflows, the gates they enforce and the release choreography live in
