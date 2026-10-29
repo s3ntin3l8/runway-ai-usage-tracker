@@ -86,6 +86,7 @@ class CycleReport:
     events: int = 0
     regressions: int = 0
     notes: list[str] = field(default_factory=list)
+    detail: str = ""
 
 
 def session_digest(session_id: str) -> str:
@@ -179,18 +180,22 @@ async def _sweep(
         params: dict[str, Any] = {"limit": PAGE_LIMIT}
         if cursor is not None:
             params["cursor"] = cursor
-        rows, cursor = probe._page(
-            await attempt.get("/v1/code/sessions", headers, params), PAGE_LIMIT
-        )
+        attempt.report["stage"] = "page_get"
+        payload = await attempt.get("/v1/code/sessions", headers, params)
+        attempt.report["stage"] = "page_shape"
+        rows, cursor = probe._page(payload, PAGE_LIMIT)
+        attempt.report["stage"] = "rows"
         report.pages += 1
         report.listed += len(rows)
         already_processed = bool(rows) and high_water is not None
         for row in rows:
             sid = row.get("id")
             if not isinstance(sid, str) or not probe._SESSION_ID.fullmatch(sid):
+                attempt.report["stage"] = "row_id"
                 raise probe.ProbeError("unsupported_contract")
             if sid in listed_ids:
                 # One session twice would double count it; the verifier rejects this too.
+                attempt.report["stage"] = "row_duplicate"
                 raise probe.ProbeError("unsupported_contract")
             listed_ids.add(sid)
             updated = _timestamp(row.get("updated_at"))
@@ -356,6 +361,8 @@ async def _read(
                 return result
     except probe.ProbeError as exc:
         report.outcome = str(exc)
+        # Which step of the sweep failed: a fixed label, never a value from the response.
+        report.detail = str(attempt.report.get("stage") or "")
     except (TimeoutError, httpx.TimeoutException):
         report.outcome = "timeout"
     except SQLAlchemyError:
@@ -425,7 +432,8 @@ async def collect_all(client: httpx.AsyncClient) -> dict[str, CycleReport]:
         for source_id, kind in sorted(sources):
             report = await collect_account(account, source_id, client)
             # A short one-way digest tells two logins of one kind apart without naming either.
-            attempts.append(f"{kind}#{session_digest(source_id)[:6]}:{report.outcome}")
+            detail = f"/{report.detail}" if report.detail else ""
+            attempts.append(f"{kind}#{session_digest(source_id)[:6]}:{report.outcome}{detail}")
             if report.outcome in ("ok", "truncated"):
                 reports[account] = report
                 break

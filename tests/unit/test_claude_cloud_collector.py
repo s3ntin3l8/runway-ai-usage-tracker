@@ -494,3 +494,22 @@ async def test_login_kinds_use_the_origin_vocabulary(environment, caplog, monkey
         await collector.collect_all(client)
     assert "file#" in caplog.text and "sidecar#" in caplog.text
     assert "path#" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_a_contract_failure_names_the_step_that_failed(environment):
+    twice = [row(usage=block()), row(usage=block())]
+    report = await sweep(listing([twice])[0])
+    assert report.outcome == "unsupported_contract" and report.detail == "row_duplicate"
+
+    bad_id = [{**row(usage=block()), "id": "not an id!"}]
+    report = await sweep(listing([bad_id])[0])
+    assert report.outcome == "unsupported_contract" and report.detail == "row_id"
+
+    def misshaped(request):
+        if request.url.path.endswith("/profile"):
+            return httpx.Response(200, json=profile())
+        return httpx.Response(200, json={"data": "nope", "next_cursor": None})
+
+    report = await sweep(misshaped)
+    assert report.outcome == "unsupported_contract" and report.detail == "page_shape"
