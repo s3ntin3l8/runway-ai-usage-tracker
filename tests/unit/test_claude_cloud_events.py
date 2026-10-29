@@ -558,6 +558,27 @@ def test_subagents_are_set_aside_only_when_the_main_loop_fits_modelusage():
     assert [e.event_id for e in events] == [f"cloud:{DIGEST}:m:main", f"cloud:{DIGEST}:m:sub"]
 
 
+def test_a_model_only_subagents_used_is_clamped_not_set_aside():
+    history = turn(
+        1,
+        [
+            msg(
+                message_id="sub1",
+                model=HAIKU,
+                inp=20,
+                read=300,
+                parent="toolu_x",
+                subagent="Explore",
+            )
+        ],
+        {HAIKU: {"inputTokens": 10, "cacheReadInputTokens": 100}},
+    )
+    events, reducer = run(history)
+    assert reducer.stats["subagent_outside_model_usage"] == 0
+    assert reducer.stats["negative_remainder"] == 1
+    assert [e.event_id for e in events] == [f"cloud:{DIGEST}:m:sub1"]
+
+
 def test_subagent_calls_inside_model_usage_are_part_of_it():
     history = turn(
         1,

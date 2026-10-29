@@ -381,6 +381,7 @@ class ClaudeCloudHistoryReducer:
             gap = {name: delta[name] - everything[name] for name in _MODEL_FIELDS}
             if (
                 any(value < 0 for value in gap.values())
+                and slug in have_main  # a model only subagents used has no main loop to measure
                 and main != everything
                 and all(main[name] <= delta[name] for name in _MODEL_FIELDS)
             ):
