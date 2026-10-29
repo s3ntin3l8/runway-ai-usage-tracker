@@ -122,10 +122,12 @@ async def test_a_chat_fixture_in_flight_makes_the_cloud_probe_busy(environment):
         return httpx.Response(200, json={})
 
     in_flight = asyncio.create_task(run_chat(chat_request(), hold))
-    await asyncio.wait_for(dispatched.wait(), timeout=5)
-    cloud = await run_probe(probe_request(), unreachable())
-    assert cloud["outcome"] == "busy"
-    release.set()
+    try:
+        await asyncio.wait_for(dispatched.wait(), timeout=5)
+        cloud = await run_probe(probe_request(), unreachable())
+        assert cloud["outcome"] == "busy"
+    finally:
+        release.set()
     chat = await asyncio.wait_for(in_flight, timeout=5)
     assert chat["outcome"] != "busy"
 
@@ -142,10 +144,12 @@ async def test_a_cloud_probe_in_flight_makes_the_chat_fixture_busy(environment):
         return httpx.Response(200, json={})
 
     in_flight = asyncio.create_task(run_probe(probe_request(), hold))
-    await asyncio.wait_for(dispatched.wait(), timeout=5)
-    chat = await run_chat(chat_request(), unreachable())
-    assert chat["outcome"] == "busy"
-    release.set()
+    try:
+        await asyncio.wait_for(dispatched.wait(), timeout=5)
+        chat = await run_chat(chat_request(), unreachable())
+        assert chat["outcome"] == "busy"
+    finally:
+        release.set()
     cloud = await asyncio.wait_for(in_flight, timeout=5)
     assert cloud["outcome"] != "busy"
 
