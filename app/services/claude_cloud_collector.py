@@ -120,6 +120,11 @@ class _Checkpoint:
     known: bool = False
 
 
+# Sessions a cycle did not finish, per account, so catch-up cycles skip the list pass. Lost on a
+# restart or a failed cycle, which only costs one extra list pass; the checkpoints are the truth.
+_PENDING: dict[str, list[_Row]] = {}
+
+
 class _StorageError(Exception):
     """A database failure while writing events or a checkpoint."""
 
@@ -539,7 +544,11 @@ async def _read_session(
 
 
 async def _sync(attempt: _CollectorProbe, headers: dict[str, str], report: CycleReport) -> None:
-    rows = await _list_rows(attempt, headers, report)
+    rows = _PENDING.pop(attempt.account, None)
+    if rows is None:
+        rows = await _list_rows(attempt, headers, report)
+    else:
+        report.notes.append("backlog_resumed")
     report.cloud_sessions = len(rows)
     now = time.time()
     due: list[tuple[_Row, _Checkpoint]] = []
@@ -563,6 +572,7 @@ async def _sync(attempt: _CollectorProbe, headers: dict[str, str], report: Cycle
             )
         if left <= 0:
             report.backlog = True
+            _PENDING[attempt.account] = [item[0] for item in due[index:]]
             return
         try:
             pages_used += await _read_session(attempt, headers, row, checkpoint, report, left)
@@ -572,9 +582,11 @@ async def _sync(attempt: _CollectorProbe, headers: dict[str, str], report: Cycle
             # One session's history that breaks the contract does not stop the others.
             report.notes.append(f"session_{attempt.report.get('stage')}")
             continue
-        report.sessions_read += 1
-        if report.backlog and index < len(due) - 1:
+        if report.backlog:
+            # Out of budget inside this session: it and everything after it wait for the next cycle.
+            _PENDING[attempt.account] = [item[0] for item in due[index:]]
             return
+        report.sessions_read += 1
 
 
 async def _read(attempt: _CollectorProbe, source_id: str, report: CycleReport) -> bool:

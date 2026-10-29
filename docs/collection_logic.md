@@ -269,7 +269,7 @@ their history. The rules are specified in
   is built differently in different sessions, so it never gates or rewrites anything.
 - **Budgets.** Per cycle at most 40 history pages and 200 requests; a session that could not close a
   turn within its pages gets a larger budget next time, and while work is left the next cycle runs
-  after 120 s instead of the interval. Logs carry counts and fixed labels only.
+  after 120 s instead of the interval, reusing the unfinished sessions instead of listing again. Logs carry counts and fixed labels only.
 - **Migration.** While events of the first (coarse) collector exist (`cloud:<digest>:<n>` ids) the
   cycle writes nothing and reports `migration_required`; the `cloud_coarse_events` Data Health fix
   removes them.

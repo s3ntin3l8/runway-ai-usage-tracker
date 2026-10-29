@@ -604,7 +604,7 @@ sessions only, behind `CLAUDE_CLOUD_COLLECTOR_ENABLED` (default off). It subclas
 probe's read-only client, so it inherits the exact-source, no-refresh and account checks, and
 keeps one checkpoint row per session in `claude_cloud_session_checkpoint`. The two tables of the
 first collector (`claude_cloud_session_usage`, `claude_cloud_collector_state`) stay in the schema,
-unused; the `cloud_coarse_events` Data Health fix clears their rows. See
+unused (the `cloud_coarse_events` Data Health fix removes that collector's events, not these rows). See
 [Claude cloud-runner sessions](collection_logic.md#claude-cloud-runner-sessions).
 
 `app/services/claude_cloud_events.py` is its pure half, specified in

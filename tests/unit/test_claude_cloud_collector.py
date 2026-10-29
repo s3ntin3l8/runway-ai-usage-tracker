@@ -184,6 +184,9 @@ async def environment(monkeypatch, tmp_path):
 @pytest.fixture(autouse=True)
 def no_page_pause(monkeypatch):
     monkeypatch.setattr(collector, "PAGE_PAUSE", 0)
+    collector._PENDING.clear()
+    yield
+    collector._PENDING.clear()
 
 
 async def cycle(upstream):
@@ -436,6 +439,23 @@ async def test_a_spent_page_budget_keeps_progress_and_asks_for_a_sooner_cycle(
             break
     assert done.outcome == "ok"
     assert per_model(events(environment)) == {"opus-5.5": [20, 8, 400, 40]}
+
+
+@pytest.mark.asyncio
+async def test_a_catch_up_cycle_skips_the_list_pass(environment, monkeypatch):
+    history = [system(1, cwd="/home/user/the-repo")]
+    seq = 2
+    for number in range(4):
+        history += turn(seq, [f"t{number}"], {"inputTokens": 5 * (number + 1)})
+        seq += 2
+    monkeypatch.setattr(collector, "HISTORY_PAGES_PER_CYCLE", 2)
+    server = Server([cloud_row()], {SECRET_ID: history}, page=3)
+    first = await cycle(server)
+    assert first.backlog and first.pages == 1
+    listed = sum(1 for path, _ in server.calls if path == "/v1/code/sessions")
+    second = await cycle(server)
+    assert "backlog_resumed" in second.notes and second.pages == 0
+    assert sum(1 for path, _ in server.calls if path == "/v1/code/sessions") == listed
 
 
 @pytest.mark.asyncio
