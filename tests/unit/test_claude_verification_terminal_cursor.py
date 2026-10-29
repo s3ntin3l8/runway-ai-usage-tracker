@@ -28,7 +28,7 @@ def test_omitted_terminal_cursor_is_accepted_without_mutating_evidence(limit, co
     assert rows == payload["data"] and cursor is None
     assert payload == original and "next_cursor" not in payload
     with pytest.raises(probe.ProbeError, match="^unsupported_contract$"):
-        probe._page(payload, limit)  # Legacy v1/v2 parsing deliberately stays unchanged.
+        probe.page(payload, limit)  # Legacy v1/v2 parsing deliberately stays unchanged.
 
 
 @pytest.mark.parametrize(
@@ -192,4 +192,4 @@ async def test_history_contradiction_cannot_claim_completion_or_replay(source_en
     await fixtures.advance(handle, store, upstream)
     assert len(calls) == 3
     # The stricter agreement rule belongs only to complete-history verification.
-    assert probe._page(contradictory, 50)[1] == "history-next"
+    assert probe.page(contradictory, 50)[1] == "history-next"

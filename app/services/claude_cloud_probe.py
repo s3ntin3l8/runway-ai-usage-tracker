@@ -9,32 +9,23 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-import sqlite3
 import time
-from pathlib import Path
 from typing import Any, cast
 from urllib.parse import quote
-from uuid import UUID
 
 import httpx
-from sqlalchemy import create_engine
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.pool import NullPool
-from sqlmodel import Session, select
 
-from app.core.db import engine
-from app.core.encryption import DecryptionError, encryption_service
 from app.core.utils import IdentityExtractor
 from app.models.claude_cloud_probe import ClaudeCloudProbeRequest
-from app.models.db import CredentialSource, ProviderConfig, SidecarDevice, SidecarSourceContribution
+from app.services import claude_cloud_support as support
 from app.services.account_identity import canonical_account_id
+from app.services.claude_cloud_support import ProbeError
 from app.services.probe_mode import probing
-from app.services.source_controls import allowed
 from app.services.token_cache import token_cache
 from scripts.audit_claude_usage import audit_messages
-from scripts.claude_cloud_list_boundary import SESSION_ID as _SESSION_ID
+from scripts.claude_cloud_list_boundary import SESSION_ID
 from scripts.claude_cloud_structure import empty_structure, observe_structure
-from scripts.sidecar_pkg.source_catalog import source_for_origin
 
 
 def session_key(sid: str) -> str:
@@ -58,14 +49,9 @@ OBSERVATION_LOCATIONS = {
     1: ("event", "data", "content"),
     2: ("event", "data", "content", "payload"),
 }
-_gate = asyncio.Lock()
 
 
-class ProbeError(Exception):
-    """Only internal, fixed outcome categories cross this boundary."""
-
-
-def _empty_report(report_version: int = 1) -> dict[str, Any]:
+def empty_report(report_version: int = 1) -> dict[str, Any]:
     report: dict[str, Any] = {
         "format_version": report_version,
         "outcome": "source_unavailable",
@@ -90,121 +76,7 @@ def _empty_report(report_version: int = 1) -> dict[str, Any]:
     return report
 
 
-def _uuid(value: object) -> str | None:
-    try:
-        return str(UUID(value)) if isinstance(value, str) else None
-    except ValueError:
-        return None
-
-
-def _authority_read(
-    account: str, source_id: str, tokens: dict[str, str], candidate: dict[str, Any]
-) -> tuple[str | None, tuple[Any, ...]]:
-    """Only bounded, read-only SQLite work runs in a cancellable worker thread."""
-    database = engine.url.database
-    if not database:
-        raise ProbeError("source_unavailable")
-    uri = "file:" + quote(str(Path(database).resolve())) + "?mode=ro"
-    read_engine = create_engine(
-        "sqlite://",
-        creator=lambda: sqlite3.connect(uri, uri=True, timeout=0.25),
-        poolclass=NullPool,
-    )
-    try:
-        return _check_authority(read_engine, account, source_id, tokens, candidate)
-    finally:
-        read_engine.dispose()
-
-
-def _check_authority(
-    read_engine: Any,
-    account: str,
-    source_id: str,
-    tokens: dict[str, str],
-    candidate: dict[str, Any],
-) -> tuple[str | None, tuple[Any, ...]]:
-    with Session(read_engine) as session:
-        source = session.exec(
-            select(CredentialSource).where(
-                CredentialSource.provider_id == "anthropic",
-                CredentialSource.account_id == account,
-                CredentialSource.source_id == source_id,
-            )
-        ).first()
-        config = session.exec(
-            select(ProviderConfig).where(
-                ProviderConfig.provider_id == "anthropic", ProviderConfig.account_id == account
-            )
-        ).first()
-        if (
-            source is None
-            or not source.enabled
-            or (config and (config.archived or not config.enabled))
-        ):
-            raise ProbeError("source_ineligible")
-        origin = candidate.get("credential_origin") or source.credential_origin or ""
-        if source.credential_origin and origin != source.credential_origin:
-            raise ProbeError("source_ineligible")
-        if origin.startswith("keychain:") and source_for_origin("anthropic", origin) is None:
-            raise ProbeError("unsupported_source")
-        scraper = source_for_origin("anthropic", origin)
-        if scraper is not None and scraper != "anthropic.claude-code":
-            raise ProbeError("unsupported_source")
-        contributions = session.exec(
-            select(SidecarSourceContribution).where(
-                SidecarSourceContribution.provider_id == "anthropic",
-                SidecarSourceContribution.credential_source_id == source_id,
-            )
-        ).all()
-        if len(contributions) > 1:
-            raise ProbeError("source_ineligible")
-        contribution = contributions[0] if contributions else None
-        durable = candidate.get("durable_source") is True
-        authority: tuple[Any, ...] = (source.source_type, origin)
-        if durable or contribution is not None or scraper is not None:
-            device_id = candidate.get("device_id")
-            generation = candidate.get("consent_generation")
-            device = session.get(SidecarDevice, device_id) if isinstance(device_id, str) else None
-            if (
-                not durable
-                or contribution is None
-                or device is None
-                or device.revoked
-                or type(generation) is not int
-                or contribution.device_id != device_id
-                or contribution.account_id != account
-                or contribution.origin != origin
-                or contribution.generation != generation
-                or contribution.scraper_id != scraper
-                or contribution.payload_encrypted is None
-                or (scraper is not None and not allowed(session, device_id, scraper, generation))
-            ):
-                raise ProbeError("source_ineligible")
-            try:
-                payload = encryption_service.decrypt_json(contribution.payload_encrypted)
-            except DecryptionError:
-                raise ProbeError("source_ineligible") from None
-            if not isinstance(payload, dict) or payload.get("tokens") != tokens:
-                raise ProbeError("source_changed")
-            authority += (device_id, scraper, generation)
-        code_origin = (
-            scraper == "anthropic.claude-code"
-            or origin == "env:CLAUDE_CODE_OAUTH_TOKEN"
-            or (
-                origin.startswith(("file:", "path:"))
-                and origin.endswith(("/.credentials.json", "/oauth_creds.json"))
-            )
-        )
-        # Egress marks borrowed Code credentials read-only too: this forbids refresh,
-        # not GETs. Require Code provenance rather than treating it as Desktop identity.
-        if not code_origin and (
-            source.source_type != "config" or tokens.get("oauth_read_only") == "1"
-        ):
-            raise ProbeError("unsupported_source")
-    return config.claude_organization_id if config else None, authority
-
-
-async def _load_source(
+async def load_source(
     account: str, source_id: str
 ) -> tuple[dict[str, str], str | None, tuple[Any, ...]]:
     if account == "default":
@@ -213,7 +85,7 @@ async def _load_source(
     if snapshot is None:
         raise ProbeError("source_unavailable")
     tokens, candidate = snapshot
-    # Syntax only: _authority_read separately requires Code provenance for "1".
+    # Syntax only: the authority read separately requires Code provenance for "1".
     if tokens.get("oauth_read_only") not in (None, "", "0", "1"):
         raise ProbeError("unsupported_source")
     if candidate.get("identity_pending") or not tokens.get("oauth_token"):
@@ -229,27 +101,14 @@ async def _load_source(
     if expires is not None and expires <= time.time():
         raise ProbeError("expired")
     organization, authority = await asyncio.to_thread(
-        _authority_read, account, source_id, tokens, candidate
+        support.authority_read, account, source_id, tokens, candidate
     )
     if await token_cache.peek_source("anthropic", account, source_id) != snapshot:
         raise ProbeError("source_changed")
     return tokens, organization, authority
 
 
-def _object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-    result: dict[str, Any] = {}
-    for key, value in pairs:
-        if key in result:
-            raise ProbeError("unsupported_contract")
-        result[key] = value
-    return result
-
-
-def _constant(value: str) -> None:
-    raise ProbeError("unsupported_contract")
-
-
-def _page(payload: object, limit: int) -> tuple[list[dict[str, Any]], str | None]:
+def page(payload: object, limit: int) -> tuple[list[dict[str, Any]], str | None]:
     if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
         raise ProbeError("unsupported_contract")
     records = payload["data"]
@@ -267,7 +126,7 @@ def _page(payload: object, limit: int) -> tuple[list[dict[str, Any]], str | None
     return records, cursor
 
 
-class _Probe:
+class Probe:
     def __init__(
         self,
         request: ClaudeCloudProbeRequest,
@@ -278,7 +137,7 @@ class _Probe:
         self.request = request
         self.client = client
         self.account = canonical_account_id(request.account_id)
-        self.report = _empty_report(request.report_version)
+        self.report = empty_report(request.report_version)
         self.tokens: dict[str, str] = {}
         self.expected_org: str | None = None
         self.authority: tuple[Any, ...] = ()
@@ -287,7 +146,7 @@ class _Probe:
 
     async def check_source(self) -> None:
         try:
-            current = await _load_source(self.account, self.request.source_id)
+            current = await load_source(self.account, self.request.source_id)
         except ProbeError:
             raise ProbeError("source_changed") from None
         if current != (self.tokens, self.expected_org, self.authority):
@@ -334,7 +193,11 @@ class _Probe:
         return response.headers.get("content-encoding", "identity").lower()
 
     def _decode(self, body: bytearray) -> Any:
-        return json.loads(body, object_pairs_hook=_object, parse_constant=_constant)
+        return json.loads(
+            body,
+            object_pairs_hook=support.strict_object,
+            parse_constant=support.strict_constant,
+        )
 
     async def identity(self) -> dict[str, str]:
         headers = {
@@ -350,7 +213,10 @@ class _Probe:
         if not isinstance(holder, dict) or not isinstance(organization, dict):
             raise ProbeError("identity_unavailable")
         email = holder.get("email")
-        subject, org = (_uuid(holder.get("uuid")), _uuid(organization.get("uuid")))
+        subject, org = (
+            support.strict_uuid(holder.get("uuid")),
+            support.strict_uuid(organization.get("uuid")),
+        )
         if not isinstance(email, str) or "@" not in email or subject is None or (org is None):
             raise ProbeError("identity_unavailable")
         if canonical_account_id(email) != self.account:
@@ -362,7 +228,7 @@ class _Probe:
             (self.request.organization_id, org),
             (self.expected_org, org),
         ):
-            if expected is not None and _uuid(expected) != actual:
+            if expected is not None and support.strict_uuid(expected) != actual:
                 raise ProbeError("identity_mismatch")
         self.report["account_verified"] = self.report["organization_verified"] = True
         headers.update(
@@ -378,11 +244,11 @@ class _Probe:
     async def sample(self) -> None:
         headers = await self.identity()
         self.report["stage"] = "sessions"
-        listed, cursor = _page(await self.get("/v1/code/sessions", headers, {"limit": 20}), 20)
+        listed, cursor = page(await self.get("/v1/code/sessions", headers, {"limit": 20}), 20)
         self.report["session_list_records"] = len(listed)
         self.report["session_list_complete"] = cursor is None
         ids = [row.get("id") for row in listed]
-        if any(not isinstance(sid, str) or not _SESSION_ID.fullmatch(sid) for sid in ids):
+        if any(not isinstance(sid, str) or not SESSION_ID.fullmatch(sid) for sid in ids):
             raise ProbeError("unsupported_contract")
         if len(set(ids)) != len(ids):
             raise ProbeError("unsupported_contract")
@@ -410,7 +276,7 @@ class _Probe:
         await self.history(sid, headers)
 
     async def history(self, sid: str, headers: dict[str, str]) -> None:
-        if not _SESSION_ID.fullmatch(sid):
+        if not SESSION_ID.fullmatch(sid):
             raise ProbeError("unsupported_contract")
         self.report["stage"] = "history"
         self.report["history_complete"] = False
@@ -425,7 +291,7 @@ class _Probe:
             params: dict[str, Any] = {"limit": 50, "sort_order": "asc"}
             if cursor is not None:
                 params["cursor"] = cursor
-            records, cursor = _page(
+            records, cursor = page(
                 await self.get(f"/v1/code/sessions/{quote(sid, safe='')}/events", headers, params),
                 50,
             )
@@ -477,15 +343,15 @@ async def probe_cloud_history(
     request: ClaudeCloudProbeRequest, client: httpx.AsyncClient
 ) -> dict[str, Any]:
     """Bound the whole attempt and recheck authority before publication."""
-    attempt = _Probe(request, client)
-    if _gate.locked():
+    attempt = Probe(request, client)
+    if support.gate.locked():
         attempt.report["outcome"] = "busy"
         return attempt.report
-    async with _gate:
+    async with support.gate:
         with probing():
             try:
                 async with asyncio.timeout(TOTAL_TIMEOUT):
-                    attempt.tokens, attempt.expected_org, attempt.authority = await _load_source(
+                    attempt.tokens, attempt.expected_org, attempt.authority = await load_source(
                         attempt.account, request.source_id
                     )
                     async with token_cache.using_source(
@@ -513,7 +379,7 @@ async def probe_cloud_history(
             except (ValueError, RecursionError):
                 attempt.report["outcome"] = "unsupported_contract"
             if attempt.report["outcome"] in ("source_changed", "timeout", "source_unavailable"):
-                report = _empty_report(request.report_version)
+                report = empty_report(request.report_version)
                 report.update(
                     outcome=attempt.report["outcome"],
                     requests=attempt.report["requests"],

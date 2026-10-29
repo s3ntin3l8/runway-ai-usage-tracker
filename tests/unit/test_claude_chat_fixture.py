@@ -10,7 +10,9 @@ from sqlmodel import Session, SQLModel, create_engine, select
 from sqlmodel.pool import StaticPool
 
 from app.models.db import CredentialSource, ProviderConfig
-from app.services import claude_cloud_probe as authority
+from app.services import claude_chat_fixture as fixture
+from app.services import claude_cloud_support as support
+from app.services.claude_cloud_support import ProbeError
 from app.services.token_cache import TokenCache
 
 ACCOUNT = "holder@example.invalid"
@@ -41,9 +43,9 @@ async def environment(monkeypatch, tmp_path):
     )
     SQLModel.metadata.create_all(engine)
     cache = TokenCache()
-    monkeypatch.setattr(authority, "engine", engine)
-    monkeypatch.setattr(authority, "token_cache", cache)
-    monkeypatch.setattr(authority, "_gate", asyncio.Lock())
+    monkeypatch.setattr(support, "engine", engine)
+    monkeypatch.setattr(fixture, "token_cache", cache)
+    monkeypatch.setattr(support, "gate", asyncio.Lock())
     monkeypatch.setattr("app.services.source_controls._ENABLED", False)
     with Session(engine) as db:
         db.add(
@@ -325,7 +327,7 @@ async def test_whole_attempt_timeout_discards_partial_authority_and_releases_gat
     report = await asyncio.wait_for(run(request(), respond), timeout=1)
     assert report["outcome"] == "timeout" and len(calls) <= 1
     assert not report["account_verified"] and report["messages"] == 0
-    assert not authority._gate.locked()
+    assert not support.gate.locked()
 
 
 @pytest.mark.asyncio
@@ -343,7 +345,7 @@ async def test_client_cancellation_never_retries_and_releases_gate(environment):
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await asyncio.wait_for(task, timeout=1)
-    assert len(calls) == 1 and not authority._gate.locked()
+    assert len(calls) == 1 and not support.gate.locked()
 
 
 @pytest.mark.asyncio
@@ -388,7 +390,7 @@ async def test_cookie_snapshot_and_durable_metadata_remain_unchanged_after_rejec
 @pytest.mark.asyncio
 async def test_busy_probe_is_inert_and_unrecognized_pagination_never_becomes_complete(environment):
     calls = []
-    async with authority._gate:
+    async with support.gate:
         report = await run(request(), upstream(calls))
     assert report["outcome"] == "busy" and not calls
     report = await run(
@@ -438,13 +440,13 @@ async def test_source_recheck_work_fits_the_attempt_budget_without_redundant_eng
     environment, monkeypatch
 ):
     checks = []
-    real = authority._authority_read
+    real = support.authority_read
 
     def count_checks(*args):
         checks.append(None)
         return real(*args)
 
-    monkeypatch.setattr(authority, "_authority_read", count_checks)
+    monkeypatch.setattr(support, "authority_read", count_checks)
     calls = []
     report = await run(request(), upstream(calls))
     assert report["outcome"] == "observed" and len(calls) == 3
@@ -460,6 +462,6 @@ async def test_request_ceiling_stops_a_future_fourth_dispatch(environment):
         attempt = _Attempt(request(), client)
         attempt.snapshot = await _load_source(ACCOUNT, SOURCE)
         attempt.report["requests"] = 3
-        with pytest.raises(authority.ProbeError, match="^response_limit$"):
+        with pytest.raises(ProbeError, match="^response_limit$"):
             await attempt.get("/api/account", {})
     assert not calls and attempt.report["requests"] == 3

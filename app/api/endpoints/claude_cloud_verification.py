@@ -26,9 +26,9 @@ from app.models.claude_cloud_verification import (
     VerificationStep,
     VerificationUnavailable,
 )
-from app.services import claude_cloud_probe as probe
+from app.services import claude_cloud_support as support
 from app.services.claude_cloud_checkpoints import CheckpointError, CheckpointStore
-from app.services.claude_cloud_probe import ProbeError
+from app.services.claude_cloud_support import ProbeError
 from app.services.claude_cloud_verification import (
     advance_verification,
     build_verification_report,
@@ -78,9 +78,9 @@ async def verification_action(
                 await asyncio.to_thread(store.archive_preview, body.job_handle)
             )
         if isinstance(body, VerificationArchive):
-            if probe._gate.locked():
+            if support.gate.locked():
                 raise CheckpointError("busy")
-            async with probe._gate:
+            async with support.gate:
                 archived_revision = await asyncio.to_thread(
                     store.archive, body.job_handle, body.revision
                 )

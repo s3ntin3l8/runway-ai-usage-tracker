@@ -5,7 +5,8 @@ import pytest
 
 from app.models.claude_cloud_verification import VerificationState
 from app.services import claude_cloud_probe as probe
-from app.services.claude_cloud_verification import _digest, _source_digest
+from app.services import claude_cloud_support as support
+from app.services.claude_cloud_verification import _digest, source_digest
 from tests.unit import test_claude_cloud_probe as sources
 from tests.unit.test_claude_cloud_verification import store_for
 
@@ -15,12 +16,12 @@ source_environment = sources.environment
 async def stopped(environment):
     store = store_for(environment)
     key = b"k" * 32
-    source = await probe._load_source(sources.ACCOUNT, sources.SOURCE)
+    source = await probe.load_source(sources.ACCOUNT, sources.SOURCE)
     state = VerificationState(
         account_id=sources.ACCOUNT,
         source_id=sources.SOURCE,
         job_key=key.hex(),
-        source_digest=_source_digest(key, source),
+        source_digest=source_digest(key, source),
         created_at=1000.0,
         deadline=2800.0,
         phase="stopped",
@@ -170,13 +171,13 @@ async def test_changed_access_bundle_is_not_substituted_for_the_recorded_source(
     source_environment, monkeypatch
 ):
     store, handle, _ = await stopped(source_environment)
-    original = probe._load_source
+    original = probe.load_source
 
     async def changed(*args):
         tokens, org, authority = await original(*args)
         return {**tokens, "oauth_token": "changed-fixture"}, org, authority
 
-    monkeypatch.setattr(probe, "_load_source", changed)
+    monkeypatch.setattr(probe, "load_source", changed)
     calls = []
     report = await inspect(handle, store, lambda request: calls.append(request))
     assert report["outcome"] == "source_changed" and calls == []
@@ -226,7 +227,7 @@ async def test_one_mib_response_guard_remains_fail_closed(source_environment):
 async def test_shared_probe_exclusion_prevents_concurrent_dispatch(source_environment):
     store, handle, _ = await stopped(source_environment)
     calls = []
-    async with probe._gate:
+    async with support.gate:
         report = await inspect(handle, store, lambda request: calls.append(request))
     assert report["outcome"] == "busy" and calls == []
 
@@ -310,7 +311,7 @@ async def test_known_expired_source_is_not_relabelled_as_a_changed_bundle(
     async def expired(*args):
         raise probe.ProbeError("expired")
 
-    monkeypatch.setattr(probe, "_load_source", expired)
+    monkeypatch.setattr(probe, "load_source", expired)
     calls = []
     report = await inspect(handle, store, lambda request: calls.append(request))
     assert report["outcome"] == "expired" and calls == []
