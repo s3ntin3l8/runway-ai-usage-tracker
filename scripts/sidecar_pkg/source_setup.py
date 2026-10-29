@@ -328,38 +328,52 @@ class SetupController:
         batch = self._batch
         if batch is None:
             return
-        for index, members in enumerate(batch["groups"]):
+        try:
+            for index, members in enumerate(batch["groups"]):
+                with self._lock:
+                    if batch["cancelled"]:
+                        break
+                    batch["index"] = index
+                try:
+                    self._run_group(members)
+                except Exception:
+                    # One group failing must neither strand its sources on "Connecting" nor stop
+                    # the rest, and nothing about the failure is exposed.
+                    with self._lock:
+                        for source_id, ticket in members:
+                            if consent.POLICY.current(ticket):
+                                self._states[source_id] = (ticket, "Action required")
+                with self._lock:
+                    batch["done"] += 1
+        finally:
+            # However the loop ends, the run is over: otherwise the page would report it as
+            # active forever and nothing could cancel it.
             with self._lock:
-                if batch["cancelled"]:
-                    break
-                batch["index"] = index
-                # A source turned off since the run started is skipped, not authorized.
-                live = [(i, t) for i, t in members if consent.POLICY.current(t)]
-                for source_id, ticket in live:
-                    self._states[source_id] = (ticket, "Connecting")
-            if not live:
-                batch["done"] += 1
-                continue
-            launched = False
+                batch["finished"] = True
+
+    def _run_group(self, members: list[tuple[str, consent.ConsentTicket]]) -> None:
+        """Authorize one Keychain item, then verify every source that reads it."""
+        with self._lock:
+            # A source turned off since the run started is skipped, not authorized.
+            live = [(i, t) for i, t in members if consent.POLICY.current(t)]
+            for source_id, ticket in live:
+                self._states[source_id] = (ticket, "Connecting")
+        if not live:
+            return
+        launched = False
+        try:
+            launched = self._launch(live[0][0])
+        except Exception:
+            pass  # Never expose native/subprocess diagnostic text.
+        for source_id, ticket in live:
+            success = False
             try:
-                launched = self._launch(live[0][0])
+                success = (
+                    launched and consent.POLICY.current(ticket) and self._verify(source_id, ticket)
+                )
             except Exception:
                 pass  # Never expose native/subprocess diagnostic text.
-            for source_id, ticket in live:
-                success = False
-                try:
-                    success = (
-                        launched
-                        and consent.POLICY.current(ticket)
-                        and self._verify(source_id, ticket)
-                    )
-                except Exception:
-                    pass  # Never expose native/subprocess diagnostic text.
-                self._finish(source_id, ticket, success)
-            with self._lock:
-                batch["done"] += 1
-        with self._lock:
-            batch["finished"] = True
+            self._finish(source_id, ticket, success)
 
     def cancel(self) -> None:
         """Stop after the Keychain item being authorized now; sources still queued stay as they were."""

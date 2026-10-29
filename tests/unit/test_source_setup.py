@@ -432,3 +432,28 @@ def test_consent_withdrawn_during_launch_drops_the_result(monkeypatch):
     controller.wait(5)
     verify.assert_not_called()
     assert controller.state("anthropic.chrome") == "Off"
+
+
+def test_an_exception_while_finishing_a_group_ends_the_run_and_does_not_stop_the_others(
+    monkeypatch,
+):
+    _enabled(monkeypatch)
+    controller = SetupController(launch=Mock(return_value=True), verify=Mock(return_value=True))
+    real_finish = controller._finish
+
+    def finish(source_id, ticket, success):
+        if source_id == "anthropic.chrome":
+            raise RuntimeError("boom")
+        real_finish(source_id, ticket, success)
+
+    controller._finish = finish  # type: ignore[method-assign]
+    controller.start_all(["anthropic.chrome", "anthropic.edge"])
+    controller.wait(5)
+    # The run is over (the page must not sit on "Authorizing" forever) and cannot be left active.
+    run = controller.run_report()
+    assert (run["active"], run["done"], run["total"]) == (False, 2, 2)
+    assert controller.state("anthropic.chrome") == "Action required"
+    assert controller.state("anthropic.edge") == "Limited"
+    # A new run can start afterwards.
+    assert controller.start_all(["anthropic.chromium"])["total"] == 1
+    controller.wait(5)

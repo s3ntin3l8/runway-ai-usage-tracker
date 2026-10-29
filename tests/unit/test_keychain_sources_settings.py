@@ -250,6 +250,10 @@ def test_page_has_one_compact_section_and_no_per_row_buttons(settings):
     assert "Dismiss new scraper notice" not in html
     assert "'Authorize'" not in html
     assert "Authorize ' + todo.length + ' enabled" in html
+    # One poll timer at most while a run is active, and ids on the controls so focus survives a refresh.
+    assert "kcPoll === null" in html
+    for marker in ("'source-' + s.id", "'browser-' + key", "'service-' + service"):
+        assert marker in html
 
 
 def test_page_script_parses(settings):

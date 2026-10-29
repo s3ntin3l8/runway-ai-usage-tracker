@@ -393,7 +393,7 @@ async function sourceAction(action, source_id, value, extra) {
 const KC_LABEL = {ok: 'Authorized', need: 'Needs authorization', err: 'Action required', busy: 'Connecting…', wait: 'Waiting', off: 'Off'};
 const KC_RANK = {off: 0, ok: 1, wait: 2, busy: 3, need: 4, err: 5};
 const KC_BROWSERS = [['chrome', 'Chrome'], ['edge', 'Edge'], ['chromium', 'Chromium']];
-let lastSourceReport = null, showOffApps = false, showOffWeb = false;
+let lastSourceReport = null, showOffApps = false, showOffWeb = false, kcPoll = null;
 
 function kcEl(tag, cls, text) {
   const node = document.createElement(tag);
@@ -408,7 +408,7 @@ function kcStatus(source, run) {
   if (run.current.includes(source.id) || source.state === 'Connecting') return 'busy';
   if (run.queued.includes(source.id)) return 'wait';
   if (source.state === 'Action required') return 'err';
-  if (source.state === 'Setup required' || source.state === 'Off') return 'need';
+  if (source.state === 'Setup required') return 'need';
   return 'ok';
 }
 
@@ -420,10 +420,10 @@ function kcChip(status, source) {
   return chip;
 }
 
-function kcSwitch(label, checked, disabled, mixed, onchange) {
+function kcSwitch(id, label, checked, disabled, mixed, onchange) {
   const wrap = kcEl('label', 'kc-switch' + (mixed ? ' mixed' : ''));
   const box = document.createElement('input');
-  box.type = 'checkbox'; box.checked = checked; box.disabled = disabled; box.setAttribute('aria-label', label);
+  box.type = 'checkbox'; box.id = id; box.checked = checked; box.disabled = disabled; box.setAttribute('aria-label', label);
   box.onchange = () => onchange(box.checked);
   wrap.append(box, document.createElement('span'));
   return wrap;
@@ -493,7 +493,7 @@ function renderSources(report) {
     const name = kcEl('span', 'kc-name', s.service);
     if (s.new) name.append(kcEl('span', 'kc-tag', 'NEW'));
     name.append(kcInfo(s.dependency));
-    appRows.append(kcRow(kcSwitch('Use Keychain: ' + s.label, s.read, !!run.active, false, on => sourceAction('set_sources', null, on, {source_ids: [s.id]})), name, kcChip(status(s), s)));
+    appRows.append(kcRow(kcSwitch('source-' + s.id, 'Use Keychain: ' + s.label, s.read, !!run.active, false, on => sourceAction('set_sources', null, on, {source_ids: [s.id]})), name, kcChip(status(s), s)));
   }
   const offApps = apps.length - apps.filter(s => s.read).length;
   if (offApps) {
@@ -510,7 +510,7 @@ function renderSources(report) {
   picker.append(document.createTextNode('Read from '));
   for (const [key, name] of KC_BROWSERS) {
     const choice = kcEl('label', selected[key] ? 'sel' : '');
-    const box = document.createElement('input'); box.type = 'checkbox'; box.checked = selected[key]; box.disabled = !!run.active;
+    const box = document.createElement('input'); box.type = 'checkbox'; box.id = 'browser-' + key; box.checked = selected[key]; box.disabled = !!run.active;
     box.onchange = () => sourceAction('set_browsers', null, {[key]: box.checked});
     choice.append(box, document.createTextNode((selected[key] ? '✓ ' : '') + name));
     picker.append(choice);
@@ -535,7 +535,7 @@ function renderSources(report) {
       name.append(pill);
     }
     const worst = children.map(status).reduce((a, b) => KC_RANK[b] > KC_RANK[a] ? b : a, 'off');
-    webRows.append(kcRow(kcSwitch('Read ' + service + ' cookies', ons.length > 0, !!run.active, mixed, on => sourceAction('set_sources', null, on, {source_ids: children.map(c => c.id)})), name, kcChip(worst, children.length === 1 ? children[0] : null)));
+    webRows.append(kcRow(kcSwitch('service-' + service.replace(/[^A-Za-z0-9]+/g, '-'), 'Read ' + service + ' cookies', ons.length > 0, !!run.active, mixed, on => sourceAction('set_sources', null, on, {source_ids: children.map(c => c.id)})), name, kcChip(worst, children.length === 1 ? children[0] : null)));
   }
   if (offServices.length || (showOffWeb && services.size)) {
     const more = kcEl('button', 'kc-more', showOffWeb ? '▴ Hide services that are off' : '▾ ' + offServices.length + ' more off (' + offServices.join(', ') + ')');
@@ -603,7 +603,10 @@ async function refreshSources(force) {
     if (focusedId) document.getElementById(focusedId)?.focus();
   }
   // A run is in flight: follow it closely, otherwise the slow poll is enough.
-  if (report.run && report.run.active) setTimeout(() => refreshSources().catch(() => {}), 1500);
+  // One timer at most: every refresh sees the run, so chaining a new one each time would multiply them.
+  if (report.run && report.run.active && kcPoll === null) {
+    kcPoll = setTimeout(() => { kcPoll = null; refreshSources().catch(() => {}); }, 1500);
+  }
 }
 refreshSources().catch(() => {});
 setInterval(() => refreshSources().catch(() => {}), 5000);
