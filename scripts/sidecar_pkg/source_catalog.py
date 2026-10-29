@@ -9,6 +9,9 @@ from typing import Any
 
 from scripts.sidecar_pkg.source_catalog_data import KEYCHAIN_RULES
 
+# The browsers whose cookie stores are read; the source id ends in the key.
+BROWSERS = {"chrome": "Chrome", "edge": "Edge", "chromium": "Chromium"}
+
 
 @dataclass(frozen=True)
 class SourceDescriptor:
@@ -20,6 +23,23 @@ class SourceDescriptor:
     renewal: bool = False
     platforms: tuple[str, ...] = ("darwin",)
     account: str | None = None
+
+    @property
+    def browser_key(self) -> str | None:
+        """``chrome`` / ``edge`` / ``chromium`` for a cookie source, None for an app or CLI."""
+        key = self.id.rpartition(".")[2]
+        return key if key in BROWSERS else None
+
+    @property
+    def service(self) -> str:
+        """The label without its browser: "Claude Pro · Chrome cookies" -> "Claude Pro"."""
+        key = self.browser_key
+        return self.label.removesuffix(f" · {BROWSERS[key]} cookies") if key else self.label
+
+    @property
+    def item_key(self) -> str:
+        """Sources with the same key read the same Keychain item, so one approval unlocks them all."""
+        return "|".join(self.services) + "|" + (self.account or "")
 
 
 def catalog() -> dict[str, SourceDescriptor]:

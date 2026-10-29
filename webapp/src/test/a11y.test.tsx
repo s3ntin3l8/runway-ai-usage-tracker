@@ -24,7 +24,7 @@
 // values themselves in both themes.
 
 import axe, { type AxeResults, type RunOptions } from 'axe-core';
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Route, Routes } from 'react-router';
 import type { QueryClient } from '@tanstack/react-query';
@@ -409,6 +409,68 @@ describe('accessibility guard (axe)', () => {
     await waitFor(() => expect(screen.getByRole('main')).toBeInTheDocument());
     await settle(client);
     await expectSurfaceRendered();
+    await expectNoViolations();
+  });
+
+  it('has no violations in the sidecar settings dialog with source rows open', async () => {
+    // The dialog is where the sources table lives: a table, its rowgroups, rows and cells are only
+    // valid ARIA when every parent owns what it requires, and that only shows once a row is open.
+    const deviceId = 'device-' + 'b'.repeat(32);
+    const source = (source_id: string, label: string, over: Record<string, unknown> = {}) => ({
+      source_id,
+      provider_id: source_id.split('.')[0],
+      label,
+      revision: 'r',
+      generation: 1,
+      read: true,
+      state: 'Ready',
+      renewal_requested: false,
+      renewal_supported: false,
+      renewal_capable: false,
+      new: false,
+      remote_paused: false,
+      revoked: false,
+      report_at: new Date().toISOString(),
+      report_stale: false,
+      announcement: false,
+      collection_health: 'healthy',
+      last_collection_at: new Date().toISOString(),
+      ...over,
+    });
+    vi.mocked(api.fetchSidecars).mockResolvedValue({
+      sidecars: [
+        {
+          sidecar_id: deviceId,
+          hostname: 'macbook',
+          os_platform: 'Darwin/25.6.0',
+          sidecar_version: '3.0.0',
+          last_seen: new Date().toISOString(),
+          ingest_count: 1,
+          error_count: 0,
+          collection_enabled: true,
+        },
+      ],
+    } as never);
+    vi.mocked(api.fetchSidecarSources).mockResolvedValue({
+      protocol: 1,
+      sources: [
+        source('anthropic.claude-code', 'Claude Code', { state: 'Setup required', announcement: true }),
+        source('github.gh-cli', 'GitHub CLI', { read: false, state: 'Off', collection_health: 'untried' }),
+        source('anthropic.chrome', 'Claude Pro · Chrome cookies'),
+        source('anthropic.edge', 'Claude Pro · Edge cookies', { state: 'Action required' }),
+      ],
+      commands: [{ id: 1, source_id: 'anthropic.chrome', generation: 1, action: 'request_setup' }],
+    } as never);
+    const { client } = renderSurface('/fleet', <FleetPage />, `/fleet?settings=${deviceId}`);
+    const dialog = within(await screen.findByRole('dialog'));
+    await userEvent.click(await dialog.findByRole('tab', { name: /^credentials/i }));
+    await userEvent.click(await dialog.findByRole('button', { name: 'Claude Pro browsers' }));
+    await userEvent.click(await dialog.findByRole('button', { name: 'Chrome cookies' }));
+    await userEvent.click(await dialog.findByRole('button', { name: /^Claude Code/ }));
+    await userEvent.click(await dialog.findByRole('button', { name: /Show 1 source that is off/ }));
+    await settle(client);
+    expect(dialog.getByRole('table', { name: 'Keychain sources' })).toBeInTheDocument();
+    expect(dialog.getAllByRole('row').length).toBeGreaterThan(6);
     await expectNoViolations();
   });
 
