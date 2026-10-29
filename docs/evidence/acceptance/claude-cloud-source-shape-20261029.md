@@ -51,13 +51,16 @@ subagents, and tool names in `message.content[]`. About two records exist per `m
 has `claude-opus-5-5` (5,339 records), `claude-fable-5-1` (500) and `<synthetic>` (27).
 
 Project context lives on `system` records, not on assistant records: `cwd` (163 in the largest
-session), `original_cwd`, and `branch`. `cwd` has the form `/home/user/<repo>` (sometimes a
+session), `original_cwd` (104) and `branch` (1); paths in the same JSON block. `cwd` has the form `/home/user/<repo>` (sometimes a
 subdirectory), which is the same shape `project_label` already derives a project from.
 
 `result` records carry per-model cumulative usage in `modelUsage[<model>]`: `inputTokens`,
 `outputTokens`, `cacheReadInputTokens`, `cacheCreationInputTokens`, `costUSD`, `thinkingTokens`,
-`canonicalModel`. The values grow monotonically across the results of one session. `system`
-`task_progress` records carry `usage.total_tokens` and `tool_uses` (subagent tasks).
+`canonicalModel`. The values grow monotonically within one process and restart from zero when the
+process restarts (one session restarts at nearly every result). `system` records in the largest session (2,831 of its 4,489) carry `usage.total_tokens`,
+`usage.tool_uses` and `usage.duration_ms`; 2,804 of its `system` records are `task_progress`. The paths
+are in the `largest_session_system_paths` block of
+[`claude-cloud-accounting-capture-20261029.json`](claude-cloud-accounting-capture-20261029.json).
 
 ## Accounting
 

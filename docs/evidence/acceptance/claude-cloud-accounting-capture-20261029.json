@@ -4783,6 +4783,47 @@
   },
   "requests_made": 258
  },
+ "largest_session_system_paths": {
+  "branch": {
+   "str": 1
+  },
+  "claude_code_version": {
+   "str": 112
+  },
+  "cwd": {
+   "str": 163
+  },
+  "model": {
+   "str": 112
+  },
+  "original_cwd": {
+   "str": 104
+  },
+  "permissionMode": {
+   "str": 113
+  },
+  "session_id": {
+   "str": 4489
+  },
+  "subtype": {
+   "str": 4489
+  },
+  "task_id": {
+   "str": 3833
+  },
+  "usage": {
+   "dict": 2831
+  },
+  "usage.duration_ms": {
+   "int": 2831
+  },
+  "usage.tool_uses": {
+   "int": 2831
+  },
+  "usage.total_tokens": {
+   "int": 2831
+  }
+ },
  "note": "numbers and model names only; digests are 6 hex chars of sha256(session id)",
  "row_properties": [
   {
