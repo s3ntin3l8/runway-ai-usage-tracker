@@ -357,6 +357,7 @@ async def _read(
                     await attempt.check_source()
                     raise
                 # Results are discarded unless the exact source is still the one used.
+                attempt.report["stage"] = "recheck"
                 await attempt.check_source()
                 return result
     except probe.ProbeError as exc:

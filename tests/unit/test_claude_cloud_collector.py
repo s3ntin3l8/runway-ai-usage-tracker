@@ -513,3 +513,36 @@ async def test_a_contract_failure_names_the_step_that_failed(environment):
 
     report = await sweep(misshaped)
     assert report.outcome == "unsupported_contract" and report.detail == "page_shape"
+
+    def not_json(request):
+        if request.url.path.endswith("/profile"):
+            return httpx.Response(200, json=profile())
+        return httpx.Response(200, content=b"<html>not json</html>")
+
+    report = await sweep(not_json)
+    assert report.outcome == "unsupported_contract" and report.detail == "page_get"
+
+
+@pytest.mark.asyncio
+async def test_the_cycle_log_carries_the_step_and_a_recheck_failure_is_not_blamed_on_rows(
+    environment, caplog, monkeypatch
+):
+    caplog.set_level(logging.INFO)
+    twice = [row(usage=block()), row(usage=block())]
+    async with httpx.AsyncClient(transport=httpx.MockTransport(listing([twice])[0])) as client:
+        await collector.collect_all(client)
+    assert ":unsupported_contract/row_duplicate" in caplog.text
+
+    caplog.clear()
+    calls = {"n": 0}
+    real = collector._CollectorProbe.check_source
+
+    async def rotated_after_sweep(self):
+        calls["n"] += 1
+        if self.report.get("stage") == "recheck":
+            raise collector.probe.ProbeError("source_changed")
+        await real(self)
+
+    monkeypatch.setattr(collector._CollectorProbe, "check_source", rotated_after_sweep)
+    report = await sweep(listing([[row(usage=block())]])[0])
+    assert report.outcome == "source_changed" and report.detail == "recheck"
