@@ -180,6 +180,11 @@ class ClaudeCloudHistoryReducer:
             return self._close_turn(event, inner)
         return []
 
+    @property
+    def open_tail(self) -> bool:
+        """Whether assistant messages after the last result are waiting for their turn to close."""
+        return bool(self._tail)
+
     def tail_events(self) -> list[UsageEventPush]:
         """Message events of the open turn (no remainders): for a session that went quiet.
 

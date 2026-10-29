@@ -602,14 +602,16 @@ another module's private member.
 `usage_events` itself (all other collectors return cards): for Claude Code cloud-runner
 sessions only, behind `CLAUDE_CLOUD_COLLECTOR_ENABLED` (default off). It subclasses the
 probe's read-only client, so it inherits the exact-source, no-refresh and account checks, and
-keeps its per-session state in `claude_cloud_session_usage` and
-`claude_cloud_collector_state`. See [Claude cloud-runner sessions](collection_logic.md#claude-cloud-runner-sessions).
+keeps one checkpoint row per session in `claude_cloud_session_checkpoint`. The two tables of the
+first collector (`claude_cloud_session_usage`, `claude_cloud_collector_state`) stay in the schema,
+unused (the `cloud_coarse_events` Data Health fix removes that collector's events, not these rows). See
+[Claude cloud-runner sessions](collection_logic.md#claude-cloud-runner-sessions).
 
-`app/services/claude_cloud_events.py` is the pure half of the replacement collector described in
+`app/services/claude_cloud_events.py` is its pure half, specified in
 [the cloud event contract](claude-cloud-event-contract.md): no network and no database, it turns a
 cloud session's ordered history records into `UsageEventPush` objects (one message event per assistant
 message, plus a per-turn, per-model remainder so each turn's totals equal what the result record
-reports). The history sync that feeds it is a separate change.
+reports). The collector feeds it each session's history and owns paging, checkpoints and ingest.
 
 ## CI/CD and releases
 

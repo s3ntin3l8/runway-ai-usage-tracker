@@ -238,27 +238,47 @@ never change the quota percentage — only the token and message breakdown.
 
 Local scraping already covers CLI, Desktop and bridge sessions. Claude Code sessions that run
 on Anthropic's cloud runner leave no local transcript, so a server-side collector
-(`app/services/claude_cloud_collector.py`, `CLAUDE_CLOUD_COLLECTOR_ENABLED`, default off)
-reads them from `GET /v1/code/sessions`:
+(`app/services/claude_cloud_collector.py`, `CLAUDE_CLOUD_COLLECTOR_ENABLED`, default off) reads
+their history. The rules are specified in
+[the cloud event contract](claude-cloud-event-contract.md); the wire facts behind them are in
+[the source-shape evidence](evidence/acceptance/claude-cloud-source-shape-20261029.md).
 
-- Only rows whose top-level `environment_kind` is `anthropic_cloud` count. `bridge` rows are
-  local sessions mirrored to claude.ai and are skipped, so nothing is counted twice.
-- A cloud row can carry `external_metadata.usage` (input, output, cache read and write
-  tokens). The collector keeps the last block per session and writes only the increase as a
-  `usage_events` row (`sidecar_id` `server`, `entrypoint` `cloud`). The event identity is the
-  session digest plus a revision, so a replay is a duplicate, never a second event. The API's
-  `cost_usd` is not used; Runway prices the tokens itself.
-- The block has no per-turn timing: an increase is dated by the row's `updated_at`.
-- The session list is read page by page; the real API omits `next_cursor` on the last page, which the collector (like the verifier) treats as the end of the list. A declared `has_more` that disagrees with the cursor fails the sweep as `unsupported_contract`.
-- A block that shrinks writes nothing and is counted (`last_regressions`); a smaller block seen on two consecutive sweeps becomes the baseline (so the session counts again once it grows), while a one-sweep dip that recovers is never billed. A counter the API
-  did not report stays unknown in the stored state, and feeds its event as 0.
-- After the first full sweep the collector stops paging once a page is entirely older than the
-  newest `updated_at` already processed, but only if the pages read so far are newest-first.
-  Every 24th sweep ignores that mark, in case `updated_at` does not move with usage.
-- Known limits: which of the block's totals is authoritative is still open (the block's input
-  differs from the per-message sum, and its output from the last result record); the collector
-  records the block as reported. A cloud session later resumed on a local machine could also
-  appear in local transcripts; there is no cross-source deduplication for that case.
+- **Which sessions.** `GET /v1/code/sessions` is listed page by page (the real API omits
+  `next_cursor` on the last page, which the collector, like the verifier, treats as the end; a
+  declared `has_more` that disagrees with the cursor fails the cycle as `unsupported_contract`). Only
+  rows whose top-level `environment_kind` is `anthropic_cloud` count; `bridge` rows are local
+  sessions mirrored to claude.ai and are skipped. A session is read when its `last_event_at` moved
+  (the row's `updated_at` is unrelated to usage and is not used).
+- **What is written.** The session's history (`/v1/code/sessions/{id}/events`) goes through
+  `claude_cloud_events`: one **message event** per assistant message (model, time, tools, subagent,
+  input and cache tokens with the 1h/5m write split, project and branch) and, when a `result` record
+  closes a turn, one **remainder event** per model for what its cumulative `modelUsage` reports beyond
+  those messages (side calls, the real output, a second model such as Haiku). Events carry
+  `sidecar_id` `server`, `entrypoint` `cloud`, and a digest as `session_id`; their ids are derived
+  from the history, so a replay is a duplicate, never a second event. The API's `costUSD` and the
+  list row's usage block are not used for pricing; Runway prices the tokens itself.
+- **Resuming.** Each session has a checkpoint (`claude_cloud_session_checkpoint`): the sequence
+  number of its last closed turn and the encrypted cursor of the page that holds it, plus the
+  reducer's state. The next read starts there; the open tail after the last result is read again.
+  A cursor the API rejects falls back to reading from the start. Events are committed before the
+  checkpoint moves.
+- **Open tail.** Messages after the last result are emitted once the session has been quiet for an
+  hour (without a remainder).
+- **Cross-check.** After a session settles, its events are compared with the list row's usage block
+  and only a label is logged (`agree`, `block_higher`, `block_lower`, `mixed`, `no_block`); the block
+  is built differently in different sessions, so it never gates or rewrites anything.
+- **Budgets.** Per cycle at most 40 history pages and, always, 200 requests; a session that could not close a
+  turn within its pages gets a larger page budget next time (never beyond the request cap; a turn longer
+  than that is skipped until the session changes again and reported as `stalled_turn_skipped`), and while work is left the next cycle runs
+  after 120 s instead of the interval, reusing the unfinished sessions instead of listing again. Logs carry counts and fixed labels only.
+- **Migration.** While events of the first (coarse) collector exist (`cloud:<digest>:<n>` ids) the
+  cycle writes nothing and reports `migration_required`; the `cloud_coarse_events` Data Health fix
+  removes them.
+- Known limits: message counts in rollups, top models and history run high for cloud sessions
+  (remainders are separate rows; the sessions view and top sessions/projects collapse them); the
+  cache-write TTL split of a remainder is an estimate; per-message output is a lower bound. A cloud
+  session later resumed on a local machine could also appear in local transcripts; none of about 290
+  checked message ids does, and there is no cross-source de-duplication.
 
 ## Implementation Notes
 

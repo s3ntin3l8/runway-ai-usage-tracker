@@ -259,8 +259,8 @@ The server can refresh OAuth tokens it holds. This is **off unless enabled**.
 | `TOKEN_AUTO_REFRESH_ENABLED` | Turn background token auto-refresh on |
 | `TOKEN_AUTO_REFRESH_INTERVAL_SECONDS` | How often the background refresher runs |
 | `TOKEN_AUTO_REFRESH_THRESHOLD_SECONDS` | Refresh a token this long before it expires |
-| `CLAUDE_CLOUD_COLLECTOR_ENABLED` | Collect usage for Claude Code cloud-runner sessions from the session list (default off) |
-| `CLAUDE_CLOUD_COLLECTOR_INTERVAL_SECONDS` | How often that collector sweeps (default 1800) |
+| `CLAUDE_CLOUD_COLLECTOR_ENABLED` | Collect usage for Claude Code cloud-runner sessions from their history (default off) |
+| `CLAUDE_CLOUD_COLLECTOR_INTERVAL_SECONDS` | How often that collector runs (default 1800; sooner while it has work left) |
 
 For local single-host development the only mandatory variable is `INGEST_API_KEY` — and `.env.example` ships it **empty**. With it unset the server starts normally and sidecar ingest is simply **disabled**; nothing warns you that ingest is off. The literal `sidecar-default-secret` is only the *insecure-default detection constant* the server uses to recognise a well-known placeholder — it is never shipped as a value. For any multi-host or Docker deployment, `DB_ENCRYPTION_KEY`, `TLS_TERMINATED`, `CORS_ORIGINS`, and an admin gate (`ADMIN_API_KEY` or `TRUSTED_PROXY_IPS` with forward-auth) become hard requirements; the server fails fast on startup otherwise.
 
