@@ -516,6 +516,30 @@ async def test_a_turn_longer_than_the_request_cap_is_skipped_not_reread_forever(
 
 
 @pytest.mark.asyncio
+async def test_the_escalated_budget_is_held_to_the_request_cap(environment, monkeypatch):
+    records = [system(1)]
+    for index in range(2, 42):
+        records.append(assistant(index, f"long{index}", inp=1, out=1, read=10))
+    records.append(
+        result(42, {OPUS: {"inputTokens": 40, "outputTokens": 40, "cacheReadInputTokens": 400}})
+    )
+    # The terminal state is out of reach (stall factor 50), so only the cap can limit the budget.
+    # A cycle has 6 requests and a catch-up cycle skips the list, so one request (identity) is not
+    # history: at most 5 history pages, even after many stalls earned a much larger budget.
+    monkeypatch.setattr(collector, "HISTORY_PAGES_PER_CYCLE", 1)
+    monkeypatch.setattr(collector, "REQUESTS_PER_CYCLE", 6)
+    monkeypatch.setattr(collector, "MAX_STALL_FACTOR", 50)
+    server = Server([cloud_row()], {SECRET_ID: records}, page=3)
+    most = 0
+    for _ in range(8):
+        server.calls.clear()
+        await cycle(server)
+        most = max(most, len(server.history_calls()))
+        assert len(server.calls) + 1 <= collector.REQUESTS_PER_CYCLE
+    assert most == 5  # reached after a few stalls; without the clamp it keeps growing
+
+
+@pytest.mark.asyncio
 async def test_a_failed_cycle_keeps_the_unfinished_sessions_for_the_next_one(
     environment, monkeypatch
 ):
