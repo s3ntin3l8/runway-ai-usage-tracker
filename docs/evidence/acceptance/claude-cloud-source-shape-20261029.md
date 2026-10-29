@@ -59,39 +59,39 @@ subdirectory), which is the same shape `project_label` already derives a project
 `canonicalModel`. The values grow monotonically across the results of one session. `system`
 `task_progress` records carry `usage.total_tokens` and `tool_uses` (subagent tasks).
 
-## Accounting: three sources, three different totals
+## Accounting: what this capture can and cannot say
+
+The capture kept only the **first five** `result` records of each session (median session: 5 of 13;
+largest: 5 of 111; the smallest session has 2 and both were kept). Any `modelUsage` figure below for
+the median session is therefore **result 5 of 13, not the final total**, and no conclusion about the
+`modelUsage` total or about which source matches billing can be drawn from it.
 
 | Session | Source | Input | Output | Cache read | Cache write |
 |---|---|---:|---:|---:|---:|
 | median | list block (`cost_usd` 8.5278) | 4,850 | 62,876 | 25,790,004 | 285,294 |
 | median | assistant messages, last record per `message.id` (138 messages) | 294 | 2,883 | 23,526,585 | 277,736 |
-| median | last `result.modelUsage` | 1,249 | 59,794 | 18,244,329 | 267,604 |
+| median | `result.modelUsage` of result 5 of 13 (not the final one) | 1,249 | 59,794 | 18,244,329 | 267,604 |
 | smallest | list block (only `cost_usd` 3.3098; no token counters) | n/a | n/a | n/a | n/a |
 | smallest | assistant messages (61 messages) | 412 | 570 | 4,906,696 | 243,527 |
-| smallest | last `result.modelUsage` | 918 | 34,688 | 5,006,052 | 273,114 |
+| smallest | `result.modelUsage` of the last (2nd) result | 918 | 34,688 | 5,006,052 | 273,114 |
 | largest | list block (`cost_usd` 752.70) | 184,208 | 5,487,271 | 2,173,590,630 | 37,427,708 |
 
 The largest session's history was cut at 15,000 records (300 pages), so it is not comparable.
 
-Findings:
-1. **Assistant `output_tokens` are streaming placeholders** (2,883 against about 60,000), so
-   per-message output cannot be summed. Input and cache counts per message are real.
-2. **The list block is the billing-faithful total.** Priced with Runway's rates, the median session's
-   block tokens cost 7.86 USD with every cache write at the 5-minute rate; the reported `cost_usd` is
-   8.53 USD, which is what a 78% share of 1-hour cache writes gives. The `modelUsage` tokens price to
-   6.99 USD even with all writes at the 1-hour rate. The smallest session prices to 2.44 USD from
-   `modelUsage` against 3.31 USD reported. So the SDK-visible usage (messages and `modelUsage`) is a
-   subset of what is billed: about 70% of the block's cache reads in the median session.
-3. **What the missing share is** is not established. Candidates the data shows but this capture does
-   not test: subagent tasks (`system/task_progress` `usage.total_tokens`, 2,831 records in the largest
-   session), `prompt_suggestion` side queries, and compaction.
-4. The block has no model split and no time dimension; `result.modelUsage` has the model split and a
-   time (the result record), but is the smaller subset.
+What the data does support:
+1. **Assistant `output_tokens` are streaming placeholders** (2,883 against about 60,000 in
+   `modelUsage`), so per-message output cannot be summed. Input and cache counts per message are real.
+2. `modelUsage` values are monotonically increasing across the results of one session, per model.
+3. One `cost_usd` is not enough to reconstruct billing: with Runway's rates the median session's block
+   tokens price to 7.86 USD (all cache writes at the 5-minute rate) or 8.72 USD (all at the 1-hour
+   rate) against 8.53 USD reported, and the rates, the write-TTL share and the model split are all
+   unknown. This needs a capture that keeps every result record and its `costUSD`.
 
 ## Not established yet
 
-- `modelUsage[].costUSD` was not captured, so it cannot yet be compared with the block's `cost_usd`.
+- Every `result` record's `modelUsage` (token fields and `costUSD`), so the final per-model totals and
+  the effective rates cannot yet be compared with the block and its `cost_usd`.
 - The largest session's full history (about 5,800+ assistant records seen in the first 15,000).
-- Whether the gap in finding 3 is subagent usage; needs `task_progress` / `task_notification` usage
-  summed against the gap.
+- Whether the sources differ at all once the final `modelUsage` is used, and if they do, whether the
+  difference is subagent usage (`task_progress` / `task_notification` `usage.total_tokens`).
 - Whether `updated_at` moves with usage: moot for these 21 (all archived), open for a live session.

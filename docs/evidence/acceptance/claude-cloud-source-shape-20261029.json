@@ -491,6 +491,7 @@
      }
     }
    ],
+   "result_records_note": "first 2 of 2 result records only",
    "scrubbed_values": {
     "event.created_at": {
      "9999-99-w:99:99.w": 353
@@ -3761,6 +3762,7 @@
      }
     }
    ],
+   "result_records_note": "first 5 of 13 result records only",
    "scrubbed_values": {
     "event.created_at": {
      "9999-99-w:99:99.w": 760
@@ -4055,6 +4057,7 @@
      }
     }
    ],
+   "result_records_note": "first 5 of 111 result records only",
    "scrubbed_values": {
     "event.created_at": {
      "9999-99-w:99:99.w": 15000
