@@ -32,8 +32,11 @@ name: Hermes (review)
 # That guard is therefore NOT the trust boundary; it only catches accidents. The
 # real control is on the runner host: its job-started hook
 # (ACTIONS_RUNNER_HOOK_JOB_STARTED, s3ntin3l8/ansible-playbooks
-# playbooks/lxc/github-runner/files/job-started.sh) fails any job a pull request
-# from another repository triggered, before a step runs, and no PR can edit it. The
+# ansible/playbooks/lxc/github-runner/files/job-started.sh, added in
+# s3ntin3l8/ansible-playbooks#107 and deployed with `make github-runner`) fails any
+# job a pull request from another repository triggered, before a step runs, and no
+# PR can edit it. If that hook is ever reverted or the runners are rebuilt without
+# it, this repo is back to relying on the approval setting alone. The
 # repo setting Settings -> Actions -> General -> "Require approval for all outside
 # collaborators" stays on as a second layer. What is at stake is the runner
 # (filesystem, LAN access), not the token (fork PRs get no secrets and a read-only
