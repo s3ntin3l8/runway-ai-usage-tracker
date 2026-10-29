@@ -12,6 +12,7 @@ from sqlmodel.pool import StaticPool
 
 from app.models.db import CredentialSource, ProviderConfig
 from app.services import claude_cloud_probe as probe
+from app.services import claude_cloud_support as support
 from app.services.token_cache import TokenCache
 
 ACCOUNT = "holder@example.com"
@@ -61,9 +62,9 @@ async def environment(monkeypatch, tmp_path):
         poolclass=StaticPool,
     )
     SQLModel.metadata.create_all(engine)
-    monkeypatch.setattr(probe, "Session", Session)
-    monkeypatch.setattr(probe, "engine", engine)
-    monkeypatch.setattr(probe, "_gate", asyncio.Lock())
+    monkeypatch.setattr(support, "Session", Session)
+    monkeypatch.setattr(support, "engine", engine)
+    monkeypatch.setattr(support, "gate", asyncio.Lock())
     # This fixture exercises a legacy file contribution, not durable cache reload.
     monkeypatch.setattr("app.services.source_controls._ENABLED", False)
     from cryptography.fernet import Fernet
@@ -72,7 +73,7 @@ async def environment(monkeypatch, tmp_path):
     from app.core.encryption import EncryptionService
 
     monkeypatch.setattr(settings, "DB_ENCRYPTION_KEY", Fernet.generate_key().decode())
-    monkeypatch.setattr(probe, "encryption_service", EncryptionService())
+    monkeypatch.setattr(support, "encryption_service", EncryptionService())
     cache = TokenCache()
     monkeypatch.setattr(probe, "token_cache", cache)
     with Session(engine) as session:
@@ -424,10 +425,10 @@ async def test_network_error_and_total_deadline_are_sanitized(environment, monke
 
 @pytest.mark.asyncio
 async def test_concurrent_operator_probe_is_rejected_and_gate_recovers(environment):
-    async with probe._gate:
+    async with support.gate:
         report = await run(request(), lambda r: pytest.fail("Busy probe issued request"))
     assert report["outcome"] == "busy"
-    assert not probe._gate.locked()
+    assert not support.gate.locked()
 
 
 @pytest.mark.asyncio
@@ -514,7 +515,7 @@ async def test_cancelled_probe_closes_stream_and_releases_admission(environment)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await asyncio.wait_for(task, timeout=1)
-    assert stream.closed and not probe._gate.locked()
+    assert stream.closed and not support.gate.locked()
 
 
 @pytest.mark.asyncio
@@ -592,7 +593,7 @@ async def seed_keychain(environment, monkeypatch, blocked=None):
                 origin=origin,
                 account_id=ACCOUNT,
                 generation=1,
-                payload_encrypted=probe.encryption_service.encrypt_json(
+                payload_encrypted=support.encryption_service.encrypt_json(
                     {"tokens": {"oauth_token": "fixture-access", "oauth_read_only": "1"}}
                 ),
             )
@@ -656,7 +657,7 @@ async def test_blocked_authority_thread_cannot_defeat_deadline_or_publish_late(
     started = threading.Event()
     release = threading.Event()
     finished = threading.Event()
-    original = probe._authority_read
+    original = support.authority_read
 
     def slow(*args):
         started.set()
@@ -666,7 +667,7 @@ async def test_blocked_authority_thread_cannot_defeat_deadline_or_publish_late(
         finally:
             finished.set()
 
-    monkeypatch.setattr(probe, "_authority_read", slow)
+    monkeypatch.setattr(support, "authority_read", slow)
     monkeypatch.setattr(probe, "TOTAL_TIMEOUT", 0.03)
     try:
         result = await asyncio.wait_for(
@@ -677,7 +678,7 @@ async def test_blocked_authority_thread_cannot_defeat_deadline_or_publish_late(
             0.3,
         )
         assert started.is_set() and result["outcome"] == "timeout"
-        assert result["observations"] == [] and not probe._gate.locked()
+        assert result["observations"] == [] and not support.gate.locked()
         assert result["format_version"] == version
         if version == 2:
             assert result["structure"]["events"] == 0
@@ -762,7 +763,7 @@ async def test_history_sink_rejects_unsafe_identifier_even_for_internal_callers(
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(lambda r: pytest.fail("Unsafe path reached HTTP"))
     ) as client:
-        attempt = probe._Probe(request(), client)
+        attempt = probe.Probe(request(), client)
         with pytest.raises(probe.ProbeError, match="^unsupported_contract$"):
             await attempt.history("../other?private", {})
 

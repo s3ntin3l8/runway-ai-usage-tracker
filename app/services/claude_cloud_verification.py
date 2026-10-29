@@ -21,6 +21,7 @@ from app.models.claude_cloud_verification import (
     VerificationState,
 )
 from app.services import claude_cloud_probe as probe
+from app.services import claude_cloud_support as support
 from app.services.claude_cloud_checkpoints import CheckpointError, CheckpointStore, Claim
 from app.services.claude_cloud_ledger import (
     compare_subagent_records,
@@ -67,7 +68,7 @@ def _verification_page(payload: object, limit: int) -> tuple[list[dict[str, Any]
             raise probe.ProbeError("unsupported_contract")
         if "next_cursor" not in payload:
             payload = {**payload, "next_cursor": None}
-    rows, cursor = probe._page(payload, limit)
+    rows, cursor = probe.page(payload, limit)
     if (
         isinstance(payload, dict)
         and "has_more" in payload
@@ -77,7 +78,7 @@ def _verification_page(payload: object, limit: int) -> tuple[list[dict[str, Any]
     return rows, cursor
 
 
-def _source_digest(key: bytes, source: tuple[Any, ...]) -> str:
+def source_digest(key: bytes, source: tuple[Any, ...]) -> str:
     return _digest(key, b"source", source)
 
 
@@ -88,14 +89,14 @@ async def start_verification(body: VerificationStart, store: CheckpointStore) ->
     if await asyncio.to_thread(store.current_handle) is not None:
         raise CheckpointError("job_exists")
     account = probe.canonical_account_id(body.account_id)
-    source = await probe._load_source(account, body.source_id)
+    source = await probe.load_source(account, body.source_id)
     key = bytes.fromhex(body.job_key) if body.job_key is not None else secrets.token_bytes(32)
     created = store.clock()
     state = VerificationState(
         account_id=account,
         source_id=body.source_id,
         job_key=key.hex(),
-        source_digest=_source_digest(key, source),
+        source_digest=source_digest(key, source),
         created_at=created,
         deadline=created + 1800,
         organization=body.organization_id,
@@ -114,8 +115,8 @@ async def read_verification(handle: str, store: CheckpointStore) -> Verification
     """
     state = await asyncio.to_thread(store.snapshot, handle)
     try:
-        source = await probe._load_source(state.account_id, state.source_id)
-        if _source_digest(bytes.fromhex(state.job_key), source) == state.source_digest:
+        source = await probe.load_source(state.account_id, state.source_id)
+        if source_digest(bytes.fromhex(state.job_key), source) == state.source_digest:
             return state
     except (probe.ProbeError, SQLAlchemyError):
         # Authority is unavailable: suppress the projection below, without writing a lease.
@@ -130,7 +131,7 @@ async def read_verification(handle: str, store: CheckpointStore) -> Verification
     )
 
 
-class _VerificationProbe(probe._Probe):
+class _VerificationProbe(probe.Probe):
     def __init__(self, claim: Claim, store: CheckpointStore, client: httpx.AsyncClient):
         self.claim = claim
         self.store = store
@@ -177,8 +178,8 @@ class _VerificationProbe(probe._Probe):
         if path == "/api/oauth/profile" and isinstance(value, dict):
             holder, org = value.get("account"), value.get("organization")
             self.profile_ids = (
-                probe._uuid(holder.get("uuid")) if isinstance(holder, dict) else None,
-                probe._uuid(org.get("uuid")) if isinstance(org, dict) else None,
+                support.strict_uuid(holder.get("uuid")) if isinstance(holder, dict) else None,
+                support.strict_uuid(org.get("uuid")) if isinstance(org, dict) else None,
             )
         return value
 
@@ -243,7 +244,7 @@ class _VerificationProbe(probe._Probe):
                 await self.get("/v1/code/sessions", headers, params), 20
             )
             ids = [row.get("id") for row in rows]
-            if any(not isinstance(sid, str) or not probe._SESSION_ID.fullmatch(sid) for sid in ids):
+            if any(not isinstance(sid, str) or not probe.SESSION_ID.fullmatch(sid) for sid in ids):
                 raise probe.ProbeError("unsupported_contract")
             digests = [_digest(self.key, b"listed-session", sid) for sid in ids]
             if len(set(digests)) != len(digests) or set(digests).intersection(
@@ -331,7 +332,7 @@ class _VerificationProbe(probe._Probe):
 
     async def history_page(self, headers: dict[str, str]) -> None:
         sid = self.state.selected_session
-        if sid is None or not probe._SESSION_ID.fullmatch(sid):
+        if sid is None or not probe.SESSION_ID.fullmatch(sid):
             raise probe.ProbeError("unsupported_contract")
         params: dict[str, Any] = {"limit": 50, "sort_order": "asc"}
         if self.state.next_cursor is not None:
@@ -381,9 +382,9 @@ async def advance_verification(
     handle: str, store: CheckpointStore, client: httpx.AsyncClient
 ) -> VerificationState:
     """One bounded batch. A terminal/interrupted job cannot issue another GET."""
-    if probe._gate.locked():
+    if support.gate.locked():
         raise CheckpointError("busy")
-    async with probe._gate:
+    async with support.gate:
         try:
             claim = await asyncio.to_thread(store.claim, handle)
         except CheckpointError as exc:
@@ -399,13 +400,13 @@ async def advance_verification(
                     min(probe.TOTAL_TIMEOUT, max(0, claim.state.deadline - store.clock()))
                 ):
                     try:
-                        source = await probe._load_source(
+                        source = await probe.load_source(
                             claim.state.account_id, claim.state.source_id
                         )
                     except probe.ProbeError:
                         raise probe.ProbeError("source_changed") from None
                     if (
-                        _source_digest(bytes.fromhex(claim.state.job_key), source)
+                        source_digest(bytes.fromhex(claim.state.job_key), source)
                         != claim.state.source_digest
                     ):
                         raise probe.ProbeError("source_changed")

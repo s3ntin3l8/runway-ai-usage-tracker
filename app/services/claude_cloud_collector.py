@@ -6,7 +6,7 @@ transcript, but their list row can carry ``external_metadata.usage``. This colle
 session list with the cached Claude Code login, keeps the last block it saw per session, and
 writes only the increase since the previous sweep as ``usage_events``.
 
-It reuses the verifier's read-only plumbing (``claude_cloud_probe._Probe``): exact cached
+It reuses the verifier's read-only plumbing (``claude_cloud_probe.Probe``): exact cached
 source, Code provenance, no refresh, account and organization checks, fixed host, bounded
 responses. Bridge rows are skipped, so local scraping is never double counted. The block has no
 per-turn timing, so an increase is dated by the row's ``updated_at`` (or the sweep time).
@@ -38,6 +38,7 @@ from app.models.claude_cloud_probe import ClaudeCloudProbeRequest
 from app.models.db import ClaudeCloudCollectorState, ClaudeCloudSessionUsage
 from app.models.schemas import UsageEventPush
 from app.services import claude_cloud_probe as probe
+from app.services import claude_cloud_support as support
 from app.services.credential_sources import describe_origin_full
 from app.services.event_ingestor import EventIngestor
 from app.services.model_normalization import normalize_anthropic_model
@@ -141,7 +142,7 @@ def usage_delta(
     return delta, False
 
 
-class _CollectorProbe(probe._Probe):
+class _CollectorProbe(probe.Probe):
     def __init__(self, account: str, source_id: str, client: httpx.AsyncClient):
         request = SimpleNamespace(
             account_id=account,
@@ -156,7 +157,7 @@ class _CollectorProbe(probe._Probe):
     async def get(self, *args: Any, **kwargs: Any) -> Any:
         # The endpoint lock is held per request, so a sweep never turns an operator-triggered
         # probe or verification away for longer than one page.
-        async with probe._gate:
+        async with support.gate:
             return await super().get(*args, **kwargs)
 
 
@@ -183,13 +184,13 @@ async def _sweep(
         attempt.report["stage"] = "page_get"
         payload = await attempt.get("/v1/code/sessions", headers, params)
         attempt.report["stage"] = "page_shape"
-        rows, cursor = probe._page(payload, PAGE_LIMIT)
+        rows, cursor = probe.page(payload, PAGE_LIMIT)
         report.pages += 1
         report.listed += len(rows)
         already_processed = bool(rows) and high_water is not None
         for row in rows:
             sid = row.get("id")
-            if not isinstance(sid, str) or not probe._SESSION_ID.fullmatch(sid):
+            if not isinstance(sid, str) or not probe.SESSION_ID.fullmatch(sid):
                 attempt.report["stage"] = "row_id"
                 raise probe.ProbeError("unsupported_contract")
             if sid in listed_ids:
@@ -346,7 +347,7 @@ async def _read(
     """The network half of a sweep; sets ``report.outcome`` and returns None on failure."""
     try:
         async with asyncio.timeout(CYCLE_TIMEOUT):
-            attempt.tokens, attempt.expected_org, attempt.authority = await probe._load_source(
+            attempt.tokens, attempt.expected_org, attempt.authority = await probe.load_source(
                 attempt.account, source_id
             )
             async with probe.token_cache.using_source("anthropic", attempt.account, source_id):
@@ -384,7 +385,7 @@ def _record(account: str, outcome: str, now: float) -> None:
 async def collect_account(account: str, source_id: str, client: httpx.AsyncClient) -> CycleReport:
     """One bounded sweep for one account through one exact cached source."""
     report = CycleReport()
-    if probe._gate.locked():
+    if support.gate.locked():
         # An operator-triggered probe or verification holds the endpoint: add no load.
         report.outcome = "busy"
         return report
