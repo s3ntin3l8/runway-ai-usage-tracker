@@ -60,7 +60,8 @@ def test_detect_ignores_the_old_state_tables(session):
 def test_plan_is_read_only_and_asks_for_confirmation(session):
     _with_id(session, f"cloud:{DIGEST}:1")
     plan = CloudCoarseEventsCheck().plan(session, GROUP_KEY, {})
-    assert plan.counts["events"] == 1 and plan.confirmation_text
+    assert plan.counts["events"] == 1 and "windows_to_rebuild" in plan.counts
+    assert plan.confirmation_text
     assert len(session.exec(select(UsageEvent)).all()) == 1
 
 

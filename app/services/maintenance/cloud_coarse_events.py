@@ -11,10 +11,12 @@ The collector's two state tables are deliberately left alone. They are create-on
 once the replacement is in place, and clearing them while the first collector is still scheduled would
 reset its delta baseline and bill every session again.
 
-Every write is chunked and committed per batch (`_chunked_sql`). The derived tables are then repaired
-*unconditionally*: apply rebuilds the Anthropic rollups and closed windows from the events that remain,
-whether or not this run deleted anything, so a run that died between the delete and the repair is
-finished by running apply again.
+Every write is chunked and committed per batch (`_chunked_sql`). The rollups are then rebuilt from the
+events that remain, *whether or not this run deleted anything*, so a run that died between the delete and
+the repair is finished by applying again. Closed windows are rebuilt only for the accounts and time
+range of the events this run removed: a window replay drops any window that cannot be rebuilt from
+events, so it must not touch windows the removal did not reach. That range is known only to the run
+that deleted (a rerun after an interruption repairs rollups but not windows).
 """
 
 from __future__ import annotations
@@ -29,7 +31,7 @@ from app.core.date_utils import parse_iso8601_utc
 from app.models.db import UsageEvent, UsagePeriodRollup, UsageWindow
 from app.services.maintenance._chunked_sql import chunked_delete
 from app.services.maintenance.rollups import rebuild_rollups_for_pairs
-from app.services.maintenance.windows import rebuild_windows_for_providers
+from app.services.maintenance.windows import rebuild_windows_overlapping
 
 PROVIDER_ID = "anthropic"
 ENTRYPOINT = "cloud"
@@ -54,8 +56,10 @@ class CoarsePlan:
     tokens_output: int = 0
     tokens_cache_read: int = 0
     tokens_cache_create: int = 0
+    windows: int = 0
     ts_min: datetime | None = None
     ts_max: datetime | None = None
+    accounts: list[str] = field(default_factory=list)
     samples: list[str] = field(default_factory=list)
 
 
@@ -90,7 +94,19 @@ def plan_cloud_coarse_events(session: Session, *, sample_size: int = 5) -> Coars
         select(func.min(UsageEvent.ts), func.max(UsageEvent.ts)).where(*where)
     ).one()
     samples: list[str] = []
+    accounts: list[str] = []
+    windows = 0
+    first_ts, last_ts = _moment(first), _moment(last)
     if events:
+        accounts = sorted(
+            session.exec(select(UsageEvent.account_id).where(*where).distinct()).all()
+        )
+        if first_ts is not None and last_ts is not None:
+            windows = session.exec(
+                select(func.count())
+                .select_from(UsageWindow)
+                .where(*_window_where(accounts, first_ts, last_ts))
+            ).one()
         samples = list(
             session.exec(
                 select(UsageEvent.event_id)
@@ -106,10 +122,23 @@ def plan_cloud_coarse_events(session: Session, *, sample_size: int = 5) -> Coars
         tokens_output=int(t_out),
         tokens_cache_read=int(t_read),
         tokens_cache_create=int(t_create),
-        ts_min=_moment(first),
-        ts_max=_moment(last),
+        windows=windows,
+        ts_min=first_ts,
+        ts_max=last_ts,
+        accounts=accounts,
         samples=samples,
     )
+
+
+def _window_where(
+    accounts: list[str], ts_min: datetime, ts_max: datetime
+) -> list[ColumnElement[bool]]:
+    return [
+        col(UsageWindow.provider_id) == PROVIDER_ID,
+        col(UsageWindow.account_id).in_(accounts),
+        col(UsageWindow.window_start) <= ts_max,
+        col(UsageWindow.window_end) > ts_min,
+    ]
 
 
 def _derived_pairs(session: Session) -> set[tuple[str, str]]:
@@ -130,8 +159,8 @@ def _derived_pairs(session: Session) -> set[tuple[str, str]]:
 def apply_cloud_coarse_events(session: Session) -> CoarseResult:
     """Remove the coarse events, then repair what derives from them.
 
-    The repair runs on every call, not only when events were deleted: apply is resumable, and a run
-    that stopped after the delete leaves rollups and windows that still count the removed events.
+    Rollups are repaired on every call (an interrupted run is finished by applying again); closed
+    windows only for the range this run removed (see the module docstring).
     """
     plan = plan_cloud_coarse_events(session)
     result = CoarseResult()
@@ -144,5 +173,12 @@ def apply_cloud_coarse_events(session: Session) -> CoarseResult:
         rebuild_rollups_for_pairs(session, pairs)
         result.rollup_pairs_rebuilt = len(pairs)
         session.commit()
-        result.windows_rebuilt = rebuild_windows_for_providers(session, [PROVIDER_ID])
+    if plan.events and plan.ts_min is not None and plan.ts_max is not None:
+        result.windows_rebuilt = rebuild_windows_overlapping(
+            session,
+            provider_id=PROVIDER_ID,
+            account_ids=plan.accounts,
+            ts_min=plan.ts_min,
+            ts_max=plan.ts_max,
+        )
     return result

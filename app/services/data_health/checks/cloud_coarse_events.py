@@ -77,11 +77,13 @@ class CloudCoarseEventsCheck(Check):
             check_id=self.id,
             group_key=group_key,
             summary=(
-                f"Remove {plan.events} coarse cloud usage event(s); rollups and windows are rebuilt"
+                f"Remove {plan.events} coarse cloud usage event(s); the Anthropic rollups and "
+                f"{plan.windows} closed window(s) are rebuilt"
             ),
             counts={
                 "events": plan.events,
                 "sessions": plan.sessions,
+                "windows_to_rebuild": plan.windows,
                 "tokens_input": plan.tokens_input,
                 "tokens_output": plan.tokens_output,
                 "tokens_cache_read": plan.tokens_cache_read,

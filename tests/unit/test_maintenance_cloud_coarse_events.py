@@ -170,11 +170,10 @@ def test_a_closed_window_follows_the_remaining_events_and_keeps_its_gauge():
     assert window.limit_value == 100.0 and window.pct_used == 42.0
 
 
-def test_a_run_that_stopped_after_the_delete_is_finished_by_running_apply_again():
+def test_a_run_that_stopped_after_the_delete_has_its_rollups_repaired_by_running_apply_again():
     session = _session()
     _seed(session)
-    _closed_window(session)
-    # Simulate the crash: the events are gone, the rollups and the window still count them.
+    # Simulate the crash: the events are gone, the rollups still count them.
     coarse = [f"cloud:{DIGEST}:1", f"cloud:{DIGEST}:2", f"cloud:{'b' * 32}:1"]
     session.exec(delete(UsageEvent).where(col(UsageEvent.event_id).in_(coarse)))  # type: ignore[call-overload]
     session.commit()
@@ -190,10 +189,49 @@ def test_a_run_that_stopped_after_the_delete_is_finished_by_running_apply_again(
         )
     ).one()
     assert lifetime.msgs == 3
-    window = session.exec(
-        select(UsageWindow).where(UsageWindow.model_id == "", UsageWindow.sidecar_id == "")
-    ).one()
-    assert window.msgs == 3
+
+
+def test_a_closed_window_without_events_is_left_alone_when_nothing_was_removed():
+    # A window replay drops any window it cannot rebuild from events; a run that removed nothing
+    # must not touch them (an archived gauge row can outlive its events).
+    session = _session()
+    _event(session, f"cloud:{DIGEST}:m:msg_1", ts=datetime(2026, 1, 5, tzinfo=UTC))
+    _closed_window(
+        session,
+        window_start=datetime(2026, 3, 2, tzinfo=UTC),
+        window_end=datetime(2026, 3, 9, tzinfo=UTC),
+        msgs=900,
+    )
+    result = apply_cloud_coarse_events(session)
+    assert result.windows_rebuilt == 0
+    window = session.exec(select(UsageWindow)).one()
+    assert window.msgs == 900 and window.limit_value == 100.0
+
+
+def test_a_window_outside_the_removed_range_is_not_rebuilt():
+    session = _session()
+    _seed(session)
+    _closed_window(
+        session,
+        window_start=datetime(2026, 3, 2, tzinfo=UTC),
+        window_end=datetime(2026, 3, 9, tzinfo=UTC),
+        msgs=900,
+    )
+    apply_cloud_coarse_events(session)
+    window = session.exec(select(UsageWindow)).one()
+    assert window.msgs == 900
+
+
+def test_plan_counts_the_windows_it_would_rebuild():
+    session = _session()
+    _seed(session)
+    _closed_window(session)  # the week of the events
+    _closed_window(
+        session,
+        window_start=datetime(2026, 3, 2, tzinfo=UTC),
+        window_end=datetime(2026, 3, 9, tzinfo=UTC),
+    )
+    assert plan_cloud_coarse_events(session).windows == 1
 
 
 def test_apply_with_nothing_to_remove_deletes_nothing():
