@@ -253,7 +253,6 @@ def test_page_has_one_compact_section_and_no_per_row_buttons(settings):
 
 
 def test_page_script_parses(settings):
-    import re
     import shutil
     import subprocess
     import tempfile
@@ -264,7 +263,8 @@ def test_page_script_parses(settings):
         pytest.skip("node is not installed")
     server, _config = settings
     html = send(server, "GET", "/")[1].decode()
-    script = re.findall(r"<script>(.*?)</script>", html, re.S)[-1]
+    # The page's own script is the last inline one; split on its tags rather than pattern-match HTML.
+    script = html.rsplit("<script>", 1)[1].split("</script>", 1)[0]
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "page.js"
         path.write_text(script, encoding="utf-8")

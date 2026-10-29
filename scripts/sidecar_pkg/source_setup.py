@@ -354,7 +354,7 @@ class SetupController:
                         and self._verify(source_id, ticket)
                     )
                 except Exception:
-                    pass
+                    pass  # Never expose native/subprocess diagnostic text.
                 self._finish(source_id, ticket, success)
             with self._lock:
                 batch["done"] += 1
