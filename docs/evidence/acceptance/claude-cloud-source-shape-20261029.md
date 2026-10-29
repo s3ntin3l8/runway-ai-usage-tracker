@@ -107,8 +107,8 @@ One cloud session (`eeee6b`, 21 turns) split at its `result` records, comparing 
 `result.usage`, and the per-turn `modelUsage` delta (all models):
 - Per turn, the summed assistant messages equal `result.usage` exactly for cache reads in 19 of 21
   turns. `result.usage` is the main loop only.
-- `modelUsage` is larger than both in 13 of 21 turns, by a recurring 240-280k cache reads and about
-  10-20 output tokens per turn from the second turn on. That is one extra call per turn that reads the
+- `modelUsage` is larger than both in 13 of 21 turns, by a recurring 190-280k cache reads and about
+  10-20 output tokens per turn in the later turns. That is one extra call per turn that reads the
   whole cached context and writes a few tokens, which matches the `prompt_suggestion` and
   `post_turn_summary` records in the history. Those calls are not assistant messages.
 - Totals for the session: cache reads 30.36M (messages), 28.16M (`result.usage`), 33.71M (`modelUsage`);
