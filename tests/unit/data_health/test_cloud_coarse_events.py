@@ -47,7 +47,7 @@ def test_detect_finds_the_first_collectors_events(session):
     assert report.total_count == 2
     group = report.groups[0]
     assert group.key == GROUP_KEY and group.fixable
-    assert group.detail == {"events": 2, "sessions": 1}
+    assert group.detail == {"events": 2, "sessions": 1, "windows": 0}
     assert {s.label for s in group.samples} == {f"cloud:{DIGEST}:1", f"cloud:{DIGEST}:2"}
 
 
@@ -70,5 +70,6 @@ def test_apply_removes_the_events(session):
     keep_id = _with_id(session, f"cloud:{DIGEST}:m:msg_1").event_id
     result, hooks = CloudCoarseEventsCheck().apply(session, GROUP_KEY, {})
     assert hooks == [] and result.counts["events_deleted"] == 1
+    assert result.counts["removed_from"] and result.counts["removed_to"]
     assert [e.event_id for e in session.exec(select(UsageEvent))] == [keep_id]
     assert CloudCoarseEventsCheck().detect(session).total_count == 0

@@ -65,6 +65,7 @@ class CloudCoarseEventsCheck(Check):
             detail={
                 "events": plan.events,
                 "sessions": plan.sessions,
+                "windows": plan.windows,
             },
         )
         return CheckReport(
@@ -108,6 +109,8 @@ class CloudCoarseEventsCheck(Check):
                     "events_deleted": result.events_deleted,
                     "rollup_pairs_rebuilt": result.rollup_pairs_rebuilt,
                     "windows_rebuilt": result.windows_rebuilt,
+                    "removed_from": result.ts_min.isoformat() if result.ts_min else None,
+                    "removed_to": result.ts_max.isoformat() if result.ts_max else None,
                 },
             ),
             [],

@@ -234,6 +234,34 @@ def test_plan_counts_the_windows_it_would_rebuild():
     assert plan_cloud_coarse_events(session).windows == 1
 
 
+def test_a_replayed_window_range_rebuilds_windows_after_an_interrupted_run():
+    session = _session()
+    _seed(session)
+    _closed_window(session)
+    coarse = [f"cloud:{DIGEST}:1", f"cloud:{DIGEST}:2", f"cloud:{'b' * 32}:1"]
+    session.exec(delete(UsageEvent).where(col(UsageEvent.event_id).in_(coarse)))  # type: ignore[call-overload]
+    session.commit()
+    untouched = apply_cloud_coarse_events(session)
+    assert untouched.windows_rebuilt == 0
+    assert session.exec(select(UsageWindow)).one().msgs == 7  # still counting the removed events
+    replayed = apply_cloud_coarse_events(
+        session,
+        windows_range=(datetime(2026, 9, 24, tzinfo=UTC), datetime(2026, 9, 25, tzinfo=UTC)),
+    )
+    assert replayed.windows_rebuilt >= 1
+    window = session.exec(
+        select(UsageWindow).where(UsageWindow.model_id == "", UsageWindow.sidecar_id == "")
+    ).one()
+    assert window.msgs == 3
+
+
+def test_apply_reports_the_range_it_removed():
+    session = _session()
+    _seed(session)
+    result = apply_cloud_coarse_events(session)
+    assert result.ts_min is not None and result.ts_max is not None
+
+
 def test_apply_with_nothing_to_remove_deletes_nothing():
     session = _session()
     _event(session, f"cloud:{DIGEST}:m:msg_1")

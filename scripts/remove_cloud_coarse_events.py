@@ -14,6 +14,12 @@ Run with the server stopped (SQLite is single-writer), or use the Data Health pa
 
   APP_HOST=127.0.0.1 python scripts/remove_cloud_coarse_events.py            # report only
   APP_HOST=127.0.0.1 python scripts/remove_cloud_coarse_events.py --apply
+
+The run prints the time range of the events it removed. If it was interrupted after the delete, the
+rollups are repaired by running it again; to replay the window rebuild too, pass that range:
+
+  APP_HOST=127.0.0.1 python scripts/remove_cloud_coarse_events.py --apply \
+      --windows-from 2026-09-24T00:00:00+00:00 --windows-to 2026-10-28T23:59:59+00:00
 """
 
 from __future__ import annotations
@@ -29,6 +35,7 @@ if str(_REPO_ROOT) not in sys.path:
 from sqlmodel import Session  # noqa: E402
 
 from app.core.console import force_utf8_console  # noqa: E402
+from app.core.date_utils import parse_iso8601_utc  # noqa: E402
 from app.core.db import engine, init_db  # noqa: E402
 from app.services.maintenance.cloud_coarse_events import (  # noqa: E402
     apply_cloud_coarse_events,
@@ -54,7 +61,18 @@ def main() -> None:
         if not args.apply:
             print("\nReport only; pass --apply to remove them.", flush=True)
             return
-        result = apply_cloud_coarse_events(session)
+        windows_range = None
+        if args.windows_from and args.windows_to:
+            windows_range = (
+                parse_iso8601_utc(args.windows_from),
+                parse_iso8601_utc(args.windows_to),
+            )
+        result = apply_cloud_coarse_events(session, windows_range=windows_range)
+    if result.ts_min and result.ts_max:
+        print(
+            f"\nRemoved events spanned {result.ts_min.isoformat()} to {result.ts_max.isoformat()}.",
+            flush=True,
+        )
     print(
         f"\nDone: removed {result.events_deleted:,} event(s); rebuilt "
         f"{result.rollup_pairs_rebuilt:,} rollup pair(s) and {result.windows_rebuilt:,} window(s). "

@@ -16,7 +16,8 @@ events that remain, *whether or not this run deleted anything*, so a run that di
 the repair is finished by applying again. Closed windows are rebuilt only for the accounts and time
 range of the events this run removed: a window replay drops any window that cannot be rebuilt from
 events, so it must not touch windows the removal did not reach. That range is known only to the run
-that deleted (a rerun after an interruption repairs rollups but not windows).
+that deleted (a rerun after an interruption repairs rollups but not windows); the script prints that
+range and takes it back (``--windows-from`` / ``--windows-to``) to replay the window rebuild.
 """
 
 from __future__ import annotations
@@ -68,6 +69,8 @@ class CoarseResult:
     events_deleted: int = 0
     rollup_pairs_rebuilt: int = 0
     windows_rebuilt: int = 0
+    ts_min: datetime | None = None
+    ts_max: datetime | None = None
 
 
 def _moment(value: object) -> datetime | None:
@@ -156,14 +159,17 @@ def _derived_pairs(session: Session) -> set[tuple[str, str]]:
     return pairs
 
 
-def apply_cloud_coarse_events(session: Session) -> CoarseResult:
+def apply_cloud_coarse_events(
+    session: Session, *, windows_range: tuple[datetime, datetime] | None = None
+) -> CoarseResult:
     """Remove the coarse events, then repair what derives from them.
 
     Rollups are repaired on every call (an interrupted run is finished by applying again); closed
-    windows only for the range this run removed (see the module docstring).
+    windows only for the range this run removed (see the module docstring), or for
+    ``windows_range`` when a caller replays that step of an interrupted run.
     """
     plan = plan_cloud_coarse_events(session)
-    result = CoarseResult()
+    result = CoarseResult(ts_min=plan.ts_min, ts_max=plan.ts_max)
     if plan.events:
         result.events_deleted = chunked_delete(session, UsageEvent, coarse_event_where())
     # Pairs come from every derived table too, so one whose events are all gone still has its
@@ -174,11 +180,18 @@ def apply_cloud_coarse_events(session: Session) -> CoarseResult:
         result.rollup_pairs_rebuilt = len(pairs)
         session.commit()
     if plan.events and plan.ts_min is not None and plan.ts_max is not None:
+        window_start, window_end, accounts = plan.ts_min, plan.ts_max, plan.accounts
+    elif windows_range is not None:
+        window_start, window_end = windows_range
+        accounts = sorted({account for _, account in pairs})
+    else:
+        return result
+    if accounts:
         result.windows_rebuilt = rebuild_windows_overlapping(
             session,
             provider_id=PROVIDER_ID,
-            account_ids=plan.accounts,
-            ts_min=plan.ts_min,
-            ts_max=plan.ts_max,
+            account_ids=accounts,
+            ts_min=window_start,
+            ts_max=window_end,
         )
     return result
