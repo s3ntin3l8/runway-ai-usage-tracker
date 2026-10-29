@@ -480,26 +480,39 @@ async def test_a_turn_longer_than_the_budget_gets_a_larger_one(environment, monk
 
 
 @pytest.mark.asyncio
-async def test_a_stalled_session_never_exceeds_the_request_cap(environment, monkeypatch):
+async def test_a_turn_longer_than_the_request_cap_is_skipped_not_reread_forever(
+    environment, monkeypatch
+):
     records = [system(1)]
     for index in range(2, 42):
         records.append(assistant(index, f"long{index}", inp=1, out=1, read=10))
     records.append(
         result(42, {OPUS: {"inputTokens": 40, "outputTokens": 40, "cacheReadInputTokens": 400}})
     )
-    monkeypatch.setattr(collector, "HISTORY_PAGES_PER_CYCLE", 2)
-    monkeypatch.setattr(collector, "REQUESTS_PER_CYCLE", 20)
+    # The turn needs 14 pages; the cap allows far fewer, so it can never close within a cycle.
+    monkeypatch.setattr(collector, "HISTORY_PAGES_PER_CYCLE", 1)
+    monkeypatch.setattr(collector, "REQUESTS_PER_CYCLE", 6)
+    monkeypatch.setattr(collector, "MAX_STALL_FACTOR", 3)
     server = Server([cloud_row()], {SECRET_ID: records}, page=3)
-    finished = False
-    for _ in range(12):
+    skipped = None
+    for number in range(1, 8):
         server.calls.clear()
         report = await cycle(server)
-        # Identity (profile) is not counted in `calls`; the cap counts every request of the cycle.
+        # The profile request is not in `calls`; the cap counts every request of the cycle.
         assert len(server.calls) + 1 <= collector.REQUESTS_PER_CYCLE
-        if report.outcome == "ok":
-            finished = True
+        if "stalled_turn_skipped" in report.notes:
+            skipped = number
+            assert not report.backlog and report.outcome == "ok"
             break
-    assert finished  # the escalation still gets the long turn closed within the cap
+    assert skipped == 3  # budgets 1, 2, 3 pages, then the terminal state
+    assert events(environment) == []
+    # Until the session changes again it is not read at all.
+    server.calls.clear()
+    quiet = await cycle(server)
+    assert quiet.sessions_read == 0 and server.history_calls() == []
+    server.rows[0]["last_event_at"] = "2026-09-25T00:00:00Z"
+    again = await cycle(server)
+    assert server.history_calls() and "stalled_turn_skipped" not in again.notes
 
 
 @pytest.mark.asyncio

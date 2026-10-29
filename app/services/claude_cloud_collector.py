@@ -505,11 +505,24 @@ async def _read_session(
         if next_cursor is None:
             break
         if used >= pages_left:
+            report.stats.update({k: v for k, v in reducer.stats.items() if k != "turns"})
+            stalls = 0 if closed_any else checkpoint.stalls + 1
+            if stalls >= MAX_STALL_FACTOR:
+                # No turn closed even with the largest budget: this one is longer than a cycle can
+                # read, and re-reading it every cycle would starve the account. Skip the session
+                # until it changes again (its last_event_at is recorded as handled) and say so.
+                report.notes.append("stalled_turn_skipped")
+                await _commit_async(
+                    account,
+                    row.digest,
+                    [],
+                    {"stalls": 0, "last_event_at": row.last_event_raw, "open_tail": False},
+                    None,
+                )
+                return used
             # Out of budget with the history unfinished: keep what is committed and come back soon.
             report.backlog = True
-            stalls = 0 if closed_any else checkpoint.stalls + 1
             await _commit_async(account, row.digest, [], {"stalls": stalls}, None)
-            report.stats.update({k: v for k, v in reducer.stats.items() if k != "turns"})
             return used
         cursor = next_cursor
         await asyncio.sleep(PAGE_PAUSE)
@@ -559,8 +572,6 @@ async def _sync(attempt: _CollectorProbe, headers: dict[str, str], report: Cycle
             # A session that could not close a turn within the usual budget gets a larger one,
             # but never more than the cycle's request cap.
             left = min(_page_budget(checkpoint), left)
-            if checkpoint.stalls >= MAX_STALL_FACTOR - 1:
-                report.notes.append("stalled_turn")
         else:
             left = min(_page_budget(checkpoint), HISTORY_PAGES_PER_CYCLE - pages_used, left)
         if left <= 0:
