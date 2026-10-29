@@ -126,6 +126,29 @@ def page(payload: object, limit: int) -> tuple[list[dict[str, Any]], str | None]
     return records, cursor
 
 
+def page_with_terminal_omission(
+    payload: object, limit: int
+) -> tuple[list[dict[str, Any]], str | None]:
+    """Follow supplied continuation, including optional terminal omission.
+
+    Page length never signals completion. A declared has_more must agree with
+    continuation; the legacy sample parser and diagnostic-v1 policy stay frozen.
+    """
+    if isinstance(payload, dict):
+        if "has_more" in payload and type(payload["has_more"]) is not bool:
+            raise ProbeError("unsupported_contract")
+        if "next_cursor" not in payload:
+            payload = {**payload, "next_cursor": None}
+    rows, cursor = page(payload, limit)
+    if (
+        isinstance(payload, dict)
+        and "has_more" in payload
+        and payload["has_more"] != (cursor is not None)
+    ):
+        raise ProbeError("unsupported_contract")
+    return rows, cursor
+
+
 class Probe:
     def __init__(
         self,

@@ -184,7 +184,7 @@ async def _sweep(
         attempt.report["stage"] = "page_get"
         payload = await attempt.get("/v1/code/sessions", headers, params)
         attempt.report["stage"] = "page_shape"
-        rows, cursor = probe.page(payload, PAGE_LIMIT)
+        rows, cursor = probe.page_with_terminal_omission(payload, PAGE_LIMIT)
         report.pages += 1
         report.listed += len(rows)
         already_processed = bool(rows) and high_water is not None
@@ -214,6 +214,10 @@ async def _sweep(
             if usage is not None:
                 observed.append(SessionObservation(sid, usage, read_model(row), updated))
         if cursor is None:
+            if len(rows) == PAGE_LIMIT:
+                # A full last page is ambiguous: the end of the list, or paging that stopped
+                # emitting cursors. The note lets the cycle log tell the two apart.
+                report.notes.append("full_last_page")
             return observed, newest, True, ordered
         # An early stop needs the pages read so far to be newest-first. Pages not yet read can
         # still disagree; the periodic full sweep (FULL_SWEEP_EVERY) is the backstop for that.
