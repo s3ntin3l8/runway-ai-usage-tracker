@@ -545,3 +545,27 @@ async def test_the_cycle_log_carries_the_step_and_a_recheck_failure_is_not_blame
     monkeypatch.setattr(collector._CollectorProbe, "check_source", rotated_after_sweep)
     report = await sweep(listing([[row(usage=block())]])[0])
     assert report.outcome == "source_changed" and report.detail == "recheck"
+
+
+@pytest.mark.asyncio
+async def test_a_last_page_without_next_cursor_ends_the_list(environment):
+    def upstream(request):
+        if request.url.path.endswith("/profile"):
+            return httpx.Response(200, json=profile())
+        if request.url.params.get("cursor"):
+            return httpx.Response(200, json={"data": [row("cse_second", usage=block())]})
+        return httpx.Response(200, json={"data": [row(usage=block())], "next_cursor": "page-2"})
+
+    report = await sweep(upstream)
+    assert report.outcome == "ok" and report.pages == 2 and report.cloud_sessions == 2
+
+
+@pytest.mark.asyncio
+async def test_has_more_must_agree_with_the_cursor(environment):
+    def upstream(request):
+        if request.url.path.endswith("/profile"):
+            return httpx.Response(200, json=profile())
+        return httpx.Response(200, json={"data": [row(usage=block())], "has_more": True})
+
+    report = await sweep(upstream)
+    assert report.outcome == "unsupported_contract" and report.detail == "page_shape"

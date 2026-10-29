@@ -249,6 +249,7 @@ reads them from `GET /v1/code/sessions`:
   session digest plus a revision, so a replay is a duplicate, never a second event. The API's
   `cost_usd` is not used; Runway prices the tokens itself.
 - The block has no per-turn timing: an increase is dated by the row's `updated_at`.
+- The session list is read page by page; the real API omits `next_cursor` on the last page, which the collector (like the verifier) treats as the end of the list. A declared `has_more` that disagrees with the cursor fails the sweep as `unsupported_contract`.
 - A block that shrinks writes nothing and is counted (`last_regressions`); a smaller block seen on two consecutive sweeps becomes the baseline (so the session counts again once it grows), while a one-sweep dip that recovers is never billed. A counter the API
   did not report stays unknown in the stored state, and feeds its event as 0.
 - After the first full sweep the collector stops paging once a page is entirely older than the
