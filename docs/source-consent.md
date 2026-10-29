@@ -34,12 +34,19 @@ renewed local source consent; it does not manufacture a new OS grant.
 
 ## Setup and local controls (#782)
 
-The local settings Sources section offers per-scraper Use Keychain controls,
-Enable all, Disable all and a separate Claude renewal control. Saving intent,
+The local settings Keychain scrapers section lists apps and CLIs one row each and the
+browser-cookie sources one row per service. A **Read from** selector chooses which
+browsers' cookie stores may be read (all three until one is unticked; unticking turns that
+browser's sources off, and ticking it again turns nothing on). It also offers Enable all, Disable
+all and a separate Claude renewal control. Saving intent,
 GET/status requests and background ticks never open permission UI. Only a local
-Authorize POST can launch the packaged foreground helper. One attempt runs at a
-time, has a deadline, selects an unambiguous exact existing item, and is followed
-by a fresh noninteractive worker check. Disabling or changing consent invalidates
+`authorize` or `authorize_all` POST can launch the packaged foreground helper.
+**Authorize all enabled** walks the sources that are on and not authorized yet, one Keychain
+item at a time: sources that read the same item (every service in one browser; Claude Desktop's
+OAuth token and session) share a single helper launch, and each source behind it is then
+verified on its own. It can be cancelled, which stops after the item being authorized. One attempt runs at a
+time (single-source and batch share the same flight), has a deadline, selects an unambiguous
+exact existing item, and is followed by a fresh noninteractive worker check. Disabling or changing consent invalidates
 late results and cancels a waiting foreground helper. No password is entered into
 the settings page, passed as an argument, sent, logged or retained.
 

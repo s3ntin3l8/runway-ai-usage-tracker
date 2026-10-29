@@ -470,9 +470,9 @@ it maps are the ones the token file maps, so both platforms push the same creden
 The entry's access list trusts only the application that wrote it, so the read needs the local
 consent the Sources UI provides:
 
-1. **Sources → Antigravity CLI → Use Keychain** — the source starts off; nothing is read until it
-   is granted.
-2. **Authorize** — raises the macOS "Runway wants to access 'gemini' in your keychain" prompt once.
+1. **Keychain scrapers → Antigravity CLI** — switch it on. The source starts off; nothing is read
+   until it is granted.
+2. **Authorize N enabled** — raises the macOS "Runway wants to access 'gemini' in your keychain" prompt once.
    Allowing it adds the sidecar to the entry's access list, after which the background read is
    silent; withdrawing the grant in Keychain Access stops it again. (The mechanism matches the
    worker the Claude Code credential uses, but it has not been run against this entry yet — see
