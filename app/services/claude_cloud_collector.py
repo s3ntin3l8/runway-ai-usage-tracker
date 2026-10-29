@@ -184,7 +184,6 @@ async def _sweep(
         payload = await attempt.get("/v1/code/sessions", headers, params)
         attempt.report["stage"] = "page_shape"
         rows, cursor = probe._page(payload, PAGE_LIMIT)
-        attempt.report["stage"] = "rows"
         report.pages += 1
         report.listed += len(rows)
         already_processed = bool(rows) and high_water is not None

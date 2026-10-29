@@ -534,13 +534,11 @@ async def test_the_cycle_log_carries_the_step_and_a_recheck_failure_is_not_blame
     assert ":unsupported_contract/row_duplicate" in caplog.text
 
     caplog.clear()
-    calls = {"n": 0}
     real = collector._CollectorProbe.check_source
 
     async def rotated_after_sweep(self):
-        calls["n"] += 1
         if self.report.get("stage") == "recheck":
-            raise collector.probe.ProbeError("source_changed")
+            raise probe.ProbeError("source_changed")
         await real(self)
 
     monkeypatch.setattr(collector._CollectorProbe, "check_source", rotated_after_sweep)
