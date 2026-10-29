@@ -54,6 +54,7 @@ Remove rows that should not exist any more.
 | `cleanup_minimax_monthly_cards.py` | The stale MiniMax "monthly" gauge cards. |
 | `cleanup_opencode_free_card.py` | The stale OpenCode "rolling free" gauge card. |
 | `cleanup_opencode_kimi_card.py` | The stale OpenCode-derived Kimi Coding gauge card. |
+| `remove_cloud_coarse_events.py` | The first Claude cloud-runner collector's coarse usage events (report only unless `--apply`), then rebuilds the Anthropic rollups and the closed windows that overlapped them; the `cloud_coarse_events` Data Health check runs the same repair. |
 
 ## Merges and collapses
 
