@@ -270,7 +270,7 @@ their history. The rules are specified in
 - **Budgets.** Per cycle at most 40 history pages and, always, 200 requests; a session that could not close a
   turn within its pages gets a larger page budget next time (never beyond the request cap; a turn longer
   than that is skipped until the session changes again and reported as `stalled_turn_skipped`), and while work is left the next cycle runs
-  after 120 s instead of the interval, reusing the unfinished sessions instead of listing again. Logs carry counts and fixed labels only.
+  after 120 s instead of the interval, reusing the unfinished sessions instead of listing again. The 120 s pace also holds when a cycle cannot see its login (`source_ineligible`) while sessions are still pending, but only for `MAX_UNREAD_CATCH_UPS` (3) such cycles in a row that read nothing; after that the interval applies until a cycle reads again, and the collector logs `unread_catch_up_capped` once when it falls back. Logs carry counts and fixed labels only.
 - **Migration.** While events of the first (coarse) collector exist (`cloud:<digest>:<n>` ids) the
   cycle writes nothing and reports `migration_required`; the `cloud_coarse_events` Data Health fix
   removes them.
