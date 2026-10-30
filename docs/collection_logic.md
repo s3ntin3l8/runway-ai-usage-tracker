@@ -382,6 +382,25 @@ runtime store, including per-profile roots, kind `generated`, provider
 scheduling id `minimax_code` and under `minimax`. A background-task session whose parent is in the
 store is skipped, because its events are filed under the parent.
 
+Codex (`parse_chatgpt_session_names`, provider `chatgpt`, source app `codex`):
+kind `agent`, from `threads.name` in `state_*.sqlite` under each Codex home
+(`CODEX_HOME` / `codex_home`, `~/.codex`, `~/.config/codex`), falling back to
+`thread_name` in `session_index.jsonl` when the column is empty. The session id
+is the stem of the thread's `rollout_path` (the id the events carry); without
+one it is the stem of the discovered rollout file ending in the thread id, and a
+thread with neither is skipped. The state DB is opened read-only. Codex's
+`title`, `preview` and `first_user_message` are the first prompt, i.e.
+conversation content, and are **never read for names**; `agent_nickname` is a
+subagent nickname, not a name.
+
+agy (`parse_antigravity_session_names`, provider `antigravity`, source app
+`antigravity`): kind `generated`, the non-empty `title` of
+`~/.gemini/antigravity-cli/conversation_summaries.db` keyed by
+`conversation_id` (read-only). Conversations without a title, parent or child,
+are skipped; a child with its own title is reported. agy's `preview` is
+conversation text and is **never read**; `agent_name` is a subagent name and is
+not used either.
+
 ## Implementation Notes
 
 - The strategy options dict carries exactly one key: `enrich`. There is no

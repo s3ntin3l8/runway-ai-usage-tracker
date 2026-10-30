@@ -3436,6 +3436,34 @@ def _collect_minimax_code_session_names(out: list[dict[str, Any]]) -> None:
     logging.debug("session names: minimax code, %d name(s) found", found)
 
 
+def _collect_codex_session_names(out: list[dict[str, Any]]) -> None:
+    """Names of Codex threads (``threads.name`` / ``session_index.jsonl``)."""
+    from scripts.sidecar_pkg.event_extractors.chatgpt import parse_chatgpt_session_names
+
+    homes = [
+        *custom_login_dirs("CODEX_HOME"),
+        Path(os.path.expanduser("~/.codex")),
+        Path(os.path.expanduser("~/.config/codex")),
+    ]
+    # custom_login_dirs does not drop the standard locations: scan each home once.
+    unique = list(dict.fromkeys(home.resolve() for home in homes if home.is_dir()))
+    records = parse_chatgpt_session_names(unique, _discover_codex_log_paths())
+    out.extend(records)
+    logging.debug("session names: %d codex name(s) found", len(records))
+
+
+def _collect_antigravity_session_names(out: list[dict[str, Any]]) -> None:
+    """Generated titles of agy conversations (``conversation_summaries.db``)."""
+    from scripts.sidecar_pkg.event_extractors.antigravity import parse_antigravity_session_names
+
+    summaries = Path(os.path.expanduser("~/.gemini/antigravity-cli/conversation_summaries.db"))
+    if not summaries.is_file():
+        return
+    records = parse_antigravity_session_names(summaries)
+    out.extend(records)
+    logging.debug("session names: %d agy title(s) found", len(records))
+
+
 #: provider_id -> ``collect(out)`` appending session-name records to ``out``
 #: (``{provider_id, session_id, source_app, name, kind}``). Run once per cycle
 #: right after that provider's events were extracted; see ``session_names.py``.
@@ -3447,6 +3475,8 @@ _SESSION_NAME_COLLECTORS: dict[str, Callable[[list[dict[str, Any]]], None]] = {
     # Also under the provider id, so a cycle targeted at ``minimax`` names its sessions too.
     # A cycle running both scans twice; ``select_for_push`` keeps the last record per key.
     "minimax": _collect_minimax_code_session_names,
+    "chatgpt": _collect_codex_session_names,
+    "antigravity": _collect_antigravity_session_names,
 }
 
 

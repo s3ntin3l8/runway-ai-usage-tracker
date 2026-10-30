@@ -30,6 +30,7 @@ import sqlite3
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(_REPO_ROOT) not in sys.path:
@@ -40,6 +41,7 @@ from app.models.schemas import UsageEventPush  # noqa: E402
 from app.services.model_normalization import (  # noqa: E402
     normalize_ag_model as _normalize_ag_model,
 )
+from scripts.sidecar_pkg import session_names  # noqa: E402
 from scripts.sidecar_pkg.sqlite_cursor import CursorReadError, iter_cursor  # noqa: E402
 
 # ── Dependency-free protobuf varint reader ────────────────────────────────────
@@ -290,3 +292,26 @@ def parse_antigravity_events(
             conn.close()
 
     return events
+
+
+def parse_antigravity_session_names(summaries_db: Path) -> list[dict[str, Any]]:
+    """Generated conversation titles from ``conversation_summaries.db``.
+
+    Only ``conversation_id`` and ``title`` are selected: ``preview`` is
+    conversation text and ``agent_name`` names a subagent, neither is a session
+    name. A conversation with an empty title (parent or child) is skipped; a
+    child with its own title is reported like any other.
+    """
+    conn = sqlite3.connect(f"{summaries_db.resolve().as_uri()}?mode=ro", uri=True, timeout=5)
+    try:
+        rows = conn.execute(
+            "SELECT conversation_id, title FROM conversation_summaries "
+            "WHERE title IS NOT NULL AND title != ''"
+        ).fetchall()
+    finally:
+        conn.close()
+    return [
+        session_names.make_record("antigravity", row[0], row[1].strip(), "generated", ANTIGRAVITY)
+        for row in rows
+        if isinstance(row[0], str) and row[0] and isinstance(row[1], str) and row[1].strip()
+    ]
