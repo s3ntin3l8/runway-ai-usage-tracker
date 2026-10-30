@@ -255,3 +255,38 @@ def test_titles_are_never_logged(tmp_path, monkeypatch, caplog):
     assert out
     assert "secret title" not in caplog.text
     assert "Fake generated title" not in caplog.text
+
+
+def test_opencode_v2_without_a_session_v2_title_column_falls_back_to_session(tmp_path):
+    path = tmp_path / "opencode.db"
+    make_opencode_v2_db(
+        str(path),
+        messages=[
+            {
+                "id": "m1",
+                "session_id": "ses_v2_a",
+                "time_created": 1778248860000,
+                "type": "assistant",
+                "data": v2_assistant_data(1778248860000),
+            }
+        ],
+        sessions=[{"id": "ses_v2_a", "directory": "/x"}],
+    )
+    conn = sqlite3.connect(path)
+    conn.execute("ALTER TABLE session_v2 DROP COLUMN title")
+    conn.commit()
+    conn.close()
+    _add_sessions(path, "session", [("ses_v2_a", "Fake v1 title")])
+    assert [r["name"] for r in parse_opencode_session_names(path)] == ["Fake v1 title"]
+
+
+def test_minimax_unreadable_store_stages_nothing(tmp_path, monkeypatch):
+    bad = tmp_path / "runtime-state.sqlite"
+    bad.write_bytes(b"not a database" * 100)
+    monkeypatch.setattr(sidecar, "_discover_minimax_code_db_paths", lambda: [bad])
+    session_names.configure(tmp_path / "state.json")
+    out: list[dict] = []
+    sidecar._collect_minimax_code_session_names(out)
+    session_names.commit([])
+    assert out == []
+    assert not session_names.file_unchanged(bad)
