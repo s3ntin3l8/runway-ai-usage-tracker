@@ -236,3 +236,97 @@ def test_a_hermes_event_is_resolved_from_the_hosts_own_native_identity(session):
     row = session.exec(select(UsageEvent)).one()
     assert row.account_id == "me@example.com"
     assert row.attribution_source == "local"
+
+
+def _post_ingest(payload: dict):
+    with (
+        patch("app.core.config.settings") as mock_settings,
+        patch("app.api.endpoints.fleet.token_cache") as mock_tc,
+    ):
+        mock_settings.INGEST_API_KEY = TEST_KEY
+        mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
+        mock_tc.store = AsyncMock()
+        client = TestClient(app)
+        body, headers = _signed(payload)
+        return client.post("/api/v1/fleet/ingest", content=body, headers=headers)
+
+
+def _names_payload(name: str = "Fake session title") -> dict:
+    return {
+        "provider": "anthropic-sidecar",
+        "sidecar_id": "dev-01",
+        "metrics": [],
+        "events": [
+            {
+                "provider_id": "anthropic",
+                "account_id": "u@x",
+                "event_id": "msg_n1",
+                "ts": "2026-05-08T14:00:00+00:00",
+                "session_id": "sess-names-1",
+                "tokens_input": 10,
+            }
+        ],
+        "session_names": [
+            {
+                "provider_id": "anthropic",
+                "session_id": "sess-names-1",
+                "source_app": "claude_code",
+                "name": name,
+                "kind": "generated",
+            }
+        ],
+    }
+
+
+def test_ingest_stores_session_names_and_replay_is_a_noop(session, caplog):
+    from app.models.db import SessionName
+
+    fake_title = "Confidential wording zz9"
+    with caplog.at_level("DEBUG"):
+        r = _post_ingest(_names_payload(fake_title))
+        assert r.status_code == 200, r.text
+        assert r.json()["names_upserted"] == 1
+        assert r.json()["events_inserted"] == 1
+        r2 = _post_ingest(_names_payload(fake_title))
+    assert r2.json()["names_upserted"] == 0
+    rows = session.exec(select(SessionName)).all()
+    assert [(x.session_id, x.name, x.kind) for x in rows] == [
+        ("sess-names-1", fake_title, "generated")
+    ]
+    assert "Confidential" not in caplog.text
+
+
+def test_ingest_without_session_names_reports_zero(session):
+    payload = _names_payload()
+    del payload["session_names"]
+    r = _post_ingest(payload)
+    assert r.status_code == 200, r.text
+    assert r.json()["names_upserted"] == 0
+
+
+def test_failing_name_upsert_does_not_fail_events(session, caplog):
+    fake_title = "Confidential wording zz9"
+    with (
+        caplog.at_level("DEBUG"),
+        patch(
+            "app.services.session_names.upsert_session_names",
+            side_effect=RuntimeError("boom"),
+        ),
+    ):
+        r = _post_ingest(_names_payload(fake_title))
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data["events_inserted"] == 1
+    assert data["events_error"] is False
+    assert data["names_upserted"] == 0
+    assert "Confidential" not in caplog.text
+    assert len(session.exec(select(UsageEvent)).all()) == 1
+
+
+def test_bad_name_entry_does_not_reject_the_payload(session):
+    payload = _names_payload()
+    payload["session_names"][0]["kind"] = "bogus"
+    r = _post_ingest(payload)
+    assert r.status_code == 200, r.text
+    assert r.json()["events_inserted"] == 1
+    assert r.json()["names_upserted"] == 0

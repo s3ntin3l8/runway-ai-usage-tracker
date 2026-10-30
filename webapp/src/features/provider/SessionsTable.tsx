@@ -253,9 +253,20 @@ function SessionRow({
             />
           </button>
         </TD>
-        <TD className="max-w-32 truncate font-mono text-xs" title={s.session_id}>
-          {shortId}
-        </TD>
+        {s.name ? (
+          <TD className="max-w-32 sm:max-w-64" title={`${s.name} (${s.session_id})`}>
+            {/* The name is free text rendered as given (any case or length), so
+                it truncates; the short id stays as a muted suffix. */}
+            <span className="flex min-w-0 items-baseline gap-2">
+              <span className="min-w-0 truncate text-sm">{s.name}</span>
+              <span className="shrink-0 font-mono text-xs text-fg-subtle">{shortId}</span>
+            </span>
+          </TD>
+        ) : (
+          <TD className="max-w-32 truncate font-mono text-xs" title={s.session_id}>
+            {shortId}
+          </TD>
+        )}
         <TD className="max-w-[7rem] sm:max-w-none">
           {/* min-w-0 lets a long model id shrink instead of widening the
               column; the badge keeps the full id in its title, so a hover

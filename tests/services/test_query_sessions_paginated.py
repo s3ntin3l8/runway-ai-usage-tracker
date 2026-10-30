@@ -358,3 +358,45 @@ def test_filter_options_follow_the_active_project(db_session):
     assert query_session_filter_options(db_session, kind="branch", project="__none__", **kw) == [
         "x"
     ]
+
+
+def _name(session, session_id, name, kind, provider="anthropic"):
+    from app.models.db import SessionName
+
+    session.add(SessionName(provider_id=provider, session_id=session_id, name=name, kind=kind))
+    session.commit()
+
+
+def test_sessions_carry_name_agent_over_generated_over_null(db_session):
+    for sid in ("both", "gen-only", "bare", "other-provider"):
+        _add(db_session, session_id=sid)
+    _name(db_session, "both", "Generated title", "generated")
+    _name(db_session, "both", "agent-name", "agent")
+    _name(db_session, "gen-only", "Only generated", "generated")
+    _name(db_session, "other-provider", "Wrong provider", "agent", provider="openai")
+    by_id = {r["session_id"]: r["name"] for r in query_sessions(db_session, **_kwargs())}
+    assert by_id == {
+        "both": "agent-name",
+        "gen-only": "Only generated",
+        "bare": None,
+        "other-provider": None,
+    }
+    page = query_sessions_paginated(db_session, **_kwargs(), page=0, page_size=10)
+    assert {r["session_id"]: r["name"] for r in page["sessions"]}["both"] == "agent-name"
+
+
+def test_name_lookup_is_limited_to_the_page(db_session, monkeypatch):
+    from app.services.queries import sessions as mod
+
+    for i in range(4):
+        _add(db_session, session_id=f"s{i}", ts=_NOW - timedelta(minutes=i))
+    seen: list[list[str]] = []
+    real = mod.resolve_names
+
+    def spy(session, provider_id, ids):
+        seen.append(list(ids))
+        return real(session, provider_id, ids)
+
+    monkeypatch.setattr(mod, "resolve_names", spy)
+    query_sessions_paginated(db_session, **_kwargs(), page=0, page_size=2, sort_by="recent")
+    assert seen == [["s0", "s1"]]
