@@ -299,6 +299,9 @@ class TestPersistentCache:
         state.chmod(0o666)
         git_identity.configure(state)
         assert git_identity._persisted == {}
+        # ...and the next save replaces it with a private file.
+        git_identity.save()
+        assert state.stat().st_mode & 0o077 == 0
 
     @pytest.mark.skipif(git_identity.os.name == "nt", reason="symlinks")
     def test_a_symlinked_file_is_not_trusted(self, tmp_path):

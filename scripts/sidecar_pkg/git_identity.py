@@ -213,6 +213,8 @@ def configure(path: Path | None) -> None:
             # Same rule as the source-control state file: a file another user
             # could have planted or edited is not trusted. The next save
             # replaces it with a private one.
+            logging.debug("git identity: state file not trusted")
+            _State.dirty = True
             return
         raw = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
