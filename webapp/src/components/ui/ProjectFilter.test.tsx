@@ -33,7 +33,7 @@ describe('ProjectFilter', () => {
     expect(screen.getByRole('button', { name: 'sanctuary' })).toHaveAttribute('aria-pressed', 'true');
   });
 
-  it('narrows the list as you type, without the all entry', async () => {
+  it('narrows the list as you type, keeping the pinned all entry', async () => {
     renderFilter();
     await screen.findByRole('button', { name: 'runway' });
     await userEvent.type(screen.getByRole('searchbox', { name: 'Search projects' }), 'SAN');
@@ -58,5 +58,16 @@ describe('ProjectFilter', () => {
     renderFilter();
     await waitFor(() => expect(api.fetchProjects).toHaveBeenCalled());
     await waitFor(() => expect(screen.queryByRole('group', { name: 'Project filter' })).not.toBeInTheDocument());
+  });
+
+  it('says so while projects load or fail instead of claiming no match', async () => {
+    vi.mocked(api.fetchProjects).mockReturnValue(new Promise(() => {}));
+    const { unmount } = renderFilter();
+    expect(await screen.findByText(/loading projects/i)).toBeInTheDocument();
+    unmount();
+    vi.mocked(api.fetchProjects).mockRejectedValue(new Error('boom'));
+    renderFilter();
+    expect(await screen.findByText(/projects unavailable/i)).toBeInTheDocument();
+    expect(screen.queryByText(/no matching projects/i)).not.toBeInTheDocument();
   });
 });

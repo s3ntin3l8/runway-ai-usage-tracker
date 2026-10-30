@@ -56,7 +56,11 @@ export function ProjectFilter({ providerId, range }: { providerId: string; range
       <div className="rounded-sm border border-edge">{pick(undefined, 'All projects')}</div>
       <div className="max-h-48 overflow-y-auto rounded-sm border border-edge">
         {matches.map((name) => pick(name, name))}
-        {matches.length === 0 ? <p className="px-2 py-2 text-[11px] text-fg-subtle">No matching projects</p> : null}
+        {matches.length === 0 ? (
+          <p className="px-2 py-2 text-[11px] text-fg-subtle">
+            {projects.isPending ? 'Loading projects…' : projects.isError ? 'Projects unavailable' : 'No matching projects'}
+          </p>
+        ) : null}
       </div>
     </div>
   );
