@@ -96,7 +96,7 @@ def test_in_place_cache_read_correction_is_flagged_and_fixed_for_that_model_only
     assert set(groups) == {"anthropic::sonnet-5.5", "anthropic::opus-5"}
     sonnet = groups["anthropic::sonnet-5.5"]
     assert sonnet.fixable and sonnet.count == 1
-    assert sonnet.detail["delta_usd"] == pytest.approx(-0.15)
+    assert sonnet.samples[0].detail["delta_usd"] == pytest.approx(-0.15)
 
     result = _CHECK.apply(session, "anthropic::sonnet-5.5", {})[0]
 
@@ -237,7 +237,7 @@ def test_detect_hint_agrees_with_the_exact_plan_on_a_mixed_fixture(session):
         )
         assert exact.updated == group.count
         assert exact.new_estimate_sum - exact.stored_estimate_sum == pytest.approx(
-            group.detail["delta_usd"], abs=1e-4
+            group.samples[0].detail["delta_usd"], abs=1e-4
         )
     for model_id in ("opus-5",):
         assert (
@@ -300,3 +300,15 @@ def test_detect_issues_a_constant_number_of_queries(session, query_counter):
     _CHECK.detect(session)
 
     assert query_counter.count == 2  # pricing preload + one aggregate
+
+
+def test_an_estimate_that_drops_to_zero_is_reported_as_zeroed_not_updated(session):
+    make_price(session, provider_id="anthropic", model_id="sonnet-5.5", cache_read_per_mtok=0.0)
+    ev = _ev(session, "z", estimated=0.20)
+
+    plan = _CHECK.plan(session, "anthropic::sonnet-5.5", {})
+
+    assert plan.counts["zeroed"] == 1 and plan.counts["updated"] == 0
+    result = _CHECK.apply(session, "anthropic::sonnet-5.5", {})[0]
+    assert result.counts["zeroed"] == 1
+    assert _reload(session, ev).cost_usd == 0.0

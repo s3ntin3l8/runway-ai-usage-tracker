@@ -293,7 +293,6 @@ class StalePricedModelsCheck(Check):
                     count=bucket.stale_events,
                     fixable=True,
                     samples=[Finding(label=f"{provider_id}/{model_id}", detail=detail)],
-                    detail=detail,
                 )
             )
         return CheckReport(
@@ -317,7 +316,10 @@ class StalePricedModelsCheck(Check):
                 f"{provider_id}/{model_id} event(s)"
             ),
             counts={
-                "updated": recost_plan.updated + recost_plan.zeroed,
+                "updated": recost_plan.updated,
+                # A corrected row whose rates are all zero, on an event that
+                # displayed the estimate: its shown cost goes to $0.
+                "zeroed": recost_plan.zeroed,
                 "unchanged": recost_plan.unchanged,
                 "events_keeping_cost_usd": recost_plan.kept_cost_usd,
                 "stored_estimate_usd": round(recost_plan.stored_estimate_sum, 4),
@@ -342,7 +344,8 @@ class StalePricedModelsCheck(Check):
                 group_key=group_key,
                 summary=f"Refreshed the cost estimate of {provider_id}/{model_id}",
                 counts={
-                    "updated": result.updated + result.zeroed,
+                    "updated": result.updated,
+                    "zeroed": result.zeroed,
                     "unchanged": result.unchanged,
                     "rollups_rebuilt_pairs": result.rollups_rebuilt_pairs,
                     "windows_rebuilt": result.windows_rebuilt,
