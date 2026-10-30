@@ -357,6 +357,13 @@ _DEFERRED_INDEXES: list[tuple[str, str, str]] = [
     ("ix_usage_events_project_ts", "usage_events", "project, ts"),
     ("ix_usage_events_kind_ts", "usage_events", "kind, ts"),
     ("ix_usage_events_source_app_ts", "usage_events", "source_app, ts"),
+    # Covers the Sessions browser's per-session lookups (`session_id = :sid`
+    # under a provider/account); first build on a large table takes seconds.
+    (
+        "ix_usage_events_account_session_ts",
+        "usage_events",
+        "provider_id, account_id, session_id, ts",
+    ),
 ]
 
 

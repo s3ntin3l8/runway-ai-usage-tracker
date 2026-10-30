@@ -1576,7 +1576,10 @@ async def get_usage_sessions_paginated(  # noqa: PLR0913, PLR0917 — known-debt
     messages / tokens / cost / recent) and `sort_dir` the direction."""
     _validate_iso_param("since", since)
     _validate_iso_param("until", until)
-    return query_sessions_paginated(
+    # Synchronous SQLite work: off the event loop, so a cold aggregation does
+    # not stall the server (and the sidecar ingests that arrive meanwhile).
+    return await asyncio.to_thread(
+        query_sessions_paginated,
         session,
         provider_id=provider_id,
         account_id=account_id,
