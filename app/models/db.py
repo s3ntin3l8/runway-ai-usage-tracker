@@ -523,6 +523,9 @@ class UsageEvent(SQLModel, table=True):  # type: ignore[call-arg]
         # NULL AND ts >= :since scan (the per-app breakdown, which is
         # identity-agnostic unless a provider/account filter narrows it).
         Index("ix_usage_events_source_app_ts", "source_app", "ts"),
+        Index(
+            "ix_usage_events_account_session_ts", "provider_id", "account_id", "session_id", "ts"
+        ),
     )
 
     id: int | None = Field(default=None, primary_key=True)
