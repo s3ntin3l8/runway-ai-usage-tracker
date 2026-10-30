@@ -43,6 +43,11 @@ def test_cleaning_keeps_joiners_and_drops_bidi_overrides():
     assert _n("a\u200eb\u200fc").name == "abc"
 
 
+def test_truncation_leaves_no_dangling_joiner():
+    name = _n("a" * 198 + "\U0001f468\u200d" + "bcd").name
+    assert len(name) <= 200 and not name.endswith("\u200d")
+
+
 def test_source_app_is_refreshed_with_the_row(db):
     upsert_session_names(db, [_n("Same", app="old_app")])
     assert upsert_session_names(db, [_n("Same", app="new_app")]) == 1

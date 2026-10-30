@@ -290,7 +290,8 @@ class SessionNameIn(BaseModel):
             if (cat := unicodedata.category(char)) not in ("Cc", "Cs")
             and (cat != "Cf" or char in _JOINERS)
         )
-        cleaned = _WHITESPACE_RUN.sub(" ", text).strip()[:SESSION_NAME_MAX_LENGTH].strip()
+        cleaned = _WHITESPACE_RUN.sub(" ", text).strip()[:SESSION_NAME_MAX_LENGTH]
+        cleaned = cleaned.rstrip("\u200c\u200d").strip()
         return cleaned if any(char not in _JOINERS for char in cleaned) else ""
 
 
