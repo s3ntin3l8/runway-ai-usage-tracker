@@ -242,7 +242,7 @@ def main() -> int:
             n_updated = n_unchanged = 0
         else:
             print(f"{prefix}Phase C — re-costing events for '{_PROVIDER}'…", flush=True)
-            n_updated, n_unchanged, n_zeroed, affected_pairs = phase_b_recost(
+            n_updated, n_unchanged, n_zeroed, affected_pairs, _skipped = phase_b_recost(
                 session, [_PROVIDER], None, dry_run
             )
             print(
