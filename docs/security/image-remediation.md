@@ -197,10 +197,12 @@ filters, so a renewal is scanned like any other change to the policy.
 
 | Reference | Digest |
 | --- | --- |
-| `python:3.12-slim-trixie` (builder and runtime) | `sha256:a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704` |
+| `python:3.12-slim-trixie` (builder and runtime) | `sha256:aa943ce411423c7582288f18707ff66eddcbaeb510502d747a72aeb34f30d159` |
 | `node:24-trixie-slim` (frontend builder) | `sha256:43b9ba1142b8dcf33fa8f922ca1be85714adc444e0586c7cf7726daaeabc1bea` |
 
-Both digests were re-resolved against the registry when this change was authored, and both carry the same toolchain as the Bookworm bases they replace: Python 3.12.15 and Node 24.22.1 (npm 11.19, which `webapp/package.json`'s `devEngines` requires and which preserves the lockfile's `libc` metadata). The Python version stays 3.12: the repository's floor is `>=3.12`, CI runs 3.12 and ruff targets `py312`.
+Both digests were re-resolved against the registry when this change was authored, and both carry the same toolchain as the Bookworm bases they replace: Python 3.12.16 (3.12.15 when first authored; see the 2026-10-30 note) and Node 24.22.1 (npm 11.19, which `webapp/package.json`'s `devEngines` requires and which preserves the lockfile's `libc` metadata). The Python version stays 3.12: the repository's floor is `>=3.12`, CI runs 3.12 and ruff targets `py312`.
+
+**2026-10-30:** the `python:3.12-slim-trixie` digest moved from the 3.12.15 build to 3.12.16, which fixes CVE-2026-115557 (Critical, CPython; fixed in 3.12.16) — the only finding blocking the image-security policy. The row above carries the current digest; the 3.12.15 figure in the paragraph above is the original 2026-10-23 state.
 
 ### What Debian 13 renamed, and why one exception key changed name
 
