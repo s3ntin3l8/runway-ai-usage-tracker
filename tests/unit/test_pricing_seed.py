@@ -859,3 +859,63 @@ def test_seed_minimax_m31_flash_free_variant_has_no_row():
         ).first()
         assert row is None, model_id
         assert _row(s, "minimax", model_id, date(2026, 10, 20)) is None, model_id
+
+
+def test_seed_chatgpt_gpt6_1_terra_rates():
+    s = _make_session()
+    seed_pricing_table(s)
+    row = s.exec(
+        select(ProviderPricing).where(
+            ProviderPricing.provider_id == "chatgpt",
+            ProviderPricing.model_id == "gpt-6.1-terra",
+        )
+    ).first()
+    assert row is not None
+    assert row.input_per_mtok == 1.00
+    assert row.output_per_mtok == 5.00
+    assert row.cache_read_per_mtok == 0.05
+    assert row.cache_create_per_mtok == 1.25
+
+
+def test_seed_opencode_routed_aliases_match_canonical_rows():
+    """OpenCode-routed MiniMax/Kimi rows must track their canonical provider's rates.
+
+    Alias rows are backdated, so compare the rate in effect at every canonical
+    revision date rather than the newest row alone — a repriced canonical row
+    with no matching alias revision must fail here.
+    """
+    s = _make_session()
+    seed_pricing_table(s)
+
+    def revisions(provider: str, model: str) -> list[ProviderPricing]:
+        rows = list(
+            s.exec(
+                select(ProviderPricing)
+                .where(
+                    ProviderPricing.provider_id == provider,
+                    ProviderPricing.model_id == model,
+                )
+                .order_by(ProviderPricing.effective_from)  # type: ignore[arg-type]
+            )
+        )
+        assert rows, (provider, model)
+        return rows
+
+    def rates(r: ProviderPricing) -> tuple[float, float, float, float]:
+        return (
+            r.input_per_mtok,
+            r.output_per_mtok,
+            r.cache_read_per_mtok,
+            r.cache_create_per_mtok,
+        )
+
+    for alias, canonical in (
+        (("opencode", "minimax-m3"), ("minimax", "MiniMax-M3")),
+        (("opencode", "minimax-m3.1-flash"), ("minimax", "MiniMax-M3.1-Flash")),
+        (("opencode", "kimi-for-coding"), ("kimi_coding", "kimi-for-coding")),
+    ):
+        alias_rows = revisions(*alias)
+        for canon in revisions(*canonical):
+            in_effect = [a for a in alias_rows if a.effective_from <= canon.effective_from]
+            assert in_effect, (alias, canon.effective_from)
+            assert rates(in_effect[-1]) == rates(canon), (alias, canon.effective_from)
