@@ -1244,6 +1244,17 @@ PRICING_SEED: list[dict] = [
     },
     {
         "provider_id": "opencode",
+        "model_id": "minimax-m3.1-flash",
+        "effective_from": "2026-10-19",
+        "input_per_mtok": 0.15,
+        "output_per_mtok": 0.60,
+        "cache_read_per_mtok": 0.015,
+        "cache_create_per_mtok": 0.0,
+        "notes": "OpenCode-routed MiniMax M3.1 Flash — alias of "
+        "minimax/MiniMax-M3.1-Flash, keep the two rates in sync",
+    },
+    {
+        "provider_id": "opencode",
         "model_id": "kimi-for-coding",
         "effective_from": "2026-01-01",
         "input_per_mtok": 0.95,

@@ -882,22 +882,27 @@ def test_seed_opencode_routed_aliases_match_canonical_rows():
     s = _make_session()
     seed_pricing_table(s)
 
-    def get(provider: str, model: str) -> ProviderPricing:
+    def latest(provider: str, model: str) -> ProviderPricing:
+        # Newest revision, so a second (repriced) canonical row is compared, not an arbitrary one.
         row = s.exec(
-            select(ProviderPricing).where(
+            select(ProviderPricing)
+            .where(
                 ProviderPricing.provider_id == provider,
                 ProviderPricing.model_id == model,
             )
+            .order_by(ProviderPricing.effective_from.desc())  # type: ignore[attr-defined]
         ).first()
         assert row is not None, (provider, model)
         return row
 
     for alias, canonical in (
         (("opencode", "minimax-m3"), ("minimax", "MiniMax-M3")),
+        (("opencode", "minimax-m3.1-flash"), ("minimax", "MiniMax-M3.1-Flash")),
         (("opencode", "kimi-for-coding"), ("kimi_coding", "kimi-for-coding")),
     ):
-        a, c = get(*alias), get(*canonical)
-        assert a.input_per_mtok == c.input_per_mtok
-        assert a.output_per_mtok == c.output_per_mtok
-        assert a.cache_read_per_mtok == c.cache_read_per_mtok
-        assert a.cache_create_per_mtok == c.cache_create_per_mtok
+        a, c = latest(*alias), latest(*canonical)
+        assert a.effective_from <= c.effective_from, alias
+        assert a.input_per_mtok == c.input_per_mtok, alias
+        assert a.output_per_mtok == c.output_per_mtok, alias
+        assert a.cache_read_per_mtok == c.cache_read_per_mtok, alias
+        assert a.cache_create_per_mtok == c.cache_create_per_mtok, alias
