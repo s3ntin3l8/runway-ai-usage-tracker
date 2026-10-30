@@ -1021,3 +1021,77 @@ async def test_a_full_last_page_without_a_cursor_is_noted(environment):
 
     report = await cycle(upstream)
     assert "full_last_page" in report.notes
+
+
+# -- session names from list titles ---------------------------------------------------------------
+
+
+def names(engine):
+    from app.models.db import SessionName
+
+    with Session(engine) as session:
+        return {
+            (r.provider_id, r.session_id, r.source_app, r.kind): r.name
+            for r in session.exec(select(SessionName)).all()
+        }
+
+
+NAME_KEY = ("anthropic", session_digest(SECRET_ID), "claude_code", "generated")
+
+
+@pytest.mark.asyncio
+async def test_a_row_title_is_stored_as_a_session_name(environment):
+    server = Server([cloud_row(title="Fake title one")], {SECRET_ID: two_turns()})
+    report = await cycle(server)
+    assert names(environment) == {NAME_KEY: "Fake title one"} and report.names_updated == 1
+
+
+@pytest.mark.asyncio
+async def test_an_unchanged_title_is_a_no_op_and_a_changed_one_updates(environment):
+    rows = [cloud_row(title="Fake title one")]
+    server = Server(rows, {SECRET_ID: two_turns()})
+    await cycle(server)
+    assert (await cycle(server)).names_updated == 0
+    rows[0]["title"] = "Fake title two"
+    report = await cycle(server)
+    assert report.names_updated == 1 and names(environment) == {NAME_KEY: "Fake title two"}
+    assert report.sessions_read == 0  # the row was not re-read; its name still moved
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("title", ["", "   ", None, 7, ["x"], {"a": 1}, "\u200b"])
+async def test_a_title_that_is_not_a_usable_string_stores_nothing(environment, title):
+    server = Server([cloud_row(title=title)], {SECRET_ID: two_turns()})
+    report = await cycle(server)
+    assert names(environment) == {} and report.names_updated == 0 and report.outcome == "ok"
+
+
+@pytest.mark.asyncio
+async def test_a_missing_title_and_bridge_rows_store_nothing(environment):
+    bridge = bridge_row()
+    bridge["title"] = "Fake bridge title"
+    server = Server([bridge, cloud_row()], {SECRET_ID: two_turns()})
+    await cycle(server)
+    assert names(environment) == {}
+
+
+@pytest.mark.asyncio
+async def test_a_failing_names_write_does_not_fail_the_cycle(environment, monkeypatch):
+    def broken(*args, **kwargs):
+        raise OperationalError("insert", {}, Exception("fake title leaked"))
+
+    monkeypatch.setattr(collector, "upsert_session_names", broken)
+    report = await cycle(Server([cloud_row(title="Fake title one")], {SECRET_ID: two_turns()}))
+    assert report.outcome == "ok" and events(environment) and report.names_updated == 0
+    assert report.notes == ["names_OperationalError"]
+
+
+@pytest.mark.asyncio
+async def test_the_cycle_log_carries_the_count_but_never_a_title(environment, caplog):
+    caplog.set_level("DEBUG")
+    server = Server([cloud_row(title="Fake secret title")], {SECRET_ID: two_turns()})
+    async with httpx.AsyncClient(transport=httpx.MockTransport(server)) as client:
+        reports = await collector.collect_all(client)
+    assert reports
+    text = "\n".join(r.getMessage() for r in caplog.records)
+    assert "Fake secret title" not in text and "names_updated=" in text
