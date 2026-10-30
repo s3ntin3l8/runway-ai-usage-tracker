@@ -105,10 +105,10 @@ def phase_b_recost(
     since: date | None,
     dry_run: bool,
     estimate_only: bool = False,
-) -> tuple[int, int, int, set[tuple[str, str]]]:
+) -> tuple[int, int, int, set[tuple[str, str]], int]:
     """Recompute cost_usd on usage_events.
 
-    Returns (updated, unchanged, zeroed, affected_pairs) — affected_pairs is
+    Returns (updated, unchanged, zeroed, affected_pairs, skipped_unpopulated) — affected_pairs is
     the set of (provider_id, account_id) pairs that actually had a cost
     change, already computed by `plan_recost`/`apply_recost`; Phase C/D use
     it to narrow their own rebuild instead of re-scanning the full CLI
@@ -130,7 +130,13 @@ def phase_b_recost(
             f"{_skipped_note(plan.skipped_unpopulated)}…",
             flush=True,
         )
-        return plan.updated, plan.unchanged, plan.zeroed, plan.affected_pairs
+        return (
+            plan.updated,
+            plan.unchanged,
+            plan.zeroed,
+            plan.affected_pairs,
+            plan.skipped_unpopulated,
+        )
     # apply_recost already computes affected_pairs and (when not told to
     # skip) would narrow its own rollup/window rebuild to them — we keep it
     # skipping that here and let Phase C/D below do the rebuild instead, but
@@ -148,7 +154,13 @@ def phase_b_recost(
         f"{_skipped_note(result.skipped_unpopulated)}…",
         flush=True,
     )
-    return result.updated, result.unchanged, result.zeroed, result.affected_pairs
+    return (
+        result.updated,
+        result.unchanged,
+        result.zeroed,
+        result.affected_pairs,
+        result.skipped_unpopulated,
+    )
 
 
 def phase_c_rollups(
@@ -250,12 +262,13 @@ def run(
     print(f"{prefix}Re-costing events for: {scope}", flush=True)
 
     with Session(engine) as session:
-        updated, unchanged, zeroed, affected_pairs = phase_b_recost(
+        updated, unchanged, zeroed, affected_pairs, skipped = phase_b_recost(
             session, providers, since, dry_run, estimate_only
         )
         print(
             f"{prefix}Phase B done — {updated + unchanged + zeroed:,} event(s): "
-            f"{updated} updated, {unchanged} unchanged, {zeroed} newly-zeroed.",
+            f"{updated} updated, {unchanged} unchanged, {zeroed} newly-zeroed"
+            f"{_skipped_note(skipped)}.",
             flush=True,
         )
 
