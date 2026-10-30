@@ -161,3 +161,13 @@ def test_worktree_patterns_stored_bad_entry_is_skipped_not_fatal():
     assert parse_stored_patterns("not json") == ()
     assert parse_stored_patterns('{"a": 1}') == ()
     assert parse_stored_patterns(None) == ()
+
+
+def test_worktree_patterns_stored_list_over_the_cap_keeps_the_first_entries():
+    import json
+
+    from app.services.project_label import MAX_WORKTREE_PATTERNS
+    from app.services.worktree_patterns import parse_stored_patterns
+
+    names = [f"p{i}" for i in range(MAX_WORKTREE_PATTERNS + 1)]
+    assert parse_stored_patterns(json.dumps(names)) == tuple(names[:MAX_WORKTREE_PATTERNS])
