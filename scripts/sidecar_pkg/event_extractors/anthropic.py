@@ -2,8 +2,10 @@
 
 import json
 import sys
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 # Allow importing from app/ when running from the repo root.
 # sidecar.py does the same via direct execution; here we guard against running
@@ -15,6 +17,7 @@ if str(_REPO_ROOT) not in sys.path:
 from app.core.source_apps import CLAUDE_CODE  # noqa: E402
 from app.models.schemas import UsageEventPush  # noqa: E402
 from app.services.model_normalization import normalize_anthropic_model  # noqa: E402
+from scripts.sidecar_pkg.session_names import make_record  # noqa: E402
 
 # Kept under its old name for importers inside the sidecar package.
 _normalize_anthropic_model = normalize_anthropic_model
@@ -134,3 +137,64 @@ def parse_anthropic_events(
         except Exception:
             continue
     return events
+
+
+_NAME_MARKERS = (b'"agent-name"', b'"ai-title"')
+
+#: Transcript record type -> (record field, session name kind).
+_NAME_RECORDS = {"agent-name": ("agentName", "agent"), "ai-title": ("aiTitle", "generated")}
+
+
+def parse_anthropic_session_names(
+    jsonl_paths: list[Path],
+    *,
+    skip: Callable[[Path], bool] | None = None,
+) -> tuple[list[dict[str, Any]], dict[Path, str]]:
+    """The last `agent-name` and last `ai-title` of every Claude Code transcript.
+
+    A separate, cheap pass from the event parse: lines are only JSON-decoded
+    when they contain a name marker, so the cost is one byte search per line.
+    The whole file is read, so a name written after the last event is found.
+    Both records carry the session id the events use (the file stem);
+    `agent-name` is kind `agent` (set by a launcher or `/rename`), `ai-title`
+    is kind `generated`.
+
+    `skip(path)` lets the caller leave out a transcript it has already
+    covered. Returns `(records, scanned)`, where `scanned` maps each file that
+    was read to its `<mtime_ns>:<size>` signature taken *before* the read, so
+    a write during the scan is picked up next cycle. Names are never logged.
+    """
+    records: list[dict[str, Any]] = []
+    scanned: dict[Path, str] = {}
+    for fp in jsonl_paths:
+        try:
+            if skip is not None and skip(fp):
+                continue
+            info = fp.stat()
+            signature = f"{info.st_mtime_ns}:{info.st_size}"
+            last: dict[str, tuple[str, str]] = {}  # kind -> (session_id, name)
+            with open(fp, "rb") as f:
+                for line in f:
+                    if not any(marker in line for marker in _NAME_MARKERS):
+                        continue
+                    try:
+                        e = json.loads(line)
+                    except ValueError:
+                        continue
+                    spec = _NAME_RECORDS.get(e.get("type")) if isinstance(e, dict) else None
+                    if spec is None:
+                        continue
+                    field, kind = spec
+                    name = e.get(field)
+                    if not isinstance(name, str) or not name.strip():
+                        continue
+                    session_id = e.get("sessionId")
+                    if not isinstance(session_id, str) or not session_id:
+                        session_id = fp.stem
+                    last[kind] = (session_id, name.strip())
+            for kind, (session_id, name) in last.items():
+                records.append(make_record("anthropic", session_id, name, kind, CLAUDE_CODE))
+            scanned[fp] = signature
+        except OSError:
+            continue
+    return records, scanned
