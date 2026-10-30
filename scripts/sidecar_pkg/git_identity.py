@@ -18,9 +18,14 @@ collection cycle.
 
 from __future__ import annotations
 
+import json
+import logging
 import os
+import secrets
 import shutil
+import stat
 import subprocess
+from pathlib import Path
 from typing import Any
 
 #: How long a git call may take. The probe runs inside a collection cycle, so
@@ -35,7 +40,25 @@ _MAX_NAME_LENGTH = 128
 #: touches a handful of directories, so this is generous.
 _CACHE_LIMIT = 512
 
+#: How many resolved directories survive a restart. Oldest entries go first.
+_PERSIST_LIMIT = 4096
+
+_STATE_VERSION = 1
+
 _cache: dict[str, str | None] = {}
+
+#: Directory -> repository name for every directory that resolved once, kept in
+#: the sidecar's state so a worktree that is deleted later keeps its name. Only
+#: successes live here: a None may be a temporary failure (git busy, a directory
+#: not created yet), and recording it would hide a later success.
+_persisted: dict[str, str] = {}
+
+
+class _State:
+    """Where the persisted cache lives and whether it changed since it was written."""
+
+    path: Path | None = None
+    dirty: bool = False
 
 
 def _creationflags() -> int:
@@ -143,10 +166,93 @@ def resolve_repo_name(cwd: str | None) -> str | None:
         name = _resolve(key)
     except Exception:  # pragma: no cover — defensive only
         name = None
+    if name:
+        _remember(key, name)
+    elif key in _persisted:
+        # The directory is gone (or git failed): the name it resolved to once
+        # is still the right one. A live answer, when there is one, wins above,
+        # so a renamed remote is picked up after the next restart.
+        name = _persisted[key]
     if len(_cache) >= _CACHE_LIMIT:
         _cache.clear()
     _cache[key] = name
     return name
+
+
+def _remember(key: str, name: str) -> None:
+    """Record a successful resolution for the state file."""
+    if _persisted.get(key) == name and next(reversed(_persisted)) == key:
+        return
+    # Re-insert at the end, also when the name is unchanged: the directories seen
+    # most recently survive longest. This runs once per directory per process.
+    _persisted.pop(key, None)
+    _persisted[key] = name
+    while len(_persisted) > _PERSIST_LIMIT:
+        _persisted.pop(next(iter(_persisted)))
+    _State.dirty = True
+
+
+def configure(path: Path | None) -> None:
+    """Load the persisted directory -> repository cache from `path`.
+
+    Called once per process before the first annotation; calling it again with
+    the same path is a no-op. A missing or unreadable file is an empty cache.
+    """
+    if path is not None and path == _State.path:
+        return
+    _persisted.clear()
+    _State.path = path
+    _State.dirty = False
+    if path is None:
+        return
+    try:
+        info = path.lstat()
+        if stat.S_ISLNK(info.st_mode) or (
+            os.name != "nt" and (info.st_uid != os.getuid() or info.st_mode & 0o077)
+        ):
+            # Same rule as the source-control state file: a file another user
+            # could have planted or edited is not trusted. The next save
+            # replaces it with a private one.
+            logging.debug("git identity: state file not trusted")
+            _State.dirty = True
+            return
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    entries = raw.get("entries") if isinstance(raw, dict) else None
+    if not isinstance(entries, dict):
+        return
+    for key, name in entries.items():
+        if isinstance(key, str) and key and isinstance(name, str):
+            clean = _sanitize(name)
+            if clean:
+                _persisted[key] = clean
+    while len(_persisted) > _PERSIST_LIMIT:
+        _persisted.pop(next(iter(_persisted)))
+
+
+def save() -> None:
+    """Write the persisted cache if it changed. Best-effort, atomic."""
+    path = _State.path
+    if path is None or not _State.dirty:
+        return
+    temporary = path.with_name(f".{path.name}.{secrets.token_hex(4)}.tmp")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {"version": _STATE_VERSION, "entries": _persisted}
+        temporary.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
+        try:
+            os.chmod(temporary, 0o600)  # paths of the user's projects
+        except OSError:
+            logging.debug("git identity: state file permissions not narrowed")
+        os.replace(temporary, path)
+        _State.dirty = False
+    except OSError as exc:
+        logging.debug("git identity: state not saved (%s)", type(exc).__name__)
+        try:
+            temporary.unlink()
+        except OSError:
+            logging.debug("git identity: temporary state file not removed")
 
 
 def annotate_project_refs(events: list[dict[str, Any]]) -> int:
@@ -164,9 +270,13 @@ def annotate_project_refs(events: list[dict[str, Any]]) -> int:
         if name:
             event["project_ref"] = name
             resolved += 1
+    save()
     return resolved
 
 
 def clear_cache() -> None:
-    """Forget the resolved repositories (used by the tests)."""
+    """Forget the resolved repositories and the state file binding (used by the tests)."""
     _cache.clear()
+    _persisted.clear()
+    _State.path = None
+    _State.dirty = False

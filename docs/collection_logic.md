@@ -282,6 +282,47 @@ their history. The rules are specified in
   session later resumed on a local machine could also appear in local transcripts; none of about 290
   checked message ids does, and there is no cross-source de-duplication.
 
+## Which events get a `project_ref`
+
+The sidecar names the git repository of each event's working directory
+(`scripts/sidecar_pkg/git_identity.py`, applied once per cycle to every event
+the cycle collected, at the end of `run_collection`). Every event extractor and
+the directory-scoped Claude/Codex path feed that one list, so no extractor
+skips the annotator; what decides the outcome is the event's `cwd`.
+
+The lookup is `git rev-parse --show-toplevel` plus `remote.origin.url` in the
+directory, so it works for any worktree layout, but only while the directory
+exists. The answer for each directory is therefore kept in the sidecar's
+`git-identity.json` (successes only, bounded to 4096 entries, oldest dropped
+first): a directory resolved once keeps its name after the worktree is deleted
+and after a restart. A directory that still exists is looked up again once per
+process, so a renamed remote is picked up.
+
+Events that cannot get a `project_ref`, and why:
+
+- **Deleted worktrees and clones, seen for the first time after the deletion.**
+  Backfilled transcripts and rows older than the annotator (the first
+  collection after an upgrade reads history) name directories that no longer
+  exist. Nothing is guessed from the path or from a parent directory, because a
+  parent can belong to a different repository. A directory the sidecar saw
+  while it existed is resolved from the persisted cache.
+- **Directories outside any repository** (scratch folders, a home directory).
+  Not remembered, so a directory that becomes a repository later is picked up.
+- **Antigravity generated worktrees**
+  (`<agy home>/.system_generated/worktrees/<id>`). The workspace path in the
+  conversation database (and `workspace_uris`) is that generated directory,
+  which carries no name of its own; only a git lookup while it exists can name
+  the repository, and agy removes these directories.
+- **Another host's paths.** A sidecar resolves only its own filesystem. The
+  Hermes, opencode and Gemini stores can hold paths written on another
+  machine; those do not exist here and stay unresolved unless that machine runs
+  its own sidecar.
+- **Events without a working directory.** Claude cowork sessions
+  (macOS desktop agent mode) and the cloud collector carry no `cwd` from the
+  sidecar; the cloud collector sets its own `project_ref`.
+- **No `git` on the sidecar's PATH**, or a lookup that fails or exceeds 3 s.
+  These are not persisted, so the next cycle retries.
+
 ## Implementation Notes
 
 - The strategy options dict carries exactly one key: `enrich`. There is no
