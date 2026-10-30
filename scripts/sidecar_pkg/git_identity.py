@@ -18,9 +18,13 @@ collection cycle.
 
 from __future__ import annotations
 
+import json
+import logging
 import os
+import secrets
 import shutil
 import subprocess
+from pathlib import Path
 from typing import Any
 
 #: How long a git call may take. The probe runs inside a collection cycle, so
@@ -35,7 +39,20 @@ _MAX_NAME_LENGTH = 128
 #: touches a handful of directories, so this is generous.
 _CACHE_LIMIT = 512
 
+#: How many resolved directories survive a restart. Oldest entries go first.
+_PERSIST_LIMIT = 4096
+
+_STATE_VERSION = 1
+
 _cache: dict[str, str | None] = {}
+
+#: Directory -> repository name for every directory that resolved once, kept in
+#: the sidecar's state so a worktree that is deleted later keeps its name. Only
+#: successes live here: a None may be a temporary failure (git busy, a directory
+#: not created yet), and recording it would hide a later success.
+_persisted: dict[str, str] = {}
+_state_path: Path | None = None
+_dirty = False
 
 
 def _creationflags() -> int:
@@ -143,10 +160,84 @@ def resolve_repo_name(cwd: str | None) -> str | None:
         name = _resolve(key)
     except Exception:  # pragma: no cover — defensive only
         name = None
+    if name:
+        _remember(key, name)
+    elif key in _persisted:
+        # The directory is gone (or git failed): the name it resolved to once
+        # is still the right one. A live answer, when there is one, wins above,
+        # so a renamed remote is picked up after the next restart.
+        name = _persisted[key]
     if len(_cache) >= _CACHE_LIMIT:
         _cache.clear()
     _cache[key] = name
     return name
+
+
+def _remember(key: str, name: str) -> None:
+    """Record a successful resolution for the state file."""
+    global _dirty
+    if _persisted.get(key) == name:
+        return
+    _persisted.pop(key, None)  # re-insert at the end: the freshest entry survives longest
+    _persisted[key] = name
+    while len(_persisted) > _PERSIST_LIMIT:
+        _persisted.pop(next(iter(_persisted)))
+    _dirty = True
+
+
+def configure(path: Path | None) -> None:
+    """Load the persisted directory -> repository cache from `path`.
+
+    Called once per process before the first annotation; calling it again with
+    the same path is a no-op. A missing or unreadable file is an empty cache.
+    """
+    global _state_path, _dirty
+    if path is not None and path == _state_path:
+        return
+    _persisted.clear()
+    _state_path = path
+    _dirty = False
+    if path is None:
+        return
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    entries = raw.get("entries") if isinstance(raw, dict) else None
+    if not isinstance(entries, dict):
+        return
+    for key, name in entries.items():
+        if isinstance(key, str) and key and isinstance(name, str):
+            clean = _sanitize(name)
+            if clean:
+                _persisted[key] = clean
+    while len(_persisted) > _PERSIST_LIMIT:
+        _persisted.pop(next(iter(_persisted)))
+
+
+def save() -> None:
+    """Write the persisted cache if it changed. Best-effort, atomic."""
+    global _dirty
+    path = _state_path
+    if path is None or not _dirty:
+        return
+    temporary = path.with_name(f".{path.name}.{secrets.token_hex(4)}.tmp")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {"version": _STATE_VERSION, "entries": _persisted}
+        temporary.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
+        try:
+            os.chmod(temporary, 0o600)  # paths of the user's projects
+        except OSError:
+            pass
+        os.replace(temporary, path)
+        _dirty = False
+    except OSError as exc:
+        logging.debug("git identity: state not saved (%s)", type(exc).__name__)
+        try:
+            temporary.unlink()
+        except OSError:
+            pass
 
 
 def annotate_project_refs(events: list[dict[str, Any]]) -> int:
@@ -164,9 +255,14 @@ def annotate_project_refs(events: list[dict[str, Any]]) -> int:
         if name:
             event["project_ref"] = name
             resolved += 1
+    save()
     return resolved
 
 
 def clear_cache() -> None:
-    """Forget the resolved repositories (used by the tests)."""
+    """Forget the resolved repositories and the state file binding (used by the tests)."""
+    global _state_path, _dirty
     _cache.clear()
+    _persisted.clear()
+    _state_path = None
+    _dirty = False

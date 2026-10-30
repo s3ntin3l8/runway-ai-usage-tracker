@@ -6160,9 +6160,12 @@ def run_collection(config: dict[str, Any], providers: list[str] | None = None) -
     # URL. Best-effort: an event whose directory is not a repository keeps the
     # folder-name label.
     try:
-        from scripts.sidecar_pkg.git_identity import annotate_project_refs
+        from scripts.sidecar_pkg import git_identity
 
-        annotate_project_refs(all_events)
+        # A directory resolved once keeps its name across restarts, after the
+        # worktree is deleted.
+        git_identity.configure(get_sidecar_dir() / "git-identity.json")
+        git_identity.annotate_project_refs(all_events)
     except Exception as _e:
         logging.debug(f"git identity: skipped ({_e})")
 

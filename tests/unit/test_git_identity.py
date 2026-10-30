@@ -166,3 +166,191 @@ class TestAnnotateProjectRefs:
 
         assert git_identity.annotate_project_refs(events) == 0
         assert "project_ref" not in events[0]
+
+
+def _git_available() -> bool:
+    return git_identity.shutil.which("git") is not None
+
+
+def _make_repo(path, remote="https://example.invalid/owner/fake-repo.git"):
+    path.mkdir(parents=True)
+    env = {"GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_SYSTEM": "/dev/null"}
+    import os
+
+    full_env = {**os.environ, **env}
+    subprocess.run(["git", "init", "-q", str(path)], check=True, env=full_env)
+    subprocess.run(
+        ["git", "-C", str(path), "remote", "add", "origin", remote], check=True, env=full_env
+    )
+
+
+class TestPersistentCache:
+    """The directory -> repository cache survives restarts and deleted directories."""
+
+    def _fake_resolve(self, monkeypatch, answers: dict[str, str | None]):
+        calls: list[str] = []
+
+        def fake(cwd: str) -> str | None:
+            calls.append(cwd)
+            return answers.get(cwd)
+
+        monkeypatch.setattr(git_identity, "_resolve", fake)
+        return calls
+
+    def _restart(self, path):
+        git_identity.clear_cache()  # what a new process starts from
+        git_identity.configure(path)
+
+    def test_a_resolution_survives_a_restart(self, monkeypatch, tmp_path):
+        state = tmp_path / "git-identity.json"
+        git_identity.configure(state)
+        self._fake_resolve(monkeypatch, {"/fake/a": "repo-a"})
+        events: list[dict[str, Any]] = [{"cwd": "/fake/a"}]
+        git_identity.annotate_project_refs(events)
+        assert state.exists()
+
+        self._restart(state)
+        self._fake_resolve(monkeypatch, {})  # the directory is gone now
+        later: list[dict[str, Any]] = [{"cwd": "/fake/a"}]
+        git_identity.annotate_project_refs(later)
+
+        assert later[0]["project_ref"] == "repo-a"
+
+    def test_a_live_answer_replaces_the_persisted_one(self, monkeypatch, tmp_path):
+        state = tmp_path / "git-identity.json"
+        git_identity.configure(state)
+        self._fake_resolve(monkeypatch, {"/fake/a": "old-name"})
+        git_identity.resolve_repo_name("/fake/a")
+        git_identity.save()
+
+        self._restart(state)
+        self._fake_resolve(monkeypatch, {"/fake/a": "new-name"})
+        assert git_identity.resolve_repo_name("/fake/a") == "new-name"
+
+    def test_none_results_are_not_persisted(self, monkeypatch, tmp_path):
+        state = tmp_path / "git-identity.json"
+        git_identity.configure(state)
+        self._fake_resolve(monkeypatch, {"/fake/a": "repo-a", "/fake/none": None})
+        git_identity.annotate_project_refs([{"cwd": "/fake/a"}, {"cwd": "/fake/none"}])
+
+        import json
+
+        entries = json.loads(state.read_text())["entries"]
+        assert entries == {"/fake/a": "repo-a"}
+
+    def test_a_none_stays_cached_in_memory_only(self, monkeypatch, tmp_path):
+        git_identity.configure(tmp_path / "git-identity.json")
+        calls = self._fake_resolve(monkeypatch, {})
+        git_identity.resolve_repo_name("/fake/none")
+        git_identity.resolve_repo_name("/fake/none")
+        assert calls == ["/fake/none"]
+
+    def test_a_missing_file_is_an_empty_cache(self, tmp_path):
+        git_identity.configure(tmp_path / "absent" / "git-identity.json")
+        assert git_identity._persisted == {}
+
+    @pytest.mark.parametrize(
+        "content",
+        ["not json", "[]", '{"entries": []}', '{"entries": {"/x": 5, "": "y", "/ok": "fine"}}'],
+    )
+    def test_a_corrupt_file_is_tolerated(self, tmp_path, content):
+        state = tmp_path / "git-identity.json"
+        state.write_text(content)
+        git_identity.configure(state)
+        assert set(git_identity._persisted) <= {"/ok"}
+
+    def test_the_file_stays_bounded(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(git_identity, "_PERSIST_LIMIT", 3)
+        state = tmp_path / "git-identity.json"
+        git_identity.configure(state)
+        self._fake_resolve(monkeypatch, {f"/fake/{i}": f"repo-{i}" for i in range(10)})
+        git_identity.annotate_project_refs([{"cwd": f"/fake/{i}"} for i in range(10)])
+
+        import json
+
+        entries = json.loads(state.read_text())["entries"]
+        assert list(entries) == ["/fake/7", "/fake/8", "/fake/9"]
+
+    def test_an_oversized_file_is_trimmed_on_load(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(git_identity, "_PERSIST_LIMIT", 2)
+        import json
+
+        state = tmp_path / "git-identity.json"
+        state.write_text(json.dumps({"entries": {f"/fake/{i}": "r" for i in range(5)}}))
+        git_identity.configure(state)
+        assert list(git_identity._persisted) == ["/fake/3", "/fake/4"]
+
+    def test_an_unwritable_state_path_does_not_raise(self, monkeypatch, tmp_path):
+        blocker = tmp_path / "blocker"
+        blocker.write_text("a file, not a directory")
+        git_identity.configure(blocker / "git-identity.json")
+        self._fake_resolve(monkeypatch, {"/fake/a": "repo-a"})
+        events: list[dict[str, Any]] = [{"cwd": "/fake/a"}]
+        assert git_identity.annotate_project_refs(events) == 1
+
+    def test_no_temporary_file_is_left_behind(self, monkeypatch, tmp_path):
+        git_identity.configure(tmp_path / "git-identity.json")
+        self._fake_resolve(monkeypatch, {"/fake/a": "repo-a"})
+        git_identity.annotate_project_refs([{"cwd": "/fake/a"}])
+        assert [p.name for p in tmp_path.iterdir()] == ["git-identity.json"]
+
+    def test_an_unchanged_cache_is_not_rewritten(self, monkeypatch, tmp_path):
+        state = tmp_path / "git-identity.json"
+        git_identity.configure(state)
+        self._fake_resolve(monkeypatch, {"/fake/a": "repo-a"})
+        git_identity.annotate_project_refs([{"cwd": "/fake/a"}])
+        state.unlink()
+        git_identity.annotate_project_refs([{"cwd": "/fake/a"}])
+        assert not state.exists()
+
+    @pytest.mark.skipif(not _git_available(), reason="git is not installed")
+    def test_a_real_checkout_keeps_its_name_after_it_is_removed(self, tmp_path):
+        import shutil
+
+        repo = tmp_path / "some-folder"
+        _make_repo(repo)
+        state = tmp_path / "state" / "git-identity.json"
+        git_identity.configure(state)
+        events: list[dict[str, Any]] = [{"cwd": str(repo)}]
+        git_identity.annotate_project_refs(events)
+        assert events[0]["project_ref"] == "fake-repo"
+
+        shutil.rmtree(repo)
+        self._restart(state)
+        later: list[dict[str, Any]] = [{"cwd": str(repo)}]
+        git_identity.annotate_project_refs(later)
+        assert later[0]["project_ref"] == "fake-repo"
+
+    @pytest.mark.skipif(not _git_available(), reason="git is not installed")
+    def test_a_directory_never_resolved_stays_unresolved_once_removed(self, tmp_path):
+        git_identity.configure(tmp_path / "git-identity.json")
+        events: list[dict[str, Any]] = [{"cwd": str(tmp_path / "never-existed")}]
+        assert git_identity.annotate_project_refs(events) == 0
+
+
+@pytest.mark.skipif(not _git_available(), reason="git is not installed")
+def test_a_collection_cycle_annotates_events_and_persists_the_cache(tmp_path, monkeypatch):
+    """The cycle wires the state file: an event from a git directory leaves the sidecar
+    with its repository name, and the directory is remembered under the sidecar dir."""
+    from scripts import sidecar
+
+    repo = tmp_path / "checkout"
+    _make_repo(repo)
+    monkeypatch.setenv("RUNWAY_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setattr(sidecar.Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(sidecar.GenericCollector, "collect_provider", lambda *a, **kw: ([], []))
+    monkeypatch.setattr(sidecar, "_post_credential_manifest", lambda **kw: None)
+    monkeypatch.setattr(sidecar, "custom_login_dirs", lambda *a: [])
+
+    def fake_extract(**kw):  # noqa: ANN003
+        kw["out_events"].append(
+            {"event_id": "e1", "provider_id": "anthropic", "cwd": str(repo), "account_source": "x"}
+        )
+        return 0
+
+    monkeypatch.setattr(sidecar, "_extract_events_for_provider", fake_extract)
+
+    result = sidecar.run_collection({"providers": ["anthropic"]}, ["anthropic"])
+
+    assert [e.get("project_ref") for e in result.events] == ["fake-repo"]
+    assert (tmp_path / "config" / "sidecar" / "git-identity.json").exists()
