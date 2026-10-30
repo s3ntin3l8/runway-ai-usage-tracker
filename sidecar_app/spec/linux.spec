@@ -125,6 +125,7 @@ a = Analysis(
         # The git repository a working directory belongs to (name only). Imported
         # lazily, so PyInstaller's static scan won't catch it.
         "scripts.sidecar_pkg.git_identity",
+        "scripts.sidecar_pkg.session_names",
         # Native Windows Credential Manager reader (advapi32). Imported lazily,
         # so PyInstaller's static scan won't catch it.
         "scripts.sidecar_pkg.wincred",

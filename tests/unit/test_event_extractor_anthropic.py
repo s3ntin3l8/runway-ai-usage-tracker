@@ -168,3 +168,93 @@ def test_sidechain_event_captures_attribution_agent():
     explore = next(e for e in evts if e.subagent_type == "Explore")
     assert explore.session_id == "parent_sess"
     assert explore.model_id == "opus-4.7"
+
+
+# --- session names -----------------------------------------------------------
+
+import json  # noqa: E402
+
+from scripts.sidecar_pkg.event_extractors.anthropic import (  # noqa: E402
+    parse_anthropic_session_names,
+)
+
+
+def _write_transcript(path: Path, lines: list[dict]) -> None:
+    path.write_text("".join(json.dumps(line) + "\n" for line in lines), encoding="utf-8")
+
+
+def _assistant(session: str) -> dict:
+    return {
+        "type": "assistant",
+        "sessionId": session,
+        "timestamp": "2026-01-01T00:00:00Z",
+        "message": {"id": "m1", "usage": {}, "content": []},
+    }
+
+
+def test_session_names_keep_the_last_of_each_kind(tmp_path):
+    named = tmp_path / "sess-aaa.jsonl"
+    _write_transcript(
+        named,
+        [
+            {"type": "agent-name", "agentName": "first-placeholder", "sessionId": "sess-aaa"},
+            {"type": "ai-title", "aiTitle": "Title one", "sessionId": "sess-aaa"},
+            _assistant("sess-aaa"),
+            {"type": "ai-title", "aiTitle": "Title two", "sessionId": "sess-aaa"},
+            {"type": "agent-name", "agentName": "renamed-placeholder", "sessionId": "sess-aaa"},
+            {"type": "ai-title", "aiTitle": "Title three", "sessionId": "sess-aaa"},
+        ],
+    )
+    plain = tmp_path / "sess-bbb.jsonl"
+    _write_transcript(plain, [_assistant("sess-bbb")])
+
+    records, scanned = parse_anthropic_session_names([named, plain])
+
+    assert {(r["session_id"], r["kind"]): r["name"] for r in records} == {
+        ("sess-aaa", "agent"): "renamed-placeholder",
+        ("sess-aaa", "generated"): "Title three",
+    }
+    assert {r["provider_id"] for r in records} == {"anthropic"}
+    assert {r["source_app"] for r in records} == {"claude_code"}
+    assert set(scanned) == {named, plain}
+
+
+def test_session_names_after_the_last_event_are_found(tmp_path):
+    fp = tmp_path / "sess-ccc.jsonl"
+    _write_transcript(
+        fp,
+        [_assistant("sess-ccc"), {"type": "ai-title", "aiTitle": "Late", "sessionId": "sess-ccc"}],
+    )
+    records, _ = parse_anthropic_session_names([fp])
+    assert [r["name"] for r in records] == ["Late"]
+
+
+def test_session_names_tolerate_junk_and_skip_records_without_a_session(tmp_path):
+    fp = tmp_path / "sess-ddd.jsonl"
+    fp.write_text(
+        'not json "ai-title"\n'
+        + json.dumps({"type": "ai-title", "aiTitle": "   ", "sessionId": "sess-ddd"})
+        + "\n"
+        + json.dumps({"type": "ai-title", "aiTitle": 7, "sessionId": "sess-ddd"})
+        + "\n"
+        + json.dumps({"type": "user", "text": "mentions agent-name only", "x": "ai-title"})
+        + "\n"
+        + json.dumps({"type": "agent-name", "agentName": "orphan-placeholder"})
+        + "\n"
+        + json.dumps(
+            {"type": "agent-name", "agentName": "kept-placeholder", "sessionId": "sess-ddd"}
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    records, _ = parse_anthropic_session_names([fp, tmp_path / "missing.jsonl"])
+    assert [(r["session_id"], r["kind"], r["name"]) for r in records] == [
+        ("sess-ddd", "agent", "kept-placeholder")
+    ]
+
+
+def test_session_names_skip_leaves_the_file_unread(tmp_path):
+    fp = tmp_path / "sess-eee.jsonl"
+    _write_transcript(fp, [{"type": "ai-title", "aiTitle": "Skipped", "sessionId": "sess-eee"}])
+    records, scanned = parse_anthropic_session_names([fp], skip=lambda path: True)
+    assert records == [] and scanned == {}

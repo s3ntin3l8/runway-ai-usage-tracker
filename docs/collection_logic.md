@@ -329,6 +329,43 @@ Events that cannot get a `project_ref`, and why:
 - **No `git` on the sidecar's PATH**, or a lookup that fails or exceeds 3 s.
   These are not persisted, so the next cycle retries.
 
+## Session names from the sidecar
+
+A session name is a title a tool shows for a session. The sidecar sends them in
+`IngestRequest.session_names` (`{provider_id, session_id, source_app, name,
+kind}`, `kind` is `agent` or `generated`); the server stores them in
+`session_names`. A name is free text and is never logged, on either side.
+
+Plumbing in `scripts/sidecar_pkg/session_names.py`, for every extractor that has names:
+
+- Write a collector `collect(out: list[dict])` that appends records built with
+  `session_names.make_record(provider_id, session_id, name, kind, source_app)`,
+  and register it in `scripts/sidecar.py::_SESSION_NAME_COLLECTORS` under the
+  provider id. It runs once per cycle right after that provider's events were
+  extracted (so the same consent and gating apply). `provider_id` must be the
+  id the sidecar stamps on that session's events; the server does not derive it.
+- Nothing else is needed. `run_collection` keeps the last record per
+  (provider_id, session_id, kind) and returns only names that changed since the
+  last accepted push in `CollectionResult.session_names` (at most 2000, the
+  server's cap; the rest follows next cycle). They ride the first batch of the
+  push only. The sent hashes live in the sidecar's `session-names.json`
+  (hashes only, 0600, atomic, bounded to 20000) and are saved only after the
+  first batch was accepted (the answer carries `names_upserted`), so a failed
+  or queued push sends them again.
+  A push that fails is queued like any other payload, so the offline queue
+  file (owner-only) holds the names in clear text, as it holds events' working
+  directories; the state file never does.
+- A collector that can skip unchanged inputs may call
+  `session_names.file_unchanged(path)` and `session_names.stage_files(scanned)`
+  (size and mtime signatures, saved together with the names, never before).
+
+Claude Code: `parse_anthropic_session_names` reads the plain
+`~/.claude/projects` transcripts (and `CLAUDE_CONFIG_DIR` roots), keeps the last
+`agent-name` record as kind `agent` and the last `ai-title` as kind `generated`
+per session, with provider `anthropic` and source app `claude_code`. Lines are
+only JSON-decoded when they contain a marker, and a transcript whose size and
+mtime are unchanged is skipped. macOS cowork transcripts are not covered.
+
 ## Implementation Notes
 
 - The strategy options dict carries exactly one key: `enrich`. There is no

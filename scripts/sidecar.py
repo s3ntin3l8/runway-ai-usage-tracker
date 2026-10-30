@@ -3373,6 +3373,42 @@ _LEGACY_EVENT_ACCOUNT_DISCOVERY: dict[str, Any] = {
 }
 
 
+def _collect_claude_session_names(out: list[dict[str, Any]]) -> None:
+    """Names from the plain ``~/.claude/projects`` transcripts (not cowork)."""
+    from scripts.sidecar_pkg import session_names
+    from scripts.sidecar_pkg.event_extractors.anthropic import parse_anthropic_session_names
+
+    records, scanned = parse_anthropic_session_names(
+        _discover_anthropic_log_paths(), skip=session_names.file_unchanged
+    )
+    out.extend(records)
+    session_names.stage_files(scanned)
+    # Counts only: a name is never logged. A renamed transcript field would
+    # otherwise make this a silent no-op.
+    logging.debug(
+        "session names: %d transcript(s) scanned, %d name(s) found", len(scanned), len(records)
+    )
+
+
+#: provider_id -> ``collect(out)`` appending session-name records to ``out``
+#: (``{provider_id, session_id, source_app, name, kind}``). Run once per cycle
+#: right after that provider's events were extracted; see ``session_names.py``.
+_SESSION_NAME_COLLECTORS: dict[str, Callable[[list[dict[str, Any]]], None]] = {
+    "anthropic": _collect_claude_session_names,
+}
+
+
+def _collect_session_names_for_provider(provider_id: str, out: list[dict[str, Any]]) -> None:
+    """Run the provider's name collector. Best-effort; a name is never logged."""
+    collector = _SESSION_NAME_COLLECTORS.get(provider_id)
+    if collector is None:
+        return
+    try:
+        collector(out)
+    except Exception as exc:
+        logging.warning("  [%s] session names skipped (%s)", provider_id, type(exc).__name__)
+
+
 def _extract_events_for_provider(
     provider_id: str,
     account_ids: list[str],
@@ -5574,6 +5610,9 @@ class CollectionResult:
     error_count: int
     completed_providers: list[str]
     cowork_batch: Any = None
+    #: Session names that changed since the last accepted push (see
+    #: ``scripts/sidecar_pkg/session_names.py``); sent with the first batch.
+    session_names: list[dict[str, Any]] = field(default_factory=list)
 
 
 def run_collection(config: dict[str, Any], providers: list[str] | None = None) -> CollectionResult:
@@ -5672,6 +5711,11 @@ def run_collection(config: dict[str, Any], providers: list[str] | None = None) -
 
     all_metrics: list[dict[str, Any]] = []
     all_events: list[dict[str, Any]] = []
+    all_session_names: list[dict[str, Any]] = []
+    from scripts.sidecar_pkg import session_names as _session_names
+
+    _session_names.configure(get_sidecar_dir() / "session-names.json")
+    _session_names.begin_cycle()
     _EVENT_WATERMARK_ALIASES.clear()
     _IDENTITY_REPORT.clear()
     _MINIMAX_CODE_STORES_READ.clear()
@@ -5961,6 +6005,7 @@ def run_collection(config: dict[str, Any], providers: list[str] | None = None) -
                 error_count += extraction_failures or 0
                 if extraction_failures:
                     provider_cycle_complete = False
+                _collect_session_names_for_provider(provider_id, all_session_names)
                 post_count = len(all_events)
                 # Evidence gate (PR #318 round-2 W3): only surface an
                 # Untagged origin when THIS provider contributed events.
@@ -6170,8 +6215,31 @@ def run_collection(config: dict[str, Any], providers: list[str] | None = None) -
         logging.debug(f"git identity: skipped ({_e})")
 
     return CollectionResult(
-        all_metrics, all_events, error_count, completed_providers_this_cycle, cowork_batch
+        all_metrics,
+        all_events,
+        error_count,
+        completed_providers_this_cycle,
+        cowork_batch,
+        _session_names.select_for_push(all_session_names),
     )
+
+
+def _commit_session_names(records: list[dict[str, Any]]) -> None:
+    try:
+        from scripts.sidecar_pkg import session_names
+
+        session_names.commit(records)
+    except Exception as exc:
+        logging.debug("session names: commit failed (%s)", type(exc).__name__)
+
+
+def _discard_session_names() -> None:
+    try:
+        from scripts.sidecar_pkg import session_names
+
+        session_names.discard()
+    except Exception as exc:
+        logging.debug("session names: discard failed (%s)", type(exc).__name__)
 
 
 class DaemonRunner:
@@ -6316,6 +6384,7 @@ class DaemonRunner:
             collection_result = run_collection(cycle_config, providers=providers)
             metrics = collection_result.metrics
             events = collection_result.events
+            session_name_records = collection_result.session_names
             collection_errors = collection_result.error_count
             completed_providers = collection_result.completed_providers
 
@@ -6371,6 +6440,8 @@ class DaemonRunner:
                     "provider": f"sidecar-{get_hostname()}",
                     "metrics": metrics if first_batch else [],
                     "events": event_batch,
+                    # First batch only; at most the server's per-request cap.
+                    "session_names": session_name_records if first_batch else None,
                     "sidecar_id": get_hostname(),
                     "sidecar_version": sidecar_version,
                     "os_platform": os_platform,
@@ -6399,6 +6470,14 @@ class DaemonRunner:
                 )
                 if not success:
                     break  # don't keep firing batches if the server is rejecting them
+                if first_batch and (
+                    isinstance(result, dict) and "names_upserted" in result
+                    # An older server ignores the field and never answers it.
+                ):
+                    # Names are marked sent only once the server stored them: a
+                    # failed upsert still answers 200 but omits ``names_upserted``
+                    # (0 is legitimate: nothing changed server-side).
+                    _commit_session_names(session_name_records)
                 if collection_result.cowork_batch is not None and not (
                     isinstance(result, dict) and result.get("events_error")
                 ):
@@ -6429,6 +6508,9 @@ class DaemonRunner:
                     logging.info(
                         f"  sent batch {batch_idx + 1}/{batch_count} ({len(event_batch)} events)"
                     )
+
+            if not success:
+                _discard_session_names()
 
             with self._lock:
                 self.last_cycle_at = time.time()
