@@ -127,6 +127,15 @@ class _Checkpoint:
 # checkpoints are the truth.
 _PENDING: dict[str, list[_Row]] = {}
 
+# Cycles in a row that may retry at the catch-up pace without reading anything while sessions are
+# still pending (a login missing from the token cache); then the configured interval applies.
+MAX_UNREAD_CATCH_UPS = 3
+
+
+def has_pending() -> bool:
+    """Whether any account still has sessions a cycle left unfinished."""
+    return any(_PENDING.values())
+
 
 class _StorageError(Exception):
     """A database failure while writing events or a checkpoint."""
@@ -727,6 +736,8 @@ class ClaudeCloudCollector:
         self._interval = max(60, interval_seconds)
         self._task: asyncio.Task | None = None
         self._running = False
+        # Consecutive cycles that read nothing while sessions stayed pending.
+        self._unread_cycles = 0
 
     def start(self) -> None:
         if self._task is not None:
@@ -746,6 +757,21 @@ class ClaudeCloudCollector:
             logger.debug("Claude cloud collector cancelled during shutdown")
         self._task = None
 
+    def _next_delay(self, reports: dict[str, CycleReport]) -> float:
+        """Catch-up pace while work is left, even if this cycle could not see its login."""
+        read = any(report.sessions_read for report in reports.values())
+        if any(report.backlog for report in reports.values()) or read:
+            self._unread_cycles = 0
+        elif has_pending():
+            self._unread_cycles += 1
+        else:
+            self._unread_cycles = 0
+        if any(report.backlog for report in reports.values()):
+            return min(self._interval, CATCH_UP_DELAY)
+        if has_pending() and self._unread_cycles <= MAX_UNREAD_CATCH_UPS:
+            return min(self._interval, CATCH_UP_DELAY)
+        return self._interval
+
     async def _run_loop(self) -> None:
         # The token cache fills as sidecars report; wait one interval-sized beat so the first
         # sweep finds the login rather than an empty cache.
@@ -757,8 +783,7 @@ class ClaudeCloudCollector:
                     timeout=5, follow_redirects=False, trust_env=False
                 ) as client:
                     reports = await collect_all(client)
-                if any(report.backlog for report in reports.values()):
-                    delay = min(delay, CATCH_UP_DELAY)
+                delay = self._next_delay(reports)
             except Exception as exc:
                 logger.warning("Claude cloud collector error: %s", type(exc).__name__)
             try:

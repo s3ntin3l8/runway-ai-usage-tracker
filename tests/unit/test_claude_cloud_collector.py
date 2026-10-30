@@ -782,6 +782,52 @@ async def test_the_background_task_starts_stops_and_catches_up(monkeypatch):
     assert 1800 in delays  # and with nothing left it returned to the interval
 
 
+def _pending_row():
+    return [object()]  # only its presence matters to the pacing
+
+
+def test_an_ineligible_cycle_keeps_the_catch_up_pace_only_while_sessions_are_pending(monkeypatch):
+    task = collector.ClaudeCloudCollector(1800)
+    ineligible = {ACCOUNT: collector.CycleReport(outcome="source_ineligible")}
+    reading = {ACCOUNT: collector.CycleReport(outcome="ok", sessions_read=2)}
+    monkeypatch.setattr(collector, "_PENDING", {})
+    assert task._next_delay(ineligible) == 1800  # nothing pending: the interval
+    monkeypatch.setattr(collector, "_PENDING", {ACCOUNT: _pending_row()})
+    assert task._next_delay(ineligible) == collector.CATCH_UP_DELAY
+    assert task._next_delay(ineligible) == collector.CATCH_UP_DELAY
+    assert task._next_delay(ineligible) == collector.CATCH_UP_DELAY
+    assert task._next_delay(ineligible) == 1800  # capped: a login that stays away
+    assert task._next_delay(reading) == collector.CATCH_UP_DELAY  # a read resets the count
+    assert task._next_delay(ineligible) == collector.CATCH_UP_DELAY
+    monkeypatch.setattr(collector, "_PENDING", {})
+    assert task._next_delay(ineligible) == 1800
+    assert task._unread_cycles == 0
+
+
+@pytest.mark.asyncio
+async def test_the_loop_retries_soon_after_an_ineligible_cycle_with_pending_sessions(monkeypatch):
+    delays = []
+
+    async def fake_collect_all(client):
+        return {ACCOUNT: collector.CycleReport(outcome="source_ineligible")}
+
+    real_sleep = asyncio.sleep
+
+    async def record(seconds):
+        delays.append(seconds)
+        await real_sleep(0)
+
+    monkeypatch.setattr(collector, "_PENDING", {ACCOUNT: _pending_row()})
+    monkeypatch.setattr(collector, "collect_all", fake_collect_all)
+    monkeypatch.setattr(collector.asyncio, "sleep", record)
+    task = collector.ClaudeCloudCollector(1800)
+    task.start()
+    for _ in range(40):
+        await real_sleep(0)
+    await task.stop()
+    assert delays[1:4] == [collector.CATCH_UP_DELAY] * 3 and 1800 in delays
+
+
 def test_the_collector_imports_only_what_the_server_image_ships():
     """The image copies app/ and a few named scripts; the sidecar extractors are not among them."""
     from pathlib import Path
