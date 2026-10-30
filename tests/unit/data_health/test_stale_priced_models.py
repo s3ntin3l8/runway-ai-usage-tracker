@@ -312,3 +312,39 @@ def test_an_estimate_that_drops_to_zero_is_reported_as_zeroed_not_updated(sessio
     result = _CHECK.apply(session, "anthropic::sonnet-5.5", {})[0]
     assert result.counts["zeroed"] == 1
     assert _reload(session, ev).cost_usd == 0.0
+
+
+def test_events_without_a_stored_estimate_are_left_alone(session):
+    make_price(session, provider_id="anthropic", model_id="sonnet-5.5", cache_read_per_mtok=0.05)
+    legacy = _ev(session, "legacy", estimated=0.0, cost=0.40)
+
+    assert _CHECK.detect(session).groups == []
+    plan = plan_recost(session, ["anthropic"], estimate_only=True)
+    assert plan.updated == 0 and plan.skipped_unpopulated == 1
+    assert plan.new_estimate_sum == 0.0 and plan.stored_estimate_sum == 0.0
+    apply_recost(session, ["anthropic"], estimate_only=True)
+    fixed = _reload(session, legacy)
+    assert fixed.cost_estimated_usd == 0.0 and fixed.cost_usd == 0.40
+
+
+def test_a_mixed_group_only_changes_the_populated_events_and_hint_agrees(session):
+    make_price(session, provider_id="anthropic", model_id="sonnet-5.5", cache_read_per_mtok=0.05)
+    stale = _ev(session, "stale", estimated=0.20)
+    legacy = _ev(session, "legacy", estimated=0.0, cost=0.40)
+
+    group = _groups(session)["anthropic::sonnet-5.5"]
+    exact = plan_recost(
+        session, ["anthropic"], estimate_only=True, models=["sonnet-5.5"], sample_size=0
+    )
+    assert group.count == exact.updated == 1
+    assert exact.skipped_unpopulated == 1
+    assert group.samples[0].detail["delta_usd"] == pytest.approx(
+        exact.new_estimate_sum - exact.stored_estimate_sum, abs=1e-4
+    )
+    assert _CHECK.plan(session, "anthropic::sonnet-5.5", {}).counts["skipped_unpopulated"] == 1
+
+    apply_recost(session, ["anthropic"], estimate_only=True, models=["sonnet-5.5"])
+
+    assert _reload(session, stale).cost_estimated_usd == pytest.approx(0.05)
+    untouched = _reload(session, legacy)
+    assert untouched.cost_estimated_usd == 0.0 and untouched.cost_usd == 0.40

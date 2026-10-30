@@ -88,6 +88,8 @@ class RecostPlan:
     unchanged: int = 0
     zeroed: int = 0
     skipped_still_unpriced: int = 0
+    # estimate_only: events with no stored estimate (legacy rows); left alone.
+    skipped_unpopulated: int = 0
     affected_pairs: set[tuple[str, str]] = field(default_factory=set)
     samples: list[RecostChange] = field(default_factory=list)
     # estimate_only bookkeeping: stored vs recomputed estimate over the events
@@ -183,7 +185,7 @@ def _legacy_reported_cost(ev: _RecostEvent) -> float | None:
 
 @dataclass(frozen=True)
 class RecostSkip:
-    reason: str  # "unchanged" | "still_unpriced"
+    reason: str  # "unchanged" | "still_unpriced" | "unpopulated"
 
 
 def _compute_changes(
@@ -218,6 +220,11 @@ def _compute_changes(
             session, ev.provider_id, ev.model_id, ev.ts, index=pricing_index
         )
         if estimate_only:
+            if ev.cost_estimated_usd <= 0:
+                # Legacy row whose estimate was never populated: nothing to
+                # call stale, and rewriting it would change history.
+                yield RecostSkip("unpopulated")
+                continue
             if price_row is None or is_priced_on_purpose_free(ev.provider_id, ev.model_id or ""):
                 # No rate resolves (nothing to refresh the estimate from) or the
                 # event is free on purpose.
@@ -327,7 +334,8 @@ def plan_recost(
             if item.reason == "unchanged":
                 plan.unchanged += 1
             else:
-                plan.skipped_still_unpriced += 1
+                plan.skipped_unpopulated += item.reason == "unpopulated"
+                plan.skipped_still_unpriced += item.reason == "still_unpriced"
             continue
         plan.affected_pairs.add((item.provider_id, item.account_id))
         if estimate_only:
@@ -366,7 +374,8 @@ def apply_recost(
             if item.reason == "unchanged":
                 result.unchanged += 1
             else:
-                result.skipped_still_unpriced += 1
+                result.skipped_unpopulated += item.reason == "unpopulated"
+                result.skipped_still_unpriced += item.reason == "still_unpriced"
             continue
         writes.append(
             {

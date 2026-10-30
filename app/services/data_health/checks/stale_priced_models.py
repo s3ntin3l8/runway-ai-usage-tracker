@@ -174,6 +174,8 @@ def _aggregate_buckets(session: Session) -> dict[tuple[str, str], _Bucket]:
         .where(
             UsageEvent.kind == "message",
             UsageEvent.cost_usd != 0.0,
+            # Events with no stored estimate (legacy rows) are left alone.
+            UsageEvent.cost_estimated_usd > 0,
             col(UsageEvent.model_id).is_not(None),
         )
         .group_by(
@@ -321,6 +323,7 @@ class StalePricedModelsCheck(Check):
                 # displayed the estimate: its shown cost goes to $0.
                 "zeroed": recost_plan.zeroed,
                 "unchanged": recost_plan.unchanged,
+                "skipped_unpopulated": recost_plan.skipped_unpopulated,
                 "events_keeping_cost_usd": recost_plan.kept_cost_usd,
                 "stored_estimate_usd": round(recost_plan.stored_estimate_sum, 4),
                 "new_estimate_usd": round(recost_plan.new_estimate_sum, 4),
@@ -347,6 +350,7 @@ class StalePricedModelsCheck(Check):
                     "updated": result.updated,
                     "zeroed": result.zeroed,
                     "unchanged": result.unchanged,
+                    "skipped_unpopulated": result.skipped_unpopulated,
                     "rollups_rebuilt_pairs": result.rollups_rebuilt_pairs,
                     "windows_rebuilt": result.windows_rebuilt,
                 },
