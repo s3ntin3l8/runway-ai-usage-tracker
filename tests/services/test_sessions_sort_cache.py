@@ -254,3 +254,26 @@ def test_session_lookup_uses_the_new_index(db):
         )
     ).all()
     assert "ix_usage_events_account_session_ts" in " ".join(str(r) for r in plan)
+
+
+def test_boundary_session_never_splits_total_from_the_page(db):
+    # A session that exists only in the sliver between two same-minute requests.
+    since = _NOW.replace(second=0, microsecond=0) - timedelta(hours=1)
+    for i in range(4):
+        _add(db, f"in-{i}", 1, start=10 + i)
+    db.add(
+        UsageEvent(
+            provider_id="anthropic",
+            account_id="acc1",
+            event_id="edge",
+            session_id="edge",
+            ts=since + timedelta(seconds=20),
+            kind="message",
+        )
+    )
+    db.commit()
+    base = {"provider_id": "anthropic", "account_id": "acc1", "page_size": 3}
+    first = query_sessions_paginated(db, since=since + timedelta(seconds=20), **base)
+    second = query_sessions_paginated(db, since=since + timedelta(seconds=40), **base)
+    assert first["total"] == second["total"] == 5
+    assert len(second["sessions"]) == 3

@@ -148,8 +148,8 @@ def query_sessions(  # noqa: PLR0913 — the event-level filters extend the sign
     `offset` pages the result (for the paginated Sessions browser).
 
     `only_ids` restricts the aggregate to those sessions (the paginated browser
-    # fetches just its page this way); the rows then come back newest first and
-    # the caller re-orders them.
+    fetches just its page this way); the rows then come back newest first and
+    the caller re-orders them.
 
     Events with NULL session_id are excluded.
     """
@@ -479,8 +479,8 @@ def _minute(value: datetime) -> datetime:
 def _index_cache_key(filters: SessionFilters) -> str:
     """Cache key of one filter set. The webapp sends a `since`/`until` rounded
     from "now" on every load, so both are floored to the minute: sort and page
-    clicks then land on the same entry (the window edge moves by under a minute,
-    which only changes which session the sort order includes, never a row)."""
+    clicks then land on the same entry. The caller floors the window the same
+    way before querying, so the entry and the page rows share one window."""
     key = (
         "sessions-index",
         *replace(
@@ -567,7 +567,12 @@ def query_sessions_paginated(  # noqa: PLR0913 — the event-level filters exten
     cached briefly (`_SESSION_INDEX_TTL`); sorting, paging and the total come
     from that list, and only the page's own sessions get the full aggregate and
     breakdowns. So a sort or page change does not re-aggregate the window.
-    `use_cache=False` runs the original all-SQL path (kept as the reference).
+    `use_cache=False` runs the original all-SQL path. It is a test reference
+    (the differential tests compare against it), not a runtime switch.
+
+    `since`/`until` are floored to the minute for the index and the page alike,
+    so `total` and the page rows always describe the same window (up to 59 s
+    wider at its edges than the exact request).
     """
     if not use_cache:
         return _query_sessions_paginated_sql(
@@ -591,8 +596,8 @@ def query_sessions_paginated(  # noqa: PLR0913 — the event-level filters exten
     filters = SessionFilters(
         provider_id=provider_id,
         account_id=account_id,
-        since=since,
-        until=until,
+        since=_minute(since),
+        until=_minute(until) if until is not None else None,
         project=project,
         sidecar_id=sidecar_id,
         model=model,
@@ -612,8 +617,8 @@ def query_sessions_paginated(  # noqa: PLR0913 — the event-level filters exten
                 session,
                 provider_id=provider_id,
                 account_id=account_id,
-                since=since,
-                until=until,
+                since=filters.since,
+                until=filters.until,
                 limit=len(page_ids),
                 project=project,
                 sidecar_id=sidecar_id,

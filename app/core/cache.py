@@ -45,7 +45,12 @@ def cache_get(key: str) -> Any | None:
 
 def cache_set(key: str, value: Any, ttl_seconds: float) -> None:
     with _lock:
-        _store[key] = (time.monotonic() + ttl_seconds, value)
+        now = time.monotonic()
+        # Reap expired entries here rather than only at read: a large short-TTL
+        # value (the sessions sort index) must not sit around until eviction.
+        for stale in [k for k, (expires_at, _) in _store.items() if now >= expires_at]:
+            del _store[stale]
+        _store[key] = (now + ttl_seconds, value)
         _store.move_to_end(key)
         while len(_store) > _MAX_ENTRIES:
             _store.popitem(last=False)  # evict least-recently-used
