@@ -128,6 +128,11 @@ class _Checkpoint:
 _PENDING: dict[str, list[_Row]] = {}
 
 
+def clear_pending() -> None:
+    """Forget the unfinished sessions, so the next cycle lists them afresh (after a reset)."""
+    _PENDING.clear()
+
+
 class _StorageError(Exception):
     """A database failure while writing events or a checkpoint."""
 
@@ -279,7 +284,11 @@ def _commit(
     with Session(engine) as session:
         inserted = 0
         if events:
-            inserted = EventIngestor(session).ingest(events, sidecar_id="server").events_inserted
+            inserted = (
+                EventIngestor(session)
+                .ingest(events, sidecar_id=support.CLOUD_SIDECAR_ID)
+                .events_inserted
+            )
         row = session.exec(
             select(ClaudeCloudSessionCheckpoint).where(
                 ClaudeCloudSessionCheckpoint.account_id == account,

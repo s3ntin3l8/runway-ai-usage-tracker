@@ -11,6 +11,7 @@ from __future__ import annotations
 from app.services.data_health.base import Check
 from app.services.data_health.checks.alert_channels import AlertChannelsCheck
 from app.services.data_health.checks.cloud_coarse_events import CloudCoarseEventsCheck
+from app.services.data_health.checks.cloud_events_reset import CloudEventsResetCheck
 from app.services.data_health.checks.config_default_keyed import ConfigDefaultKeyedCheck
 from app.services.data_health.checks.inconsistent_project_labels import (
     InconsistentProjectLabelsCheck,
@@ -55,6 +56,7 @@ REGISTRY: list[Check] = [
     PathShapedProjectsCheck(),
     InconsistentProjectLabelsCheck(),
     CloudCoarseEventsCheck(),
+    CloudEventsResetCheck(),
     PendingEventsCheck(),
     AlertChannelsCheck(),
 ]

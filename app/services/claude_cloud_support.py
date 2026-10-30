@@ -30,6 +30,10 @@ from scripts.sidecar_pkg.source_catalog import source_for_origin
 # and stays a module attribute so a test can bind a fresh lock to its own event loop.
 gate = asyncio.Lock()
 
+# The sidecar id the collector ingests under. It is a server-side source, not a host: a sidecar that
+# claims it is refused (`SERVER_SIDECAR_IDS` in `sidecar_devices.py`), so no device can merge into it.
+CLOUD_SIDECAR_ID = "anthropic-cloud"
+
 
 class ProbeError(Exception):
     """Only internal, fixed outcome categories cross this boundary."""

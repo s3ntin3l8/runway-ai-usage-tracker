@@ -229,17 +229,17 @@ class ClaudeCloudHistoryReducer:
     def _project(self, cwd: str | None) -> tuple[str | None, str | None]:
         """(project_ref, cwd) for an event.
 
-        The working directory is only passed on when a repository is attributed: the ingestor would
-        otherwise label the project with the last path segment, which is the wrong thing for a bare
-        home or a parent directory.
+        A session that names exactly one repository belongs to it whatever directory it ran in, so
+        every event carries that name. The working directory is only passed on when one of its path
+        segments is the repository: the ingestor would otherwise label the project with the last
+        path segment, which is the wrong thing for a bare home or a parent directory. With several
+        repositories the one whose name is a segment of the directory wins, else none.
         """
         names = tuple(name for name in map(_repo_name, self.facts.repos) if name)
         parts = [part for part in (cwd or "").split("/") if part]
-        chosen: str | None = None
-        if len(names) == 1 and (cwd is None or names[0] in parts):
-            chosen = names[0]
-        elif len(names) > 1:
-            chosen = next((name for name in names if name in parts), None)
+        if len(names) == 1:
+            return (names[0], cwd) if names[0] in parts else (names[0], None)
+        chosen = next((name for name in names if name in parts), None)
         return (chosen, cwd) if chosen else (None, None)
 
     def _base(self, context: _Message | None) -> dict[str, Any]:

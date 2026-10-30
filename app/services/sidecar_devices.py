@@ -23,6 +23,10 @@ def reserved_registry_id(value: str) -> bool:
     return re.fullmatch(r"device-[a-f0-9]{32}", value) is not None
 
 
+# Source ids the server writes itself (the Claude cloud collector, `CLOUD_SIDECAR_ID`). A sidecar may
+# not claim one: its usage would merge into the server's. A test pins that the two stay equal.
+SERVER_SIDECAR_IDS = frozenset({"anthropic-cloud"})
+
 # How long a freshly enrolled device may go without a source sync before that is worth a notice.
 SOURCE_SYNC_GRACE = timedelta(minutes=10)
 
@@ -140,4 +144,6 @@ def authenticated_registry_id(request: Any, claimed: str | None) -> str | None:
         raise HTTPException(
             status_code=403, detail="Device identity requires device authentication"
         )
+    if claimed is not None and claimed in SERVER_SIDECAR_IDS:
+        raise HTTPException(status_code=403, detail="This sidecar id is reserved for the server")
     return claimed
