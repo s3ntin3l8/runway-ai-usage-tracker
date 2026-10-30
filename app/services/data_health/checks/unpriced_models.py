@@ -29,23 +29,19 @@ from app.services.data_health.base import (
     Severity,
 )
 from app.services.maintenance.event_cost import resolve_event_cost
-from app.services.maintenance.recost import apply_recost, plan_recost
-from app.services.model_normalization import is_free_tier_model_id
+from app.services.maintenance.recost import (
+    apply_recost,
+    is_priced_on_purpose_free,
+    plan_recost,
+)
 
 
 def _is_excluded(provider_id: str, model_id: str) -> bool:
-    if provider_id == "opencode-free":
-        return True
-    m = model_id.lower()
     # Free-tier ids are excluded for every provider, not just the OpenCode
     # ones: the cost calculator's segment-trim fallback is blocked for them
     # too, so a "-free" id can never reach a paid sibling row and be billed
     # at list price.
-    if is_free_tier_model_id(m):
-        return True
-    if m in ("unknown", ""):
-        return True
-    return False
+    return is_priced_on_purpose_free(provider_id, model_id)
 
 
 def _classify_events(session: Session) -> dict[tuple[str, str], dict[str, int]]:

@@ -100,6 +100,31 @@ class PricingIndex:
         rows = [PricingRowSnapshot(*values) for values in session.execute(statement).all()]
         return cls(rows)
 
+    def effective_dates(self, provider_id: str) -> list[date]:
+        """Every distinct `effective_from` among one provider's rows, ascending.
+        Price resolution for any model of the provider is constant between two
+        consecutive dates, so a bulk consumer can resolve once per interval."""
+        return sorted(
+            {
+                row.effective_from
+                for (provider, _model), rows in self._exact.items()
+                if provider == provider_id
+                for row in rows
+            }
+        )
+
+    def long_thresholds(self) -> list[int]:
+        """Every distinct long-prompt threshold any row carries, ascending, so a
+        bulk SQL aggregate can precompute one tier flag per threshold."""
+        return sorted(
+            {
+                row.long_prompt_threshold_tokens
+                for rows in self._exact.values()
+                for row in rows
+                if row.long_prompt_threshold_tokens is not None
+            }
+        )
+
     @staticmethod
     def _at_or_before(
         rows: list[PricingRowSnapshot] | None, effective_on: date

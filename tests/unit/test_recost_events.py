@@ -94,7 +94,7 @@ def test_phase_b_updates_zero_cost_event():
     s = _make_session()
     ev = _chatgpt_event(s, cost_usd=0.0)
 
-    updated, unchanged, zeroed, affected_pairs = phase_b_recost(
+    updated, unchanged, zeroed, affected_pairs, _skipped = phase_b_recost(
         s, providers=["chatgpt"], since=None, dry_run=False
     )
 
@@ -147,7 +147,7 @@ def test_phase_b_skips_error_events():
     s.add(err_ev)
     s.commit()
 
-    updated, unchanged, zeroed, affected_pairs = phase_b_recost(
+    updated, unchanged, zeroed, affected_pairs, _skipped = phase_b_recost(
         s, providers=["chatgpt"], since=None, dry_run=False
     )
     assert updated == 0
@@ -173,7 +173,7 @@ def test_phase_b_unchanged_count_when_cost_already_correct():
     s.add(ev)
     s.commit()
 
-    updated, unchanged, zeroed, affected_pairs = phase_b_recost(
+    updated, unchanged, zeroed, affected_pairs, _skipped = phase_b_recost(
         s, providers=["chatgpt"], since=None, dry_run=False
     )
     assert updated == 0
@@ -392,7 +392,7 @@ def test_affected_pairs_narrows_rebuild_to_the_provider_that_changed():
 
     # Same sequencing run() uses: Phase B, then thread its affected_pairs
     # into Phase C/D — with `--all` (providers=None) at the CLI.
-    _updated, _unchanged, _zeroed, affected_pairs = phase_b_recost(
+    _updated, _unchanged, _zeroed, affected_pairs, _skipped = phase_b_recost(
         s, providers=None, since=None, dry_run=False
     )
     assert affected_pairs == {("chatgpt", "user@test.com")}
@@ -524,3 +524,43 @@ def test_phase_c_and_d_given_empty_pairs_directly_are_a_no_op():
     window_after = s.exec(select(UsageWindow).where(UsageWindow.provider_id == "chatgpt")).first()
     assert window_after is not None
     assert window_after.id == window_id
+
+
+def test_estimate_only_run_names_the_events_skipped_for_having_no_stored_estimate(capsys):
+    from datetime import date
+
+    from app.models.db import ProviderPricing
+
+    s = _make_session()
+    s.add(
+        ProviderPricing(
+            provider_id="chatgpt",
+            model_id="gpt-6-sol",
+            effective_from=date(2020, 1, 1),
+            input_per_mtok=2.0,
+            output_per_mtok=2.0,
+            cache_read_per_mtok=0.0,
+            cache_create_per_mtok=0.0,
+        )
+    )
+    for i, estimated in enumerate((0.5, 0.0)):  # stale, then a legacy row
+        s.add(
+            UsageEvent(
+                provider_id="chatgpt",
+                account_id="acct",
+                sidecar_id="dev-01",
+                event_id=f"est-{i}",
+                ts=datetime(2026, 9, 1, tzinfo=UTC),
+                kind="message",
+                model_id="gpt-6-sol",
+                tokens_input=1_000_000,
+                cost_usd=0.5,
+                cost_estimated_usd=estimated,
+            )
+        )
+    s.commit()
+
+    *_, skipped = phase_b_recost(s, None, None, True, estimate_only=True)
+    assert skipped == 1
+    out = capsys.readouterr().out
+    assert "1 with no stored estimate" in out

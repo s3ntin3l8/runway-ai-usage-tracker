@@ -33,6 +33,7 @@ from app.services.data_health.checks.pending_events import PendingEventsCheck
 from app.services.data_health.checks.rollup_drift import RollupDriftCheck
 from app.services.data_health.checks.stale_credential_rules import StaleCredentialRulesCheck
 from app.services.data_health.checks.stale_credential_sources import StaleCredentialSourcesCheck
+from app.services.data_health.checks.stale_priced_models import StalePricedModelsCheck
 from app.services.data_health.checks.unpriced_claude_accounts import (
     UnpricedClaudeAccountsCheck,
 )
@@ -53,6 +54,7 @@ REGISTRY: list[Check] = [
     OrphanGaugeSeriesCheck(),
     MisidentifiedGaugeSeriesCheck(),
     UnpricedModelsCheck(),
+    StalePricedModelsCheck(),
     UnpricedClaudeAccountsCheck(),
     RollupDriftCheck(),
     MinimaxBackgroundSessionsCheck(),

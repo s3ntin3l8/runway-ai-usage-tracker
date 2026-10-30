@@ -26,7 +26,13 @@ python3 scripts/reclassify_opencode_providers.py --providers opencode-ollama --d
 ```
 
 `recost_events.py` also accepts `--skip-rollups` and `--skip-windows` to leave
-the derived tables alone.
+the derived tables alone, and `--estimate-only` to refresh only stale computed
+estimates (events with no stored estimate are skipped and reported as such, and
+reported costs and the shown total of events that do not display the estimate
+are left alone). That is the rule the Data Health `stale_priced_models`
+fix applies, and the normal path after a pricing correction. A plain run is the
+full re-price and also rewrites `cost_usd` where the estimate/reported selection
+changed (for example after a `billing_type` change).
 
 ## Backfills
 
@@ -84,7 +90,7 @@ Re-tag events and rows under the right provider or model.
 
 | Script | What it repairs |
 |---|---|
-| `recost_events.py` | Recompute `cost_usd` on `usage_events` and rebuild the derived cost tables. The right tool after a pricing-seed change. |
+| `recost_events.py` | The **full** re-price: recompute `cost_usd` on `usage_events` and rebuild the derived cost tables. Only needed after a calculator change or a change of how the displayed cost is chosen; for a pricing correction use the Data Health `stale_priced_models` fix (server stays up) or `--estimate-only`, which applies the same rule. |
 | `link_minimax_background_sessions.py` | File the MiniMax Code background-task rows under the session that spawned them. Run it on the host that ran MiniMax Code — only that host has the runtime store. |
 | `migrate_kimi_coding_key.py` | One-shot migration: the `kimi_coding` API key stored in the `session_cookie` slot. |
 
