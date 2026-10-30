@@ -17,7 +17,7 @@ from typing import Any
 from sqlmodel import Session, col, select
 
 from app.models.db import ProviderConfig, UsageEvent
-from app.services.cost_calculator import PricingIndex, resolve_price_row
+from app.services.cost_calculator import PricingIndex, is_aggregate_event_id, resolve_price_row
 from app.services.data_health.base import (
     AsyncHook,
     Check,
@@ -74,6 +74,7 @@ def _classify_events(session: Session) -> dict[tuple[str, str], dict[str, int]]:
             UsageEvent.tokens_cache_create_1h,
             UsageEvent.tokens_cache_create_5m,
             UsageEvent.cost_reported_usd,
+            UsageEvent.event_id,
         )
         .where(
             col(UsageEvent.kind) == "message",
@@ -103,6 +104,7 @@ def _classify_events(session: Session) -> dict[tuple[str, str], dict[str, int]]:
         tokens_cache_create_1h,
         tokens_cache_create_5m,
         cost_reported_usd,
+        event_id,
     ) in events:
         assert model_id is not None
         if _is_excluded(provider_id, model_id):
@@ -132,6 +134,7 @@ def _classify_events(session: Session) -> dict[tuple[str, str], dict[str, int]]:
             tokens_cache_create_5m=tokens_cache_create_5m,
             billing_type=configs.get((provider_id, account_id), "unknown"),
             reported_cost=cost_reported_usd,
+            standard_tier_only=is_aggregate_event_id(event_id),
             resolved_price_row=price,
             price_row_resolved=True,
         )

@@ -125,21 +125,34 @@ PricingRow = ProviderPricing | PricingRowSnapshot
 
 
 def is_aggregate_event_id(event_id: str | None) -> bool:
-    """True for a Claude cloud remainder event (`cloud:<digest>:r:<n>:<model>`).
+    """True for a Claude cloud event that aggregates several calls.
 
-    A remainder aggregates the deltas of several calls, so it has no single
-    prompt size and must never trigger a long-prompt tier."""
-    return event_id is not None and event_id.startswith("cloud:") and ":r:" in event_id
+    Every `cloud:` id except a per-message `cloud:<digest>:m:<id>` is an
+    aggregate: remainders (`:r:`) and the first collector's coarse
+    `cloud:<digest>:<n>` events. They have no single prompt size and must never
+    trigger a long-prompt tier. Structural (fails closed for future cloud forms)."""
+    return event_id is not None and event_id.startswith("cloud:") and ":m:" not in event_id
+
+
+_PARTIAL_TIER_WARNED: set[tuple[str, str]] = set()
 
 
 def _long_tier_applies(row: PricingRow, prompt_tokens: int) -> bool:
     threshold = row.long_prompt_threshold_tokens
-    return (
-        threshold is not None
-        and prompt_tokens > threshold
-        and row.long_input_per_mtok is not None
-        and row.long_output_per_mtok is not None
-    )
+    if threshold is None or prompt_tokens <= threshold:
+        return False
+    if row.long_input_per_mtok is None or row.long_output_per_mtok is None:
+        key = (row.provider_id, row.model_id)
+        if key not in _PARTIAL_TIER_WARNED and len(_PARTIAL_TIER_WARNED) < 256:
+            _PARTIAL_TIER_WARNED.add(key)
+            logger.warning(
+                "cost_calculator: %s/%s has a long-prompt threshold but no long input/output "
+                "rate — billing the standard tier (incomplete tier)",
+                row.provider_id,
+                row.model_id,
+            )
+        return False
+    return True
 
 
 def _price_row(

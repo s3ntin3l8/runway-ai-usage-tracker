@@ -2,7 +2,7 @@ import logging
 from datetime import UTC, date, datetime, timedelta, timezone
 
 import pytest
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session, SQLModel, create_engine, select
 from sqlmodel.pool import StaticPool
 
 from app.models.db import ProviderPricing
@@ -1361,6 +1361,7 @@ def test_haiku_55_standard_tier_only_ignores_the_long_tier():
 
 def test_is_aggregate_event_id_matches_only_cloud_remainders():
     assert cost_calculator.is_aggregate_event_id("cloud:abc:r:3:haiku-5.5")
+    assert cost_calculator.is_aggregate_event_id("cloud:abc:3")  # first collector's coarse event
     assert not cost_calculator.is_aggregate_event_id("cloud:abc:m:msg_1")
     assert not cost_calculator.is_aggregate_event_id("msg:r:1")
     assert not cost_calculator.is_aggregate_event_id(None)
@@ -1388,3 +1389,17 @@ def test_pricing_index_carries_the_long_tier():
     assert row is not None
     assert row.long_prompt_threshold_tokens == 100_000
     assert row.long_input_per_mtok == 0.50
+
+
+def test_incomplete_long_tier_bills_standard_and_warns_once(caplog):
+    s = _seeded_session()
+    row = s.exec(select(ProviderPricing).where(ProviderPricing.model_id == "haiku-5.5")).one()
+    row.long_output_per_mtok = None
+    s.add(row)
+    s.commit()
+    cost_calculator._PARTIAL_TIER_WARNED.clear()
+    with caplog.at_level("WARNING", logger="app.services.cost_calculator"):
+        b1 = _haiku_55_cost(s, tokens_input=150_000)
+        _haiku_55_cost(s, tokens_input=150_000)
+    assert b1.output == 0.50
+    assert len([r for r in caplog.records if "incomplete tier" in r.getMessage()]) == 1
