@@ -19,6 +19,15 @@ logger = logging.getLogger(__name__)
 # Trailing "-<major>(.<minor>...)" version suffix, e.g. "opus-4.8" -> "opus".
 _VERSION_SUFFIX = re.compile(r"-\d+(?:\.\d+)*$")
 
+# (provider, model) pairs already warned about for the version-suffix fallback,
+# so a busy ingest or a re-cost over thousands of events logs each model once.
+# Bounded because model ids arrive from sidecars: a FIFO (dicts keep insertion
+# order) drops the oldest entry past the cap and the key is length-capped, so
+# the warning never goes permanently quiet and the memory never grows.
+_FAMILY_FALLBACK_WARNED: dict[tuple[str, str], None] = {}
+_FAMILY_FALLBACK_WARNED_MAX = 256
+_FAMILY_FALLBACK_KEY_MAX = 128
+
 
 class CostBreakdown(NamedTuple):
     """Per-component USD cost. `output` includes reasoning (billed at the output
@@ -179,6 +188,25 @@ def resolve_price_row(
         family = _VERSION_SUFFIX.sub("", model_id)
         if family != model_id:
             row = exact_lookup(family)
+            if (
+                row is not None
+                and provider_id == "anthropic"
+                and (provider_id, model_id[:_FAMILY_FALLBACK_KEY_MAX])
+                not in _FAMILY_FALLBACK_WARNED
+            ):
+                # A brand-new version (e.g. "haiku-5.5") silently reusing an
+                # older sibling's row can misprice by an order of magnitude.
+                _FAMILY_FALLBACK_WARNED[(provider_id, model_id[:_FAMILY_FALLBACK_KEY_MAX])] = None
+                if len(_FAMILY_FALLBACK_WARNED) > _FAMILY_FALLBACK_WARNED_MAX:
+                    del _FAMILY_FALLBACK_WARNED[next(iter(_FAMILY_FALLBACK_WARNED))]
+                logger.warning(
+                    "cost_calculator: %s/%s has no pricing row — billing at "
+                    "the '%s' family rate via version-suffix fallback "
+                    "(estimated; seed a dedicated row)",
+                    provider_id,
+                    model_id,
+                    family,
+                )
     if row is None and not free_tier:
         # Codenamed/unseeded variants ("gpt-5.7-nova") don't end in a bare
         # digit, so _VERSION_SUFFIX above never fires. Progressively

@@ -79,10 +79,21 @@ PRICING_SEED: list[dict] = [
         "effective_from": "2026-01-01",
         "input_per_mtok": 2.00,
         "output_per_mtok": 10.00,
-        "cache_read_per_mtok": 0.20,
+        "cache_read_per_mtok": 0.10,  # 0.05x input (like Opus 5.5; Sonnet 5 is 0.1x)
         "cache_create_per_mtok": 2.50,  # 5m TTL writes: 1.25x input
         "cache_create_1h_per_mtok": 4.00,  # 1h TTL writes: 2x input
-        "notes": "Sonnet 5.5 — same rates as Sonnet 5",
+        "notes": "Sonnet 5.5 — same as Sonnet 5 except cache reads at 0.05x input",
+    },
+    {
+        "provider_id": "anthropic",
+        "model_id": "haiku-5.5",
+        "effective_from": "2026-01-01",
+        "input_per_mtok": 0.10,
+        "output_per_mtok": 0.50,
+        "cache_read_per_mtok": 0.01,  # 0.1x input
+        "cache_create_per_mtok": 0.125,  # 5m TTL writes: 1.25x input
+        "cache_create_1h_per_mtok": 0.20,  # 1h TTL writes: 2x input
+        "notes": "Haiku 5.5 — prompts up to 100k tokens (the long-prompt tier is not modelled)",
     },
     {
         "provider_id": "anthropic",
@@ -1278,6 +1289,9 @@ PRICING_SEED: list[dict] = [
 ]
 
 
+_SONNET_55_OLD_CACHE_READ = 0.20
+
+
 def seed_pricing_table(session: Session) -> int:
     """Insert any seed rows missing from provider_pricing. Returns rows inserted."""
     inserted = 0
@@ -1301,6 +1315,17 @@ def seed_pricing_table(session: Session) -> int:
             seed_1h = row.get("cache_create_1h_per_mtok", 0.0)
             if exists.cache_create_1h_per_mtok == 0.0 and seed_1h:
                 exists.cache_create_1h_per_mtok = seed_1h
+                session.add(exists)
+            if (
+                row["provider_id"] == "anthropic"
+                and row["model_id"] == "sonnet-5.5"
+                and exists.cache_read_per_mtok == _SONNET_55_OLD_CACHE_READ
+            ):
+                # Sonnet 5.5 was first seeded with Sonnet 5's 0.20 cache-read
+                # rate; the list price is 0.05x input. Fix it in place, but only
+                # while it still holds that old value (any other value is left
+                # alone); idempotent, so re-running on every startup is a no-op.
+                exists.cache_read_per_mtok = row["cache_read_per_mtok"]
                 session.add(exists)
             seed_create = row.get("cache_create_per_mtok", 0.0)
             if exists.cache_create_per_mtok == 0.0 and seed_create:

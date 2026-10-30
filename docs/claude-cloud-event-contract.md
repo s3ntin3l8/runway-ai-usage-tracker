@@ -254,8 +254,9 @@ guard is unaffected; applying it twice is a no-op.
   row as one message, so for cloud sessions those global message counts run about 10-25% high (one
   extra row per turn and model). The sessions view and top sessions, hosts and projects collapse
   remainders through `turn_id` and stay exact. Accepted trade-off; token and cost totals are exact.
-- `haiku-5.5` has no pricing row and is silently priced as Haiku 4.5; the real rate needs confirming
-  (tracked separately).
+- `haiku-5.5` is priced at its own row (prompts up to 100k tokens: $0.10 in / $0.50 out); the
+  over-100k-token tier is not modelled yet (tracked separately). Stored events priced before the row
+  existed need `scripts/recost_events.py --provider anthropic`.
 - Per-message output is a lower bound; real output arrives in remainder events. Per-message output is
   therefore not attributable to a single message.
 - Remainder events have no tools and no per-message time; they are dated at the result.
