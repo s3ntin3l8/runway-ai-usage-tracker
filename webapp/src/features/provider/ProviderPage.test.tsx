@@ -383,14 +383,14 @@ describe('ProviderPage', () => {
       renderPage('/provider/anthropic?tab=sessions');
       await userEvent.click(await screen.findByRole('button', { name: /filters/i }));
       expect(await screen.findByRole('combobox', { name: 'Usage source' })).toBeInTheDocument();
-      expect(screen.getByRole('listbox', { name: 'Project filter' })).toBeInTheDocument();
+      expect(screen.getByRole('group', { name: 'Project filter' })).toBeInTheDocument();
     });
 
     it('hides Project on other tabs', async () => {
       renderPage('/provider/anthropic?tab=events');
       await userEvent.click(await screen.findByRole('button', { name: /filters/i }));
       expect(await screen.findByRole('combobox', { name: 'Usage source' })).toBeInTheDocument();
-      expect(screen.queryByRole('listbox', { name: 'Project filter' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('group', { name: 'Project filter' })).not.toBeInTheDocument();
     });
 
     it('counts an active project in the badge only where it is shown', async () => {
@@ -405,7 +405,7 @@ describe('ProviderPage', () => {
     it('selecting a project updates the badge and the sessions request', async () => {
       renderPage('/provider/anthropic?tab=sessions');
       await userEvent.click(await screen.findByRole('button', { name: /filters/i }));
-      await userEvent.click(await screen.findByRole('option', { name: 'sanctuary' }));
+      await userEvent.click(await screen.findByRole('button', { name: 'sanctuary' }));
       await waitFor(() =>
         expect(api.fetchSessionsPaginated).toHaveBeenCalledWith(
           expect.objectContaining({ project: 'sanctuary' }),

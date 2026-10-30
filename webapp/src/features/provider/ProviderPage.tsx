@@ -475,7 +475,7 @@ function ProviderFilters({
         <p className="text-[11px] text-fg-muted">Filters apply to the current tab where supported.</p>
       </div>
       {showSource ? <div className="space-y-1"><div className="text-[11px] text-fg-muted">Source</div><SidecarFilter /></div> : null}
-      {showProject ? <div className="space-y-1"><div className="text-[11px] text-fg-muted">Project</div><ProjectFilter providerId={providerId} range={range} /></div> : null}
+      {showProject ? <ProjectFilter providerId={providerId} range={range} /> : null}
       {showCache ? <div className="space-y-1"><div className="text-[11px] text-fg-muted">Cached tokens</div><ExcludeCacheToggle /></div> : null}
     </Popover>
   );
