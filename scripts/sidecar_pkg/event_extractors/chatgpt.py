@@ -11,9 +11,12 @@ identifier in individual messages.
 """
 
 import json
+import logging
+import sqlite3
 import sys
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 # Allow importing from app/ when running from the repo root.
 _REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -22,6 +25,7 @@ if str(_REPO_ROOT) not in sys.path:
 
 from app.core.source_apps import CODEX  # noqa: E402
 from app.models.schemas import UsageEventPush  # noqa: E402
+from scripts.sidecar_pkg import session_names  # noqa: E402
 
 
 def _normalize_chatgpt_model(model: str) -> str:
@@ -191,3 +195,102 @@ def parse_chatgpt_events(
             continue
 
     return events
+
+
+# ── Session names ─────────────────────────────────────────────────────────────
+
+
+def _open_readonly(path: Path) -> sqlite3.Connection:
+    return sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True, timeout=5)
+
+
+def _state_db_order(path: Path) -> tuple[int, str]:
+    """Oldest schema version first, so the newest DB's rows win (state_10 after state_9)."""
+    digits = path.stem.removeprefix("state_")
+    return (int(digits) if digits.isdigit() else -1, path.name)
+
+
+def _codex_threads(db_path: Path) -> list[tuple[str, str, str | None]]:
+    """``(thread id, name, rollout_path)`` of every named thread in a state DB.
+
+    Only the ``name`` column is read for text: ``title``, ``preview`` and
+    ``first_user_message`` hold the conversation's first prompt, never a name.
+    """
+    conn = _open_readonly(db_path)
+    try:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(threads)")}
+        if not {"id", "name"} <= columns:
+            return []
+        rollout = "rollout_path" if "rollout_path" in columns else "NULL"
+        rows = conn.execute(
+            f"SELECT id, name, {rollout} FROM threads WHERE name IS NOT NULL AND name != ''"
+        ).fetchall()
+    finally:
+        conn.close()
+    return [
+        (str(r[0]), r[1], r[2] if isinstance(r[2], str) else None)
+        for r in rows
+        if isinstance(r[1], str)
+    ]
+
+
+def _index_thread_names(index_path: Path) -> dict[str, str]:
+    """``{thread id: thread_name}`` from ``session_index.jsonl`` (the last row wins)."""
+    names: dict[str, str] = {}
+    with open(index_path, encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(row, dict):
+                continue
+            thread_id, name = row.get("id"), row.get("thread_name")
+            if isinstance(thread_id, str) and isinstance(name, str) and name.strip():
+                names[thread_id] = name
+    return names
+
+
+def parse_chatgpt_session_names(
+    codex_homes: list[Path], rollout_paths: list[Path]
+) -> list[dict[str, Any]]:
+    """Names of Codex threads, keyed by the rollout file stem the events use.
+
+    ``threads.name`` (kind ``agent``) wins over ``session_index.jsonl``'s
+    ``thread_name``. The session id is the stem of the thread's ``rollout_path``;
+    without one it is the stem of the discovered rollout file ending in the
+    thread id, and a thread with neither is skipped (no guessing).
+    """
+    stems = {p.stem[-36:]: p.stem for p in rollout_paths if len(p.stem) > 36}
+    by_session: dict[str, str] = {}
+    for home in codex_homes:
+        index_names: dict[str, str] = {}
+        index_path = home / "session_index.jsonl"
+        if index_path.is_file():
+            try:
+                index_names = _index_thread_names(index_path)
+            except OSError as exc:
+                logging.debug("codex session index unreadable (%s)", type(exc).__name__)
+        db_names: dict[str, tuple[str, str | None]] = {}
+        for db_path in sorted(home.glob("state_*.sqlite"), key=_state_db_order):
+            try:
+                threads = _codex_threads(db_path)
+            except sqlite3.Error as exc:
+                logging.debug("codex state db unreadable (%s)", type(exc).__name__)
+                continue
+            for thread_id, name, rollout_path in threads:
+                db_names[thread_id] = (name, rollout_path)
+        rollout_by_id = {t: r for t, (_n, r) in db_names.items() if r}
+        for thread_id in db_names.keys() | index_names.keys():
+            named = db_names.get(thread_id)
+            name = named[0] if named and named[0].strip() else index_names.get(thread_id, "")
+            if not name.strip():
+                continue
+            rollout = rollout_by_id.get(thread_id)
+            stem = Path(rollout).stem if rollout else stems.get(thread_id[-36:])
+            if stem:
+                by_session[stem] = name.strip()
+    return [
+        session_names.make_record("chatgpt", stem, name, "agent", CODEX)
+        for stem, name in by_session.items()
+    ]
