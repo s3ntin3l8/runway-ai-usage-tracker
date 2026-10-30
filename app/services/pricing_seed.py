@@ -1310,7 +1310,15 @@ _LONG_TIER_COLUMNS = (
 
 
 def seed_pricing_table(session: Session) -> int:
-    """Insert any seed rows missing from provider_pricing. Returns rows inserted."""
+    """Insert any seed rows missing from provider_pricing. Returns rows inserted.
+
+    Seed rule: a real price change is a NEW row with a new `effective_from`; an
+    in-place edit of an existing row (the backfills below) is only for a seed
+    mistake. Cost resolution picks the row in effect at each event's own date,
+    so a new row never reaches older events. The Data Health
+    `stale_priced_models` fix refreshes stored estimates against that table, so
+    an in-place edit made for a real price change would rewrite history there.
+    """
     inserted = 0
     for row in PRICING_SEED:
         exists = session.exec(

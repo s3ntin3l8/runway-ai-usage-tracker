@@ -1,6 +1,10 @@
 """Recompute usage_events.cost_usd (and derived rollups/windows) after a
 provider_pricing seed change — the shared logic behind `scripts/recost_events.py`
-and the Data Health `unpriced_models` fix.
+and the Data Health `unpriced_models` and `stale_priced_models` fixes.
+
+Three modes: the default full recost, `only_zero_cost` (give an unpriced model a
+price) and `estimate_only` (refresh a stale computed estimate without touching
+what the event displays unless it displays the estimate; see `_compute_changes`).
 
 Cost resolution itself lives in `event_cost.resolve_event_cost`, the single
 rule ingest and recost now share (see that module's docstring for the two
@@ -19,12 +23,28 @@ from sqlalchemy import func, or_, update
 from sqlmodel import Session, col, select
 
 from app.models.db import ProviderConfig, UsageEvent
-from app.services.cost_calculator import PricingIndex, is_aggregate_event_id, resolve_price_row
+from app.services.cost_calculator import (
+    PricingIndex,
+    compute_event_cost_breakdown,
+    is_aggregate_event_id,
+    resolve_price_row,
+)
 from app.services.maintenance.event_cost import ResolvedCost, resolve_event_cost
 from app.services.maintenance.windows import rebuild_windows_for_providers
+from app.services.model_normalization import is_free_tier_model_id
 from app.services.period_rollups import rebuild_rollups_for_pairs
 
 _EVENT_BATCH = 1000
+
+
+def is_priced_on_purpose_free(provider_id: str, model_id: str) -> bool:
+    """Free routes, free-tier ids and the sentinels are priced at $0 on purpose,
+    not missing a rate: Data Health never lists them and `estimate_only` never
+    refreshes them (a free id can still resolve a seeded exact row)."""
+    if provider_id == "opencode-free":
+        return True
+    m = model_id.lower()
+    return is_free_tier_model_id(m) or m in ("unknown", "")
 
 
 @dataclass(frozen=True)
@@ -57,6 +77,9 @@ class RecostChange:
     event_ref: str  # event_id column, for display
     old_cost_usd: float
     resolved: ResolvedCost
+    # Only meaningful in estimate_only mode.
+    old_cost_estimated_usd: float = 0.0
+    cost_usd_kept: bool = False
 
 
 @dataclass
@@ -67,6 +90,12 @@ class RecostPlan:
     skipped_still_unpriced: int = 0
     affected_pairs: set[tuple[str, str]] = field(default_factory=set)
     samples: list[RecostChange] = field(default_factory=list)
+    # estimate_only bookkeeping: stored vs recomputed estimate over the events
+    # that change, and how many keep their cost_usd (it shows a reported cost
+    # or a billing-type choice rather than the estimate).
+    stored_estimate_sum: float = 0.0
+    new_estimate_sum: float = 0.0
+    kept_cost_usd: int = 0
 
 
 @dataclass
@@ -75,7 +104,13 @@ class RecostResult(RecostPlan):
     windows_rebuilt: int = 0
 
 
-def _event_scope(providers: list[str] | None, since: date | None, only_zero_cost: bool):
+def _event_scope(
+    providers: list[str] | None,
+    since: date | None,
+    only_zero_cost: bool,
+    estimate_only: bool = False,
+    models: list[str] | None = None,
+):
     columns = [getattr(UsageEvent, name) for name in _RecostEvent.__dataclass_fields__]
     stmt = select(*columns).where(UsageEvent.kind == "message")
     if providers:
@@ -84,6 +119,12 @@ def _event_scope(providers: list[str] | None, since: date | None, only_zero_cost
         stmt = stmt.where(UsageEvent.ts >= datetime(since.year, since.month, since.day, tzinfo=UTC))
     if only_zero_cost:
         stmt = stmt.where(UsageEvent.cost_usd == 0.0)
+    if estimate_only:
+        # $0 events belong to `unpriced_models`; this mode only refreshes
+        # events that already carry a cost.
+        stmt = stmt.where(UsageEvent.cost_usd != 0.0)
+    if models is not None:
+        stmt = stmt.where(UsageEvent.model_id.in_(models))  # type: ignore[union-attr]
     return stmt.order_by(col(UsageEvent.ts), col(UsageEvent.id))
 
 
@@ -92,6 +133,8 @@ def _event_pages(
     providers: list[str] | None,
     since: date | None,
     only_zero_cost: bool,
+    estimate_only: bool = False,
+    models: list[str] | None = None,
 ) -> Iterator[_RecostEvent]:
     # No live cursor across the caller's periodic commits. Keyset pagination
     # also survives cost changes that remove rows from the only-zero filter;
@@ -99,7 +142,9 @@ def _event_pages(
     max_id = session.execute(select(func.max(UsageEvent.id))).scalar_one()
     if max_id is None:
         return
-    scope = _event_scope(providers, since, only_zero_cost).where(col(UsageEvent.id) <= max_id)
+    scope = _event_scope(providers, since, only_zero_cost, estimate_only, models).where(
+        col(UsageEvent.id) <= max_id
+    )
     cursor: tuple[datetime, int] | None = None
     while True:
         stmt = scope
@@ -146,21 +191,77 @@ def _compute_changes(
     providers: list[str] | None,
     since: date | None,
     only_zero_cost: bool,
+    estimate_only: bool = False,
+    models: list[str] | None = None,
 ) -> Iterator[RecostChange | RecostSkip]:
     """Yields a RecostChange per event that needs a write, or a skip-reason
     string for one that doesn't — callers that only need the changes can
     filter with `isinstance(x, RecostChange)`; plan_recost also tallies the
-    skip reasons for an accurate preview count."""
+    skip reasons for an accurate preview count.
+
+    `estimate_only` is the Data Health `stale_priced_models` rule: an event is a
+    candidate only when the estimate from today's price table at its own `ts`
+    differs from the stored `cost_estimated_usd`. A candidate gets a new
+    estimate and cost breakdown; `cost_usd` follows only when it currently
+    equals the old estimate (the event displays the estimate); `cost_reported_usd`
+    is never touched. So a reported cost or a `billing_type` change since
+    ingest never alters history, and a real price change stays safe because
+    `resolve_price_row` picks the row in effect at the event's own date."""
     configs = {
         (c.provider_id, c.account_id): c.billing_type
         for c in session.exec(select(ProviderConfig)).all()
     }
     pricing_index = PricingIndex.load(session, providers)
-    for ev in _event_pages(session, providers, since, only_zero_cost):
+    for ev in _event_pages(session, providers, since, only_zero_cost, estimate_only, models):
         billing_type = configs.get((ev.provider_id, ev.account_id), "unknown")
         price_row = resolve_price_row(
             session, ev.provider_id, ev.model_id, ev.ts, index=pricing_index
         )
+        if estimate_only:
+            if price_row is None or is_priced_on_purpose_free(ev.provider_id, ev.model_id or ""):
+                # No rate resolves (nothing to refresh the estimate from) or the
+                # event is free on purpose.
+                yield RecostSkip("unchanged")
+                continue
+            # Not `resolve_event_cost`: its cost_usd selection (reported vs
+            # estimate by billing_type) is exactly what this mode must not
+            # redo; only the computed estimate and its breakdown are wanted.
+            breakdown = compute_event_cost_breakdown(
+                session,
+                provider_id=ev.provider_id,
+                model_id=ev.model_id,
+                ts=ev.ts,
+                tokens_input=ev.tokens_input,
+                tokens_output=ev.tokens_output,
+                tokens_cache_read=ev.tokens_cache_read,
+                tokens_cache_create=ev.tokens_cache_create,
+                tokens_reasoning=ev.tokens_reasoning,
+                tokens_cache_create_1h=ev.tokens_cache_create_1h,
+                tokens_cache_create_5m=ev.tokens_cache_create_5m,
+                standard_tier_only=is_aggregate_event_id(ev.event_id),
+                _resolved_price_row=price_row,
+                _price_row_resolved=True,
+            )
+            if abs(breakdown.total - ev.cost_estimated_usd) <= 1e-9:
+                yield RecostSkip("unchanged")
+                continue
+            shows_estimate = abs(ev.cost_usd - ev.cost_estimated_usd) <= 1e-9
+            yield RecostChange(
+                event_id=ev.id,
+                provider_id=ev.provider_id,
+                account_id=ev.account_id,
+                event_ref=ev.event_id,
+                old_cost_usd=ev.cost_usd,
+                resolved=ResolvedCost(
+                    cost_usd=breakdown.total if shows_estimate else ev.cost_usd,
+                    cost_reported_usd=ev.cost_reported_usd,
+                    cost_estimated_usd=breakdown.total,
+                    breakdown=breakdown,
+                ),
+                old_cost_estimated_usd=ev.cost_estimated_usd,
+                cost_usd_kept=not shows_estimate,
+            )
+            continue
         resolved = resolve_event_cost(
             session,
             provider_id=ev.provider_id,
@@ -203,17 +304,25 @@ def _compute_changes(
         )
 
 
+def _check_modes(only_zero_cost: bool, estimate_only: bool) -> None:
+    if only_zero_cost and estimate_only:
+        raise ValueError("only_zero_cost and estimate_only are mutually exclusive")
+
+
 def plan_recost(
     session: Session,
     providers: list[str] | None,
     *,
     since: date | None = None,
     only_zero_cost: bool = False,
+    estimate_only: bool = False,
+    models: list[str] | None = None,
     sample_size: int = 20,
 ) -> RecostPlan:
     """Read-only preview — no writes, no commit."""
+    _check_modes(only_zero_cost, estimate_only)
     plan = RecostPlan()
-    for item in _compute_changes(session, providers, since, only_zero_cost):
+    for item in _compute_changes(session, providers, since, only_zero_cost, estimate_only, models):
         if isinstance(item, RecostSkip):
             if item.reason == "unchanged":
                 plan.unchanged += 1
@@ -221,6 +330,10 @@ def plan_recost(
                 plan.skipped_still_unpriced += 1
             continue
         plan.affected_pairs.add((item.provider_id, item.account_id))
+        if estimate_only:
+            plan.stored_estimate_sum += item.old_cost_estimated_usd
+            plan.new_estimate_sum += item.resolved.cost_estimated_usd
+            plan.kept_cost_usd += int(item.cost_usd_kept)
         if item.resolved.cost_usd == 0.0:
             plan.zeroed += 1
         else:
@@ -236,6 +349,8 @@ def apply_recost(
     *,
     since: date | None = None,
     only_zero_cost: bool = False,
+    estimate_only: bool = False,
+    models: list[str] | None = None,
     skip_rollups: bool = False,
     skip_windows: bool = False,
 ) -> RecostResult:
@@ -243,9 +358,10 @@ def apply_recost(
     windows for every affected (provider_id, account_id) pair. Commits as it
     goes (batched every 1000 events, matching the prior script's behavior).
     """
+    _check_modes(only_zero_cost, estimate_only)
     result = RecostResult()
     writes: list[dict[str, Any]] = []
-    for item in _compute_changes(session, providers, since, only_zero_cost):
+    for item in _compute_changes(session, providers, since, only_zero_cost, estimate_only, models):
         if isinstance(item, RecostSkip):
             if item.reason == "unchanged":
                 result.unchanged += 1

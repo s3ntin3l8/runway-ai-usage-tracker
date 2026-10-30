@@ -25,7 +25,7 @@ is re-pricing, not general-purpose "rebuild everything just in case".
 This is a thin CLI wrapper — the actual logic lives in
 app/services/maintenance/{event_cost,recost,windows}.py and
 app/services/period_rollups.py, shared with the in-app Data Health
-`unpriced_models` fixer so a host-run script and an in-app fix can never
+`unpriced_models` and `stale_priced_models` fixers so a host-run script and an in-app fix can never
 drift apart.
 
 Source-reported amounts are migrated into cost_reported_usd and kept separate
@@ -54,6 +54,10 @@ Examples:
 
   # Recompute all providers, only events from a date onward (Phase B only)
   python scripts/recost_events.py --all --since 2025-08-01
+
+  # Only refresh stale estimates; reported costs and what billing_type
+  # selected stay as they are (what the Data Health fix does)
+  python scripts/recost_events.py --all --estimate-only
 
   # Recompute every provider; Phases C/D only rebuild the pairs that
   # actually had a cost change (a no-op if nothing changed)
@@ -92,6 +96,7 @@ def phase_b_recost(
     providers: list[str] | None,
     since: date | None,
     dry_run: bool,
+    estimate_only: bool = False,
 ) -> tuple[int, int, int, set[tuple[str, str]]]:
     """Recompute cost_usd on usage_events.
 
@@ -107,7 +112,9 @@ def phase_b_recost(
     always be 0 here.
     """
     if dry_run:
-        plan = plan_recost(session, providers, since=since, sample_size=0)
+        plan = plan_recost(
+            session, providers, since=since, estimate_only=estimate_only, sample_size=0
+        )
         print(
             f"Phase B — examining {plan.updated + plan.unchanged + plan.zeroed:,} event(s)…",
             flush=True,
@@ -117,7 +124,14 @@ def phase_b_recost(
     # skip) would narrow its own rollup/window rebuild to them — we keep it
     # skipping that here and let Phase C/D below do the rebuild instead, but
     # we still read affected_pairs off the result before discarding the rest.
-    result = apply_recost(session, providers, since=since, skip_rollups=True, skip_windows=True)
+    result = apply_recost(
+        session,
+        providers,
+        since=since,
+        estimate_only=estimate_only,
+        skip_rollups=True,
+        skip_windows=True,
+    )
     print(
         f"Phase B — examined {result.updated + result.unchanged + result.zeroed:,} event(s)…",
         flush=True,
@@ -217,6 +231,7 @@ def run(
     dry_run: bool,
     skip_rollups: bool,
     skip_windows: bool,
+    estimate_only: bool = False,
 ) -> None:
     prefix = "[DRY-RUN] " if dry_run else ""
     scope = "all providers" if providers is None else ", ".join(providers)
@@ -224,7 +239,7 @@ def run(
 
     with Session(engine) as session:
         updated, unchanged, zeroed, affected_pairs = phase_b_recost(
-            session, providers, since, dry_run
+            session, providers, since, dry_run, estimate_only
         )
         print(
             f"{prefix}Phase B done — {updated + unchanged + zeroed:,} event(s): "
@@ -294,6 +309,13 @@ def main() -> int:
         help="Report what would change without writing anything.",
     )
     p.add_argument(
+        "--estimate-only",
+        action="store_true",
+        help="Only refresh stale computed estimates (the Data Health "
+        "stale_priced_models rule): cost_reported_usd is never touched and "
+        "cost_usd changes only where it equals the old estimate.",
+    )
+    p.add_argument(
         "--skip-rollups",
         action="store_true",
         help="Skip Phase C (usage_period_rollup rebuild).",
@@ -322,6 +344,7 @@ def main() -> int:
         dry_run=args.dry_run,
         skip_rollups=args.skip_rollups,
         skip_windows=args.skip_windows,
+        estimate_only=args.estimate_only,
     )
     return 0
 
