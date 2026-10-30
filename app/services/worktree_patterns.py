@@ -15,46 +15,67 @@ from threading import Lock
 from sqlmodel import Session, select
 
 from app.models.db import SystemConfig
-from app.services.project_label import clean_worktree_patterns
+from app.services.project_label import MAX_WORKTREE_PATTERNS, validate_worktree_pattern
 
-_lock = Lock()
-_cached: tuple[str, ...] | None = None
-#: Bumped by every invalidation, so a read that raced a write never stores the
-#: value it read before the write.
-_generation = 0
+
+class _State:
+    """The process-wide cache: the patterns and a generation counter."""
+
+    def __init__(self) -> None:
+        self.lock = Lock()
+        self.patterns: tuple[str, ...] | None = None
+        #: Bumped by every invalidation, so a read that raced a write never
+        #: stores the value it read before the write.
+        self.generation = 0
+
+
+_state = _State()
 
 
 def parse_stored_patterns(raw: str | None) -> tuple[str, ...]:
-    """The patterns stored in the config row; a corrupt value reads as no patterns."""
+    """The patterns stored in the config row.
+
+    A corrupt value reads as no patterns, and a single bad entry is skipped
+    rather than disabling the rest.
+    """
     if not raw:
         return ()
     try:
         value = json.loads(raw)
-        if not isinstance(value, list):
-            return ()
-        return tuple(clean_worktree_patterns(str(v) for v in value))
-    except (ValueError, TypeError):
+    except ValueError:
         return ()
+    if not isinstance(value, list):
+        return ()
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for entry in value:
+        try:
+            pattern = validate_worktree_pattern(entry) if isinstance(entry, str) else None
+        except ValueError:
+            pattern = None
+        if pattern is None or pattern.lower() in seen:
+            continue
+        seen.add(pattern.lower())
+        cleaned.append(pattern)
+    return tuple(cleaned[:MAX_WORKTREE_PATTERNS])
 
 
 def get_worktree_patterns(session: Session) -> tuple[str, ...]:
     """The operator-added patterns (the built-in containers are not included)."""
-    global _cached
-    with _lock:
-        if _cached is not None:
-            return _cached
-        generation = _generation
+    with _state.lock:
+        if _state.patterns is not None:
+            return _state.patterns
+        generation = _state.generation
     cfg = session.exec(select(SystemConfig)).first()
     patterns = parse_stored_patterns(cfg.worktree_patterns_json if cfg else None)
-    with _lock:
-        if generation == _generation:
-            _cached = patterns
+    with _state.lock:
+        if generation == _state.generation:
+            _state.patterns = patterns
     return patterns
 
 
 def invalidate_worktree_patterns() -> None:
     """Forget the cached patterns; the next read goes to the database."""
-    global _cached, _generation
-    with _lock:
-        _cached = None
-        _generation += 1
+    with _state.lock:
+        _state.patterns = None
+        _state.generation += 1

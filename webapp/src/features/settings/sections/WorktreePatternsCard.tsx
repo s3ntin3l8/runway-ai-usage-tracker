@@ -68,13 +68,14 @@ export function WorktreePatternsCard({ config }: { config: AppConfig | undefined
               }}
               placeholder="e.g. *-wt"
               aria-invalid={error ? true : undefined}
+              aria-describedby={error ? 'sys-wt-pattern-error' : undefined}
             />
             <Button type="button" onClick={add}>
               Add
             </Button>
           </div>
           {error ? (
-            <p role="alert" className="text-xs text-critical">
+            <p id="sys-wt-pattern-error" role="alert" className="text-xs text-critical">
               {error}
             </p>
           ) : null}

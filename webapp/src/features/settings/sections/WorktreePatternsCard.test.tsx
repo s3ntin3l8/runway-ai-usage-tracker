@@ -54,12 +54,17 @@ describe('WorktreePatternsCard', () => {
   });
 
   it('shows an inline error for an invalid entry and does not add it', async () => {
-    renderWithProviders(<WorktreePatternsCard config={cfg({ worktree_patterns: [] })} />);
+    renderWithProviders(<WorktreePatternsCard config={cfg()} />);
 
     await userEvent.type(screen.getByLabelText(/extra worktree directories/i), 'a/b');
     await userEvent.click(screen.getByRole('button', { name: /^add$/i }));
 
     expect(screen.getByRole('alert')).toHaveTextContent(/separator/i);
-    expect(screen.queryByLabelText('Worktree patterns')).toBeNull();
+    expect(screen.getByLabelText(/extra worktree directories/i)).toHaveAttribute(
+      'aria-describedby',
+      'sys-wt-pattern-error',
+    );
+    const list = screen.getByRole('list', { name: 'Worktree patterns' });
+    expect(list.querySelectorAll('li')).toHaveLength(1);
   });
 });

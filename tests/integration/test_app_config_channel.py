@@ -152,3 +152,12 @@ def test_worktree_patterns_put_invalidates_the_cached_getter(client: TestClient,
     assert get_worktree_patterns(session) == ("*-wt",)
     client.put("/api/v1/system/app-config", json={"worktree_patterns": []})
     assert get_worktree_patterns(session) == ()
+
+
+def test_worktree_patterns_stored_bad_entry_is_skipped_not_fatal():
+    from app.services.worktree_patterns import parse_stored_patterns
+
+    assert parse_stored_patterns('["*-wt", "a/b", 3, "*-WT", "ok"]') == ("*-wt", "ok")
+    assert parse_stored_patterns("not json") == ()
+    assert parse_stored_patterns('{"a": 1}') == ()
+    assert parse_stored_patterns(None) == ()
