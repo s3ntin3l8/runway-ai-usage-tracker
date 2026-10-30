@@ -3383,6 +3383,11 @@ def _collect_claude_session_names(out: list[dict[str, Any]]) -> None:
     )
     out.extend(records)
     session_names.stage_files(scanned)
+    # Counts only: a name is never logged. A renamed transcript field would
+    # otherwise make this a silent no-op.
+    logging.debug(
+        "session names: %d transcript(s) scanned, %d name(s) found", len(scanned), len(records)
+    )
 
 
 #: provider_id -> ``collect(out)`` appending session-name records to ``out``
@@ -6465,8 +6470,13 @@ class DaemonRunner:
                 )
                 if not success:
                     break  # don't keep firing batches if the server is rejecting them
-                if first_batch:
-                    # Names are marked sent only once the server accepted them.
+                if first_batch and (
+                    isinstance(result, dict) and "names_upserted" in result
+                    # An older server ignores the field and never answers it.
+                ):
+                    # Names are marked sent only once the server stored them: a
+                    # failed upsert still answers 200 but omits ``names_upserted``
+                    # (0 is legitimate: nothing changed server-side).
                     _commit_session_names(session_name_records)
                 if collection_result.cowork_batch is not None and not (
                     isinstance(result, dict) and result.get("events_error")

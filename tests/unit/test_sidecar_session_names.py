@@ -230,7 +230,7 @@ def cycle(tmp_path, monkeypatch):
 
     def post(url, payload, *a, **k):
         posts.append(payload)
-        return (True, {}, 200) if outcome["ok"] else (False, "offline", 0)
+        return (True, {"names_upserted": 1}, 200) if outcome["ok"] else (False, "offline", 0)
 
     monkeypatch.setattr(sidecar, "http_post_signed_with_retry", post)
     runner = sidecar.DaemonRunner({"api_url": "http://localhost", "api_key": "test"})
@@ -335,3 +335,18 @@ def test_a_failing_collector_does_not_break_the_cycle(cycle, monkeypatch, caplog
         assert cycle.run() == []
     assert "private-agent-name" not in caplog.text
     assert cycle.sent  # the push still happened
+
+
+def test_a_200_without_names_upserted_does_not_mark_names_sent(cycle, monkeypatch):
+    _write(
+        cycle.dir / "sess-4.jsonl",
+        [{"type": "ai-title", "aiTitle": "Placeholder title", "sessionId": "sess-4"}],
+    )
+    monkeypatch.setattr(sidecar, "http_post_signed_with_retry", lambda *a, **k: (True, {}, 200))
+    assert len(cycle.run()) == 0  # cycle.run reads its own recorder, not this reply
+    from scripts.sidecar_pkg import session_names as sn
+
+    pending = sn.select_for_push(
+        [sn.make_record("anthropic", "sess-4", "Placeholder title", "generated")]
+    )
+    assert len(pending) == 1

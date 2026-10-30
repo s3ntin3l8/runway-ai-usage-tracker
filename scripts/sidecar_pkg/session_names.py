@@ -2,7 +2,9 @@
 
 A session name is the title a tool shows for a session (a launcher's name, a
 generated title). It is free text and may be sensitive, so nothing in this
-module ever logs one, and the state file holds only hashes.
+module ever logs one, and the state file holds only hashes. (A push that
+fails is queued like any payload, and the offline queue file holds the names in
+clear text, owner-only, as it holds events' working directories.)
 
 Contract for an extractor or collector that has names to report:
 
@@ -40,8 +42,9 @@ from typing import Any
 #: The server drops anything beyond this many names per request.
 MAX_PER_PUSH = 2000
 
-#: A name longer than this is cut before it is hashed and sent.
-MAX_NAME_LENGTH = 500
+#: The server keeps at most this many characters (SESSION_NAME_MAX_LENGTH), so a
+#: longer name is cut before it is hashed and sent.
+MAX_NAME_LENGTH = 200
 
 #: Entries kept in the state file. Oldest go first; an evicted entry only means
 #: its name is sent once more.

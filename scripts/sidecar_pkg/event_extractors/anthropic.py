@@ -155,7 +155,7 @@ def parse_anthropic_session_names(
     A separate, cheap pass from the event parse: lines are only JSON-decoded
     when they contain a name marker, so the cost is one byte search per line.
     The whole file is read, so a name written after the last event is found.
-    Both records carry the session id the events use (the file stem);
+    Both records carry the `sessionId` the events use (a record without one is skipped);
     `agent-name` is kind `agent` (set by a launcher or `/rename`), `ai-title`
     is kind `generated`.
 
@@ -190,7 +190,9 @@ def parse_anthropic_session_names(
                         continue
                     session_id = e.get("sessionId")
                     if not isinstance(session_id, str) or not session_id:
-                        session_id = fp.stem
+                        # The events carry no stem fallback either, so a name
+                        # for it could never be joined to a session.
+                        continue
                     last[kind] = (session_id, name.strip())
             for kind, (session_id, name) in last.items():
                 records.append(make_record("anthropic", session_id, name, kind, CLAUDE_CODE))

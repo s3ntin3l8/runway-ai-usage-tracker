@@ -229,7 +229,7 @@ def test_session_names_after_the_last_event_are_found(tmp_path):
     assert [r["name"] for r in records] == ["Late"]
 
 
-def test_session_names_tolerate_junk_and_use_the_file_stem(tmp_path):
+def test_session_names_tolerate_junk_and_skip_records_without_a_session(tmp_path):
     fp = tmp_path / "sess-ddd.jsonl"
     fp.write_text(
         'not json "ai-title"\n'
@@ -239,13 +239,17 @@ def test_session_names_tolerate_junk_and_use_the_file_stem(tmp_path):
         + "\n"
         + json.dumps({"type": "user", "text": "mentions agent-name only", "x": "ai-title"})
         + "\n"
-        + json.dumps({"type": "agent-name", "agentName": "stem-placeholder"})
+        + json.dumps({"type": "agent-name", "agentName": "orphan-placeholder"})
+        + "\n"
+        + json.dumps(
+            {"type": "agent-name", "agentName": "kept-placeholder", "sessionId": "sess-ddd"}
+        )
         + "\n",
         encoding="utf-8",
     )
     records, _ = parse_anthropic_session_names([fp, tmp_path / "missing.jsonl"])
     assert [(r["session_id"], r["kind"], r["name"]) for r in records] == [
-        ("sess-ddd", "agent", "stem-placeholder")
+        ("sess-ddd", "agent", "kept-placeholder")
     ]
 
 
