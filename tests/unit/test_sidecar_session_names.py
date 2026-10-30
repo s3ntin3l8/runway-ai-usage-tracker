@@ -226,11 +226,11 @@ def cycle(tmp_path, monkeypatch):
     monkeypatch.setattr(sidecar, "queue_push", lambda payload, *a: True)
 
     posts: list[dict[str, Any]] = []
-    outcome = {"ok": True}
+    outcome: dict[str, Any] = {"ok": True, "reply": {"names_upserted": 1}}
 
     def post(url, payload, *a, **k):
         posts.append(payload)
-        return (True, {"names_upserted": 1}, 200) if outcome["ok"] else (False, "offline", 0)
+        return (True, outcome["reply"], 200) if outcome["ok"] else (False, "offline", 0)
 
     monkeypatch.setattr(sidecar, "http_post_signed_with_retry", post)
     runner = sidecar.DaemonRunner({"api_url": "http://localhost", "api_key": "test"})
@@ -350,6 +350,39 @@ def test_a_200_without_names_upserted_does_not_mark_names_sent(cycle, monkeypatc
         [sn.make_record("anthropic", "sess-4", "Placeholder title", "generated")]
     )
     assert len(pending) == 1
+
+
+def _pending_after(cycle, reply):
+    cycle.fail["reply"] = reply
+    cycle.run()
+    from scripts.sidecar_pkg import session_names as sn
+
+    return sn.select_for_push(
+        [sn.make_record("anthropic", "sess-5", "Placeholder title", "generated")]
+    )
+
+
+def _title_file(cycle):
+    _write(
+        cycle.dir / "sess-5.jsonl",
+        [{"type": "ai-title", "aiTitle": "Placeholder title", "sessionId": "sess-5"}],
+    )
+
+
+def test_names_error_leaves_names_unsent_for_the_next_cycle(cycle):
+    _title_file(cycle)
+    assert len(_pending_after(cycle, {"names_upserted": 0, "names_error": True})) == 1
+    assert [n["name"] for n in cycle.run()] == ["Placeholder title"]  # sent again
+
+
+def test_names_error_false_commits_the_names(cycle):
+    _title_file(cycle)
+    assert _pending_after(cycle, {"names_upserted": 1, "names_error": False}) == []
+
+
+def test_older_server_without_names_error_still_commits(cycle):
+    _title_file(cycle)
+    assert _pending_after(cycle, {"names_upserted": 1}) == []
 
 
 def test_the_name_cap_matches_the_servers():
