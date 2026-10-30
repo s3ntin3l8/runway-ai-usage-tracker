@@ -1,4 +1,6 @@
 import html
+import re
+import unicodedata
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -249,6 +251,50 @@ def read_login_directory_report(value: str | None) -> LoginDirectoryReport | Non
         return None
 
 
+SESSION_NAME_MAX_LENGTH = 200
+SESSION_NAMES_MAX_PER_REQUEST = 2000
+
+_WHITESPACE_RUN = re.compile(r"\s+")
+_JOINERS = frozenset("\u200c\u200d")
+
+
+class SessionNameIn(BaseModel):
+    """One session name reported by a sidecar (or a collector).
+
+    ``provider_id`` is the provider the sidecar stamps on that session's events
+    (the id the Sessions view filters by). ``kind`` is ``agent`` (set by the user
+    or a launcher) or ``generated`` (produced by the tool). The name is free
+    text that may hold sensitive wording: it is cleaned here and never logged.
+    """
+
+    provider_id: str
+    session_id: str
+    source_app: str | None = None
+    name: str
+    kind: Literal["agent", "generated"]
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def clean_name(cls, value: Any) -> str:
+        """Control characters out, whitespace collapsed, bounded. May end up empty."""
+        if value is None:
+            return ""
+        # Control (Cc), surrogate (Cs) and invisible format (Cf: bidi overrides,
+        # ZWSP, LRM/RLM, BOM, soft hyphen) characters go. ZWJ/ZWNJ stay so emoji
+        # sequences and Persian/Arabic/Indic shaping survive, but a name made of
+        # nothing visible is dropped.
+        text = "".join(" " if char.isspace() else char for char in str(value))
+        text = "".join(
+            char
+            for char in text
+            if (cat := unicodedata.category(char)) not in ("Cc", "Cs")
+            and (cat != "Cf" or char in _JOINERS)
+        )
+        cleaned = _WHITESPACE_RUN.sub(" ", text).strip()[:SESSION_NAME_MAX_LENGTH]
+        cleaned = cleaned.rstrip("\u200c\u200d").strip()
+        return cleaned if any(char not in _JOINERS for char in cleaned) else ""
+
+
 class IngestRequest(BaseModel):
     """Updated body for /api/v1/fleet/ingest."""
 
@@ -281,8 +327,32 @@ class IngestRequest(BaseModel):
     # stamped each event provider's data with this cycle, and why
     # ("local" | "tag" | "default"). None from sidecars that don't report it.
     identity_sources: dict[str, dict[str, str]] | None = None
+    # Session names (display titles). Optional: an older sidecar sends none, and
+    # an older server ignores the field. Empty names are dropped by the server.
+    session_names: list[SessionNameIn] | None = None
     # api_key is now passed via X-Signature header for security
     # NOTE: deltas field removed — replaced by events[]
+
+    @field_validator("session_names", mode="before")
+    @classmethod
+    def lenient_session_names(cls, value: Any) -> list[SessionNameIn] | None:
+        """Names are best-effort: a malformed or surplus entry is dropped, never
+        a reason to reject the payload (its events must still be ingested)."""
+        if value is None:
+            return None
+        if not isinstance(value, list):
+            return None
+        kept: list[SessionNameIn] = []
+        for item in value[:SESSION_NAMES_MAX_PER_REQUEST]:
+            try:
+                entry = (
+                    item if isinstance(item, SessionNameIn) else SessionNameIn.model_validate(item)
+                )
+            except ValueError:
+                continue
+            if entry.name and entry.session_id and entry.provider_id:
+                kept.append(entry)
+        return kept
 
 
 class ForecastEntry(BaseModel):

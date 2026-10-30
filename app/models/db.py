@@ -1087,3 +1087,26 @@ class ClaudeCloudCollectorState(SQLModel, table=True):  # type: ignore[call-arg]
     last_outcome: str = "never_run"
     last_events: int = 0
     last_regressions: int = 0
+
+
+class SessionName(SQLModel, table=True):  # type: ignore[call-arg]
+    """A human-readable name for a session, one row per (provider, session, kind).
+
+    ``kind`` is ``agent`` (set by the user or a launcher) or ``generated``
+    (produced by the tool). Not a column on ``usage_events``: a name changes
+    during a session, and one event row per name would repeat it. The text is
+    free-form and may hold sensitive wording, so it is never logged.
+    """
+
+    __tablename__ = "session_names"
+    __table_args__ = (
+        # Its autoindex also serves the (provider_id, session_id) page lookup.
+        UniqueConstraint("provider_id", "session_id", "kind", name="uq_session_names_key"),
+    )
+    id: int | None = Field(default=None, primary_key=True)
+    provider_id: str
+    session_id: str
+    source_app: str | None = None
+    name: str
+    kind: str
+    updated_at: UTCDateTime = Field(default_factory=lambda: datetime.now(UTC))

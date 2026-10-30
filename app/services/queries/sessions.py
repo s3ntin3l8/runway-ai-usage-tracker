@@ -11,6 +11,7 @@ from sqlmodel import Session
 
 from app.models._datetime import iso_utc
 from app.services.queries._shared import _parse_ts, sqlite_utc_timestamp
+from app.services.session_names import resolve_names
 
 # ---------------------------------------------------------------------------
 # 7.4  query_sessions
@@ -283,6 +284,9 @@ def query_sessions(  # noqa: PLR0913 — the event-level filters extend the sign
         params={**filters.params(), "limit": limit, "offset": offset},
     ).all()
 
+    # One extra query for this page's ids only; the aggregate is untouched.
+    names = resolve_names(session, provider_id, [row.session_id for row in rows])
+
     results: list[dict[str, Any]] = []
     for row in rows:
         ts_start = _parse_ts(row.ts_start)
@@ -365,6 +369,7 @@ def query_sessions(  # noqa: PLR0913 — the event-level filters extend the sign
         results.append(
             {
                 "session_id": row.session_id,
+                "name": names.get(row.session_id),
                 "ts_start": iso_utc(ts_start),
                 "ts_end": iso_utc(ts_end),
                 "duration_seconds": duration,

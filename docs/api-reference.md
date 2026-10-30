@@ -93,6 +93,34 @@ for cookie flags, `SESSION_SECRET`, and session lifetime.
 
 See [Sidecar Documentation](sidecar.md) for ingest authentication and payload format.
 
+#### Session names
+
+`/usage/sessions` and `/usage/sessions/paginated` return `name` per session
+(`string | null`): the `agent` name (set by the user or a launcher) if one is
+stored, else the `generated` one (produced by the tool), else `null`. The
+lookup covers only the returned page's session ids and is keyed by the row's
+`provider_id`.
+
+The ingest payload takes an optional `session_names` list, at most 2000
+entries per request (surplus and malformed entries are dropped; they never fail
+the events in the same payload):
+
+```json
+{ "session_names": [
+  { "provider_id": "anthropic", "session_id": "<id>", "source_app": "claude_code",
+    "name": "<text>", "kind": "agent" }
+] }
+```
+
+`provider_id` is the provider the sidecar stamps on that session's events;
+`kind` is `agent` or `generated`. The server cleans the name (control
+characters removed, whitespace collapsed, 200 characters at most), drops empty
+names, keeps the latest value per `(provider_id, session_id, kind)` and writes
+nothing when neither the name nor its `source_app` changed. The ingest response adds `names_upserted` (rows
+written; `0` when none were sent, all were unchanged, or the name write failed,
+which never fails event ingestion). Names are free text: the server never logs
+them. An older server ignores the field and an older sidecar omits it.
+
 ## Usage & history
 
 | Method | Route | Auth | Description |

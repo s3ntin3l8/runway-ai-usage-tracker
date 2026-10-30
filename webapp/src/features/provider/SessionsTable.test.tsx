@@ -21,6 +21,27 @@ describe('SessionsTable', () => {
     expect(screen.getByText('bbbbbbbb')).toBeInTheDocument();
   });
 
+  it('shows the name with the short id as a muted suffix', () => {
+    const longName = 'A very long fake session name '.repeat(8).trim();
+    renderWithProviders(
+      <SessionsTable
+        sessions={[
+          session({ session_id: 'aaaaaaaa1111', name: 'fake-agent-name' }),
+          session({ session_id: 'bbbbbbbb2222', name: longName }),
+          session({ session_id: 'cccccccc3333', name: null }),
+        ]}
+      />,
+    );
+    expect(screen.getByText('fake-agent-name')).toBeInTheDocument();
+    expect(screen.getByText('aaaaaaaa')).toBeInTheDocument();
+    const long = screen.getByText(longName);
+    expect(long).toHaveClass('truncate');
+    expect(long.closest('td')).toHaveAttribute('title', `${longName} (bbbbbbbb2222)`);
+    // No name: today's id display.
+    expect(screen.getByText('cccccccc')).toBeInTheDocument();
+    expect(screen.getByText('cccccccc').closest('td')).toHaveAttribute('title', 'cccccccc3333');
+  });
+
   it('expands a row to reveal the token breakdown', async () => {
     renderWithProviders(
       <SessionsTable

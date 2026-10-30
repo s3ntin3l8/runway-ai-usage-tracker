@@ -265,6 +265,8 @@ export interface SubagentSplit {
 
 export interface SessionEntry {
   session_id: string;
+  // Display name: the agent-set name if present, else the tool-generated one.
+  name?: string | null;
   ts_start?: string;
   ts_end?: string;
   duration_seconds?: number;
