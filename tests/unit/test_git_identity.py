@@ -256,8 +256,10 @@ class TestPersistentCache:
     def test_a_corrupt_file_is_tolerated(self, tmp_path, content):
         state = tmp_path / "git-identity.json"
         state.write_text(content)
+        state.chmod(0o600)
         git_identity.configure(state)
-        assert set(git_identity._persisted) <= {"/ok"}
+        expected = {"/ok"} if "/ok" in content else set()
+        assert set(git_identity._persisted) == expected
 
     def test_the_file_stays_bounded(self, monkeypatch, tmp_path):
         monkeypatch.setattr(git_identity, "_PERSIST_LIMIT", 3)
@@ -271,12 +273,52 @@ class TestPersistentCache:
         entries = json.loads(state.read_text())["entries"]
         assert list(entries) == ["/fake/7", "/fake/8", "/fake/9"]
 
+    def test_a_recently_seen_directory_is_evicted_last(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(git_identity, "_PERSIST_LIMIT", 3)
+        state = tmp_path / "git-identity.json"
+        git_identity.configure(state)
+        answers = {f"/fake/{c}": f"repo-{c}" for c in "abcd"}
+        self._fake_resolve(monkeypatch, answers)
+        for c in "abc":
+            git_identity.resolve_repo_name(f"/fake/{c}")
+        git_identity.save()
+
+        self._restart(state)  # a new process sees /a again, with an unchanged name
+        self._fake_resolve(monkeypatch, answers)
+        git_identity.resolve_repo_name("/fake/a")
+        git_identity.resolve_repo_name("/fake/d")
+
+        assert list(git_identity._persisted) == ["/fake/c", "/fake/a", "/fake/d"]
+
+    @pytest.mark.skipif(git_identity.os.name == "nt", reason="POSIX permissions")
+    def test_a_file_others_can_write_is_not_trusted(self, tmp_path):
+        import json
+
+        state = tmp_path / "git-identity.json"
+        state.write_text(json.dumps({"entries": {"/fake/a": "repo-a"}}))
+        state.chmod(0o666)
+        git_identity.configure(state)
+        assert git_identity._persisted == {}
+
+    @pytest.mark.skipif(git_identity.os.name == "nt", reason="symlinks")
+    def test_a_symlinked_file_is_not_trusted(self, tmp_path):
+        import json
+
+        target = tmp_path / "elsewhere.json"
+        target.write_text(json.dumps({"entries": {"/fake/a": "repo-a"}}))
+        target.chmod(0o600)
+        state = tmp_path / "git-identity.json"
+        state.symlink_to(target)
+        git_identity.configure(state)
+        assert git_identity._persisted == {}
+
     def test_an_oversized_file_is_trimmed_on_load(self, monkeypatch, tmp_path):
         monkeypatch.setattr(git_identity, "_PERSIST_LIMIT", 2)
         import json
 
         state = tmp_path / "git-identity.json"
         state.write_text(json.dumps({"entries": {f"/fake/{i}": "r" for i in range(5)}}))
+        state.chmod(0o600)
         git_identity.configure(state)
         assert list(git_identity._persisted) == ["/fake/3", "/fake/4"]
 

@@ -23,6 +23,7 @@ import logging
 import os
 import secrets
 import shutil
+import stat
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -180,9 +181,11 @@ def resolve_repo_name(cwd: str | None) -> str | None:
 
 def _remember(key: str, name: str) -> None:
     """Record a successful resolution for the state file."""
-    if _persisted.get(key) == name:
+    if _persisted.get(key) == name and next(reversed(_persisted)) == key:
         return
-    _persisted.pop(key, None)  # re-insert at the end: the freshest entry survives longest
+    # Re-insert at the end, also when the name is unchanged: the directories seen
+    # most recently survive longest. This runs once per directory per process.
+    _persisted.pop(key, None)
     _persisted[key] = name
     while len(_persisted) > _PERSIST_LIMIT:
         _persisted.pop(next(iter(_persisted)))
@@ -203,6 +206,14 @@ def configure(path: Path | None) -> None:
     if path is None:
         return
     try:
+        info = path.lstat()
+        if stat.S_ISLNK(info.st_mode) or (
+            os.name != "nt" and (info.st_uid != os.getuid() or info.st_mode & 0o077)
+        ):
+            # Same rule as the source-control state file: a file another user
+            # could have planted or edited is not trusted. The next save
+            # replaces it with a private one.
+            return
         raw = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return
