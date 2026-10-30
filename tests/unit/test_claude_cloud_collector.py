@@ -1076,7 +1076,9 @@ async def test_a_missing_title_and_bridge_rows_store_nothing(environment):
 
 
 @pytest.mark.asyncio
-async def test_a_failing_names_write_does_not_fail_the_cycle(environment, monkeypatch):
+async def test_a_failing_names_write_does_not_fail_the_cycle(environment, monkeypatch, caplog):
+    caplog.set_level("DEBUG")
+
     def broken(*args, **kwargs):
         raise OperationalError("insert", {}, Exception("fake title leaked"))
 
@@ -1084,6 +1086,7 @@ async def test_a_failing_names_write_does_not_fail_the_cycle(environment, monkey
     report = await cycle(Server([cloud_row(title="Fake title one")], {SECRET_ID: two_turns()}))
     assert report.outcome == "ok" and events(environment) and report.names_updated == 0
     assert report.notes == ["names_OperationalError"]
+    assert "fake title leaked" not in caplog.text
 
 
 @pytest.mark.asyncio

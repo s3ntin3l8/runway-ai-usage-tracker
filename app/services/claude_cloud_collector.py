@@ -38,6 +38,7 @@ from sqlmodel import Session, col, func, select
 
 from app.core.db import engine
 from app.core.encryption import DecryptionError, encryption_service
+from app.core.source_apps import CLAUDE_CODE
 from app.models.claude_cloud_probe import ClaudeCloudProbeRequest
 from app.models.db import ClaudeCloudSessionCheckpoint, UsageEvent
 from app.models.schemas import SessionNameIn, UsageEventPush
@@ -575,9 +576,9 @@ async def _read_session(
 def _store_names(rows: list[_Row]) -> int:
     names = [
         SessionNameIn(
-            provider_id="anthropic",
+            provider_id=PROVIDER_ID,
             session_id=row.digest,
-            source_app="claude_code",
+            source_app=CLAUDE_CODE,
             name=row.title,
             kind="generated",
         )
