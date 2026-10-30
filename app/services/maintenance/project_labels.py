@@ -13,7 +13,7 @@ This module is the single implementation of the relabel. The Data Health check
 (`scripts/consolidate_session_projects.py`) both call it, so the in-app fixer
 and the script cannot drift apart.
 
-Three scopes, one implementation:
+Four scopes, one implementation:
 
 - `plan_path_shaped_projects` — the sessions whose stored label is *path-shaped*
   (it contains a separator, which a real basename never does). This is the
@@ -21,6 +21,8 @@ Three scopes, one implementation:
 - `plan_session_relabels` — every session, whether or not its label is
   path-shaped. This is the consolidation pass the CLI has always run: a session
   whose cwd drifts into a subfolder ends up with one label per folder.
+- `plan_worktree_relabels` — only the sessions that ran in a worktree directory
+  (`WORKTREE_CONTAINERS`); the repair the `worktree_project_labels` check offers.
 - `plan_repo_relabels` — the rows whose label should follow the *git
   repository* the client reported. The client resolves the repository on its own
   host and sends its name; the rows collected before it did keep the folder's
@@ -31,7 +33,9 @@ the session's newest row reported (`project_ref`, the same precedence the
 ingestor applies) and, for a session that reported none,
 `derive_project(pick_canonical_cwd(<the session's cwds>))` — rule 1 plus rule
 2 — and every row of the session takes it, including the rows whose `cwd` is
-NULL. That is what makes one session one project.
+NULL. That is what makes one session one project — with one exception: a row
+that carries a *different* `project_ref` of its own keeps it, because the
+ingestor labelled it with that name and nothing could repair a rewrite.
 
 The relabel is an **update**: no row is inserted, no token count changes and no
 rollup moves — the rollups are keyed by provider, account and period, never by
