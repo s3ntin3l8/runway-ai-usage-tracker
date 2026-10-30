@@ -91,6 +91,7 @@ Re-tag events and rows under the right provider or model.
 | Script | What it repairs |
 |---|---|
 | `recost_events.py` | The **full** re-price: recompute `cost_usd` on `usage_events` and rebuild the derived cost tables. Only needed after a calculator change or a change of how the displayed cost is chosen; for a pricing correction use the Data Health `stale_priced_models` fix (server stays up) or `--estimate-only`, which applies the same rule. |
+| `reprice_fallback_priced_events.py` | Re-price old events billed through a family fallback row (the Data Health `fallback_priced_events` fix, for events with no stored estimate; events that have one are `stale_priced_models`); `--dry-run` previews. |
 | `link_minimax_background_sessions.py` | File the MiniMax Code background-task rows under the session that spawned them. Run it on the host that ran MiniMax Code — only that host has the runtime store. |
 | `migrate_kimi_coding_key.py` | One-shot migration: the `kimi_coding` API key stored in the `session_cookie` slot. |
 
