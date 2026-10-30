@@ -117,7 +117,9 @@ the events in the same payload):
 characters removed, whitespace collapsed, 200 characters at most), drops empty
 names, keeps the latest value per `(provider_id, session_id, kind)` and writes
 nothing when neither the name nor its `source_app` changed. The ingest response adds `names_upserted` (rows
-written; `0` when none were sent, all were unchanged, or every entry was dropped before the upsert because it was invalid or empty after cleaning, which the sidecar treats as sent) and `names_error`
+written; `0` when none were sent, all were unchanged, or every entry was
+dropped as invalid or empty after cleaning; the sidecar counts any `0` as sent,
+so dropped names are not retried) and `names_error`
 (`true` only when the name write raised after its retries, which never fails
 event ingestion; the sidecar then keeps the names unsent and retries them next
 cycle, like `events_error` for events). Names are free text: the server never logs
