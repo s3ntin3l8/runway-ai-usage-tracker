@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Check } from 'lucide-react';
+import { useProjectFilter } from '@/hooks/useProjectFilter';
 import { useBranchFilter, useModelFilter } from '@/hooks/useSessionFilters';
 import { useSessionFilterOptions, type DateRange } from '@/features/provider/queries';
 import { cn } from '@/lib/cn';
@@ -27,15 +28,18 @@ export function SessionOptionFilter({
   range?: DateRange;
 }) {
   const copy = COPY[kind];
-  const useFilter = kind === 'model' ? useModelFilter : useBranchFilter;
-  const [selected, setSelected] = useFilter();
+  // Both hooks run on every render (stable order); `kind` only picks the value.
+  const [model, setModel] = useModelFilter();
+  const [branch, setBranch] = useBranchFilter();
+  const [selected, setSelected] = kind === 'model' ? [model, setModel] : [branch, setBranch];
+  const [project] = useProjectFilter();
   const [query, setQuery] = useState('');
   const [search, setSearch] = useState('');
   useEffect(() => {
     const timer = setTimeout(() => setSearch(query.trim()), SEARCH_DEBOUNCE_MS);
     return () => clearTimeout(timer);
   }, [query]);
-  const options = useSessionFilterOptions(kind, providerId, accountId, range, search);
+  const options = useSessionFilterOptions(kind, providerId, accountId, range, search, project);
   const names = new Set(options.data ?? []);
   // Keep a URL-selected value visible even when the list no longer carries it.
   if (selected && !search) names.add(selected);

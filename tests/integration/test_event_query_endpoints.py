@@ -1197,3 +1197,16 @@ class TestSessionsFilters:
             c.get("/api/v1/usage/session-models", params={"provider_id": "anthropic"}).status_code
             == 422
         )
+
+    def test_malformed_dates_are_422_and_options_follow_project(self, session):
+        self._seed(session)
+        c = _client()
+        assert self._get(since="not-a-date").status_code == 422
+        assert (
+            c.get("/api/v1/usage/session-models", params={**self._P, "until": "nope"}).status_code
+            == 422
+        )
+        r = c.get("/api/v1/usage/session-models", params={**self._P, "project": "__none__"})
+        assert r.json() == {"models": ["opus"]}
+        r = c.get("/api/v1/usage/session-branches", params={**self._P, "project": "runway"})
+        assert r.json() == {"branches": ["feat", "main"]}

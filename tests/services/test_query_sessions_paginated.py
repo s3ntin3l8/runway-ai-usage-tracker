@@ -343,3 +343,18 @@ def test_filter_options_rank_search_and_exclude_blanks(db_session):
     assert opts("branch", search="_x") == ["feat_x"]
     assert opts("branch", search="%") == []
     assert opts("model", until=_NOW - timedelta(minutes=4)) == ["sonnet"]
+
+
+def test_filter_options_follow_the_active_project(db_session):
+    from app.services.queries.sessions import query_session_filter_options
+
+    _ev(db_session, 1, session_id="a", model="opus", branch="main", project="runway")
+    _ev(db_session, 2, session_id="b", model="sonnet", branch="feat", project="other")
+    _ev(db_session, 3, session_id="c", model="haiku", branch="x", project=None)
+    kw = {"provider_id": "anthropic", "account_id": "acc1", "since": _SINCE}
+    assert query_session_filter_options(db_session, kind="model", project="runway", **kw) == [
+        "opus"
+    ]
+    assert query_session_filter_options(db_session, kind="branch", project="__none__", **kw) == [
+        "x"
+    ]

@@ -1,32 +1,11 @@
 import { useCallback } from 'react';
-import { useSearchParams } from 'react-router';
+import { useUrlParam } from './useUrlParam';
 
 // Value of the `project` URL param that selects sessions without a project
 // label (the server documents the same sentinel).
 export const NO_PROJECT = '__none__';
 
-// The Sessions model / branch / subagent filters live in the URL, like the
-// usage source and the project, so a reload or a shared link keeps them.
-function useUrlParam(name: string): readonly [string | undefined, (value: string | undefined) => void] {
-  const [searchParams, setSearchParams] = useSearchParams();
-  const value = searchParams.get(name) || undefined;
-  const set = useCallback(
-    (next: string | undefined) => {
-      setSearchParams(
-        (prev) => {
-          const params = new URLSearchParams(prev);
-          if (next) params.set(name, next);
-          else params.delete(name);
-          return params;
-        },
-        { replace: true },
-      );
-    },
-    [name, setSearchParams],
-  );
-  return [value, set] as const;
-}
-
+// The Sessions model / branch / subagent filters live in the URL too.
 export const useModelFilter = () => useUrlParam('model');
 export const useBranchFilter = () => useUrlParam('branch');
 

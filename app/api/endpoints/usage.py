@@ -1574,6 +1574,8 @@ async def get_usage_sessions_paginated(  # noqa: PLR0913, PLR0917 — known-debt
     events from the totals. All are event-level and intersect. Sorting is
     server-side over the full result set; `sort_by` picks the column (duration /
     messages / tokens / cost / recent) and `sort_dir` the direction."""
+    _validate_iso_param("since", since)
+    _validate_iso_param("until", until)
     return query_sessions_paginated(
         session,
         provider_id=provider_id,
@@ -1600,10 +1602,13 @@ async def _session_options(
     since: str | None,
     until: str | None,
     sidecar_id: str | None,
+    project: str | None,
     q: str | None,
     limit: int,
     session: Session,
 ) -> list[str]:
+    _validate_iso_param("since", since)
+    _validate_iso_param("until", until)
     return await asyncio.to_thread(
         query_session_filter_options,
         session,
@@ -1613,6 +1618,7 @@ async def _session_options(
         since=parse_iso8601_utc(since) if since else None,
         until=parse_iso8601_utc(until) if until else None,
         sidecar_id=sidecar_id,
+        project=project,
         search=q.strip() if q and q.strip() else None,
         limit=limit,
     )
@@ -1627,11 +1633,13 @@ async def get_session_models(  # noqa: PLR0913 — mirrors the sessions window f
     since: str | None = Query(default=None),
     until: str | None = Query(default=None),
     sidecar_id: str | None = None,
+    project: str | None = Query(default=None),
     q: str | None = Query(default=None, max_length=100),
     limit: int = Query(default=50, ge=1, le=200),
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
-    """Top models (by event count) in the sessions window, for the Model filter."""
+    """Top models (by event count) in the sessions window, for the Model filter.
+    Honors `project` so the list only offers models that exist under it."""
     return {
         "models": await _session_options(
             "model",
@@ -1640,6 +1648,7 @@ async def get_session_models(  # noqa: PLR0913 — mirrors the sessions window f
             since=since,
             until=until,
             sidecar_id=sidecar_id,
+            project=project,
             q=q,
             limit=limit,
             session=session,
@@ -1656,11 +1665,13 @@ async def get_session_branches(  # noqa: PLR0913 — mirrors the sessions window
     since: str | None = Query(default=None),
     until: str | None = Query(default=None),
     sidecar_id: str | None = None,
+    project: str | None = Query(default=None),
     q: str | None = Query(default=None, max_length=100),
     limit: int = Query(default=50, ge=1, le=200),
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
-    """Top git branches (by event count) in the sessions window, for the Branch filter."""
+    """Top git branches (by event count) in the sessions window, for the Branch filter.
+    Honors `project` so the list only offers branches that exist under it."""
     return {
         "branches": await _session_options(
             "branch",
@@ -1669,6 +1680,7 @@ async def get_session_branches(  # noqa: PLR0913 — mirrors the sessions window
             since=since,
             until=until,
             sidecar_id=sidecar_id,
+            project=project,
             q=q,
             limit=limit,
             session=session,

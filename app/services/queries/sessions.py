@@ -496,13 +496,15 @@ def query_session_filter_options(  # noqa: PLR0913 — mirrors the sessions wind
     since: datetime | None = None,
     until: datetime | None = None,
     sidecar_id: str | None = None,
+    project: str | None = None,
     search: str | None = None,
     limit: int = 50,
 ) -> list[str]:
     """Top-`limit` distinct models or branches for the sessions filter lists.
 
     Ranked by event count within the same account/window the sessions list
-    uses; NULL and empty values are excluded. `search` is a case-insensitive
+    uses (and under the active `project`, so the list never offers a value that
+    would empty the table); NULL and empty values are excluded. `search` is a case-insensitive
     substring match so a capped list stays reachable by typing.
     """
     column = _OPTION_COLUMNS[kind]
@@ -513,6 +515,7 @@ def query_session_filter_options(  # noqa: PLR0913 — mirrors the sessions wind
         account_id=account_id,
         since=since,
         until=until,
+        project=project,
         sidecar_id=sidecar_id,
     )
     params = {**filters.params(), "limit": limit}

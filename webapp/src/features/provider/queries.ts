@@ -320,17 +320,19 @@ export const useSessionFilterOptions = (
   accountId: string,
   range: DateRange | undefined,
   search: string,
+  project?: string,
 ) => {
   const [sidecarId] = useUsageSource();
   const fetcher = kind === 'model' ? fetchSessionModels : fetchSessionBranches;
   return useQuery({
-    queryKey: ['usage', 'session-options', kind, providerId, accountId, range?.since, range?.until, sidecarId, search],
+    queryKey: ['usage', 'session-options', kind, providerId, accountId, range?.since, range?.until, sidecarId, search, project],
     queryFn: async () => {
       const res = await fetcher({
         provider_id: providerId,
         account_id: accountId,
         sidecar_id: sidecarId,
         ...(range ? { since: range.since, until: range.until } : {}),
+        ...(project ? { project } : {}),
         ...(search ? { q: search } : {}),
       });
       return 'models' in res ? res.models : res.branches;

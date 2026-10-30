@@ -44,6 +44,12 @@ describe('SessionOptionFilter', () => {
     expect(screen.getByTestId('search')).not.toHaveTextContent('branch');
   });
 
+  it('scopes the option list to the selected project', async () => {
+    renderFilter('model', '/?project=__none__');
+    await screen.findByRole('button', { name: 'opus' });
+    expect(api.fetchSessionModels).toHaveBeenCalledWith(expect.objectContaining({ project: '__none__' }));
+  });
+
   it('searches server-side after a debounce', async () => {
     renderFilter('branch');
     await screen.findByRole('button', { name: 'main' });
