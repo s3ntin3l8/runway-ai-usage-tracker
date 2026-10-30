@@ -64,6 +64,17 @@ describe('SessionOptionFilter', () => {
     );
   });
 
+  it('keeps a selected value that is no longer listed visible while it matches the search', async () => {
+    renderFilter('model', '/?model=gone');
+    expect(await screen.findByRole('button', { name: 'gone' })).toHaveAttribute('aria-pressed', 'true');
+    vi.mocked(api.fetchSessionModels).mockResolvedValue({ models: ['opus'] });
+    await userEvent.type(screen.getByRole('searchbox', { name: 'Search models' }), 'go');
+    await waitFor(() => expect(api.fetchSessionModels).toHaveBeenLastCalledWith(expect.objectContaining({ q: 'go' })));
+    expect(screen.getByRole('button', { name: 'gone' })).toHaveAttribute('aria-pressed', 'true');
+    await userEvent.type(screen.getByRole('searchbox', { name: 'Search models' }), 'zz');
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'gone' })).not.toBeInTheDocument());
+  });
+
   it('shows an empty-search message', async () => {
     renderFilter('model');
     await screen.findByRole('button', { name: 'opus' });

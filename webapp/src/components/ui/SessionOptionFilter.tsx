@@ -41,8 +41,10 @@ export function SessionOptionFilter({
   }, [query]);
   const options = useSessionFilterOptions(kind, providerId, accountId, range, search, project);
   const names = new Set(options.data ?? []);
-  // Keep a URL-selected value visible even when the list no longer carries it.
-  if (selected && !search) names.add(selected);
+  // Keep a URL-selected value visible even when the list no longer carries it
+  // (as ProjectFilter does), so it keeps its check mark while a search is
+  // active, as long as it matches what was typed.
+  if (selected && selected.toLowerCase().includes(search.toLowerCase())) names.add(selected);
   const matches = [...names];
 
   // Nothing to filter by (no models / branches recorded): hide the section.
