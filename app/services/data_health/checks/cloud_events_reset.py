@@ -12,7 +12,6 @@ from typing import Any
 
 from sqlmodel import Session
 
-from app.core.date_utils import parse_iso8601_utc
 from app.services.claude_cloud_support import CLOUD_SIDECAR_ID
 from app.services.data_health.base import (
     AsyncHook,
@@ -101,15 +100,7 @@ class CloudEventsResetCheck(Check):
     def apply(
         self, session: Session, group_key: str, params: dict[str, Any]
     ) -> tuple[FixResult, list[AsyncHook]]:
-        # An interrupted fix is finished by applying again; passing the removed range (the
-        # `removed_from` / `removed_to` of the first run's result) also replays the window rebuild.
-        window_from, window_to = params.get("windows_from"), params.get("windows_to")
-        windows_range = (
-            (parse_iso8601_utc(str(window_from)), parse_iso8601_utc(str(window_to)))
-            if window_from and window_to
-            else None
-        )
-        result = apply_cloud_events_reset(session, windows_range=windows_range)
+        result = apply_cloud_events_reset(session)
         return (
             FixResult(
                 check_id=self.id,

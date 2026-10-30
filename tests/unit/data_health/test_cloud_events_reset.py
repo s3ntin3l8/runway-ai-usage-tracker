@@ -73,13 +73,3 @@ def test_apply_removes_events_and_checkpoints_and_goes_quiet(session):
     assert result.counts["events_deleted"] == 1 and result.counts["checkpoints_deleted"] == 1
     assert [e.event_id for e in session.exec(select(UsageEvent))] == [keep]
     assert CloudEventsResetCheck().detect(session).total_count == 0
-
-
-def test_apply_can_replay_the_window_rebuild_of_an_interrupted_run(session):
-    _cloud(session, f"cloud:{DIGEST}:m:msg_1")
-    result, _ = CloudEventsResetCheck().apply(
-        session,
-        GROUP_KEY,
-        {"windows_from": "2026-09-24T00:00:00+00:00", "windows_to": "2026-09-25T00:00:00+00:00"},
-    )
-    assert result.counts["events_deleted"] == 1
