@@ -476,9 +476,14 @@ def _minute(value: datetime) -> datetime:
     return value.replace(second=0, microsecond=0)
 
 
+def _minute_up(value: datetime) -> datetime:
+    floored = _minute(value)
+    return floored if floored == value else floored + timedelta(minutes=1)
+
+
 def _index_cache_key(filters: SessionFilters) -> str:
     """Cache key of one filter set. The webapp sends a `since`/`until` rounded
-    from "now" on every load, so both are floored to the minute: sort and page
+    from "now" on every load, so `since` is floored and `until` ceiled to the minute (the window only ever widens): sort and page
     clicks then land on the same entry. The caller floors the window the same
     way before querying, so the entry and the page rows share one window."""
     key = (
@@ -486,7 +491,7 @@ def _index_cache_key(filters: SessionFilters) -> str:
         *replace(
             filters,
             since=_minute(filters.since),
-            until=_minute(filters.until) if filters.until is not None else None,
+            until=_minute_up(filters.until) if filters.until is not None else None,
         ).cache_key(),
     )
     return repr(key)
@@ -570,7 +575,7 @@ def query_sessions_paginated(  # noqa: PLR0913 — the event-level filters exten
     `use_cache=False` runs the original all-SQL path. It is a test reference
     (the differential tests compare against it), not a runtime switch.
 
-    `since`/`until` are floored to the minute for the index and the page alike,
+    `since` is floored and `until` ceiled to the minute for the index and the page alike,
     so `total` and the page rows always describe the same window (up to 59 s
     wider at its edges than the exact request).
     """
@@ -597,7 +602,7 @@ def query_sessions_paginated(  # noqa: PLR0913 — the event-level filters exten
         provider_id=provider_id,
         account_id=account_id,
         since=_minute(since),
-        until=_minute(until) if until is not None else None,
+        until=_minute_up(until) if until is not None else None,
         project=project,
         sidecar_id=sidecar_id,
         model=model,

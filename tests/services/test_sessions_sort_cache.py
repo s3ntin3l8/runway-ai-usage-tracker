@@ -277,3 +277,23 @@ def test_boundary_session_never_splits_total_from_the_page(db):
     second = query_sessions_paginated(db, since=since + timedelta(seconds=40), **base)
     assert first["total"] == second["total"] == 5
     assert len(second["sessions"]) == 3
+
+
+def test_non_aligned_until_keeps_the_newest_events(db):
+    until = _NOW.replace(second=45)
+    db.add(
+        UsageEvent(
+            provider_id="anthropic",
+            account_id="acc1",
+            event_id="newest",
+            session_id="newest",
+            ts=_NOW.replace(second=30),
+            kind="message",
+        )
+    )
+    db.commit()
+    kwargs = {"provider_id": "anthropic", "account_id": "acc1", "since": _SINCE, "until": until}
+    fast = query_sessions_paginated(db, **kwargs)
+    ref = query_sessions_paginated(db, **kwargs, use_cache=False)
+    assert fast == ref
+    assert fast["total"] == 1
