@@ -524,3 +524,10 @@ def test_phase_c_and_d_given_empty_pairs_directly_are_a_no_op():
     window_after = s.exec(select(UsageWindow).where(UsageWindow.provider_id == "chatgpt")).first()
     assert window_after is not None
     assert window_after.id == window_id
+
+
+def test_phase_b_names_the_events_skipped_for_having_no_stored_estimate(capsys):
+    from scripts.recost_events import _skipped_note
+
+    assert _skipped_note(0) == ""
+    assert "3 with no stored estimate" in _skipped_note(3)

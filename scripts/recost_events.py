@@ -91,6 +91,14 @@ from app.services.maintenance.windows import (  # noqa: E402
 )
 
 
+def _skipped_note(skipped_unpopulated: int) -> str:
+    return (
+        f" (plus {skipped_unpopulated:,} with no stored estimate, left alone)"
+        if skipped_unpopulated
+        else ""
+    )
+
+
 def phase_b_recost(
     session: Session,
     providers: list[str] | None,
@@ -109,14 +117,17 @@ def phase_b_recost(
     This CLI never passes `only_zero_cost=True` (that's the Data Health
     `unpriced_models` fixer's contract, not this script's), so the printed
     total never has a `skipped_still_unpriced` count to exclude — it would
-    always be 0 here.
+    always be 0 here. With `--estimate-only`, events that have no stored
+    estimate are skipped (`skipped_unpopulated`); they are not part of the
+    printed total and get their own count in the Phase B line.
     """
     if dry_run:
         plan = plan_recost(
             session, providers, since=since, estimate_only=estimate_only, sample_size=0
         )
         print(
-            f"Phase B — examining {plan.updated + plan.unchanged + plan.zeroed:,} event(s)…",
+            f"Phase B — examining {plan.updated + plan.unchanged + plan.zeroed:,} event(s)"
+            f"{_skipped_note(plan.skipped_unpopulated)}…",
             flush=True,
         )
         return plan.updated, plan.unchanged, plan.zeroed, plan.affected_pairs
@@ -133,7 +144,8 @@ def phase_b_recost(
         skip_windows=True,
     )
     print(
-        f"Phase B — examined {result.updated + result.unchanged + result.zeroed:,} event(s)…",
+        f"Phase B — examined {result.updated + result.unchanged + result.zeroed:,} event(s)"
+        f"{_skipped_note(result.skipped_unpopulated)}…",
         flush=True,
     )
     return result.updated, result.unchanged, result.zeroed, result.affected_pairs
