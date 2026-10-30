@@ -19,7 +19,7 @@ from sqlalchemy import func, or_, update
 from sqlmodel import Session, col, select
 
 from app.models.db import ProviderConfig, UsageEvent
-from app.services.cost_calculator import PricingIndex, resolve_price_row
+from app.services.cost_calculator import PricingIndex, is_aggregate_event_id, resolve_price_row
 from app.services.maintenance.event_cost import ResolvedCost, resolve_event_cost
 from app.services.maintenance.windows import rebuild_windows_for_providers
 from app.services.period_rollups import rebuild_rollups_for_pairs
@@ -175,6 +175,7 @@ def _compute_changes(
             tokens_cache_create_5m=ev.tokens_cache_create_5m,
             billing_type=billing_type,
             reported_cost=_legacy_reported_cost(ev),
+            standard_tier_only=is_aggregate_event_id(ev.event_id),
             resolved_price_row=price_row,
             price_row_resolved=True,
         )

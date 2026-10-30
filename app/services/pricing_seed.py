@@ -93,7 +93,15 @@ PRICING_SEED: list[dict] = [
         "cache_read_per_mtok": 0.01,  # 0.1x input
         "cache_create_per_mtok": 0.125,  # 5m TTL writes: 1.25x input
         "cache_create_1h_per_mtok": 0.20,  # 1h TTL writes: 2x input
-        "notes": "Haiku 5.5 — prompts up to 100k tokens (the long-prompt tier is not modelled)",
+        # Prompts over 100,000 tokens (input + cache read + cache create) bill
+        # the whole event at the long-prompt rates.
+        "long_prompt_threshold_tokens": 100_000,
+        "long_input_per_mtok": 0.50,
+        "long_output_per_mtok": 2.50,
+        "long_cache_read_per_mtok": 0.05,
+        "long_cache_create_per_mtok": 0.625,
+        "long_cache_create_1h_per_mtok": 1.00,
+        "notes": "Haiku 5.5 — $0.10/$0.50 up to 100k-token prompts, long-prompt tier above",
     },
     {
         "provider_id": "anthropic",
@@ -1291,6 +1299,15 @@ PRICING_SEED: list[dict] = [
 
 _SONNET_55_OLD_CACHE_READ = 0.20
 
+_LONG_TIER_COLUMNS = (
+    "long_prompt_threshold_tokens",
+    "long_input_per_mtok",
+    "long_output_per_mtok",
+    "long_cache_read_per_mtok",
+    "long_cache_create_per_mtok",
+    "long_cache_create_1h_per_mtok",
+)
+
 
 def seed_pricing_table(session: Session) -> int:
     """Insert any seed rows missing from provider_pricing. Returns rows inserted."""
@@ -1327,6 +1344,14 @@ def seed_pricing_table(session: Session) -> int:
                 # alone); idempotent, so re-running on every startup is a no-op.
                 exists.cache_read_per_mtok = row["cache_read_per_mtok"]
                 session.add(exists)
+            # Long-prompt tier postdates the haiku-5.5 row: backfill it in
+            # place, only while every tier column is still NULL.
+            if row.get("long_prompt_threshold_tokens") is not None and all(
+                getattr(exists, name) is None for name in _LONG_TIER_COLUMNS
+            ):
+                for name in _LONG_TIER_COLUMNS:
+                    setattr(exists, name, row[name])
+                session.add(exists)
             seed_create = row.get("cache_create_per_mtok", 0.0)
             if exists.cache_create_per_mtok == 0.0 and seed_create:
                 exists.cache_create_per_mtok = seed_create
@@ -1342,6 +1367,7 @@ def seed_pricing_table(session: Session) -> int:
                 cache_read_per_mtok=row["cache_read_per_mtok"],
                 cache_create_per_mtok=row["cache_create_per_mtok"],
                 cache_create_1h_per_mtok=row.get("cache_create_1h_per_mtok", 0.0),
+                **{name: row.get(name) for name in _LONG_TIER_COLUMNS},
                 notes=row.get("notes"),
             )
         )

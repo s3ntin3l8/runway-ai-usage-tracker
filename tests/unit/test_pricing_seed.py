@@ -995,3 +995,66 @@ def test_seed_opencode_routed_aliases_match_canonical_rows():
             in_effect = [a for a in alias_rows if a.effective_from <= canon.effective_from]
             assert in_effect, (alias, canon.effective_from)
             assert rates(in_effect[-1]) == rates(canon), (alias, canon.effective_from)
+
+
+def test_seed_anthropic_haiku_5_5_long_prompt_tier():
+    row = _anthropic_row("haiku-5.5")
+    assert row.long_prompt_threshold_tokens == 100_000
+    assert row.long_input_per_mtok == 0.50
+    assert row.long_output_per_mtok == 2.50
+    assert row.long_cache_read_per_mtok == 0.05
+    assert row.long_cache_create_per_mtok == 0.625
+    assert row.long_cache_create_1h_per_mtok == 1.00
+    # No other anthropic model gets a tier.
+    s = _make_session()
+    seed_pricing_table(s)
+    tiered = s.exec(
+        select(ProviderPricing).where(ProviderPricing.long_prompt_threshold_tokens.is_not(None))  # type: ignore[union-attr]
+    ).all()
+    assert [r.model_id for r in tiered] == ["haiku-5.5"]
+
+
+def _haiku_55_row(s) -> ProviderPricing:
+    return s.exec(
+        select(ProviderPricing).where(
+            ProviderPricing.provider_id == "anthropic",
+            ProviderPricing.model_id == "haiku-5.5",
+        )
+    ).one()
+
+
+def test_seed_backfills_the_haiku_5_5_tier_on_an_existing_row():
+    s = _make_session()
+    seed_pricing_table(s)
+    row = _haiku_55_row(s)
+    row.long_prompt_threshold_tokens = None
+    row.long_input_per_mtok = None
+    row.long_output_per_mtok = None
+    row.long_cache_read_per_mtok = None
+    row.long_cache_create_per_mtok = None
+    row.long_cache_create_1h_per_mtok = None
+    s.add(row)
+    s.commit()
+    seed_pricing_table(s)
+    s.expire_all()
+    row = _haiku_55_row(s)
+    assert row.long_prompt_threshold_tokens == 100_000
+    assert row.long_input_per_mtok == 0.50
+    assert row.long_cache_create_1h_per_mtok == 1.00
+
+
+def test_seed_keeps_a_hand_tuned_haiku_5_5_tier():
+    s = _make_session()
+    seed_pricing_table(s)
+    row = _haiku_55_row(s)
+    row.long_input_per_mtok = 0.75
+    row.long_prompt_threshold_tokens = 50_000
+    row.long_output_per_mtok = None
+    s.add(row)
+    s.commit()
+    seed_pricing_table(s)
+    s.expire_all()
+    row = _haiku_55_row(s)
+    assert row.long_input_per_mtok == 0.75
+    assert row.long_prompt_threshold_tokens == 50_000
+    assert row.long_output_per_mtok is None

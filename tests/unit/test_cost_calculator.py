@@ -2,7 +2,7 @@ import logging
 from datetime import UTC, date, datetime, timedelta, timezone
 
 import pytest
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session, SQLModel, create_engine, select
 from sqlmodel.pool import StaticPool
 
 from app.models.db import ProviderPricing
@@ -1259,13 +1259,17 @@ def _cost_kwargs():
 
 
 def test_haiku_5_5_prices_at_its_own_row_without_a_warning(caplog):
-    """Haiku 5.5 has a dedicated row: 1M input tokens cost $0.10, no fallback warning."""
+    """Haiku 5.5 has a dedicated row: 100k input tokens cost $0.01, no fallback warning."""
     s = _seeded_session()
     with caplog.at_level("WARNING", logger="app.services.cost_calculator"):
+        # 100k tokens is the top of the standard tier (the long tier starts above it).
         cost = compute_event_cost(
-            s, provider_id="anthropic", model_id="haiku-5.5", **_cost_kwargs()
+            s,
+            provider_id="anthropic",
+            model_id="haiku-5.5",
+            **{**_cost_kwargs(), "tokens_input": 100_000},
         )
-    assert cost == 0.10
+    assert cost == 0.01
     assert not caplog.records
 
 
@@ -1298,3 +1302,107 @@ def test_version_suffix_warning_set_is_bounded_and_keeps_warning(caplog, monkeyp
     assert len(cost_calculator._FAMILY_FALLBACK_WARNED) == 2
     assert len(caplog.records) == 5
     assert "opus-4.4" in caplog.records[-1].message
+
+
+def _haiku_55_cost(s, *, tokens_input=0, tokens_cache_read=0, tokens_cache_create=0, **kw):
+    return compute_event_cost_breakdown(
+        s,
+        provider_id="anthropic",
+        model_id="haiku-5.5",
+        ts=datetime(2026, 10, 30, tzinfo=UTC),
+        tokens_input=tokens_input,
+        tokens_output=1_000_000,
+        tokens_cache_read=tokens_cache_read,
+        tokens_cache_create=tokens_cache_create,
+        **kw,
+    )
+
+
+def test_haiku_55_prompt_up_to_threshold_bills_standard():
+    s = _seeded_session()
+    for prompt in (90_000, 99_999, 100_000):  # exactly 100,000 is still standard
+        b = _haiku_55_cost(s, tokens_input=prompt)
+        assert b.output == 0.50
+        assert b.input == round(prompt / 1_000_000 * 0.10, 6)
+
+
+def test_haiku_55_prompt_over_threshold_bills_the_whole_event_long():
+    s = _seeded_session()
+    b = _haiku_55_cost(s, tokens_input=100_001)
+    assert b.output == 2.50
+    assert b.input == round(100_001 / 1_000_000 * 0.50, 6)
+
+
+def test_haiku_55_prompt_size_sums_input_cache_read_and_cache_create():
+    s = _seeded_session()
+    b = _haiku_55_cost(
+        s,
+        tokens_input=10,
+        tokens_cache_read=60_000,
+        tokens_cache_create=40_000,
+        tokens_cache_create_1h=10_000,
+        tokens_cache_create_5m=30_000,
+    )
+    assert b.output == 2.50
+    assert b.cache_read == round(60_000 / 1_000_000 * 0.05, 6)
+    assert b.cache_create == round(10_000 / 1e6 * 1.00 + 30_000 / 1e6 * 0.625, 6)
+    # 99,999 + 1 (cache reads only) stays standard.
+    std = _haiku_55_cost(s, tokens_input=0, tokens_cache_read=100_000)
+    assert std.output == 0.50
+    assert std.cache_read == round(100_000 / 1e6 * 0.01, 6)
+
+
+def test_haiku_55_standard_tier_only_ignores_the_long_tier():
+    s = _seeded_session()
+    b = _haiku_55_cost(s, tokens_input=500_000, standard_tier_only=True)
+    assert b.output == 0.50
+    assert b.input == round(500_000 / 1e6 * 0.10, 6)
+
+
+def test_is_aggregate_event_id_matches_only_cloud_remainders():
+    assert cost_calculator.is_aggregate_event_id("cloud:abc:r:3:haiku-5.5")
+    assert cost_calculator.is_aggregate_event_id("cloud:abc:3")  # first collector's coarse event
+    assert not cost_calculator.is_aggregate_event_id("cloud:abc:m:msg_1")
+    assert not cost_calculator.is_aggregate_event_id("msg:r:1")
+    assert not cost_calculator.is_aggregate_event_id(None)
+
+
+def test_model_without_a_tier_is_unchanged_by_prompt_size():
+    s = _seeded_session()
+    b = compute_event_cost_breakdown(
+        s,
+        provider_id="anthropic",
+        model_id="sonnet",
+        ts=datetime(2026, 10, 30, tzinfo=UTC),
+        tokens_input=500_000,
+        tokens_output=1_000_000,
+        tokens_cache_read=0,
+        tokens_cache_create=0,
+    )
+    assert b.input == 1.5
+    assert b.output == 15.0
+
+
+def test_pricing_index_carries_the_long_tier():
+    s = _seeded_session()
+    row = PricingIndex.load(s, ["anthropic"]).exact("anthropic", "haiku-5.5", date(2026, 10, 30))
+    assert row is not None
+    assert row.long_prompt_threshold_tokens == 100_000
+    assert row.long_input_per_mtok == 0.50
+
+
+def test_incomplete_long_tier_bills_standard_and_warns_once(caplog):
+    s = _seeded_session()
+    row = s.exec(select(ProviderPricing).where(ProviderPricing.model_id == "haiku-5.5")).one()
+    row.long_output_per_mtok = None
+    s.add(row)
+    s.commit()
+    cost_calculator._PARTIAL_TIER_WARNED.clear()
+    try:
+        with caplog.at_level("WARNING", logger="app.services.cost_calculator"):
+            b1 = _haiku_55_cost(s, tokens_input=150_000)
+            _haiku_55_cost(s, tokens_input=150_000)
+    finally:
+        cost_calculator._PARTIAL_TIER_WARNED.clear()
+    assert b1.output == 0.50
+    assert len([r for r in caplog.records if "incomplete tier" in r.getMessage()]) == 1

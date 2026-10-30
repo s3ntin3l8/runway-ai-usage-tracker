@@ -35,7 +35,7 @@ from sqlalchemy import update
 from sqlmodel import Session, col, select
 
 from app.models.db import ProviderConfig, UsageEvent, UsagePeriodRollup
-from app.services.cost_calculator import PricingIndex, resolve_price_row
+from app.services.cost_calculator import PricingIndex, is_aggregate_event_id, resolve_price_row
 from app.services.maintenance.event_cost import ResolvedCost, resolve_event_cost
 from app.services.maintenance.windows import rebuild_windows_for_providers
 from app.services.model_normalization import ARGON_MODEL_ID, is_argon_model_id
@@ -187,6 +187,7 @@ def _changes(session: Session, providers: list[str] | None) -> list[ArgonRetagCh
             tokens_cache_create_5m=ev.tokens_cache_create_5m,
             billing_type=configs.get((ev.provider_id, ev.account_id), "unknown"),
             reported_cost=ev.cost_reported_usd,
+            standard_tier_only=is_aggregate_event_id(ev.event_id),
             resolved_price_row=price_row,
             price_row_resolved=True,
         )

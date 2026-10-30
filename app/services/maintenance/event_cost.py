@@ -61,6 +61,7 @@ def resolve_event_cost(  # noqa: PLR0913 — one param per priced token dimensio
     tokens_cache_create_5m: int = 0,
     billing_type: str,
     reported_cost: float | None,
+    standard_tier_only: bool = False,
     resolved_price_row: PricingRow | None = None,
     price_row_resolved: bool = False,
 ) -> ResolvedCost:
@@ -80,6 +81,9 @@ def resolve_event_cost(  # noqa: PLR0913 — one param per priced token dimensio
     2. No pricing row resolves at all, but a reported cost is available ->
        trust the report rather than bill $0.00 for an unseeded model.
     3. Otherwise -> the computed estimate (`breakdown.total`).
+
+    `standard_tier_only` keeps an aggregated event (cloud remainder) off a
+    model's long-prompt tier; see `cost_calculator.is_aggregate_event_id`.
     """
     price_row = (
         resolved_price_row
@@ -98,6 +102,7 @@ def resolve_event_cost(  # noqa: PLR0913 — one param per priced token dimensio
         tokens_reasoning=tokens_reasoning,
         tokens_cache_create_1h=tokens_cache_create_1h,
         tokens_cache_create_5m=tokens_cache_create_5m,
+        standard_tier_only=standard_tier_only,
         _resolved_price_row=price_row,
         _price_row_resolved=True,
     )

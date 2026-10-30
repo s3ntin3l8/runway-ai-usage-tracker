@@ -360,3 +360,25 @@ def test_recost_pages_seek_the_timestamp_index_with_bound_parameters(monkeypatch
         event.remove(bind, "before_cursor_execute", explain_pages)
     assert plans
     assert all(any("kind=? AND ts>?" in row[3] for row in plan) for plan in plans)
+
+
+def test_recost_reprices_a_long_prompt_haiku_55_event_but_not_a_remainder():
+    from app.services.pricing_seed import seed_pricing_table
+
+    session = _session()
+    seed_pricing_table(session)
+    common = {
+        "provider_id": "anthropic",
+        "model_id": "haiku-5.5",
+        "tokens_input": 150_000,
+        "tokens_output": 1_000_000,
+    }
+    _event(session, event_id="cloud:abc:m:msg_1", **common)
+    _event(session, event_id="cloud:abc:r:1:haiku-5.5", **common)
+
+    result = apply_recost(session, ["anthropic"])
+
+    assert result.updated == 2
+    costs = {e.event_id: e.cost_usd for e in session.exec(select(UsageEvent)).all()}
+    assert costs["cloud:abc:m:msg_1"] == round(0.15 * 0.50 + 2.50, 6)
+    assert costs["cloud:abc:r:1:haiku-5.5"] == round(0.15 * 0.10 + 0.50, 6)

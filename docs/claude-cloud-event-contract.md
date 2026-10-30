@@ -254,9 +254,12 @@ guard is unaffected; applying it twice is a no-op.
   row as one message, so for cloud sessions those global message counts run about 10-25% high (one
   extra row per turn and model). The sessions view and top sessions, hosts and projects collapse
   remainders through `turn_id` and stay exact. Accepted trade-off; token and cost totals are exact.
-- `haiku-5.5` is priced at its own row (prompts up to 100k tokens: $0.10 in / $0.50 out); the
-  over-100k-token tier is not modelled yet (tracked separately). Stored events priced before the row
-  existed need `scripts/recost_events.py --provider anthropic`.
+- `haiku-5.5` is priced at its own row with a long-prompt tier: an event whose prompt
+  (`input + cache read + cache create` tokens) exceeds 100,000 tokens bills entirely at the higher rates
+  ($0.50 in / $2.50 out), otherwise $0.10 / $0.50. Message events (`:m:`) carry a real per-call prompt
+  size and use the tier. Remainder events (`:r:`) aggregate several calls and have no single prompt
+  size, so they always price at the standard tier: for Haiku 5.5 a remainder's cost is a lower bound.
+  Stored events priced before the tier existed need `scripts/recost_events.py --provider anthropic`.
 - Per-message output is a lower bound; real output arrives in remainder events. Per-message output is
   therefore not attributable to a single message.
 - Remainder events have no tools and no per-message time; they are dated at the result.
