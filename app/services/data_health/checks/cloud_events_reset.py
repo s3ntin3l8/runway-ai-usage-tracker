@@ -12,6 +12,7 @@ from typing import Any
 
 from sqlmodel import Session
 
+from app.core.date_utils import parse_iso8601_utc
 from app.services.claude_cloud_support import CLOUD_SIDECAR_ID
 from app.services.data_health.base import (
     AsyncHook,
@@ -40,13 +41,14 @@ class CloudEventsResetCheck(Check):
     )
     impact = (
         "The Source filter and host column show these events under the old id. Stored events are "
-        "never relabelled, so only a re-collection can correct them."
+        "never relabelled, so only a re-collection can correct them. A session whose history is no "
+        "longer readable upstream loses its stored usage for good."
     )
     recommended_action = (
         "Remove the cloud events and the collector's per-session checkpoints. The collector then "
         "reads every session's history again with the current labels."
     )
-    severity = Severity.INFO
+    severity = Severity.WARN
 
     def detect(self, session: Session) -> CheckReport:
         plan = plan_cloud_events_reset(session, sample_size=5)
@@ -99,7 +101,15 @@ class CloudEventsResetCheck(Check):
     def apply(
         self, session: Session, group_key: str, params: dict[str, Any]
     ) -> tuple[FixResult, list[AsyncHook]]:
-        result = apply_cloud_events_reset(session)
+        # An interrupted fix is finished by applying again; passing the removed range (the
+        # `removed_from` / `removed_to` of the first run's result) also replays the window rebuild.
+        window_from, window_to = params.get("windows_from"), params.get("windows_to")
+        windows_range = (
+            (parse_iso8601_utc(str(window_from)), parse_iso8601_utc(str(window_to)))
+            if window_from and window_to
+            else None
+        )
+        result = apply_cloud_events_reset(session, windows_range=windows_range)
         return (
             FixResult(
                 check_id=self.id,

@@ -263,3 +263,10 @@ def test_the_report_only_run_changes_nothing(monkeypatch, capsys):
     with Session(engine) as session:
         assert len(session.exec(select(UsageEvent)).all()) == 1
     assert "Report only" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("module", [reset_script, coarse_script])
+@pytest.mark.parametrize("flag", ["--windows-from", "--windows-to"])
+def test_a_half_supplied_window_range_is_refused(module, flag):
+    with pytest.raises(SystemExit):
+        module.main(["--apply", flag, "2026-09-24T00:00:00+00:00"])

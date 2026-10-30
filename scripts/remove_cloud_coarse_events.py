@@ -58,6 +58,8 @@ def main(argv: list[str] | None = None) -> None:
         help="replay the window rebuild for an interrupted run: end of the removed range (ISO 8601)",
     )
     args = parser.parse_args(argv)
+    if bool(args.windows_from) != bool(args.windows_to):
+        parser.error("--windows-from and --windows-to must be given together")
 
     init_db()
     with Session(engine) as session:
