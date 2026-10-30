@@ -84,3 +84,14 @@ def test_it_and_inconsistent_project_labels_do_not_undo_each_other(session):
 
     assert inconsistent.detect(session).groups == []
     assert {e.project for e in session.exec(select(UsageEvent)).all()} == {"real-repo"}
+
+
+def test_plain_subfolder_drift_is_not_reported_or_rewritten(session):
+    _event(session, "1", cwd="/home/u/alpha", project="alpha", sid="s2")
+    _event(session, "2", cwd="/home/u/alpha/src", project="src", sid="s2")
+    check = WorktreeProjectLabelsCheck()
+
+    assert check.detect(session).groups == []
+    check.apply(session, _KEY, {})
+
+    assert {e.project for e in session.exec(select(UsageEvent)).all()} == {"alpha", "src"}

@@ -46,7 +46,7 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
 from sqlalchemy import ColumnElement, func, or_, tuple_
 from sqlalchemy import select as sa_select
@@ -54,7 +54,7 @@ from sqlmodel import Session, col, select
 
 from app.models.db import UsageEvent
 from app.services.maintenance._chunked_sql import chunked_update
-from app.services.project_label import derive_project, pick_canonical_cwd
+from app.services.project_label import WORKTREE_CONTAINERS, derive_project, pick_canonical_cwd
 
 #: How many rows one UPDATE statement carries. SQLite's parameter limit is
 #: 32766 on the versions Runway ships, but a few hundred keeps the statement
@@ -90,6 +90,26 @@ def _path_shaped_filter() -> ColumnElement[bool]:
     that is easy to get subtly wrong.
     """
     return or_(*(func.instr(col(UsageEvent.project), sep) > 0 for sep in _SEPARATORS))
+
+
+def _worktree_filter() -> ColumnElement[bool]:
+    """The SQL predicate for a cwd that holds a worktree-container segment.
+
+    The SQL twin of `project_label`'s segment regex: a whole segment, preceded
+    by either separator, followed by either separator or the end of the path,
+    case-insensitive. It only narrows the rows that are loaded; the exact label
+    is still derived in Python, so a false positive here costs a row read, never
+    a wrong write.
+    """
+    cwd = func.lower(col(UsageEvent.cwd))
+    clauses: list[ColumnElement[bool]] = []
+    for name in WORKTREE_CONTAINERS:
+        for lead in _SEPARATORS:
+            segment = f"{lead}{name.lower()}"
+            for trail in _SEPARATORS:
+                clauses.append(func.instr(cwd, segment + trail) > 0)
+            clauses.append(func.substr(cwd, -len(segment)) == segment)
+    return or_(*clauses)
 
 
 @dataclass
@@ -178,7 +198,7 @@ def _plan(
     session: Session,
     *,
     providers: list[str] | None,
-    restrict_to_path_shaped: bool,
+    scope: Literal["all", "path_shaped", "worktree"],
     sample_size: int,
 ) -> PathShapedProjectPlan:
     """The sessions to relabel, with the label each should carry."""
@@ -193,20 +213,24 @@ def _plan(
     if providers is not None:
         stmt = stmt.where(col(UsageEvent.provider_id).in_(providers))
 
-    if restrict_to_path_shaped:
+    if scope != "all":
         # A subquery, not a list of session ids: the list grows with the number
         # of affected sessions, and SQLite caps a statement at 32766 parameters —
         # on a large install the list form would raise "too many SQL
         # variables" in `detect` itself, leaving the repair unreachable exactly
-        # where it is needed.
-        shaped_sessions = select(col(UsageEvent.session_id)).where(_path_shaped_filter()).distinct()
+        # where it is needed. The same subquery keeps the scan bounded: only the
+        # sessions in scope are loaded, not the whole table.
+        predicate = _path_shaped_filter() if scope == "path_shaped" else _worktree_filter()
+        scoped_sessions = select(col(UsageEvent.session_id)).where(predicate).distinct()
         if providers is not None:
-            shaped_sessions = shaped_sessions.where(col(UsageEvent.provider_id).in_(providers))
-        rows = session.execute(stmt.where(col(UsageEvent.session_id).in_(shaped_sessions))).all()
+            scoped_sessions = scoped_sessions.where(col(UsageEvent.provider_id).in_(providers))
+        rows = session.execute(stmt.where(col(UsageEvent.session_id).in_(scoped_sessions))).all()
     else:
         rows = session.execute(stmt).all()
 
     by_session: dict[str, list[tuple[int, str | None, str | None]]] = defaultdict(list)
+    # Rows that carry a repository name of their own.
+    own_refs: dict[int, str] = {}
     # The repository name a session's newest reporting row carries, with the
     # (ts, id) it was reported at.
     session_refs: dict[str, tuple[Any, int, str]] = {}
@@ -219,6 +243,7 @@ def _plan(
             continue
         by_session[session_id].append((row_id, cwd, project))
         if project_ref:
+            own_refs[row_id] = project_ref
             stamp = (ts, row_id)
             known = session_refs.get(session_id)
             if known is None or stamp > (known[0], known[1]):
@@ -246,12 +271,20 @@ def _plan(
                 plan.unfixable_sessions += 1
                 plan.unfixable_rows += path_shaped_rows
             continue
-        changed = [row_id for row_id, _, project in entries if project != canonical]
+        # A row that reported a different repository of its own keeps it: the
+        # ingestor labelled it with that name, and `inconsistent_project_labels`
+        # leaves it alone too, so nothing could repair a rewrite.
+        changed = [
+            row_id
+            for row_id, _, project in entries
+            if project != canonical and own_refs.get(row_id, canonical) == canonical
+        ]
         if not changed:
             continue
+        changed_ids = set(changed)
         labels = sorted({project for _, _, project in entries if project})
-        for _, _, project in entries:
-            if project != canonical:
+        for row_id, _, project in entries:
+            if row_id in changed_ids:
                 label_counts[(project or "(none)", canonical)] += 1
         plan.relabels.append(
             SessionRelabel(
@@ -291,7 +324,7 @@ def plan_path_shaped_projects(
     return _plan(
         session,
         providers=providers,
-        restrict_to_path_shaped=True,
+        scope="path_shaped",
         sample_size=sample_size,
     )
 
@@ -311,7 +344,27 @@ def plan_session_relabels(
     return _plan(
         session,
         providers=providers,
-        restrict_to_path_shaped=False,
+        scope="all",
+        sample_size=sample_size,
+    )
+
+
+def plan_worktree_relabels(
+    session: Session,
+    *,
+    providers: list[str] | None = None,
+    sample_size: int = 20,
+) -> PathShapedProjectPlan:
+    """The sessions that ran in a worktree directory, and the label they should carry.
+
+    Only sessions with at least one cwd inside a worktree container
+    (`WORKTREE_CONTAINERS`) are in scope. A session that merely drifted into a
+    subfolder is the consolidation script's business, not this repair's.
+    """
+    return _plan(
+        session,
+        providers=providers,
+        scope="worktree",
         sample_size=sample_size,
     )
 

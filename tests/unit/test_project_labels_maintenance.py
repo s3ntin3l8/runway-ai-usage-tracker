@@ -21,6 +21,7 @@ from app.services.maintenance.project_labels import (
     plan_path_shaped_projects,
     plan_repo_relabels,
     plan_session_relabels,
+    plan_worktree_relabels,
 )
 
 _TS = datetime(2026, 5, 8, 14, 0, 0, tzinfo=UTC)
@@ -539,15 +540,56 @@ class TestWorktreeSessions:
         refs = {r.event_id: r.project_ref for r in s.exec(select(UsageEvent)).all()}
         assert refs == {"a": None, "b": "real-repo"}
 
-    def test_the_newest_reported_repository_wins(self):
+    def test_the_newest_reported_repository_wins_for_rows_without_their_own(self):
         s = _session()
         later = datetime(2026, 5, 9, tzinfo=UTC)
         _add(s, "a", session_id="s1", cwd="/h/f", project="old", project_ref="old")
         _add(s, "b", session_id="s1", cwd="/h/f", project="new", project_ref="new", ts=later)
+        _add(s, "c", session_id="s1", cwd="/h/f", project="f")
 
         apply_session_relabels(s, plan_session_relabels(s))
 
-        assert set(_projects(s).values()) == {"new"}
+        assert _projects(s) == {"a": "old", "b": "new", "c": "new"}
+
+    def test_a_row_with_its_own_different_repository_is_left_alone(self):
+        s = _session()
+        _add(s, "a", session_id="s1", cwd="/h/repoA", project="repoA", project_ref="repoA")
+        _add(
+            s,
+            "b",
+            session_id="s1",
+            cwd="/h/repoB",
+            project="repoB",
+            project_ref="repoB",
+            ts=datetime(2026, 5, 9, tzinfo=UTC),
+        )
+
+        assert plan_session_relabels(s).rows_to_relabel == 0
+
+    def test_the_worktree_scope_ignores_plain_subfolder_drift(self):
+        s = _session()
+        _add(s, "a", session_id="s1", cwd="/home/u/alpha", project="alpha")
+        _add(s, "b", session_id="s1", cwd="/home/u/alpha/src", project="src")
+        _add(s, "c", session_id="s2", cwd=r"D:\Projects\repo", project=r"D:\Projects\repo")
+        _add(s, "d", session_id="s3", cwd=r"C:\u\beta\.WT\x\app", project="app")
+
+        plan = plan_worktree_relabels(s)
+
+        assert plan.rows_to_relabel == 1
+        apply_session_relabels(s, plan)
+        assert _projects(s) == {
+            "a": "alpha",
+            "b": "src",
+            "c": r"D:\Projects\repo",
+            "d": "beta",
+        }
+
+    def test_the_worktree_scope_matches_container_at_the_end_of_the_path(self):
+        s = _session()
+        _add(s, "a", session_id="s1", cwd="/home/u/alpha/.worktree", project=".worktree")
+        _add(s, "b", session_id="s2", cwd="/home/u/alpha/.wtx/y", project="y")
+
+        assert plan_worktree_relabels(s).rows_to_relabel == 1
 
     def test_the_apply_is_idempotent_and_moves_no_total(self):
         s = _session()

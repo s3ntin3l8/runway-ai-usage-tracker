@@ -32,7 +32,7 @@ from app.services.data_health.base import (
 from app.services.maintenance.project_labels import (
     apply_session_relabels,
     label_map_detail,
-    plan_session_relabels,
+    plan_worktree_relabels,
 )
 
 _GROUP = "worktree_project_labels"
@@ -62,7 +62,7 @@ class WorktreeProjectLabelsCheck(Check):
     severity = Severity.WARN
 
     def detect(self, session: Session) -> CheckReport:
-        plan = plan_session_relabels(session)
+        plan = plan_worktree_relabels(session)
         groups: list[FindingGroup] = []
         if plan.rows_to_relabel:
             groups.append(
@@ -96,7 +96,7 @@ class WorktreeProjectLabelsCheck(Check):
                 summary=_STALE_SUMMARY,
                 counts={"rows_to_relabel": 0},
             )
-        relabel_plan = plan_session_relabels(session)
+        relabel_plan = plan_worktree_relabels(session)
         return FixPlan(
             check_id=self.id,
             group_key=group_key,
@@ -127,7 +127,7 @@ class WorktreeProjectLabelsCheck(Check):
                 [],
             )
         # Re-plan at apply time: rows may have been collected since the scan.
-        result = apply_session_relabels(session, plan_session_relabels(session))
+        result = apply_session_relabels(session, plan_worktree_relabels(session))
         return (
             FixResult(
                 check_id=self.id,
