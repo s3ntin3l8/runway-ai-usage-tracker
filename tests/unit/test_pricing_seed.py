@@ -859,3 +859,45 @@ def test_seed_minimax_m31_flash_free_variant_has_no_row():
         ).first()
         assert row is None, model_id
         assert _row(s, "minimax", model_id, date(2026, 10, 20)) is None, model_id
+
+
+def test_seed_chatgpt_gpt6_1_terra_rates():
+    s = _make_session()
+    seed_pricing_table(s)
+    row = s.exec(
+        select(ProviderPricing).where(
+            ProviderPricing.provider_id == "chatgpt",
+            ProviderPricing.model_id == "gpt-6.1-terra",
+        )
+    ).first()
+    assert row is not None
+    assert row.input_per_mtok == 1.00
+    assert row.output_per_mtok == 5.00
+    assert row.cache_read_per_mtok == 0.05
+    assert row.cache_create_per_mtok == 1.25
+
+
+def test_seed_opencode_routed_aliases_match_canonical_rows():
+    """OpenCode-routed MiniMax/Kimi rows must track their canonical provider's rates."""
+    s = _make_session()
+    seed_pricing_table(s)
+
+    def get(provider: str, model: str) -> ProviderPricing:
+        row = s.exec(
+            select(ProviderPricing).where(
+                ProviderPricing.provider_id == provider,
+                ProviderPricing.model_id == model,
+            )
+        ).first()
+        assert row is not None, (provider, model)
+        return row
+
+    for alias, canonical in (
+        (("opencode", "minimax-m3"), ("minimax", "MiniMax-M3")),
+        (("opencode", "kimi-for-coding"), ("kimi_coding", "kimi-for-coding")),
+    ):
+        a, c = get(*alias), get(*canonical)
+        assert a.input_per_mtok == c.input_per_mtok
+        assert a.output_per_mtok == c.output_per_mtok
+        assert a.cache_read_per_mtok == c.cache_read_per_mtok
+        assert a.cache_create_per_mtok == c.cache_create_per_mtok

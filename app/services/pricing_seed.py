@@ -254,6 +254,17 @@ PRICING_SEED: list[dict] = [
     },
     {
         "provider_id": "chatgpt",
+        "model_id": "gpt-6.1-terra",
+        "effective_from": "2026-09-01",
+        "input_per_mtok": 1.00,
+        "output_per_mtok": 5.00,
+        "cache_read_per_mtok": 0.05,
+        "cache_create_per_mtok": 1.25,  # 1.25x input
+        "notes": "GPT-6.1 Terra (rates per developers.openai.com/api/docs/pricing, "
+        "checked 2026-10-30); >272K long-context tier not modeled",
+    },
+    {
+        "provider_id": "chatgpt",
         "model_id": "gpt-6-luna",
         "effective_from": "2026-09-01",
         "input_per_mtok": 0.10,
@@ -1182,7 +1193,7 @@ PRICING_SEED: list[dict] = [
         "cache_create_per_mtok": 0.66,
         "notes": "DeepSeek-V4-Pro-0813, off-peak",
     },
-    # ── OpenCode-routed DeepSeek ─────────────────────────────────────────────
+    # ── OpenCode-routed DeepSeek / MiniMax / Kimi ─────────────────────────────────────────────
     # OpenCode Zen list prices (https://opencode.ai/v2/docs/console/models,
     # checked 2026-10-15). Go-subscription events frequently arrive with no
     # logged cost, so these give them a notional "what it would have cost" figure
@@ -1219,6 +1230,28 @@ PRICING_SEED: list[dict] = [
         "cache_read_per_mtok": 0.145,
         "cache_create_per_mtok": 0.0,
         "notes": "OpenCode Zen DeepSeek V4 Pro",
+    },
+    {
+        "provider_id": "opencode",
+        "model_id": "minimax-m3",
+        "effective_from": "2026-01-01",
+        "input_per_mtok": 0.30,
+        "output_per_mtok": 1.20,
+        "cache_read_per_mtok": 0.06,
+        "cache_create_per_mtok": 0.0,
+        "notes": "OpenCode-routed MiniMax M3 — alias of minimax/MiniMax-M3, "
+        "keep the two rates in sync",
+    },
+    {
+        "provider_id": "opencode",
+        "model_id": "kimi-for-coding",
+        "effective_from": "2026-01-01",
+        "input_per_mtok": 0.95,
+        "output_per_mtok": 4.00,
+        "cache_read_per_mtok": 0.19,
+        "cache_create_per_mtok": 0.0,
+        "notes": "OpenCode-routed Kimi For Coding — alias of "
+        "kimi_coding/kimi-for-coding, keep the two rates in sync",
     },
     {
         "provider_id": "opencode",
