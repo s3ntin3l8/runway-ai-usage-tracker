@@ -116,7 +116,7 @@ the events in the same payload):
 `kind` is `agent` or `generated`. The server cleans the name (control
 characters removed, whitespace collapsed, 200 characters at most), drops empty
 names, keeps the latest value per `(provider_id, session_id, kind)` and writes
-nothing for an unchanged name. The ingest response adds `names_upserted` (names
+nothing when neither the name nor its `source_app` changed. The ingest response adds `names_upserted` (rows
 written; `0` when none were sent, all were unchanged, or the name write failed,
 which never fails event ingestion). Names are free text: the server never logs
 them. An older server ignores the field and an older sidecar omits it.

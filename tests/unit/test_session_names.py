@@ -38,6 +38,9 @@ def test_cleaning_keeps_joiners_and_drops_bidi_overrides():
     family = "\U0001f468\u200d\U0001f469\u200d\U0001f467"
     assert _n(f"Fake {family}").name == f"Fake {family}"
     assert _n("a\u202eb\u2066c").name == "abc"
+    assert _n("\u200b\u200b\ufeff\u00ad").name == ""
+    assert _n("\u200d\u200c").name == ""
+    assert _n("a\u200eb\u200fc").name == "abc"
 
 
 def test_source_app_is_refreshed_with_the_row(db):

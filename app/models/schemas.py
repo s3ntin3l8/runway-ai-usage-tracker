@@ -255,7 +255,7 @@ SESSION_NAME_MAX_LENGTH = 200
 SESSION_NAMES_MAX_PER_REQUEST = 2000
 
 _WHITESPACE_RUN = re.compile(r"\s+")
-_BIDI_CONTROLS = frozenset("\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069")
+_JOINERS = frozenset("\u200c\u200d")
 
 
 class SessionNameIn(BaseModel):
@@ -279,16 +279,19 @@ class SessionNameIn(BaseModel):
         """Control characters out, whitespace collapsed, bounded. May end up empty."""
         if value is None:
             return ""
-        # Only control (Cc), surrogate (Cs) and bidi-override characters go;
-        # other format characters (ZWJ/ZWNJ) are kept so emoji sequences and
-        # Persian/Arabic/Indic shaping survive.
+        # Control (Cc), surrogate (Cs) and invisible format (Cf: bidi overrides,
+        # ZWSP, LRM/RLM, BOM, soft hyphen) characters go. ZWJ/ZWNJ stay so emoji
+        # sequences and Persian/Arabic/Indic shaping survive, but a name made of
+        # nothing visible is dropped.
         text = "".join(" " if char.isspace() else char for char in str(value))
         text = "".join(
             char
             for char in text
-            if unicodedata.category(char) not in ("Cc", "Cs") and char not in _BIDI_CONTROLS
+            if (cat := unicodedata.category(char)) not in ("Cc", "Cs")
+            and (cat != "Cf" or char in _JOINERS)
         )
-        return _WHITESPACE_RUN.sub(" ", text).strip()[:SESSION_NAME_MAX_LENGTH].strip()
+        cleaned = _WHITESPACE_RUN.sub(" ", text).strip()[:SESSION_NAME_MAX_LENGTH].strip()
+        return cleaned if any(char not in _JOINERS for char in cleaned) else ""
 
 
 class IngestRequest(BaseModel):
