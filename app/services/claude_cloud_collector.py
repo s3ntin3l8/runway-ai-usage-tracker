@@ -38,9 +38,10 @@ from sqlmodel import Session, col, func, select
 
 from app.core.db import engine
 from app.core.encryption import DecryptionError, encryption_service
+from app.core.source_apps import CLAUDE_CODE
 from app.models.claude_cloud_probe import ClaudeCloudProbeRequest
 from app.models.db import ClaudeCloudSessionCheckpoint, UsageEvent
-from app.models.schemas import UsageEventPush
+from app.models.schemas import SessionNameIn, UsageEventPush
 from app.services import claude_cloud_probe as probe
 from app.services import claude_cloud_support as support
 from app.services.claude_cloud_events import (
@@ -54,6 +55,7 @@ from app.services.credential_sources import describe_origin_full
 from app.services.event_ingestor import EventIngestor
 from app.services.maintenance.cloud_coarse_events import coarse_event_where
 from app.services.probe_mode import probing
+from app.services.session_names import upsert_session_names
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +93,7 @@ class CycleReport:
     cloud_sessions: int = 0
     sessions_read: int = 0
     events: int = 0
+    names_updated: int = 0
     backlog: bool = False
     stats: Counter[str] = field(default_factory=Counter)
     crosscheck: Counter[str] = field(default_factory=Counter)
@@ -100,7 +103,7 @@ class CycleReport:
 
 @dataclass
 class _Row:
-    """What one list row says about a cloud session; no title, content or id beyond the read."""
+    """What one list row says about a cloud session; the title only feeds the session name."""
 
     session_id: str
     digest: str
@@ -108,6 +111,8 @@ class _Row:
     last_event_at: datetime | None
     last_event_raw: str | None
     block: dict[str, int] | None
+    # Free text: stored as a session name, never logged (hence no repr).
+    title: str | None = field(default=None, repr=False)
 
 
 @dataclass
@@ -405,6 +410,7 @@ async def _list_rows(
                     last_event_at=_timestamp(raw),
                     last_event_raw=raw if isinstance(raw, str) else None,
                     block=_block(row),
+                    title=title if isinstance(title := row.get("title"), str) else None,
                 )
             )
         if cursor is None:
@@ -567,10 +573,37 @@ async def _read_session(
     return used
 
 
+def _store_names(rows: list[_Row]) -> int:
+    names = [
+        SessionNameIn(
+            provider_id=PROVIDER_ID,
+            session_id=row.digest,
+            source_app=CLAUDE_CODE,
+            name=row.title,
+            kind="generated",
+        )
+        for row in rows
+        if row.title and row.title.strip()
+    ]
+    if not names:
+        return 0
+    with Session(engine) as session:
+        return upsert_session_names(session, names)
+
+
+async def _update_names(rows: list[_Row], report: CycleReport) -> None:
+    """Titles from the list pass become session names; a failure never fails the usage sync."""
+    try:
+        report.names_updated = await asyncio.to_thread(_store_names, rows)
+    except Exception as exc:  # noqa: BLE001 - names are a side output; type only, no message
+        report.notes.append(f"names_{type(exc).__name__}")
+
+
 async def _sync(attempt: _CollectorProbe, headers: dict[str, str], report: CycleReport) -> None:
     rows = _PENDING.get(attempt.account)
     if rows is None:
         rows = await _list_rows(attempt, headers, report)
+        await _update_names(rows, report)
     else:
         report.notes.append("backlog_resumed")
     report.cloud_sessions = len(rows)
@@ -722,7 +755,7 @@ async def collect_all(client: httpx.AsyncClient) -> dict[str, CycleReport]:
     for account, report in reports.items():
         logger.info(
             "Claude cloud collector: outcome=%s list_pages=%d history_pages=%d listed=%d cloud=%d "
-            "read=%d new_events=%d crosscheck=%s stats=%s notes=%s logins=%s",
+            "read=%d new_events=%d names_updated=%d crosscheck=%s stats=%s notes=%s logins=%s",
             report.outcome,
             report.pages,
             report.history_pages,
@@ -730,6 +763,7 @@ async def collect_all(client: httpx.AsyncClient) -> dict[str, CycleReport]:
             report.cloud_sessions,
             report.sessions_read,
             report.events,
+            report.names_updated,
             ",".join(f"{k}:{v}" for k, v in sorted(report.crosscheck.items())) or "-",
             ",".join(f"{k}:{v}" for k, v in sorted(report.stats.items())) or "-",
             ",".join(report.notes) or "-",

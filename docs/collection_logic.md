@@ -259,6 +259,12 @@ their history. The rules are specified in
   `sidecar_id` `server`, `entrypoint` `cloud`, and a digest as `session_id`; their ids are derived
   from the history, so a replay is a duplicate, never a second event. The API's `costUSD` and the
   list row's usage block are not used for pricing; Runway prices the tokens itself.
+- **Session names.** The list row's `title` (a string; anything else is ignored) is stored as the
+  session's name (`session_names`, provider `anthropic`, the digest as session id, kind `generated`)
+  on every list pass, also for sessions that are not re-read, through the same cleaning and
+  change-only upsert as sidecar names. `task_summary` and `post_turn_summary` are status text and
+  never names. A failed names write is a note on the cycle (`names_<ExceptionType>`) and does not
+  fail the usage sync; the cycle log carries `names_updated=<count>`, never a title.
 - **Resuming.** Each session has a checkpoint (`claude_cloud_session_checkpoint`): the sequence
   number of its last closed turn and the encrypted cursor of the page that holds it, plus the
   reducer's state. The next read starts there; the open tail after the last result is read again.

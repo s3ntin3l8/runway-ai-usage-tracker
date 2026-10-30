@@ -85,6 +85,11 @@ History is append-only and ordered, so a re-read produces the same ids and the u
 
 `project` is derived by the ingestor from `project_ref`/`cwd` as for local events.
 
+Non-usage side output: the list row's `title` (string, non-empty after cleaning) is upserted as a
+session name (`provider_id` `anthropic`, `session_id` = digest, `source_app` `claude_code`, kind
+`generated`) on every list pass, change-only. `task_summary` / `post_turn_summary` are not names. It
+creates no event and is never logged.
+
 ## 5. Rules
 
 ### 5.1 Finding and reading sessions
