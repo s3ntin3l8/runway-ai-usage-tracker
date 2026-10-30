@@ -30,6 +30,7 @@ import { fetchAppConfig } from '@/api/endpoints';
 import { useForceCollect } from '@/hooks/useForceCollect';
 import { keepAliveLoginsText } from '@/lib/keepAlive';
 import { setTzConfig } from '@/lib/tz';
+import { WorktreePatternsCard } from './WorktreePatternsCard';
 
 export function SystemSection() {
   const queryClient = useQueryClient();
@@ -221,6 +222,8 @@ export function SystemSection() {
           </form>
         </CardContent>
       </Card>
+
+      <WorktreePatternsCard config={appConfig.data} />
 
       <Card>
         <CardHeader>

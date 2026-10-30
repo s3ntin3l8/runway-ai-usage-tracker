@@ -38,6 +38,7 @@ from app.core.db import engine, init_db  # noqa: E402
 from app.models.db import UsageEvent  # noqa: E402
 from app.models.schemas import UsageEventPush  # noqa: E402
 from app.services.project_label import derive_project  # noqa: E402
+from app.services.worktree_patterns import get_worktree_patterns  # noqa: E402
 from scripts.sidecar import (  # noqa: E402
     _discover_anthropic_log_paths,
     _discover_codex_log_paths,
@@ -77,10 +78,10 @@ def _has_context(push: UsageEventPush) -> bool:
     return push.cwd is not None or push.tool_names is not None or push.latency_ms is not None
 
 
-def _apply(ev: UsageEvent, push: UsageEventPush) -> None:
+def _apply(ev: UsageEvent, push: UsageEventPush, patterns: tuple[str, ...] = ()) -> None:
     """Apply context from `push` to a NULL-cwd event (mirrors EventIngestor)."""
     ev.cwd = push.cwd
-    ev.project = derive_project(push.cwd)
+    ev.project = derive_project(push.cwd, patterns)
     ev.git_branch = push.git_branch
     ev.tools_json = json.dumps(push.tool_names) if push.tool_names else None
     if push.latency_ms is not None:
@@ -111,6 +112,7 @@ _PROVIDERS = [
 
 def backfill(session: Session, providers: list[str], dry_run: bool) -> int:
     total_changed = 0
+    patterns = get_worktree_patterns(session)
     # Cache parsed logs per source so opencode/opencode-free share one parse.
     push_cache: dict[str, dict[str, UsageEventPush]] = {}
 
@@ -139,7 +141,7 @@ def backfill(session: Session, providers: list[str], dry_run: bool) -> int:
                 continue
             changed += 1
             if not dry_run:
-                _apply(ev, push)
+                _apply(ev, push, patterns)
                 session.add(ev)
         print(
             f"{provider}: {changed:,} of {len(events):,} NULL-cwd event(s) matched"

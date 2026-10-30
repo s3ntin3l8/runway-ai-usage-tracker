@@ -116,3 +116,58 @@ def test_auto_update_unset_preserves_value(client: TestClient):
     client.put("/api/v1/system/app-config", json={"sidecar_auto_update": True})
     client.put("/api/v1/system/app-config", json={"sidecar_update_channel": "edge"})
     assert client.get("/api/v1/system/app-config").json()["sidecar_auto_update"] is True
+
+
+def test_worktree_patterns_default_and_roundtrip(client: TestClient):
+    body = client.get("/api/v1/system/app-config").json()
+    assert body["worktree_patterns"] == []
+    assert ".wt" in body["worktree_builtin_patterns"]
+
+    r = client.put("/api/v1/system/app-config", json={"worktree_patterns": ["*-wt", " extra "]})
+    assert r.status_code == 200
+    assert client.get("/api/v1/system/app-config").json()["worktree_patterns"] == ["*-wt", "extra"]
+
+    # Omitting the field leaves it; an empty list clears it.
+    client.put("/api/v1/system/app-config", json={"sidecar_auto_update": True})
+    assert client.get("/api/v1/system/app-config").json()["worktree_patterns"] == ["*-wt", "extra"]
+    client.put("/api/v1/system/app-config", json={"worktree_patterns": []})
+    assert client.get("/api/v1/system/app-config").json()["worktree_patterns"] == []
+
+
+@pytest.mark.parametrize(
+    "bad", [[""], ["a/b"], ["*"], ["a?"], ["x" * 65], [f"p{i}" for i in range(21)]]
+)
+def test_worktree_patterns_invalid_is_rejected_and_not_saved(client: TestClient, bad):
+    client.put("/api/v1/system/app-config", json={"worktree_patterns": ["keep"]})
+    r = client.put("/api/v1/system/app-config", json={"worktree_patterns": bad})
+    assert r.status_code == 400
+    assert client.get("/api/v1/system/app-config").json()["worktree_patterns"] == ["keep"]
+
+
+def test_worktree_patterns_put_invalidates_the_cached_getter(client: TestClient, session: Session):
+    from app.services.worktree_patterns import get_worktree_patterns
+
+    assert get_worktree_patterns(session) == ()
+    client.put("/api/v1/system/app-config", json={"worktree_patterns": ["*-wt"]})
+    assert get_worktree_patterns(session) == ("*-wt",)
+    client.put("/api/v1/system/app-config", json={"worktree_patterns": []})
+    assert get_worktree_patterns(session) == ()
+
+
+def test_worktree_patterns_stored_bad_entry_is_skipped_not_fatal():
+    from app.services.worktree_patterns import parse_stored_patterns
+
+    assert parse_stored_patterns('["*-wt", "a/b", 3, "*-WT", "ok"]') == ("*-wt", "ok")
+    assert parse_stored_patterns("not json") == ()
+    assert parse_stored_patterns('{"a": 1}') == ()
+    assert parse_stored_patterns(None) == ()
+
+
+def test_worktree_patterns_stored_list_over_the_cap_keeps_the_first_entries():
+    import json
+
+    from app.services.project_label import MAX_WORKTREE_PATTERNS
+    from app.services.worktree_patterns import parse_stored_patterns
+
+    names = [f"p{i}" for i in range(MAX_WORKTREE_PATTERNS + 1)]
+    assert parse_stored_patterns(json.dumps(names)) == tuple(names[:MAX_WORKTREE_PATTERNS])

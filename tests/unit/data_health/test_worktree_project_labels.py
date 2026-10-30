@@ -95,3 +95,40 @@ def test_plain_subfolder_drift_is_not_reported_or_rewritten(session):
     check.apply(session, _KEY, {})
 
     assert {e.project for e in session.exec(select(UsageEvent)).all()} == {"alpha", "src"}
+
+
+def test_a_configured_pattern_makes_a_sibling_worktree_relabel(session):
+    import json
+
+    from app.models.db import SystemConfig
+    from app.services.worktree_patterns import invalidate_worktree_patterns
+
+    _event(session, "1", cwd="/home/u/repo-wt/213-cross-host/app", project="app")
+    check = WorktreeProjectLabelsCheck()
+    assert check.detect(session).groups == []
+
+    session.add(SystemConfig(worktree_patterns_json=json.dumps(["*-wt"])))
+    session.commit()
+    invalidate_worktree_patterns()
+
+    report = check.detect(session)
+    assert report.total_count == 1
+    assert report.groups[0].samples[0].detail == {"from": "app", "to": "repo", "rows": 1}
+    check.apply(session, _KEY, {})
+    assert session.exec(select(UsageEvent)).one().project == "repo"
+    assert check.detect(session).groups == []
+
+
+def test_the_scope_prefilter_handles_like_metacharacters(session):
+    import json
+
+    from app.models.db import SystemConfig
+
+    session.add(SystemConfig(worktree_patterns_json=json.dumps(["a_b%", "x*y"])))
+    session.commit()
+    _event(session, "1", cwd="/home/u/repo/a_b%/s", project="s")
+    _event(session, "2", cwd="/home/u/repo2/xzzy", project="xzzy", sid="s2")
+    _event(session, "3", cwd="/home/u/repo3/aXb%/s", project="s", sid="s3")
+
+    plan = WorktreeProjectLabelsCheck().detect(session)
+    assert plan.total_count == 2

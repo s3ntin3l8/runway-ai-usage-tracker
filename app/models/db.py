@@ -404,6 +404,9 @@ class SystemConfig(SQLModel, table=True):  # type: ignore[call-arg]
     browser_preference: str | None = None  # e.g. "safari,chrome,firefox"
     default_poll_interval_seconds: int | None = None  # None = use per-collector default TTL
     dashboard_layout_json: str | None = None
+    # JSON list of extra worktree directory patterns for project labels
+    # (see app/services/project_label.py); None = built-in containers only.
+    worktree_patterns_json: str | None = None
     user_timezone: str | None = (
         None  # IANA name, e.g. "Europe/Berlin"; None = use TZ env / browser detect
     )

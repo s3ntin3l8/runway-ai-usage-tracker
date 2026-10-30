@@ -929,6 +929,10 @@ export interface AppConfig {
   sidecar_auto_update?: boolean | null;
   /** Fleet-wide default: keep-alive on for every sidecar without its own override. */
   sidecar_keep_alive_default?: boolean | null;
+  /** Extra worktree directory patterns for project labels (added to the built-ins). */
+  worktree_patterns?: string[];
+  /** The built-in worktree directory names (read-only). */
+  worktree_builtin_patterns?: string[];
 }
 
 export interface CollectionStrategy {

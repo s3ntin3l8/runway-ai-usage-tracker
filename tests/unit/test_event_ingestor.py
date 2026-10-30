@@ -99,6 +99,20 @@ def test_ingest_derives_project_and_persists_context():
     assert row.latency_ms == 1234
 
 
+def test_ingest_applies_the_configured_worktree_patterns():
+    import json
+
+    from app.models.db import SystemConfig
+
+    s = _seeded_session()
+    s.add(SystemConfig(worktree_patterns_json=json.dumps(["*-wt"])))
+    s.commit()
+    EventIngestor(s).ingest([_make_push(cwd="/home/u/repo-wt/slug/app")], sidecar_id="dev-01")
+    row = s.exec(select(UsageEvent)).first()
+    assert row.cwd == "/home/u/repo-wt/slug/app"
+    assert row.project == "repo"
+
+
 def test_ingest_without_cwd_leaves_project_null():
     s = _seeded_session()
     EventIngestor(s).ingest([_make_push()], sidecar_id="dev-01")
