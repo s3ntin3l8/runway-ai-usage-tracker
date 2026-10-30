@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import time
 from collections.abc import Sequence
@@ -74,11 +75,16 @@ from app.services.credential_sources import (
     is_server_source_id,
 )
 from app.services.credential_tags import CredentialTagRepo
+from app.services.project_label import WORKTREE_CONTAINERS, clean_worktree_patterns
 from app.services.sidecar_downloads import sidecar_downloads
 from app.services.sidecar_version_checker import is_update_available, sidecar_version_checker
 from app.services.source_probe import isolated_collector, probe_sources
 from app.services.token_cache import OAUTH_TOKEN_VALUE_KEYS, token_cache
 from app.services.token_health import token_health_service
+from app.services.worktree_patterns import (
+    invalidate_worktree_patterns,
+    parse_stored_patterns,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -1214,6 +1220,9 @@ class _AppConfigUpdate(BaseModel):
     sidecar_auto_update: bool | None = None
     # Fleet-wide default: keep-alive on for every sidecar without its own override.
     sidecar_keep_alive_default: bool | None = None
+    # Extra worktree directory patterns for project labels (added to the built-ins);
+    # [] clears them, null leaves them as they are.
+    worktree_patterns: list[str] | None = Field(default=None, max_length=200)
 
 
 class _DashboardLayout(BaseModel):
@@ -3219,6 +3228,10 @@ async def get_app_config(request: Request, session: Session = Depends(get_sessio
         "sidecar_update_channel": (cfg.sidecar_update_channel if cfg else None) or "stable",
         "sidecar_auto_update": bool(cfg.sidecar_auto_update) if cfg else False,
         "sidecar_keep_alive_default": bool(cfg.sidecar_keep_alive_default) if cfg else False,
+        "worktree_patterns": list(
+            parse_stored_patterns(cfg.worktree_patterns_json if cfg else None)
+        ),
+        "worktree_builtin_patterns": list(WORKTREE_CONTAINERS),
         "env_timezone": settings.env_timezone,
     }
 
@@ -3279,7 +3292,19 @@ async def upsert_app_config(
         cfg.sidecar_auto_update = bool(body.sidecar_auto_update)
     if body.sidecar_keep_alive_default is not None:
         cfg.sidecar_keep_alive_default = bool(body.sidecar_keep_alive_default)
+    patterns_changed = False
+    if body.worktree_patterns is not None:
+        try:
+            patterns = clean_worktree_patterns(body.worktree_patterns)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=f"Invalid worktree pattern: {e}") from e
+        cfg.worktree_patterns_json = json.dumps(patterns) if patterns else None
+        patterns_changed = True
     session.commit()
+    if patterns_changed:
+        # Ingest labels events through the cached patterns; drop them so the
+        # next event (and the next relabel scan) sees the new list.
+        invalidate_worktree_patterns()
 
     # Wake poller so the new interval applies on the next tick rather than
     # waiting out the current sleep.

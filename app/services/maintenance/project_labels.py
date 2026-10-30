@@ -48,6 +48,7 @@ pure function of the session's cwd set, so a second run changes nothing.
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -59,6 +60,7 @@ from sqlmodel import Session, col, select
 from app.models.db import UsageEvent
 from app.services.maintenance._chunked_sql import chunked_update
 from app.services.project_label import WORKTREE_CONTAINERS, derive_project, pick_canonical_cwd
+from app.services.worktree_patterns import get_worktree_patterns
 
 #: How many rows one UPDATE statement carries. SQLite's parameter limit is
 #: 32766 on the versions Runway ships, but a few hundred keeps the statement
@@ -96,8 +98,17 @@ def _path_shaped_filter() -> ColumnElement[bool]:
     return or_(*(func.instr(col(UsageEvent.project), sep) > 0 for sep in _SEPARATORS))
 
 
-def _worktree_filter() -> ColumnElement[bool]:
+def _like_escape(text: str) -> str:
+    """Escape LIKE metacharacters in a literal (escape character `!`)."""
+    return text.replace("!", "!!").replace("%", "!%").replace("_", "!_")
+
+
+def _worktree_filter(patterns: Sequence[str] = ()) -> ColumnElement[bool]:
     """The SQL predicate for a cwd that holds a worktree-container segment.
+
+    `patterns` are the operator's extra patterns; `*` becomes a LIKE `%`, which
+    also crosses separators — a superset of the segment match, which is fine
+    for a prefilter.
 
     The SQL twin of `project_label`'s segment regex: a whole segment, preceded
     by either separator, followed by either separator or the end of the path,
@@ -113,6 +124,12 @@ def _worktree_filter() -> ColumnElement[bool]:
             for trail in _SEPARATORS:
                 clauses.append(func.instr(cwd, segment + trail) > 0)
             clauses.append(func.substr(cwd, -len(segment)) == segment)
+    for pattern in patterns:
+        like = "%".join(_like_escape(part) for part in pattern.lower().split("*"))
+        for lead in _SEPARATORS:
+            for trail in _SEPARATORS:
+                clauses.append(cwd.like(f"%{lead}{like}{trail}%", escape="!"))
+            clauses.append(cwd.like(f"%{lead}{like}", escape="!"))
     return or_(*clauses)
 
 
@@ -205,7 +222,12 @@ def _plan(
     scope: Literal["all", "path_shaped", "worktree"],
     sample_size: int,
 ) -> PathShapedProjectPlan:
-    """The sessions to relabel, with the label each should carry."""
+    """The sessions to relabel, with the label each should carry.
+
+    The labels follow the worktree patterns saved in Settings, so changing the
+    setting and applying the repair relabels history.
+    """
+    patterns = get_worktree_patterns(session)
     stmt = sa_select(
         col(UsageEvent.id),
         col(UsageEvent.session_id),
@@ -224,7 +246,7 @@ def _plan(
         # variables" in `detect` itself, leaving the repair unreachable exactly
         # where it is needed. The same subquery keeps the scan bounded: only the
         # sessions in scope are loaded, not the whole table.
-        predicate = _path_shaped_filter() if scope == "path_shaped" else _worktree_filter()
+        predicate = _path_shaped_filter() if scope == "path_shaped" else _worktree_filter(patterns)
         scoped_sessions = select(col(UsageEvent.session_id)).where(predicate).distinct()
         if providers is not None:
             scoped_sessions = scoped_sessions.where(col(UsageEvent.provider_id).in_(providers))
@@ -265,7 +287,9 @@ def _plan(
         canonical = (
             reported[2]
             if reported is not None
-            else derive_project(pick_canonical_cwd(cwd for _, cwd, _ in entries))
+            else derive_project(
+                pick_canonical_cwd((cwd for _, cwd, _ in entries), patterns), patterns
+            )
         )
         path_shaped_rows = sum(1 for _, _, project in entries if _is_path_shaped(project))
         if canonical is None:

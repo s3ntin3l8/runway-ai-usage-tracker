@@ -427,6 +427,16 @@ def setup_test_settings(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _reset_worktree_patterns_cache():
+    """The worktree-pattern getter caches per process; tests use separate databases."""
+    from app.services.worktree_patterns import invalidate_worktree_patterns
+
+    invalidate_worktree_patterns()
+    yield
+    invalidate_worktree_patterns()
+
+
+@pytest.fixture(autouse=True)
 async def clear_token_cache(monkeypatch):
     """Clear the global token cache before each test to ensure isolation."""
     from app.services import source_controls

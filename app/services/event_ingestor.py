@@ -23,6 +23,7 @@ from app.services.maintenance.event_cost import resolve_event_cost
 from app.services.model_normalization import normalize_ag_model
 from app.services.period_rollups import update_rollups_for_event
 from app.services.project_label import derive_project
+from app.services.worktree_patterns import get_worktree_patterns
 
 
 @dataclass
@@ -386,7 +387,8 @@ class EventIngestor:
                     # two checkouts of one repository group together even when
                     # their folders are named differently. Without it, the
                     # folder's own name is the label.
-                    project=push.project_ref or derive_project(push.cwd),
+                    project=push.project_ref
+                    or derive_project(push.cwd, get_worktree_patterns(self.session)),
                     project_ref=push.project_ref,
                     git_branch=push.git_branch,
                     tools_json=(json.dumps(push.tool_names) if push.tool_names else None),

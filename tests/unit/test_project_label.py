@@ -3,10 +3,13 @@
 import pytest
 
 from app.services.project_label import (
+    MAX_WORKTREE_PATTERNS,
     WORKTREE_CONTAINERS,
+    clean_worktree_patterns,
     derive_project,
     normalize_cwd,
     pick_canonical_cwd,
+    validate_worktree_pattern,
 )
 
 
@@ -192,3 +195,66 @@ class TestWorktreeContainers:
         assert (
             pick_canonical_cwd(["/home/u/repo/.wt/a/src", "/home/u/repo/.wt/b"]) == "/home/u/repo"
         )
+
+
+class TestWorktreePatterns:
+    """Operator-added patterns (`worktree_patterns`) on top of the built-ins."""
+
+    def test_sibling_pattern_strips_the_suffix(self):
+        path = "/home/u/repo-wt/213-cross-host/app"
+        assert derive_project(path) == "app"
+        assert derive_project("/home/u/repo-wt/213-cross-host") == "213-cross-host"
+        assert normalize_cwd(path, ["*-wt"]) == "/home/u/repo"
+        assert derive_project(path, ["*-wt"]) == "repo"
+
+    def test_sibling_pattern_with_windows_separators_and_case(self):
+        assert derive_project(r"C:\Users\u\Repo-WT\slug\app", ["*-wt"]) == "Repo"
+
+    def test_sibling_segment_that_is_only_the_suffix_is_cut_like_a_container(self):
+        assert normalize_cwd("/home/u/repo/-wt/slug", ["*-wt"]) == "/home/u/repo"
+
+    def test_container_pattern_cuts_before_the_segment(self):
+        assert normalize_cwd("/home/u/repo/worktrees-extra/s/app", ["worktrees-extra"]) == (
+            "/home/u/repo"
+        )
+        assert normalize_cwd("/home/u/repo/wt-one/s", ["wt-*"]) == "/home/u/repo"
+
+    def test_pattern_must_match_the_whole_segment(self):
+        assert derive_project("/home/u/my-wt-notes/app", ["*-wt"]) == "app"
+        assert derive_project("/home/u/repo/worktrees-extra2/s", ["worktrees-extra"]) == "s"
+
+    def test_defaults_still_apply_and_the_first_match_wins(self):
+        assert derive_project("/home/u/repo/.wt/slug", ["*-wt"]) == "repo"
+        assert derive_project("/home/u/a-wt/b/.wt/c", ["*-wt"]) == "a"
+        assert derive_project("/home/u/a/.wt/b-wt/c", ["*-wt"]) == "a"
+
+    def test_a_relative_leading_segment_is_left_alone(self):
+        assert normalize_cwd("repo-wt/slug", ["*-wt"]) == "repo-wt/slug"
+
+    def test_no_patterns_is_unchanged(self):
+        assert normalize_cwd("/home/u/repo-wt/slug", ()) == "/home/u/repo-wt/slug"
+
+    def test_pick_canonical_cwd_uses_the_patterns(self):
+        cwds = ["/home/u/repo-wt/s1/app", "/home/u/repo"]
+        assert pick_canonical_cwd(cwds, ["*-wt"]) == "/home/u/repo"
+
+    def test_a_corrupt_stored_pattern_is_ignored(self):
+        assert derive_project("/home/u/repo/x/y", ["a/b", "", "*"]) == "y"
+
+
+class TestWorktreePatternValidation:
+    @pytest.mark.parametrize(
+        "bad", ["", "  ", "a/b", "a\\b", "*", "**", "..", ".", "a?b", "[a]", "x" * 65, "a\x00b"]
+    )
+    def test_rejects(self, bad):
+        with pytest.raises(ValueError):
+            validate_worktree_pattern(bad)
+
+    @pytest.mark.parametrize("good", ["*-wt", ".wt", "worktrees-extra", "wt-*", " *-wt "])
+    def test_accepts(self, good):
+        assert validate_worktree_pattern(good) == good.strip()
+
+    def test_list_dedupes_case_insensitively_and_bounds_the_count(self):
+        assert clean_worktree_patterns(["*-WT", "*-wt", "a"]) == ["*-WT", "a"]
+        with pytest.raises(ValueError):
+            clean_worktree_patterns([f"p{i}" for i in range(MAX_WORKTREE_PATTERNS + 1)])
