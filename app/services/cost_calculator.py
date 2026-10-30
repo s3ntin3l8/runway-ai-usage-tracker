@@ -21,10 +21,12 @@ _VERSION_SUFFIX = re.compile(r"-\d+(?:\.\d+)*$")
 
 # (provider, model) pairs already warned about for the version-suffix fallback,
 # so a busy ingest or a re-cost over thousands of events logs each model once.
-# Bounded because model ids arrive from sidecars: past the cap, further new
-# models are no longer logged rather than growing the set without limit.
-_FAMILY_FALLBACK_WARNED: set[tuple[str, str]] = set()
+# Bounded because model ids arrive from sidecars: a FIFO (dicts keep insertion
+# order) drops the oldest entry past the cap and the key is length-capped, so
+# the warning never goes permanently quiet and the memory never grows.
+_FAMILY_FALLBACK_WARNED: dict[tuple[str, str], None] = {}
 _FAMILY_FALLBACK_WARNED_MAX = 256
+_FAMILY_FALLBACK_KEY_MAX = 128
 
 
 class CostBreakdown(NamedTuple):
@@ -189,12 +191,14 @@ def resolve_price_row(
             if (
                 row is not None
                 and provider_id == "anthropic"
-                and (provider_id, model_id) not in _FAMILY_FALLBACK_WARNED
-                and len(_FAMILY_FALLBACK_WARNED) < _FAMILY_FALLBACK_WARNED_MAX
+                and (provider_id, model_id[:_FAMILY_FALLBACK_KEY_MAX])
+                not in _FAMILY_FALLBACK_WARNED
             ):
                 # A brand-new version (e.g. "haiku-5.5") silently reusing an
                 # older sibling's row can misprice by an order of magnitude.
-                _FAMILY_FALLBACK_WARNED.add((provider_id, model_id))
+                _FAMILY_FALLBACK_WARNED[(provider_id, model_id[:_FAMILY_FALLBACK_KEY_MAX])] = None
+                if len(_FAMILY_FALLBACK_WARNED) > _FAMILY_FALLBACK_WARNED_MAX:
+                    del _FAMILY_FALLBACK_WARNED[next(iter(_FAMILY_FALLBACK_WARNED))]
                 logger.warning(
                     "cost_calculator: %s/%s has no pricing row — billing at "
                     "the '%s' family rate via version-suffix fallback "

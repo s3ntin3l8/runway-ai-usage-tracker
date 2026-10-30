@@ -1272,7 +1272,7 @@ def test_haiku_5_5_prices_at_its_own_row_without_a_warning(caplog):
 def test_version_suffix_fallback_warns_once_per_model(caplog, monkeypatch):
     """An unseeded anthropic version silently reusing the family row is logged
     once per model, not once per event; a different model warns separately."""
-    monkeypatch.setattr(cost_calculator, "_FAMILY_FALLBACK_WARNED", set())
+    monkeypatch.setattr(cost_calculator, "_FAMILY_FALLBACK_WARNED", {})
     s = _seeded_session()
     with caplog.at_level("WARNING", logger="app.services.cost_calculator"):
         for _ in range(3):
@@ -1286,13 +1286,15 @@ def test_version_suffix_fallback_warns_once_per_model(caplog, monkeypatch):
     assert sum("opus-4.9" in m for m in messages) == 1
 
 
-def test_version_suffix_warning_set_is_bounded(caplog, monkeypatch):
-    """Sidecar-supplied ids cannot grow the warned set without limit."""
-    monkeypatch.setattr(cost_calculator, "_FAMILY_FALLBACK_WARNED", set())
+def test_version_suffix_warning_set_is_bounded_and_keeps_warning(caplog, monkeypatch):
+    """Sidecar-supplied ids cannot grow the warned set without limit, and a
+    full set still warns about a never-seen model (oldest entry is dropped)."""
+    monkeypatch.setattr(cost_calculator, "_FAMILY_FALLBACK_WARNED", {})
     monkeypatch.setattr(cost_calculator, "_FAMILY_FALLBACK_WARNED_MAX", 2)
     s = _seeded_session()
     with caplog.at_level("WARNING", logger="app.services.cost_calculator"):
         for n in range(5):
             compute_event_cost(s, provider_id="anthropic", model_id=f"opus-4.{n}", **_cost_kwargs())
     assert len(cost_calculator._FAMILY_FALLBACK_WARNED) == 2
-    assert len(caplog.records) == 2
+    assert len(caplog.records) == 5
+    assert "opus-4.4" in caplog.records[-1].message
