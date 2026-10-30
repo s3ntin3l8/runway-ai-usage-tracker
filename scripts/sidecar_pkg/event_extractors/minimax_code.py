@@ -142,6 +142,7 @@ from pydantic import ValidationError  # noqa: E402
 
 from app.core.source_apps import MINIMAX_CODE  # noqa: E402
 from app.models.schemas import UsageEventPush  # noqa: E402
+from scripts.sidecar_pkg.session_names import make_record  # noqa: E402
 from scripts.sidecar_pkg.sqlite_cursor import CursorReadError, iter_cursor  # noqa: E402
 
 logger = logging.getLogger("runway.sidecar.minimax_code")
@@ -1432,3 +1433,46 @@ def parse_minimax_code_events(
         return []
     finally:
         conn.close()
+
+
+def parse_minimax_code_session_names(db_path: Path) -> list[dict[str, Any]]:
+    """Session titles from one runtime store, as ``generated`` name records.
+
+    ``local_runtime_sessions.title`` only: ``agent_name`` is the agent's label and
+    the FTS index holds search terms, neither is a session name. A background-task
+    session whose parent is in the store is skipped: its events are filed under
+    the parent (see :func:`parse_minimax_code_events`), which carries the title
+    the user sees. Read-only, like the event extraction.
+    """
+    if not db_path.exists():
+        return []
+    try:
+        conn = sqlite3.connect(f"{db_path.resolve().as_uri()}?mode=ro", uri=True)
+    except Exception:
+        return []
+    try:
+        cur = conn.cursor()
+        columns = _table_columns(cur, _SESSIONS_TABLE)
+        if not {"session_id", "title"} <= columns:
+            return []
+        parent = "parent_session_id" if "parent_session_id" in columns else "NULL"
+        rows = cur.execute(
+            f"SELECT session_id, title, {parent} FROM {_SESSIONS_TABLE}"  # noqa: S608
+        ).fetchall()
+    except Exception:
+        return []
+    finally:
+        conn.close()
+    known = {row[0] for row in rows if isinstance(row[0], str)}
+    records: list[dict[str, Any]] = []
+    for session_id, title, parent_id in rows:
+        if not isinstance(session_id, str) or not session_id:
+            continue
+        if not isinstance(title, str) or not title.strip():
+            continue
+        if parent_id and parent_id in known:
+            continue
+        records.append(
+            make_record(PROVIDER_ID, session_id, title.strip(), "generated", MINIMAX_CODE)
+        )
+    return records

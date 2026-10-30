@@ -366,6 +366,20 @@ per session, with provider `anthropic` and source app `claude_code`. Lines are
 only JSON-decoded when they contain a marker, and a transcript whose size and
 mtime are unchanged is skipped. macOS cowork transcripts are not covered.
 
+opencode: `parse_opencode_session_names` reads `session.title` (and
+`session_v2.title` on a migrated v2 database), kind `generated`, source app
+`opencode`, for sessions that have assistant messages. A session whose messages
+were served by several backends gets one name per runway provider id its events
+carry (the same retag as the event extractor, `event_provider_id`). The scan is
+skipped while the database and its WAL are unchanged.
+
+MiniMax Code: `parse_minimax_code_session_names` reads
+`local_runtime_sessions.title` (not `agent_name`, not the FTS index) from every
+runtime store, including per-profile roots, kind `generated`, provider
+`minimax`, source app `minimax_code`. It is registered under the ledger's
+scheduling id `minimax_code`. A background-task session whose parent is in the
+store is skipped, because its events are filed under the parent.
+
 ## Implementation Notes
 
 - The strategy options dict carries exactly one key: `enrich`. There is no
