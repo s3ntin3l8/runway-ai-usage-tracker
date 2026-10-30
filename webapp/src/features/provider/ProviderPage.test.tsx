@@ -4,7 +4,7 @@ import { Route, Routes } from 'react-router';
 import { renderWithProviders } from '@/test/utils';
 import { ProviderPage } from './ProviderPage';
 import * as api from '@/api/endpoints';
-import { fleetEntry, fleetResponse, limitCard, providerConfigs } from './test-fixtures';
+import { fleetEntry, fleetResponse, limitCard, providerConfigs, sessionsPaginated } from './test-fixtures';
 
 vi.mock('@/api/endpoints');
 vi.mock('sonner', () => ({
@@ -22,6 +22,17 @@ vi.mock('./ActivityTab', () => ({ ActivityTab: () => <div data-testid="activity-
 vi.mock('./EventsTab', () => ({ EventsTab: () => <div data-testid="events-tab" /> }));
 vi.mock('./ForecastTab', () => ({ ForecastTab: () => <div data-testid="forecast-tab" /> }));
 vi.mock('./CostTab', () => ({ CostTab: () => <div data-testid="cost-tab" /> }));
+vi.mock('./SessionsBrowser', async () => {
+  const { useProjectFilter } = await import('@/hooks/useProjectFilter');
+  const { useSessionsPaginated } = await import('./queries');
+  return {
+    SessionsBrowser: ({ providerId, accountId }: { providerId: string; accountId: string }) => {
+      const [project] = useProjectFilter();
+      useSessionsPaginated(providerId, accountId, { page: 0, pageSize: 25, since: '2026-01-01', project: project ?? null, enabled: true });
+      return <div data-testid="sessions-tab" />;
+    },
+  };
+});
 vi.mock('./DebugTab', () => ({ DebugTab: () => <div data-testid="debug-tab" /> }));
 
 const renderPage = (route = '/provider/anthropic') =>
@@ -357,5 +368,50 @@ describe('ProviderPage', () => {
 
     await userEvent.click(screen.getByRole('button', { name: /back/i }));
     expect(await screen.findByTestId('home-route')).toBeInTheDocument();
+  });
+
+  describe('Filters popover', () => {
+    beforeEach(() => {
+      vi.mocked(api.fetchFleetUsage).mockResolvedValue(fleetResponse([fleetEntry()]));
+      vi.mocked(api.fetchProjects).mockResolvedValue({ projects: ['runway', 'sanctuary'] });
+      vi.mocked(api.fetchSidecars).mockResolvedValue({ sidecars: [] });
+      vi.mocked(api.fetchUsageSources).mockResolvedValue({ sidecar_ids: [] } as never);
+      vi.mocked(api.fetchSessionsPaginated).mockResolvedValue(sessionsPaginated(3, 3));
+    });
+
+    it('shows Source and Project on the sessions tab', async () => {
+      renderPage('/provider/anthropic?tab=sessions');
+      await userEvent.click(await screen.findByRole('button', { name: /filters/i }));
+      expect(await screen.findByRole('combobox', { name: 'Usage source' })).toBeInTheDocument();
+      expect(screen.getByRole('group', { name: 'Project filter' })).toBeInTheDocument();
+    });
+
+    it('hides Project on other tabs', async () => {
+      renderPage('/provider/anthropic?tab=events');
+      await userEvent.click(await screen.findByRole('button', { name: /filters/i }));
+      expect(await screen.findByRole('combobox', { name: 'Usage source' })).toBeInTheDocument();
+      expect(screen.queryByRole('group', { name: 'Project filter' })).not.toBeInTheDocument();
+    });
+
+    it('counts an active project in the badge only where it is shown', async () => {
+      renderPage('/provider/anthropic?tab=sessions&project=runway');
+      const button = await screen.findByRole('button', { name: /filters/i });
+      expect(button).toHaveTextContent('1');
+      await userEvent.click(screen.getByRole('tab', { name: 'Events' }));
+      expect(await screen.findByTestId('events-tab')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /filters/i })).not.toHaveTextContent('1');
+    });
+
+    it('selecting a project updates the badge and the sessions request', async () => {
+      renderPage('/provider/anthropic?tab=sessions');
+      await userEvent.click(await screen.findByRole('button', { name: /filters/i }));
+      await userEvent.click(await screen.findByRole('button', { name: 'sanctuary' }));
+      await waitFor(() =>
+        expect(api.fetchSessionsPaginated).toHaveBeenCalledWith(
+          expect.objectContaining({ project: 'sanctuary' }),
+        ),
+      );
+      expect(screen.getByRole('button', { name: /filters/i })).toHaveTextContent('1');
+    });
   });
 });

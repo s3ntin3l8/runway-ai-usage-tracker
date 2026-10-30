@@ -3,6 +3,8 @@ import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/test/utils';
 import { SessionsBrowser } from './SessionsBrowser';
 import { currentPeriod, pastPeriod, sessionsPaginated } from './test-fixtures';
+import { useLocation } from 'react-router';
+import { useUsageSource } from '@/hooks/useUsageSource';
 import * as api from '@/api/endpoints';
 
 vi.mock('@/api/endpoints');
@@ -10,6 +12,19 @@ vi.mock('@/api/endpoints');
 function primeProjects(projects: string[] = ['runway', 'sanctuary']) {
   vi.mocked(api.fetchProjects).mockResolvedValue({ projects });
   vi.mocked(api.fetchSidecars).mockResolvedValue({ sidecars: [] });
+}
+
+function SourceSwitch() {
+  const [, setSidecar] = useUsageSource();
+  const location = useLocation();
+  return (
+    <>
+      <button type="button" onClick={() => setSidecar('other')}>
+        switch source
+      </button>
+      <span data-testid="search">{location.search}</span>
+    </>
+  );
 }
 
 describe('SessionsBrowser', () => {
@@ -60,20 +75,44 @@ describe('SessionsBrowser', () => {
     );
   });
 
-  it('filters by project', async () => {
+  it('sends the URL project to the request and no longer renders its own select', async () => {
     vi.mocked(api.fetchSessionsPaginated).mockResolvedValue(sessionsPaginated(25, 60));
     renderWithProviders(
       <SessionsBrowser providerId="anthropic" accountId="me@example.com" scope={currentPeriod()} active />,
+      { route: '/provider/anthropic?tab=sessions&project=sanctuary' },
     );
     await screen.findByText(/^Sessions ·/);
-    // The filter renders once the projects query resolves.
-    await userEvent.click(await screen.findByRole('combobox'));
-    await userEvent.click(await screen.findByRole('option', { name: 'sanctuary' }));
+    expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
     await waitFor(() =>
       expect(api.fetchSessionsPaginated).toHaveBeenCalledWith(
         expect.objectContaining({ project: 'sanctuary' }),
       ),
     );
+  });
+
+  it('sends no project when none is selected', async () => {
+    vi.mocked(api.fetchSessionsPaginated).mockResolvedValue(sessionsPaginated(25, 60));
+    renderWithProviders(
+      <SessionsBrowser providerId="anthropic" accountId="me@example.com" scope={currentPeriod()} active />,
+    );
+    await waitFor(() => expect(api.fetchSessionsPaginated).toHaveBeenCalled());
+    expect(vi.mocked(api.fetchSessionsPaginated).mock.calls[0]?.[0]).not.toHaveProperty('project');
+  });
+
+  it('clears the project when the source changes, but not on mount', async () => {
+    vi.mocked(api.fetchSessionsPaginated).mockResolvedValue(sessionsPaginated(25, 60));
+    renderWithProviders(
+      <>
+        <SourceSwitch />
+        <SessionsBrowser providerId="anthropic" accountId="me@example.com" scope={currentPeriod()} active />
+      </>,
+      { route: '/provider/anthropic?sidecar=first&project=sanctuary' },
+    );
+    await screen.findByText(/^Sessions ·/);
+    expect(screen.getByTestId('search')).toHaveTextContent('project=sanctuary');
+    await userEvent.click(screen.getByRole('button', { name: 'switch source' }));
+    await waitFor(() => expect(screen.getByTestId('search')).not.toHaveTextContent('project='));
+    expect(screen.getByTestId('search')).toHaveTextContent('sidecar=other');
   });
 
   it('scopes the query to a past month with since and until', async () => {

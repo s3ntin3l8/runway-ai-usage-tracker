@@ -1,22 +1,21 @@
 // Sessions: the full, paginated session list for this account scoped to the
 // selected month (defaults to current) — the "browse everything" companion to
 // the top-10 sessions on the Activity tab. Same row format, 25 per page, with
-// an optional project filter.
+// an optional project filter (set from the provider Filters popover).
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { useExcludeCache } from '@/hooks/useExcludeCache';
+import { useProjectFilter } from '@/hooks/useProjectFilter';
 import { useUsageSource } from '@/hooks/useUsageSource';
 import { SessionsTable, type SessionSortKey, type SortDir } from './SessionsTable';
 import type { TabScope } from './period';
-import { useProjects, useSessionsPaginated } from './queries';
+import { useSessionsPaginated } from './queries';
 
 const PAGE_SIZE = 25;
-const ALL = '__all__';
 
 export function SessionsBrowser({
   providerId,
@@ -31,18 +30,23 @@ export function SessionsBrowser({
 }) {
   const { excludeCache } = useExcludeCache();
   const [sidecarId] = useUsageSource();
+  const [project, setProject] = useProjectFilter();
   const [page, setPage] = useState(0);
-  const [project, setProject] = useState<string>(ALL);
   // Default sort mirrors the server default ('recent' desc) — no header is
   // marked active until the user clicks one.
   const [sortBy, setSortBy] = useState<SessionSortKey | 'recent'>('recent');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
   // Reset to the first page whenever the scope, project, or sort changes — the
   // old offset is meaningless against a reordered or differently-sized result.
+  // A project only exists within one source, so switching source clears it —
+  // but not on mount, or a reload would drop the project from the URL.
+  const previousSidecar = useRef(sidecarId);
   useEffect(() => {
+    if (previousSidecar.current === sidecarId) return;
+    previousSidecar.current = sidecarId;
     setPage(0);
-    setProject(ALL);
-  }, [sidecarId]);
+    setProject(undefined);
+  }, [sidecarId, setProject]);
   useEffect(() => setPage(0), [scope.key, project, sortBy, sortDir]);
 
   // Toggle direction when re-clicking the active column; otherwise switch
@@ -56,13 +60,12 @@ export function SessionsBrowser({
     }
   };
 
-  const projects = useProjects(providerId, scope.range);
   const q = useSessionsPaginated(providerId, accountId, {
     page,
     pageSize: PAGE_SIZE,
     since: scope.range.since,
     until: scope.range.until,
-    project: project === ALL ? null : project,
+    project: project ?? null,
     sortBy,
     sortDir,
     enabled: active,
@@ -74,29 +77,11 @@ export function SessionsBrowser({
   const start = total === 0 ? 0 : page * PAGE_SIZE + 1;
   const end = Math.min((page + 1) * PAGE_SIZE, total);
   const hasNext = (page + 1) * PAGE_SIZE < total;
-  const projectOptions = projects.data?.projects ?? [];
 
   return (
     <Card>
       <CardHeader>
         <CardTitle>Sessions · {scopeLabel}</CardTitle>
-        <div className="flex items-center gap-3">
-          {projectOptions.length > 0 ? (
-            <Select value={project} onValueChange={setProject}>
-              <SelectTrigger className="h-8 w-44" label="Project filter">
-                <SelectValue placeholder="All projects" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={ALL}>All projects</SelectItem>
-                {projectOptions.map((p) => (
-                  <SelectItem key={p} value={p}>
-                    {p}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          ) : null}
-        </div>
       </CardHeader>
 
       {q.isPending ? (
@@ -107,7 +92,7 @@ export function SessionsBrowser({
         <CardContent>
           <p className="py-12 text-center text-xs text-fg-subtle">
             No sessions in {scopeLabel}
-            {project === ALL ? '' : ` for ${project}`} — sessions arrive via sidecar ingest.
+            {project ? ` for ${project}` : ''} — sessions arrive via sidecar ingest.
           </p>
         </CardContent>
       ) : (
