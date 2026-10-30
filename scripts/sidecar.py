@@ -3390,11 +3390,63 @@ def _collect_claude_session_names(out: list[dict[str, Any]]) -> None:
     )
 
 
+def _collect_opencode_session_names(out: list[dict[str, Any]]) -> None:
+    """Titles of the sessions in ``opencode.db`` (kind ``generated``)."""
+    from scripts.sidecar_pkg import session_names
+    from scripts.sidecar_pkg.event_extractors.opencode import parse_opencode_session_names
+
+    db_path = _discover_opencode_db_path()
+    if db_path is None:
+        return
+    # The WAL carries the recent writes, so both files decide whether to rescan.
+    inputs = [path for path in (db_path, Path(f"{db_path}-wal")) if path.exists()]
+    if inputs and all(session_names.file_unchanged(path) for path in inputs):
+        return
+    signatures = {path: session_names.file_signature(path) for path in inputs}
+    records = parse_opencode_session_names(db_path)
+    if records is None:
+        # A failed read (locked store) is not a scan: stage nothing, retry next cycle.
+        logging.debug("session names: opencode store not readable")
+        return
+    out.extend(records)
+    session_names.stage_files({p: sig for p, sig in signatures.items() if sig is not None})
+    logging.debug("session names: opencode, %d name(s) found", len(records))
+
+
+def _collect_minimax_code_session_names(out: list[dict[str, Any]]) -> None:
+    """Titles from every MiniMax Code runtime store (kind ``generated``)."""
+    from scripts.sidecar_pkg import session_names
+    from scripts.sidecar_pkg.event_extractors.minimax_code import (
+        parse_minimax_code_session_names,
+    )
+
+    found = 0
+    for db_path in _discover_minimax_code_db_paths():
+        inputs = [path for path in (db_path, Path(f"{db_path}-wal")) if path.exists()]
+        if inputs and all(session_names.file_unchanged(path) for path in inputs):
+            continue
+        signatures = {path: session_names.file_signature(path) for path in inputs}
+        records = parse_minimax_code_session_names(db_path)
+        if records is None:
+            logging.debug("session names: minimax code store not readable")
+            continue
+        out.extend(records)
+        found += len(records)
+        session_names.stage_files({p: sig for p, sig in signatures.items() if sig is not None})
+    logging.debug("session names: minimax code, %d name(s) found", found)
+
+
 #: provider_id -> ``collect(out)`` appending session-name records to ``out``
 #: (``{provider_id, session_id, source_app, name, kind}``). Run once per cycle
 #: right after that provider's events were extracted; see ``session_names.py``.
 _SESSION_NAME_COLLECTORS: dict[str, Callable[[list[dict[str, Any]]], None]] = {
     "anthropic": _collect_claude_session_names,
+    "opencode": _collect_opencode_session_names,
+    # The ledger's scheduling id (always scheduled); its events carry provider "minimax".
+    "minimax_code": _collect_minimax_code_session_names,
+    # Also under the provider id, so a cycle targeted at ``minimax`` names its sessions too.
+    # A cycle running both scans twice; ``select_for_push`` keeps the last record per key.
+    "minimax": _collect_minimax_code_session_names,
 }
 
 

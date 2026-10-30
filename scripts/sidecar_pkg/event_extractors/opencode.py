@@ -96,6 +96,7 @@ from scripts.sidecar_pkg.canonical_providers import (  # noqa: E402
     SHARED_CANONICAL_PROVIDER_MAP,
     CanonicalProviderTuple,
 )
+from scripts.sidecar_pkg.session_names import make_record  # noqa: E402
 from scripts.sidecar_pkg.sqlite_cursor import CursorReadError, iter_cursor  # noqa: E402
 
 # OpenCode's own providerID (backend/billing tier) -> runway provider_id.
@@ -147,6 +148,32 @@ _OC_CANONICAL_MAP: dict[str, CanonicalProviderTuple] = {
 def map_opencode_canonical(oc_provider_id: str) -> tuple[str, str | None] | None:
     """Return the canonical provider and optional explicit account override."""
     return _OC_CANONICAL_MAP.get((oc_provider_id or "").strip().lower())
+
+
+def _canonical_for(oc_provider_id: str, model_id: str) -> CanonicalProviderTuple | None:
+    """The canonical provider an OpenCode message is retagged onto, if any.
+
+    ``_OC_CANONICAL_MAP`` first; otherwise a generic gateway tag (``opencode``/BYOK)
+    on a model id that only OpenRouter serves (``vendor/model:free``,
+    ``openrouter/...``) folds like a message tagged ``providerID="openrouter"``.
+    Limited to the generic gateways so a local/other backend's own ids are never claimed.
+    """
+    canonical = map_opencode_canonical(oc_provider_id)
+    if (
+        canonical is None
+        and oc_provider_id in _OC_GATEWAY_PROVIDER_IDS
+        and is_openrouter_model_id(model_id)
+    ):
+        canonical = map_opencode_canonical("openrouter")
+    return canonical
+
+
+def event_provider_id(oc_provider_id: str, model_id: str) -> str:
+    """The runway ``provider_id`` the extractor stamps on a message's event."""
+    canonical = _canonical_for(oc_provider_id, model_id)
+    if canonical is not None:
+        return canonical[0]
+    return map_opencode_provider_id(oc_provider_id)
 
 
 def _classify_opencode_error(err: dict) -> str:
@@ -437,17 +464,7 @@ def parse_opencode_events(
                 # the canonical provider (e.g. provider:minimax), so per-event
                 # consultation here is the only way to retarget the event onto the
                 # labeled quota card.
-                canonical = map_opencode_canonical(oc_provider_id)
-                if (
-                    canonical is None
-                    and oc_provider_id in _OC_GATEWAY_PROVIDER_IDS
-                    and is_openrouter_model_id(model_id)
-                ):
-                    # The gateway tag says "opencode"/BYOK, but only OpenRouter serves
-                    # `vendor/model:free` or `openrouter/...` ids — fold it like a
-                    # message tagged providerID="openrouter". Limited to the generic
-                    # gateways so a local/other backend's own ids are never claimed.
-                    canonical = map_opencode_canonical("openrouter")
+                canonical = _canonical_for(oc_provider_id, model_id)
                 if canonical is not None:
                     canonical_provider_id, account_override = canonical
                     runway_provider_id = canonical_provider_id
@@ -532,3 +549,94 @@ def parse_opencode_events(
         conn.close()
 
     return events
+
+
+_SESSION_TABLES = ("session_v2", "session")
+
+
+def _titled_sessions(cur: sqlite3.Cursor, v2: bool) -> dict[str, str]:
+    """``{session_id: title}`` for sessions with a non-blank title, newest first.
+
+    On a v2 database ``session_v2`` is the live table and wins, even for a blank
+    title (an untitled session must not get the frozen pre-migration v1 title
+    back). The v1 ``session`` table only fills sessions ``session_v2`` has no
+    titled row for: a store whose ``session_v2`` carries no ``title`` column.
+    """
+    titles: dict[str, str] = {}
+    decided: set[str] = set()
+    for table in _SESSION_TABLES if v2 else ("session",):
+        columns = {info[1] for info in cur.execute(f"PRAGMA table_info({table})")}
+        if not {"id", "title"} <= columns:
+            continue
+        order = " ORDER BY time_updated DESC" if "time_updated" in columns else ""
+        rows = cur.execute(f"SELECT id, title FROM {table}{order}").fetchall()
+        for session_id, title in rows:
+            if not isinstance(session_id, str) or not session_id or session_id in decided:
+                continue
+            if isinstance(title, str) and title.strip():
+                titles[session_id] = title.strip()
+        decided.update(row[0] for row in rows if isinstance(row[0], str))
+    return titles
+
+
+def parse_opencode_session_names(db_path: Path) -> list[dict] | None:
+    """Session titles for the sessions the usage extractor reports events for.
+
+    One ``generated`` record per (provider id, session): a session whose messages
+    were served by several backends is retagged per message, so its events (and
+    therefore its name) live under several runway provider ids. Only ``title`` is
+    read; no message text. Read-only, like the event extraction. ``None`` means
+    the read failed (locked or unreadable database), which a caller must not
+    treat as "scanned"; ``[]`` means a successful read with nothing to report.
+    """
+    if not db_path.exists():
+        return []
+    try:
+        conn = sqlite3.connect(f"{db_path.resolve().as_uri()}?mode=ro", uri=True)
+    except Exception:
+        return None
+    try:
+        cur = conn.cursor()
+        v2 = _is_v2(cur)
+        titles = _titled_sessions(cur, v2)
+        if not titles:
+            return []
+        if v2:
+            cur.execute(
+                "SELECT DISTINCT m.session_id, json_extract(m.data, '$.model'), s.model "
+                "FROM session_message m LEFT JOIN session_v2 s ON s.id = m.session_id "
+                "WHERE m.type IN ('assistant', 'compaction')"
+            )
+        else:
+            cur.execute(
+                "SELECT DISTINCT session_id, json_extract(data, '$.providerID'), "
+                "json_extract(data, '$.modelID') FROM message "
+                "WHERE json_extract(data, '$.role') = 'assistant'"
+            )
+        provider_ids: dict[str, set[str]] = {}
+        for session_id, first, second in iter_cursor(cur):
+            if session_id not in titles:
+                continue
+            if v2:
+                try:
+                    model = json.loads(first) if first else (json.loads(second) if second else {})
+                except Exception:
+                    continue
+                model = model if isinstance(model, dict) else {}
+                oc_provider = model.get("providerID") or ""
+                model_id = model.get("id") or "unknown"
+            else:
+                oc_provider = first or ""
+                model_id = second or "unknown"
+            provider_ids.setdefault(session_id, set()).add(
+                event_provider_id(str(oc_provider), str(model_id))
+            )
+    except Exception:
+        return None
+    finally:
+        conn.close()
+    records: list[dict] = []
+    for session_id, title in titles.items():
+        for provider_id in sorted(provider_ids.get(session_id, ())):
+            records.append(make_record(provider_id, session_id, title, "generated", OPENCODE))
+    return records
