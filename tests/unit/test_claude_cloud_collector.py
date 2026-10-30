@@ -786,7 +786,10 @@ def _pending_row():
     return [object()]  # only its presence matters to the pacing
 
 
-def test_an_ineligible_cycle_keeps_the_catch_up_pace_only_while_sessions_are_pending(monkeypatch):
+def test_an_ineligible_cycle_keeps_the_catch_up_pace_only_while_sessions_are_pending(
+    monkeypatch, caplog
+):
+    caplog.set_level(logging.INFO)
     task = collector.ClaudeCloudCollector(1800)
     ineligible = {ACCOUNT: collector.CycleReport(outcome="source_ineligible")}
     reading = {ACCOUNT: collector.CycleReport(outcome="ok", sessions_read=2)}
@@ -797,11 +800,17 @@ def test_an_ineligible_cycle_keeps_the_catch_up_pace_only_while_sessions_are_pen
     assert task._next_delay(ineligible) == collector.CATCH_UP_DELAY
     assert task._next_delay(ineligible) == collector.CATCH_UP_DELAY
     assert task._next_delay(ineligible) == 1800  # capped: a login that stays away
+    assert task._next_delay({}) == 1800  # no report at all (login absent) counts the same
     assert task._next_delay(reading) == collector.CATCH_UP_DELAY  # a read resets the count
+    for _ in range(3):  # no report at all (login absent): still paced, then capped again
+        assert task._next_delay({}) == collector.CATCH_UP_DELAY
+    assert task._next_delay({}) == 1800
+    assert task._next_delay(reading) == collector.CATCH_UP_DELAY
     assert task._next_delay(ineligible) == collector.CATCH_UP_DELAY
     monkeypatch.setattr(collector, "_PENDING", {})
     assert task._next_delay(ineligible) == 1800
     assert task._unread_cycles == 0
+    assert caplog.text.count("unread_catch_up_capped") == 2  # logged once per cap, not per cycle
 
 
 @pytest.mark.asyncio

@@ -759,17 +759,23 @@ class ClaudeCloudCollector:
 
     def _next_delay(self, reports: dict[str, CycleReport]) -> float:
         """Catch-up pace while work is left, even if this cycle could not see its login."""
+        backlog = any(report.backlog for report in reports.values())
         read = any(report.sessions_read for report in reports.values())
-        if any(report.backlog for report in reports.values()) or read:
+        pending = has_pending()
+        if backlog:
             self._unread_cycles = 0
-        elif has_pending():
-            self._unread_cycles += 1
-        else:
+            return min(self._interval, CATCH_UP_DELAY)
+        if not pending:
             self._unread_cycles = 0
-        if any(report.backlog for report in reports.values()):
+            return self._interval
+        if read:
+            self._unread_cycles = 0
             return min(self._interval, CATCH_UP_DELAY)
-        if has_pending() and self._unread_cycles <= MAX_UNREAD_CATCH_UPS:
+        self._unread_cycles += 1
+        if self._unread_cycles <= MAX_UNREAD_CATCH_UPS:
             return min(self._interval, CATCH_UP_DELAY)
+        if self._unread_cycles == MAX_UNREAD_CATCH_UPS + 1:
+            logger.info("Claude cloud collector: unread_catch_up_capped, back to the interval")
         return self._interval
 
     async def _run_loop(self) -> None:
