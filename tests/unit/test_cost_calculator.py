@@ -6,6 +6,7 @@ from sqlmodel import Session, SQLModel, create_engine
 from sqlmodel.pool import StaticPool
 
 from app.models.db import ProviderPricing
+from app.services import cost_calculator
 from app.services.cost_calculator import (
     PricingIndex,
     compute_event_cost,
@@ -1230,7 +1231,8 @@ def test_preloaded_index_snapshots_survive_session_commit():
         ("anthropic", "fable-5.1", 10.00, 0.25),
         ("anthropic", "opus-5.5", 4.00, 0.20),
         ("anthropic", "sonnet-5", 2.00, 0.20),
-        ("anthropic", "sonnet-5.5", 2.00, 0.20),
+        ("anthropic", "sonnet-5.5", 2.00, 0.10),
+        ("anthropic", "haiku-5.5", 0.10, 0.01),
     ],
 )
 def test_new_generation_models_resolve_to_their_own_rows(
@@ -1244,3 +1246,41 @@ def test_new_generation_models_resolve_to_their_own_rows(
     assert row is not None
     assert row.input_per_mtok == input_rate
     assert row.cache_read_per_mtok == cache_read_rate
+
+
+def _cost_kwargs():
+    return {
+        "ts": datetime.now(UTC),
+        "tokens_input": 1_000_000,
+        "tokens_output": 0,
+        "tokens_cache_read": 0,
+        "tokens_cache_create": 0,
+    }
+
+
+def test_haiku_5_5_prices_at_its_own_row_without_a_warning(caplog):
+    """Haiku 5.5 has a dedicated row: 1M input tokens cost $0.10, no fallback warning."""
+    s = _seeded_session()
+    with caplog.at_level("WARNING", logger="app.services.cost_calculator"):
+        cost = compute_event_cost(
+            s, provider_id="anthropic", model_id="haiku-5.5", **_cost_kwargs()
+        )
+    assert cost == 0.10
+    assert not caplog.records
+
+
+def test_version_suffix_fallback_warns_once_per_model(caplog, monkeypatch):
+    """An unseeded anthropic version silently reusing the family row is logged
+    once per model, not once per event; a different model warns separately."""
+    monkeypatch.setattr(cost_calculator, "_FAMILY_FALLBACK_WARNED", set())
+    s = _seeded_session()
+    with caplog.at_level("WARNING", logger="app.services.cost_calculator"):
+        for _ in range(3):
+            cost = compute_event_cost(
+                s, provider_id="anthropic", model_id="opus-4.8", **_cost_kwargs()
+            )
+        compute_event_cost(s, provider_id="anthropic", model_id="opus-4.9", **_cost_kwargs())
+    assert cost == 5.00  # still resolves at the 'opus' family rate
+    messages = [r.message for r in caplog.records]
+    assert sum("opus-4.8" in m for m in messages) == 1
+    assert sum("opus-4.9" in m for m in messages) == 1

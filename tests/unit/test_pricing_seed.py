@@ -317,15 +317,83 @@ def test_seed_anthropic_opus_5_5_rates():
     assert row.cache_create_1h_per_mtok == 8.00
 
 
-def test_seed_anthropic_sonnet_5_and_5_5_rates():
-    """Sonnet 5/5.5 are $2/$10 — not the bare `sonnet` (4.5) family's $3/$15."""
-    for model_id in ("sonnet-5", "sonnet-5.5"):
-        row = _anthropic_row(model_id)
-        assert row.input_per_mtok == 2.00
-        assert row.output_per_mtok == 10.00
-        assert row.cache_read_per_mtok == 0.20
-        assert row.cache_create_per_mtok == 2.50
-        assert row.cache_create_1h_per_mtok == 4.00
+def test_seed_anthropic_sonnet_5_rates():
+    """Sonnet 5 is $2/$10 — not the bare `sonnet` (4.5) family's $3/$15."""
+    row = _anthropic_row("sonnet-5")
+    assert row.input_per_mtok == 2.00
+    assert row.output_per_mtok == 10.00
+    assert row.cache_read_per_mtok == 0.20
+    assert row.cache_create_per_mtok == 2.50
+    assert row.cache_create_1h_per_mtok == 4.00
+
+
+def test_seed_anthropic_sonnet_5_5_cache_read_is_discounted():
+    """Sonnet 5.5 cache hits are 0.05x input ($0.10), unlike Sonnet 5's $0.20."""
+    row = _anthropic_row("sonnet-5.5")
+    assert row.input_per_mtok == 2.00
+    assert row.output_per_mtok == 10.00
+    assert row.cache_read_per_mtok == 0.10
+    assert row.cache_create_per_mtok == 2.50
+    assert row.cache_create_1h_per_mtok == 4.00
+
+
+def test_seed_anthropic_haiku_5_5_rates():
+    """Haiku 5.5 (prompts up to 100k tokens) is $0.10/$0.50, not Haiku 4.5's $1/$5."""
+    row = _anthropic_row("haiku-5.5")
+    assert row.input_per_mtok == 0.10
+    assert row.output_per_mtok == 0.50
+    assert row.cache_read_per_mtok == 0.01
+    assert row.cache_create_per_mtok == 0.125
+    assert row.cache_create_1h_per_mtok == 0.20
+
+
+def _sonnet_55_cache_read(s) -> float:
+    return (
+        s.exec(
+            select(ProviderPricing).where(
+                ProviderPricing.provider_id == "anthropic",
+                ProviderPricing.model_id == "sonnet-5.5",
+            )
+        )
+        .one()
+        .cache_read_per_mtok
+    )
+
+
+def test_seed_corrects_sonnet_5_5_cache_read_on_an_existing_db():
+    """A DB seeded with the old 0.20 rate is fixed in place on the next seed."""
+    s = _make_session()
+    seed_pricing_table(s)
+    row = s.exec(
+        select(ProviderPricing).where(
+            ProviderPricing.provider_id == "anthropic",
+            ProviderPricing.model_id == "sonnet-5.5",
+        )
+    ).one()
+    row.cache_read_per_mtok = 0.20
+    s.add(row)
+    s.commit()
+    seed_pricing_table(s)
+    s.expire_all()
+    assert _sonnet_55_cache_read(s) == 0.10
+
+
+def test_seed_keeps_a_hand_tuned_sonnet_5_5_cache_read():
+    """The correction only touches the old wrong value, never a tuned one."""
+    s = _make_session()
+    seed_pricing_table(s)
+    row = s.exec(
+        select(ProviderPricing).where(
+            ProviderPricing.provider_id == "anthropic",
+            ProviderPricing.model_id == "sonnet-5.5",
+        )
+    ).one()
+    row.cache_read_per_mtok = 0.15
+    s.add(row)
+    s.commit()
+    seed_pricing_table(s)
+    s.expire_all()
+    assert _sonnet_55_cache_read(s) == 0.15
 
 
 def test_seed_chatgpt_gpt6_1_sol_rates():

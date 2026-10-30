@@ -19,6 +19,10 @@ logger = logging.getLogger(__name__)
 # Trailing "-<major>(.<minor>...)" version suffix, e.g. "opus-4.8" -> "opus".
 _VERSION_SUFFIX = re.compile(r"-\d+(?:\.\d+)*$")
 
+# (provider, model) pairs already warned about for the version-suffix fallback,
+# so a busy ingest or a re-cost over thousands of events logs each model once.
+_FAMILY_FALLBACK_WARNED: set[tuple[str, str]] = set()
+
 
 class CostBreakdown(NamedTuple):
     """Per-component USD cost. `output` includes reasoning (billed at the output
@@ -179,6 +183,22 @@ def resolve_price_row(
         family = _VERSION_SUFFIX.sub("", model_id)
         if family != model_id:
             row = exact_lookup(family)
+            if (
+                row is not None
+                and provider_id == "anthropic"
+                and (provider_id, model_id) not in _FAMILY_FALLBACK_WARNED
+            ):
+                # A brand-new version (e.g. "haiku-5.5") silently reusing an
+                # older sibling's row can misprice by an order of magnitude.
+                _FAMILY_FALLBACK_WARNED.add((provider_id, model_id))
+                logger.warning(
+                    "cost_calculator: %s/%s has no pricing row — billing at "
+                    "the '%s' family rate via version-suffix fallback "
+                    "(estimated; seed a dedicated row)",
+                    provider_id,
+                    model_id,
+                    family,
+                )
     if row is None and not free_tier:
         # Codenamed/unseeded variants ("gpt-5.7-nova") don't end in a bare
         # digit, so _VERSION_SUFFIX above never fires. Progressively
