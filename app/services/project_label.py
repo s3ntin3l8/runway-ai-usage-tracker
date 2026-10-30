@@ -5,10 +5,12 @@ session's root directory — the directory the agent was launched from. Two thin
 make that non-trivial, so they live here as the single source of truth shared by
 `EventIngestor` and the consolidation migration:
 
-- **Rule 1 — `.claude/` truncation** (stateless, path-only): a per-message `cwd`
-  often points inside a git worktree (`<root>/.claude/worktrees/<name>/…`) or a
-  temp dir (`<root>/.claude/tmp/…`). The `.claude` segment reliably marks the
-  project-root boundary, so we cut there. Safe to apply to a single cwd at ingest.
+- **Rule 1 — worktree-container truncation** (stateless, path-only): a
+  per-message `cwd` often points inside a git worktree
+  (`<root>/.claude/worktrees/<name>/…`, `<root>/.wt/<slug>/…`) or a temp dir
+  (`<root>/.claude/tmp/…`). A `.claude`, `.wt`, `.worktrees`, `.worktree` or
+  `.mullion-worktrees` segment reliably marks the project-root boundary, so we
+  cut there. Safe to apply to a single cwd at ingest.
   The segment has to be a whole one — and it has to be *preceded* by a
   separator, so a relative path that starts with `.claude` is left alone: there
   is no root to cut back to, and cutting it would lose the label entirely.
@@ -38,14 +40,30 @@ from collections.abc import Iterable
 #: server's.
 _SEPARATORS_RE = re.compile(r"[\\/]+")
 
-#: A path segment named `.claude` marks the project-root boundary. The segment
-#: must be a whole segment (`\.claude` followed by a separator or the end of the
-#: path), and the match is case-insensitive because Windows paths are.
+#: Directory names that hold a repository's worktrees and temp checkouts:
+#: `<root>/.claude/worktrees/<name>`, `<root>/.wt/<slug>`, ... The segment marks
+#: the project-root boundary, so `normalize_cwd` cuts the path there. A bare
+#: `worktrees` folder (no dot) is deliberately NOT listed: it only occurs below
+#: `.claude` or agy's `.system_generated`. Keep this the one list to extend.
+WORKTREE_CONTAINERS: tuple[str, ...] = (
+    ".claude",
+    ".wt",
+    ".worktrees",
+    ".worktree",
+    ".mullion-worktrees",
+)
+
+#: A path segment named like one of `WORKTREE_CONTAINERS`. The segment must be a
+#: whole segment (followed by a separator or the end of the path), and the match
+#: is case-insensitive because Windows paths are.
 #:
 #: The segment must be *preceded* by a separator, so a relative path that
 #: starts with `.claude` is not a project root boundary — it has no root to
 #: cut back to, and cutting it would lose the label entirely.
-_CLAUDE_SEGMENT_RE = re.compile(r"[\\/]\.claude(?=[\\/]|$)", re.IGNORECASE)
+_WORKTREE_SEGMENT_RE = re.compile(
+    r"[\\/](?:" + "|".join(re.escape(name) for name in WORKTREE_CONTAINERS) + r")(?=[\\/]|$)",
+    re.IGNORECASE,
+)
 
 #: A Windows drive spec (`C:`). It is not a directory level, so it does not count
 #: towards a path's depth and never becomes the label.
@@ -73,16 +91,17 @@ def _depth(path: str) -> int:
 def normalize_cwd(cwd: str | None) -> str | None:
     """Rule 1: strip the volatile suffix from a cwd. Path-only, stateless.
 
-    If `cwd` contains a `.claude` segment, truncate to the part before the FIRST
-    occurrence (drops worktrees/tmp). The segment is matched in either
+    If `cwd` contains a worktree-container segment (`WORKTREE_CONTAINERS`:
+    `.claude`, `.wt`, ...), truncate to the part before the FIRST occurrence
+    (drops worktrees/tmp). The segment is matched in either
     separator form, so a Windows worktree path collapses like a POSIX one, and
     it must be preceded by a separator — a relative path that *starts* with
-    `.claude` has no root to cut back to and is left alone.
+    such a segment has no root to cut back to and is left alone.
     Trailing separators are stripped. Returns None for None/empty input.
     """
     if not cwd:
         return None
-    match = _CLAUDE_SEGMENT_RE.search(cwd)
+    match = _WORKTREE_SEGMENT_RE.search(cwd)
     if match is not None:
         cwd = cwd[: match.start()]
     cwd = cwd.rstrip("/\\")

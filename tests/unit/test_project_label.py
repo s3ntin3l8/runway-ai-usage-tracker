@@ -1,6 +1,13 @@
 """Tests for project-label derivation — the shared cwd-normalization rules."""
 
-from app.services.project_label import derive_project, normalize_cwd, pick_canonical_cwd
+import pytest
+
+from app.services.project_label import (
+    WORKTREE_CONTAINERS,
+    derive_project,
+    normalize_cwd,
+    pick_canonical_cwd,
+)
 
 
 class TestNormalizeCwd:
@@ -140,3 +147,48 @@ class TestPickCanonicalCwdOnWindows:
 
     def test_ties_are_broken_deterministically(self):
         assert pick_canonical_cwd([r"D:\b\repo", r"D:\a\repo"]) == r"D:\a\repo"
+
+
+class TestWorktreeContainers:
+    @pytest.mark.parametrize("name", WORKTREE_CONTAINERS)
+    def test_every_default_container_cuts_to_the_repository(self, name):
+        assert normalize_cwd(f"/home/u/repo/{name}/213-cross-host/app") == "/home/u/repo"
+        assert derive_project(f"/home/u/repo/{name}/213-cross-host/app") == "repo"
+
+    @pytest.mark.parametrize("name", WORKTREE_CONTAINERS)
+    def test_windows_separators_and_drive(self, name):
+        assert derive_project(rf"C:\Users\u\repo\{name}\slug\app") == "repo"
+        assert normalize_cwd(rf"C:\Users\u\repo\{name}\slug") == r"C:\Users\u\repo"
+
+    @pytest.mark.parametrize("name", WORKTREE_CONTAINERS)
+    def test_case_insensitive(self, name):
+        assert derive_project(f"/home/u/repo/{name.upper()}/slug") == "repo"
+
+    @pytest.mark.parametrize("name", WORKTREE_CONTAINERS)
+    def test_trailing_separator_and_container_as_last_segment(self, name):
+        assert normalize_cwd(f"/home/u/repo/{name}/") == "/home/u/repo"
+        assert normalize_cwd(f"/home/u/repo/{name}") == "/home/u/repo"
+
+    def test_a_relative_path_starting_with_a_container_is_unchanged(self):
+        assert normalize_cwd(".wt/x") == ".wt/x"
+        assert derive_project(".wt/x") == "x"
+
+    def test_a_bare_worktrees_folder_is_not_a_container(self):
+        assert normalize_cwd("/home/u/repo/worktrees/x") == "/home/u/repo/worktrees/x"
+        assert derive_project("/home/u/repo/worktrees/x") == "x"
+
+    def test_opencode_is_not_a_container(self):
+        assert derive_project("/home/u/repo/.opencode/x") == "x"
+
+    def test_a_longer_segment_name_is_not_cut(self):
+        assert derive_project("/home/u/repo/.wtx/y") == "y"
+        assert derive_project("/home/u/repo/my.wt/y") == "y"
+
+    def test_the_first_container_wins_when_nested(self):
+        assert derive_project("/home/u/repo/.wt/feat/.claude/worktrees/slug") == "repo"
+        assert derive_project("/home/u/repo/.claude/worktrees/a/.wt/b") == "repo"
+
+    def test_canonical_cwd_collapses_worktrees(self):
+        assert (
+            pick_canonical_cwd(["/home/u/repo/.wt/a/src", "/home/u/repo/.wt/b"]) == "/home/u/repo"
+        )

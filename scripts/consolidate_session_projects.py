@@ -15,12 +15,14 @@ path until this pass relabels them.
 This is a pure-DB pass (cwd is already populated, unlike
 `backfill_project_context.py` which re-reads logs): it groups events by
 `session_id`, picks the session's canonical root cwd (rule 1 `.claude/` truncation
-+ rule 2 shallowest cwd, see app/services/project_label.py), and relabels every
-row in the session — including NULL-cwd rows — to that root's basename. The raw
++ rule 2 shallowest cwd, see app/services/project_label.py; rule 1 cuts at
+`.claude`, `.wt`, `.worktrees`, `.worktree` and `.mullion-worktrees`), and relabels every
+row in the session — including NULL-cwd rows — to that root's basename, or to the
+repository name the session reported (`project_ref`) when it has one. The raw
 per-message `cwd` is left untouched.
 
 The relabel itself lives in `app/services/maintenance/project_labels.py`, which the
-`path_shaped_projects` Data Health check uses as well — one implementation, so the
+`path_shaped_projects` and `worktree_project_labels` Data Health checks use as well — one implementation, so the
 in-app fixer and this script cannot drift apart.
 
 Idempotency is by determinism, not a NULL guard: the canonical project is a pure
