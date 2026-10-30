@@ -1284,3 +1284,15 @@ def test_version_suffix_fallback_warns_once_per_model(caplog, monkeypatch):
     messages = [r.message for r in caplog.records]
     assert sum("opus-4.8" in m for m in messages) == 1
     assert sum("opus-4.9" in m for m in messages) == 1
+
+
+def test_version_suffix_warning_set_is_bounded(caplog, monkeypatch):
+    """Sidecar-supplied ids cannot grow the warned set without limit."""
+    monkeypatch.setattr(cost_calculator, "_FAMILY_FALLBACK_WARNED", set())
+    monkeypatch.setattr(cost_calculator, "_FAMILY_FALLBACK_WARNED_MAX", 2)
+    s = _seeded_session()
+    with caplog.at_level("WARNING", logger="app.services.cost_calculator"):
+        for n in range(5):
+            compute_event_cost(s, provider_id="anthropic", model_id=f"opus-4.{n}", **_cost_kwargs())
+    assert len(cost_calculator._FAMILY_FALLBACK_WARNED) == 2
+    assert len(caplog.records) == 2

@@ -21,7 +21,10 @@ _VERSION_SUFFIX = re.compile(r"-\d+(?:\.\d+)*$")
 
 # (provider, model) pairs already warned about for the version-suffix fallback,
 # so a busy ingest or a re-cost over thousands of events logs each model once.
+# Bounded because model ids arrive from sidecars: past the cap, further new
+# models are no longer logged rather than growing the set without limit.
 _FAMILY_FALLBACK_WARNED: set[tuple[str, str]] = set()
+_FAMILY_FALLBACK_WARNED_MAX = 256
 
 
 class CostBreakdown(NamedTuple):
@@ -187,6 +190,7 @@ def resolve_price_row(
                 row is not None
                 and provider_id == "anthropic"
                 and (provider_id, model_id) not in _FAMILY_FALLBACK_WARNED
+                and len(_FAMILY_FALLBACK_WARNED) < _FAMILY_FALLBACK_WARNED_MAX
             ):
                 # A brand-new version (e.g. "haiku-5.5") silently reusing an
                 # older sibling's row can misprice by an order of magnitude.

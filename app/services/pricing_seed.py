@@ -1323,7 +1323,8 @@ def seed_pricing_table(session: Session) -> int:
             ):
                 # Sonnet 5.5 was first seeded with Sonnet 5's 0.20 cache-read
                 # rate; the list price is 0.05x input. Fix it in place, but only
-                # while it still holds the old wrong value (never a tuned one).
+                # while it still holds that old value (any other value is left
+                # alone); idempotent, so re-running on every startup is a no-op.
                 exists.cache_read_per_mtok = row["cache_read_per_mtok"]
                 session.add(exists)
             seed_create = row.get("cache_create_per_mtok", 0.0)

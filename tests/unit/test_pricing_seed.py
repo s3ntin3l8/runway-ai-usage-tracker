@@ -376,6 +376,14 @@ def test_seed_corrects_sonnet_5_5_cache_read_on_an_existing_db():
     seed_pricing_table(s)
     s.expire_all()
     assert _sonnet_55_cache_read(s) == 0.10
+    # Sonnet 5 legitimately shares the 0.20 value and must be untouched.
+    sonnet_5 = s.exec(
+        select(ProviderPricing).where(
+            ProviderPricing.provider_id == "anthropic",
+            ProviderPricing.model_id == "sonnet-5",
+        )
+    ).one()
+    assert sonnet_5.cache_read_per_mtok == 0.20
 
 
 def test_seed_keeps_a_hand_tuned_sonnet_5_5_cache_read():
