@@ -836,6 +836,7 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
     # Session names: best-effort, in their own try/except so a name failure can
     # never fail the events above. A name is free text: log counts, never text.
     names_upserted = 0
+    names_error = False
     if payload.session_names:
         from app.services.session_names import upsert_session_names
 
@@ -843,6 +844,7 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
             names_upserted = upsert_session_names(session, payload.session_names)
         except Exception as e:
             session.rollback()
+            names_error = True
             logger.error(
                 "Session name upsert failed (%d names): %s",
                 len(payload.session_names),
@@ -941,6 +943,9 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
         "events_error": events_error,
         # Session names written (new or changed); 0 when none were sent or all unchanged.
         "names_upserted": names_upserted,
+        # True only when the names upsert raised: the sidecar keeps the names
+        # unsent and retries them next cycle (0 upserted alone cannot tell).
+        "names_error": names_error,
         "windows_closed": ingest_result.windows_closed if ingest_result else 0,
         "poll_providers": poll_providers,
         "trigger": trigger,

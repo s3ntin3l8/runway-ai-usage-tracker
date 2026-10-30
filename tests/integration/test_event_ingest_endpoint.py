@@ -286,9 +286,11 @@ def test_ingest_stores_session_names_and_replay_is_a_noop(session, caplog):
         r = _post_ingest(_names_payload(fake_title))
         assert r.status_code == 200, r.text
         assert r.json()["names_upserted"] == 1
+        assert r.json()["names_error"] is False
         assert r.json()["events_inserted"] == 1
         r2 = _post_ingest(_names_payload(fake_title))
     assert r2.json()["names_upserted"] == 0
+    assert r2.json()["names_error"] is False
     rows = session.exec(select(SessionName)).all()
     assert [(x.session_id, x.name, x.kind) for x in rows] == [
         ("sess-names-1", fake_title, "generated")
@@ -302,6 +304,7 @@ def test_ingest_without_session_names_reports_zero(session):
     r = _post_ingest(payload)
     assert r.status_code == 200, r.text
     assert r.json()["names_upserted"] == 0
+    assert r.json()["names_error"] is False
 
 
 def test_failing_name_upsert_does_not_fail_events(session, caplog):
@@ -319,6 +322,7 @@ def test_failing_name_upsert_does_not_fail_events(session, caplog):
     assert data["events_inserted"] == 1
     assert data["events_error"] is False
     assert data["names_upserted"] == 0
+    assert data["names_error"] is True
     assert "Confidential" not in caplog.text
     assert len(session.exec(select(UsageEvent)).all()) == 1
 

@@ -6470,13 +6470,16 @@ class DaemonRunner:
                 )
                 if not success:
                     break  # don't keep firing batches if the server is rejecting them
-                if first_batch and (
-                    isinstance(result, dict) and "names_upserted" in result
+                if (
+                    first_batch
+                    and isinstance(result, dict)
                     # An older server ignores the field and never answers it.
+                    and "names_upserted" in result
+                    # A failed upsert answers 200 with ``names_error``: keep
+                    # the names unsent so the next cycle retries them
+                    # (``names_upserted`` 0 alone is legitimate: unchanged).
+                    and not result.get("names_error")
                 ):
-                    # Names are marked sent only once the server stored them: a
-                    # failed upsert still answers 200 but omits ``names_upserted``
-                    # (0 is legitimate: nothing changed server-side).
                     _commit_session_names(session_name_records)
                 if collection_result.cowork_batch is not None and not (
                     isinstance(result, dict) and result.get("events_error")
