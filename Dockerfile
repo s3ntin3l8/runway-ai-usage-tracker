@@ -16,7 +16,7 @@ COPY webapp/ ./webapp/
 RUN npm --prefix webapp run build
 
 # Stage 2: Build Python dependencies
-FROM python:3.12-slim-trixie@sha256:a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704 AS python-builder
+FROM python:3.12-slim-trixie@sha256:aa943ce411423c7582288f18707ff66eddcbaeb510502d747a72aeb34f30d159 AS python-builder
 WORKDIR /app
 # The builder's compiler is deliberately unpinned, and it is here as insurance
 # rather than as a current need: every requirement resolves to a wheel on both
@@ -48,7 +48,7 @@ RUN pip install --no-cache-dir --upgrade pip \
     && pip uninstall -y pip setuptools wheel
 
 # Stage 3: Final Image
-FROM python:3.12-slim-trixie@sha256:a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704
+FROM python:3.12-slim-trixie@sha256:aa943ce411423c7582288f18707ff66eddcbaeb510502d747a72aeb34f30d159
 # Create non-root user with home directory
 RUN groupadd -r runway && useradd -r -g runway -u 1000 -m runway
 
