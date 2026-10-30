@@ -146,3 +146,215 @@ def test_project_filter(db_session):
     res = query_sessions_paginated(db_session, **_kwargs(), project="runway")
     assert res["total"] == 2
     assert {s["session_id"] for s in res["sessions"]} == {"a", "c"}
+
+
+# ---------------------------------------------------------------------------
+# Model / branch / subagent / unattributed-project filters
+# ---------------------------------------------------------------------------
+
+
+def _ev(
+    session, n, *, session_id, model="opus", branch=None, project=None, subagent=None, tokens=100
+):
+    session.add(
+        UsageEvent(
+            provider_id="anthropic",
+            account_id="acc1",
+            event_id=f"{session_id}-{n}",
+            session_id=session_id,
+            project=project,
+            git_branch=branch,
+            subagent_type=subagent,
+            ts=_NOW - timedelta(minutes=n),
+            tokens_input=tokens,
+            model_id=model,
+            sidecar_id="local",
+            kind="message",
+        )
+    )
+    session.commit()
+
+
+def _seed_filters(session):
+    # s1: opus on main (project runway) + sonnet subagent on feat
+    _ev(session, 1, session_id="s1", model="opus", branch="main", project="runway", tokens=100)
+    _ev(
+        session,
+        2,
+        session_id="s1",
+        model="sonnet",
+        branch="feat",
+        project="runway",
+        subagent="Explore",
+        tokens=40,
+    )
+    # s2: opus on main, no project
+    _ev(session, 3, session_id="s2", model="opus", branch="main", project=None, tokens=10)
+    # s3: sonnet on feat, empty project
+    _ev(session, 4, session_id="s3", model="sonnet", branch="feat", project="", tokens=20)
+
+
+def _ids(res):
+    return {s["session_id"] for s in res["sessions"]}
+
+
+def _consistent(res):
+    assert res["total"] == len(res["sessions"])
+
+
+def test_model_filter_narrows_rows_total_and_breakdown(db_session):
+    _seed_filters(db_session)
+    res = query_sessions_paginated(db_session, **_kwargs(), model="sonnet")
+    assert _ids(res) == {"s1", "s3"}
+    _consistent(res)
+    s1 = next(s for s in res["sessions"] if s["session_id"] == "s1")
+    assert s1["tokens_total"] == 40
+    assert [m["model_id"] for m in s1["by_model"]] == ["sonnet"]
+    assert s1["models"] == ["sonnet"]
+
+
+def test_branch_filter(db_session):
+    _seed_filters(db_session)
+    res = query_sessions_paginated(db_session, **_kwargs(), branch="main")
+    assert _ids(res) == {"s1", "s2"}
+    _consistent(res)
+    s1 = next(s for s in res["sessions"] if s["session_id"] == "s1")
+    assert s1["tokens_total"] == 100
+
+
+def test_subagents_exclude_drops_exactly_the_subagent_events(db_session):
+    _seed_filters(db_session)
+    base = query_sessions_paginated(db_session, **_kwargs())
+    res = query_sessions_paginated(db_session, **_kwargs(), exclude_subagents=True)
+    b1 = next(s for s in base["sessions"] if s["session_id"] == "s1")
+    r1 = next(s for s in res["sessions"] if s["session_id"] == "s1")
+    assert b1["tokens_total"] - r1["tokens_total"] == 40
+    assert b1["subagents"] and r1["subagents"] == []
+    assert r1["subagent_msgs"] == 0
+    assert [m["model_id"] for m in r1["by_model"]] == ["opus"]
+    # sessions without subagent events are untouched
+    assert next(s for s in res["sessions"] if s["session_id"] == "s2")["tokens_total"] == 10
+    assert res["total"] == base["total"] == 3
+
+
+def test_subagents_exclude_drops_sessions_made_only_of_subagent_events(db_session):
+    _ev(db_session, 1, session_id="only-sub", subagent="Explore")
+    _ev(db_session, 2, session_id="main", subagent=None)
+    res = query_sessions_paginated(db_session, **_kwargs(), exclude_subagents=True)
+    assert _ids(res) == {"main"}
+    _consistent(res)
+
+
+def test_no_project_sentinel_selects_null_and_empty(db_session):
+    _seed_filters(db_session)
+    res = query_sessions_paginated(db_session, **_kwargs(), project="__none__")
+    assert _ids(res) == {"s2", "s3"}
+    _consistent(res)
+
+
+def test_no_project_sentinel_is_event_level(db_session):
+    _ev(db_session, 1, session_id="mixed", project="runway", tokens=100)
+    _ev(db_session, 2, session_id="mixed", project=None, tokens=7)
+    res = query_sessions_paginated(db_session, **_kwargs(), project="__none__")
+    assert _ids(res) == {"mixed"}
+    assert res["sessions"][0]["tokens_total"] == 7
+
+
+def test_real_project_name_keeps_its_meaning(db_session):
+    _seed_filters(db_session)
+    res = query_sessions_paginated(db_session, **_kwargs(), project="runway")
+    assert _ids(res) == {"s1"}
+
+
+def test_filters_intersect(db_session):
+    _seed_filters(db_session)
+    res = query_sessions_paginated(
+        db_session, **_kwargs(), model="opus", branch="main", project="__none__"
+    )
+    assert _ids(res) == {"s2"}
+    _consistent(res)
+    res = query_sessions_paginated(db_session, **_kwargs(), model="sonnet", branch="main")
+    assert res["sessions"] == [] and res["total"] == 0
+    res = query_sessions_paginated(db_session, **_kwargs(), model="sonnet", exclude_subagents=True)
+    assert _ids(res) == {"s3"}
+
+
+def test_no_filters_leaves_results_unchanged(db_session):
+    _seed_filters(db_session)
+    res = query_sessions_paginated(db_session, **_kwargs())
+    assert _ids(res) == {"s1", "s2", "s3"}
+    s1 = next(s for s in res["sessions"] if s["session_id"] == "s1")
+    assert s1["tokens_total"] == 140
+    assert len(s1["subagents"]) == 1
+
+
+def test_project_filter_applies_to_breakdowns(db_session):
+    # The breakdowns used to ignore `project`, so a filtered row described
+    # events outside the filter.
+    _ev(db_session, 1, session_id="x", model="opus", project="runway", tokens=100)
+    _ev(
+        db_session,
+        2,
+        session_id="x",
+        model="sonnet",
+        project="other",
+        subagent="Explore",
+        tokens=50,
+    )
+    row = query_sessions(db_session, **_kwargs(), project="runway")[0]
+    assert row["tokens_total"] == 100
+    assert [m["model_id"] for m in row["by_model"]] == ["opus"]
+    assert row["subagents"] == []
+    assert sum(m["tokens_total"] for m in row["by_model"]) == row["tokens_total"]
+
+
+def test_session_filters_where_uses_only_bound_values():
+    from app.services.queries.sessions import SessionFilters
+
+    f = SessionFilters(
+        provider_id="p",
+        account_id="a",
+        since=_SINCE,
+        project="__none__",
+        model="x'; DROP TABLE usage_events; --",
+        branch="b",
+        exclude_subagents=True,
+    )
+    assert "DROP" not in f.where()
+    assert "project" not in f.params()
+    assert f.params()["model"].startswith("x'")
+    assert f.cache_key() == SessionFilters(**{**f.__dict__}).cache_key()
+
+
+def test_filter_options_rank_search_and_exclude_blanks(db_session):
+    from app.services.queries.sessions import query_session_filter_options
+
+    for i in range(3):
+        _ev(db_session, i, session_id="a", model="opus", branch="main")
+    _ev(db_session, 5, session_id="b", model="sonnet", branch="feat_x")
+    _ev(db_session, 6, session_id="b", model="", branch="")
+    opts = lambda kind, **kw: query_session_filter_options(  # noqa: E731
+        db_session, kind=kind, provider_id="anthropic", account_id="acc1", since=_SINCE, **kw
+    )
+    assert opts("model") == ["opus", "sonnet"]
+    assert opts("branch") == ["main", "feat_x"]
+    assert opts("branch", limit=1) == ["main"]
+    assert opts("model", search="SON") == ["sonnet"]
+    assert opts("branch", search="_x") == ["feat_x"]
+    assert opts("branch", search="%") == []
+    assert opts("model", until=_NOW - timedelta(minutes=4)) == ["sonnet"]
+
+
+def test_filter_options_follow_the_active_project(db_session):
+    from app.services.queries.sessions import query_session_filter_options
+
+    _ev(db_session, 1, session_id="a", model="opus", branch="main", project="runway")
+    _ev(db_session, 2, session_id="b", model="sonnet", branch="feat", project="other")
+    _ev(db_session, 3, session_id="c", model="haiku", branch="x", project=None)
+    kw = {"provider_id": "anthropic", "account_id": "acc1", "since": _SINCE}
+    assert query_session_filter_options(db_session, kind="model", project="runway", **kw) == [
+        "opus"
+    ]
+    assert query_session_filter_options(db_session, kind="branch", project="__none__", **kw) == [
+        "x"
+    ]

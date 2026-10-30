@@ -21,6 +21,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/Tabs';
 import { TimeRangePicker } from '@/components/ui/TimeRangePicker';
 import { ExcludeCacheToggle } from '@/components/ui/ExcludeCacheToggle';
 import { ProjectFilter } from '@/components/ui/ProjectFilter';
+import { SessionOptionFilter } from '@/components/ui/SessionOptionFilter';
+import { Switch } from '@/components/ui/Switch';
 import { SidecarFilter } from '@/components/ui/SidecarFilter';
 import { Popover } from '@/components/ui/Popover';
 import { useFleet, useProviderConfigs } from '@/features/home/queries';
@@ -37,6 +39,7 @@ import { resolveScope } from './period';
 import { useProviderEventRange, type DateRange } from './queries';
 import { labelOrMaskedId } from '@/lib/accountDisplay';
 import { useProjectFilter } from '@/hooks/useProjectFilter';
+import { useBranchFilter, useHideSubagents, useModelFilter } from '@/hooks/useSessionFilters';
 import { useUsageSource } from '@/hooks/useUsageSource';
 import { useExcludeCache } from '@/hooks/useExcludeCache';
 
@@ -218,6 +221,7 @@ export function ProviderPage() {
             {(showSourceFilter || (entry && CACHE_AWARE_TABS.has(tab))) ? (
               <ProviderFilters
                 providerId={providerId}
+                accountId={accountId}
                 range={scope.range}
                 showSource={Boolean(showSourceFilter)}
                 showProject={Boolean(entry && PROJECT_AWARE_TABS.has(tab))}
@@ -443,23 +447,32 @@ export function ProviderPage() {
 
 function ProviderFilters({
   providerId,
+  accountId,
   range,
   showSource,
   showProject,
   showCache,
 }: {
   providerId: string;
+  accountId: string;
   range: DateRange;
   showSource: boolean;
+  // The Sessions tab: project, model, branch and the subagent toggle.
   showProject: boolean;
   showCache: boolean;
 }) {
   const [sidecarId] = useUsageSource();
   const [project] = useProjectFilter();
+  const [model] = useModelFilter();
+  const [branch] = useBranchFilter();
+  const [hideSubagents, setHideSubagents] = useHideSubagents();
   const { excludeCache } = useExcludeCache();
   const filters = [
     { visible: showSource, active: Boolean(sidecarId) },
     { visible: showProject, active: Boolean(project) },
+    { visible: showProject, active: Boolean(model) },
+    { visible: showProject, active: Boolean(branch) },
+    { visible: showProject, active: hideSubagents },
     { visible: showCache, active: excludeCache },
   ];
   // Count only exposed filters so the badge stays aligned as controls are added.
@@ -467,7 +480,7 @@ function ProviderFilters({
   return (
     <Popover
       align="start"
-      className="w-72 space-y-4"
+      className="max-h-[80vh] w-72 space-y-4 overflow-y-auto"
       trigger={<Button variant="secondary" size="sm" className="shrink-0"><SlidersHorizontal className="size-3.5" aria-hidden /> Filters{activeCount ? <span className="ml-1 rounded-full bg-accent/15 px-1.5 text-[10px] text-accent-text">{activeCount}</span> : null}</Button>}
     >
       <div className="space-y-1">
@@ -476,6 +489,14 @@ function ProviderFilters({
       </div>
       {showSource ? <div className="space-y-1"><div className="text-[11px] text-fg-muted">Source</div><SidecarFilter /></div> : null}
       {showProject ? <ProjectFilter providerId={providerId} range={range} /> : null}
+      {showProject ? <SessionOptionFilter kind="model" providerId={providerId} accountId={accountId} range={range} /> : null}
+      {showProject ? <SessionOptionFilter kind="branch" providerId={providerId} accountId={accountId} range={range} /> : null}
+      {showProject ? (
+        <div className="flex items-center justify-between gap-2">
+          <label htmlFor="hide-subagents" className="text-[12px] text-fg-muted">Hide subagent usage</label>
+          <Switch id="hide-subagents" aria-label="Hide subagent usage" checked={hideSubagents} onCheckedChange={setHideSubagents} />
+        </div>
+      ) : null}
       {showCache ? <div className="space-y-1"><div className="text-[11px] text-fg-muted">Cached tokens</div><ExcludeCacheToggle /></div> : null}
     </Popover>
   );

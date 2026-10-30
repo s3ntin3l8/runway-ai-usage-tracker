@@ -12,6 +12,8 @@ import {
   fetchHeatmap,
   fetchHistoryChart,
   fetchProjects,
+  fetchSessionBranches,
+  fetchSessionModels,
   fetchSessions,
   fetchSessionsPaginated,
   fetchSourceApps,
@@ -232,6 +234,9 @@ export const useSessionsPaginated = (
     since,
     until,
     project,
+    model,
+    branch,
+    hideSubagents,
     sortBy = 'recent',
     sortDir = 'desc',
     enabled,
@@ -241,6 +246,9 @@ export const useSessionsPaginated = (
     since: string;
     until?: string;
     project?: string | null;
+    model?: string | null;
+    branch?: string | null;
+    hideSubagents?: boolean;
     sortBy?: string;
     sortDir?: string;
     enabled: boolean;
@@ -256,6 +264,9 @@ export const useSessionsPaginated = (
       since,
       until,
       project,
+      model,
+      branch,
+      hideSubagents,
       sortBy,
       sortDir,
       page,
@@ -269,6 +280,9 @@ export const useSessionsPaginated = (
         since,
         ...(until ? { until } : {}),
         ...(project ? { project } : {}),
+        ...(model ? { model } : {}),
+        ...(branch ? { branch } : {}),
+        ...(hideSubagents ? { subagents: 'exclude' } : {}),
         page,
         limit: pageSize,
         sort_by: sortBy,
@@ -293,6 +307,37 @@ export const useProjects = (providerId: string, range?: DateRange) => {
         sidecar_id: sidecarId,
         ...(range ? { since: range.since, until: range.until } : {}),
       }),
+    staleTime: 120_000,
+  });
+};
+
+// Top models / branches for the Sessions filter lists, scoped to the account
+// and window the table shows. The server caps the list (top N by usage), so
+// `search` narrows it server-side for anything past the cap.
+export const useSessionFilterOptions = (
+  kind: 'model' | 'branch',
+  providerId: string,
+  accountId: string,
+  range: DateRange | undefined,
+  search: string,
+  project?: string,
+) => {
+  const [sidecarId] = useUsageSource();
+  const fetcher = kind === 'model' ? fetchSessionModels : fetchSessionBranches;
+  return useQuery({
+    queryKey: ['usage', 'session-options', kind, providerId, accountId, range?.since, range?.until, sidecarId, search, project],
+    queryFn: async () => {
+      const res = await fetcher({
+        provider_id: providerId,
+        account_id: accountId,
+        sidecar_id: sidecarId,
+        ...(range ? { since: range.since, until: range.until } : {}),
+        ...(project ? { project } : {}),
+        ...(search ? { q: search } : {}),
+      });
+      return 'models' in res ? res.models : res.branches;
+    },
+    placeholderData: keepPreviousData,
     staleTime: 120_000,
   });
 };

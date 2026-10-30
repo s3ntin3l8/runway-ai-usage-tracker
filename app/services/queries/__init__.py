@@ -30,6 +30,7 @@ from app.services.queries.history import (
 )
 from app.services.queries.sessions import (
     count_sessions,
+    query_session_filter_options,
     query_sessions,
     query_sessions_paginated,
 )
@@ -66,6 +67,7 @@ __all__ = [
     "query_history_grouped",
     "query_history_raw",
     "query_projects",
+    "query_session_filter_options",
     "query_sessions",
     "query_sessions_paginated",
     "query_snapshots",

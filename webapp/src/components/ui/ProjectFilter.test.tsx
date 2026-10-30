@@ -39,9 +39,9 @@ describe('ProjectFilter', () => {
     await userEvent.type(screen.getByRole('searchbox', { name: 'Search projects' }), 'SAN');
     const group = screen.getByRole('group', { name: 'Project filter' });
     const names = () => within(group).getAllByRole('button').map((b) => b.textContent);
-    expect(names()).toEqual(['All projects', 'sanctuary', 'sandbox']);
+    expect(names()).toEqual(['All projects', 'No project', 'sanctuary', 'sandbox']);
     await userEvent.type(screen.getByRole('searchbox', { name: 'Search projects' }), 'zzz');
-    expect(names()).toEqual(['All projects']);
+    expect(names()).toEqual(['All projects', 'No project']);
     expect(screen.getByText(/no matching projects/i)).toBeInTheDocument();
   });
 
@@ -49,6 +49,16 @@ describe('ProjectFilter', () => {
     renderFilter('/?project=gone');
     expect(await screen.findByRole('button', { name: 'gone' })).toHaveAttribute('aria-pressed', 'true');
     await userEvent.type(screen.getByRole('searchbox', { name: 'Search projects' }), 'run');
+    await userEvent.click(screen.getByRole('button', { name: 'All projects' }));
+    expect(screen.getByTestId('search')).not.toHaveTextContent('project');
+  });
+
+  it('selects the unattributed-project sentinel without listing it as a project', async () => {
+    renderFilter();
+    await userEvent.click(await screen.findByRole('button', { name: 'No project' }));
+    expect(screen.getByTestId('search')).toHaveTextContent('project=__none__');
+    expect(screen.getByRole('button', { name: 'No project' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.queryByRole('button', { name: '__none__' })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'All projects' }));
     expect(screen.getByTestId('search')).not.toHaveTextContent('project');
   });

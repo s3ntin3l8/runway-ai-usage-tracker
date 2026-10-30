@@ -5,6 +5,7 @@ import { SessionsBrowser } from './SessionsBrowser';
 import { currentPeriod, pastPeriod, sessionsPaginated } from './test-fixtures';
 import { useLocation } from 'react-router';
 import { useUsageSource } from '@/hooks/useUsageSource';
+import { useModelFilter } from '@/hooks/useSessionFilters';
 import * as api from '@/api/endpoints';
 
 vi.mock('@/api/endpoints');
@@ -113,6 +114,55 @@ describe('SessionsBrowser', () => {
     await userEvent.click(screen.getByRole('button', { name: 'switch source' }));
     await waitFor(() => expect(screen.getByTestId('search')).not.toHaveTextContent('project='));
     expect(screen.getByTestId('search')).toHaveTextContent('sidecar=other');
+  });
+
+  it('sends model, branch and subagents=exclude from the URL, and omits them otherwise', async () => {
+    vi.mocked(api.fetchSessionsPaginated).mockResolvedValue(sessionsPaginated(25, 60));
+    renderWithProviders(
+      <SessionsBrowser providerId="anthropic" accountId="me@example.com" scope={currentPeriod()} active />,
+      { route: '/provider/anthropic?tab=sessions&model=opus&branch=main&subagents=exclude&project=__none__' },
+    );
+    await waitFor(() =>
+      expect(api.fetchSessionsPaginated).toHaveBeenCalledWith(
+        expect.objectContaining({ model: 'opus', branch: 'main', subagents: 'exclude', project: '__none__' }),
+      ),
+    );
+  });
+
+  it('sends none of the new filters when unset', async () => {
+    vi.mocked(api.fetchSessionsPaginated).mockResolvedValue(sessionsPaginated(25, 60));
+    renderWithProviders(
+      <SessionsBrowser providerId="anthropic" accountId="me@example.com" scope={currentPeriod()} active />,
+    );
+    await waitFor(() => expect(api.fetchSessionsPaginated).toHaveBeenCalled());
+    const params = vi.mocked(api.fetchSessionsPaginated).mock.calls[0]?.[0];
+    expect(params).not.toHaveProperty('model');
+    expect(params).not.toHaveProperty('branch');
+    expect(params).not.toHaveProperty('subagents');
+  });
+
+  it('returns to page 0 when a filter changes', async () => {
+    vi.mocked(api.fetchSessionsPaginated).mockResolvedValue(sessionsPaginated(25, 60));
+    function ModelSwitch() {
+      const [, setModel] = useModelFilter();
+      return <button type="button" onClick={() => setModel('opus')}>set model</button>;
+    }
+    renderWithProviders(
+      <>
+        <ModelSwitch />
+        <SessionsBrowser providerId="anthropic" accountId="me@example.com" scope={currentPeriod()} active />
+      </>,
+    );
+    await userEvent.click(await screen.findByRole('button', { name: /next page/i }));
+    await waitFor(() =>
+      expect(api.fetchSessionsPaginated).toHaveBeenCalledWith(expect.objectContaining({ page: 1 })),
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'set model' }));
+    await waitFor(() =>
+      expect(api.fetchSessionsPaginated).toHaveBeenLastCalledWith(
+        expect.objectContaining({ page: 0, model: 'opus' }),
+      ),
+    );
   });
 
   it('scopes the query to a past month with since and until', async () => {

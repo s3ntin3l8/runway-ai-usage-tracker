@@ -24,11 +24,24 @@ vi.mock('./ForecastTab', () => ({ ForecastTab: () => <div data-testid="forecast-
 vi.mock('./CostTab', () => ({ CostTab: () => <div data-testid="cost-tab" /> }));
 vi.mock('./SessionsBrowser', async () => {
   const { useProjectFilter } = await import('@/hooks/useProjectFilter');
+  const { useModelFilter, useBranchFilter, useHideSubagents } = await import('@/hooks/useSessionFilters');
   const { useSessionsPaginated } = await import('./queries');
   return {
     SessionsBrowser: ({ providerId, accountId }: { providerId: string; accountId: string }) => {
       const [project] = useProjectFilter();
-      useSessionsPaginated(providerId, accountId, { page: 0, pageSize: 25, since: '2026-01-01', project: project ?? null, enabled: true });
+      const [model] = useModelFilter();
+      const [branch] = useBranchFilter();
+      const [hideSubagents] = useHideSubagents();
+      useSessionsPaginated(providerId, accountId, {
+        page: 0,
+        pageSize: 25,
+        since: '2026-01-01',
+        project: project ?? null,
+        model: model ?? null,
+        branch: branch ?? null,
+        hideSubagents,
+        enabled: true,
+      });
       return <div data-testid="sessions-tab" />;
     },
   };
@@ -374,6 +387,8 @@ describe('ProviderPage', () => {
     beforeEach(() => {
       vi.mocked(api.fetchFleetUsage).mockResolvedValue(fleetResponse([fleetEntry()]));
       vi.mocked(api.fetchProjects).mockResolvedValue({ projects: ['runway', 'sanctuary'] });
+      vi.mocked(api.fetchSessionModels).mockResolvedValue({ models: ['opus', 'sonnet'] });
+      vi.mocked(api.fetchSessionBranches).mockResolvedValue({ branches: ['main', 'feat/x'] });
       vi.mocked(api.fetchSidecars).mockResolvedValue({ sidecars: [] });
       vi.mocked(api.fetchUsageSources).mockResolvedValue({ sidecar_ids: [] } as never);
       vi.mocked(api.fetchSessionsPaginated).mockResolvedValue(sessionsPaginated(3, 3));
@@ -384,6 +399,41 @@ describe('ProviderPage', () => {
       await userEvent.click(await screen.findByRole('button', { name: /filters/i }));
       expect(await screen.findByRole('combobox', { name: 'Usage source' })).toBeInTheDocument();
       expect(screen.getByRole('group', { name: 'Project filter' })).toBeInTheDocument();
+    });
+
+    it('shows Model, Branch and the subagent toggle on the sessions tab only', async () => {
+      renderPage('/provider/anthropic?tab=sessions');
+      await userEvent.click(await screen.findByRole('button', { name: /filters/i }));
+      expect(await screen.findByRole('group', { name: 'Model filter' })).toBeInTheDocument();
+      expect(screen.getByRole('group', { name: 'Branch filter' })).toBeInTheDocument();
+      expect(screen.getByRole('switch', { name: 'Hide subagent usage' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'No project' })).toBeInTheDocument();
+    });
+
+    it('hides the session filters on other tabs', async () => {
+      renderPage('/provider/anthropic?tab=events');
+      await userEvent.click(await screen.findByRole('button', { name: /filters/i }));
+      await screen.findByRole('combobox', { name: 'Usage source' });
+      expect(screen.queryByRole('group', { name: 'Model filter' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('switch', { name: 'Hide subagent usage' })).not.toBeInTheDocument();
+    });
+
+    it('counts model, branch, subagent and no-project filters in the badge', async () => {
+      renderPage('/provider/anthropic?tab=sessions&model=opus&branch=main&subagents=exclude&project=__none__');
+      expect(await screen.findByRole('button', { name: /filters/i })).toHaveTextContent('4');
+    });
+
+    it('picking a model and toggling subagents reach the sessions request', async () => {
+      renderPage('/provider/anthropic?tab=sessions');
+      await userEvent.click(await screen.findByRole('button', { name: /filters/i }));
+      await userEvent.click(await screen.findByRole('button', { name: 'sonnet' }));
+      await userEvent.click(screen.getByRole('switch', { name: 'Hide subagent usage' }));
+      await waitFor(() =>
+        expect(api.fetchSessionsPaginated).toHaveBeenLastCalledWith(
+          expect.objectContaining({ model: 'sonnet', subagents: 'exclude' }),
+        ),
+      );
+      expect(screen.getByRole('button', { name: /filters/i })).toHaveTextContent('2');
     });
 
     it('hides Project on other tabs', async () => {
