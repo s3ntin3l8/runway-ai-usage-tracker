@@ -51,8 +51,13 @@ _cache: dict[str, str | None] = {}
 #: successes live here: a None may be a temporary failure (git busy, a directory
 #: not created yet), and recording it would hide a later success.
 _persisted: dict[str, str] = {}
-_state_path: Path | None = None
-_dirty = False
+
+
+class _State:
+    """Where the persisted cache lives and whether it changed since it was written."""
+
+    path: Path | None = None
+    dirty: bool = False
 
 
 def _creationflags() -> int:
@@ -175,14 +180,13 @@ def resolve_repo_name(cwd: str | None) -> str | None:
 
 def _remember(key: str, name: str) -> None:
     """Record a successful resolution for the state file."""
-    global _dirty
     if _persisted.get(key) == name:
         return
     _persisted.pop(key, None)  # re-insert at the end: the freshest entry survives longest
     _persisted[key] = name
     while len(_persisted) > _PERSIST_LIMIT:
         _persisted.pop(next(iter(_persisted)))
-    _dirty = True
+    _State.dirty = True
 
 
 def configure(path: Path | None) -> None:
@@ -191,12 +195,11 @@ def configure(path: Path | None) -> None:
     Called once per process before the first annotation; calling it again with
     the same path is a no-op. A missing or unreadable file is an empty cache.
     """
-    global _state_path, _dirty
-    if path is not None and path == _state_path:
+    if path is not None and path == _State.path:
         return
     _persisted.clear()
-    _state_path = path
-    _dirty = False
+    _State.path = path
+    _State.dirty = False
     if path is None:
         return
     try:
@@ -217,9 +220,8 @@ def configure(path: Path | None) -> None:
 
 def save() -> None:
     """Write the persisted cache if it changed. Best-effort, atomic."""
-    global _dirty
-    path = _state_path
-    if path is None or not _dirty:
+    path = _State.path
+    if path is None or not _State.dirty:
         return
     temporary = path.with_name(f".{path.name}.{secrets.token_hex(4)}.tmp")
     try:
@@ -229,15 +231,15 @@ def save() -> None:
         try:
             os.chmod(temporary, 0o600)  # paths of the user's projects
         except OSError:
-            pass
+            logging.debug("git identity: state file permissions not narrowed")
         os.replace(temporary, path)
-        _dirty = False
+        _State.dirty = False
     except OSError as exc:
         logging.debug("git identity: state not saved (%s)", type(exc).__name__)
         try:
             temporary.unlink()
         except OSError:
-            pass
+            logging.debug("git identity: temporary state file not removed")
 
 
 def annotate_project_refs(events: list[dict[str, Any]]) -> int:
@@ -261,8 +263,7 @@ def annotate_project_refs(events: list[dict[str, Any]]) -> int:
 
 def clear_cache() -> None:
     """Forget the resolved repositories and the state file binding (used by the tests)."""
-    global _state_path, _dirty
     _cache.clear()
     _persisted.clear()
-    _state_path = None
-    _dirty = False
+    _State.path = None
+    _State.dirty = False
