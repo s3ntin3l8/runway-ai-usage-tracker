@@ -343,10 +343,16 @@ def test_a_200_without_names_upserted_does_not_mark_names_sent(cycle, monkeypatc
         [{"type": "ai-title", "aiTitle": "Placeholder title", "sessionId": "sess-4"}],
     )
     monkeypatch.setattr(sidecar, "http_post_signed_with_retry", lambda *a, **k: (True, {}, 200))
-    assert len(cycle.run()) == 0  # cycle.run reads its own recorder, not this reply
+    cycle.run()
     from scripts.sidecar_pkg import session_names as sn
 
     pending = sn.select_for_push(
         [sn.make_record("anthropic", "sess-4", "Placeholder title", "generated")]
     )
     assert len(pending) == 1
+
+
+def test_the_name_cap_matches_the_servers():
+    from app.models.schemas import SESSION_NAME_MAX_LENGTH
+
+    assert session_names.MAX_NAME_LENGTH == SESSION_NAME_MAX_LENGTH

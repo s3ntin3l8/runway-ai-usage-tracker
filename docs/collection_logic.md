@@ -344,7 +344,8 @@ Plumbing in `scripts/sidecar_pkg/session_names.py`, for every extractor that has
   server's cap; the rest follows next cycle). They ride the first batch of the
   push only. The sent hashes live in the sidecar's `session-names.json`
   (hashes only, 0600, atomic, bounded to 20000) and are saved only after the
-  first batch was accepted (the answer carries `names_upserted`), so a failed or queued push sends them again.
+  first batch was accepted (the answer carries `names_upserted`), so a failed
+  or queued push sends them again.
   A push that fails is queued like any other payload, so the offline queue
   file (owner-only) holds the names in clear text, as it holds events' working
   directories; the state file never does.
