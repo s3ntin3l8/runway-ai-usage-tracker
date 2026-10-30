@@ -3404,6 +3404,10 @@ def _collect_opencode_session_names(out: list[dict[str, Any]]) -> None:
         return
     signatures = {path: session_names.file_signature(path) for path in inputs}
     records = parse_opencode_session_names(db_path)
+    if records is None:
+        # A failed read (locked store) is not a scan: stage nothing, retry next cycle.
+        logging.debug("session names: opencode store not readable")
+        return
     out.extend(records)
     session_names.stage_files({p: sig for p, sig in signatures.items() if sig is not None})
     logging.debug("session names: opencode, %d name(s) found", len(records))
@@ -3423,6 +3427,9 @@ def _collect_minimax_code_session_names(out: list[dict[str, Any]]) -> None:
             continue
         signatures = {path: session_names.file_signature(path) for path in inputs}
         records = parse_minimax_code_session_names(db_path)
+        if records is None:
+            logging.debug("session names: minimax code store not readable")
+            continue
         out.extend(records)
         found += len(records)
         session_names.stage_files({p: sig for p, sig in signatures.items() if sig is not None})
@@ -3437,6 +3444,9 @@ _SESSION_NAME_COLLECTORS: dict[str, Callable[[list[dict[str, Any]]], None]] = {
     "opencode": _collect_opencode_session_names,
     # The ledger's scheduling id (always scheduled); its events carry provider "minimax".
     "minimax_code": _collect_minimax_code_session_names,
+    # Also under the provider id, so a cycle targeted at ``minimax`` names its sessions too.
+    # A cycle running both scans twice; ``select_for_push`` keeps the last record per key.
+    "minimax": _collect_minimax_code_session_names,
 }
 
 

@@ -137,15 +137,22 @@ def make_opencode_v2_db(path: str, messages: list[dict], sessions: list[dict] | 
     )
     cur.execute("CREATE TABLE account (id TEXT PRIMARY KEY, email TEXT)")
     cur.execute("INSERT INTO account VALUES ('acc1', 'user@opencode.test')")
-    cur.execute("CREATE TABLE session_v2 (id TEXT PRIMARY KEY, directory TEXT, model TEXT)")
+    cur.execute(
+        "CREATE TABLE session_v2 (id TEXT PRIMARY KEY, directory TEXT, model TEXT, title TEXT)"
+    )
     cur.execute(
         "CREATE TABLE session_message (id TEXT PRIMARY KEY, session_id TEXT, type TEXT, "
         "seq INTEGER, time_created INTEGER, time_updated INTEGER, data TEXT)"
     )
     for s in sessions or []:
         cur.execute(
-            "INSERT INTO session_v2 VALUES (?,?,?)",
-            (s["id"], s.get("directory"), json.dumps(s["model"]) if s.get("model") else None),
+            "INSERT INTO session_v2 VALUES (?,?,?,?)",
+            (
+                s["id"],
+                s.get("directory"),
+                json.dumps(s["model"]) if s.get("model") else None,
+                s.get("title"),
+            ),
         )
     for seq, m in enumerate(messages):
         cur.execute(

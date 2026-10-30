@@ -1435,7 +1435,7 @@ def parse_minimax_code_events(
         conn.close()
 
 
-def parse_minimax_code_session_names(db_path: Path) -> list[dict[str, Any]]:
+def parse_minimax_code_session_names(db_path: Path) -> list[dict[str, Any]] | None:
     """Session titles from one runtime store, as ``generated`` name records.
 
     ``local_runtime_sessions.title`` only: ``agent_name`` is the agent's label and
@@ -1449,7 +1449,7 @@ def parse_minimax_code_session_names(db_path: Path) -> list[dict[str, Any]]:
     try:
         conn = sqlite3.connect(f"{db_path.resolve().as_uri()}?mode=ro", uri=True)
     except Exception:
-        return []
+        return None
     try:
         cur = conn.cursor()
         columns = _table_columns(cur, _SESSIONS_TABLE)
@@ -1460,7 +1460,7 @@ def parse_minimax_code_session_names(db_path: Path) -> list[dict[str, Any]]:
             f"SELECT session_id, title, {parent} FROM {_SESSIONS_TABLE}"  # noqa: S608
         ).fetchall()
     except Exception:
-        return []
+        return None
     finally:
         conn.close()
     known = {row[0] for row in rows if isinstance(row[0], str)}

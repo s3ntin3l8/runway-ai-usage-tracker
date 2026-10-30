@@ -115,14 +115,15 @@ def test_opencode_v2_reads_session_v2_titles_and_retags(tmp_path):
                 "data": v2_assistant_data(1778248870000),
             },
         ],
-        sessions=[{"id": "ses_v2_a", "directory": "/x"}, {"id": "ses_v2_b", "directory": "/x"}],
+        sessions=[
+            {"id": "ses_v2_a", "directory": "/x", "title": "Fake v2 title"},
+            {"id": "ses_v2_b", "directory": "/x", "title": "   "},
+        ],
     )
-    conn = sqlite3.connect(path)
-    conn.execute("ALTER TABLE session_v2 ADD COLUMN title TEXT")
-    conn.execute("UPDATE session_v2 SET title = 'Fake v2 title' WHERE id = 'ses_v2_a'")
-    conn.execute("UPDATE session_v2 SET title = '   ' WHERE id = 'ses_v2_b'")
-    conn.commit()
-    conn.close()
+    # The frozen v1 table holds stale titles that must not resurface.
+    _add_sessions(
+        path, "session", [("ses_v2_a", "Fake stale title"), ("ses_v2_b", "Fake stale title two")]
+    )
     events = parse_opencode_events(path, "default", _EPOCH)
     records = parse_opencode_session_names(path)
     assert [r["session_id"] for r in records] == ["ses_v2_a"]
@@ -137,6 +138,28 @@ def test_opencode_without_a_session_table_yields_nothing(tmp_path):
     make_opencode_db(str(path)).close()
     assert parse_opencode_session_names(path) == []
     assert parse_opencode_session_names(tmp_path / "missing.db") == []
+
+
+def test_opencode_unreadable_store_is_not_staged_as_scanned(tmp_path, monkeypatch):
+    path = _opencode_v1(tmp_path)
+    monkeypatch.setattr(sidecar, "_discover_opencode_db_path", lambda: path)
+    session_names.configure(tmp_path / "state.json")
+    from scripts.sidecar_pkg.event_extractors import opencode
+
+    monkeypatch.setattr(opencode, "parse_opencode_session_names", lambda _p: None)
+    out: list[dict] = []
+    sidecar._collect_opencode_session_names(out)
+    session_names.commit([])
+    monkeypatch.undo()
+    monkeypatch.setattr(sidecar, "_discover_opencode_db_path", lambda: path)
+    sidecar._collect_opencode_session_names(out)
+    assert len(out) == 1
+
+
+def test_minimax_unreadable_store_is_none(tmp_path):
+    bad = tmp_path / "runtime-state.sqlite"
+    bad.write_bytes(b"not a database" * 100)
+    assert parse_minimax_code_session_names(bad) is None
 
 
 def test_opencode_unchanged_rerun_sends_nothing(tmp_path):
@@ -194,6 +217,9 @@ def test_minimax_covers_every_profile_root(tmp_path, monkeypatch):
     out: list[dict] = []
     sidecar._collect_minimax_code_session_names(out)
     assert {r["session_id"] for r in out} == {"mvs_one", "mvs_two"}
+    assert (
+        sidecar._SESSION_NAME_COLLECTORS["minimax"] is sidecar._collect_minimax_code_session_names
+    )
 
 
 def test_collectors_are_registered_and_skip_unchanged_inputs(tmp_path, monkeypatch):

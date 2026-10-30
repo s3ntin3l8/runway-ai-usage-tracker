@@ -555,35 +555,46 @@ _SESSION_TABLES = ("session_v2", "session")
 
 
 def _titled_sessions(cur: sqlite3.Cursor, v2: bool) -> dict[str, str]:
-    """``{session_id: title}`` for sessions with a non-blank title, newest first."""
+    """``{session_id: title}`` for sessions with a non-blank title, newest first.
+
+    On a v2 database ``session_v2`` is the live table and wins, even for a blank
+    title (an untitled session must not get the frozen pre-migration v1 title
+    back). The v1 ``session`` table only fills sessions ``session_v2`` has no
+    titled row for: a store whose ``session_v2`` carries no ``title`` column.
+    """
     titles: dict[str, str] = {}
+    decided: set[str] = set()
     for table in _SESSION_TABLES if v2 else ("session",):
         columns = {info[1] for info in cur.execute(f"PRAGMA table_info({table})")}
         if not {"id", "title"} <= columns:
             continue
         order = " ORDER BY time_updated DESC" if "time_updated" in columns else ""
-        for session_id, title in cur.execute(f"SELECT id, title FROM {table}{order}"):
-            if not isinstance(session_id, str) or not isinstance(title, str):
+        rows = cur.execute(f"SELECT id, title FROM {table}{order}").fetchall()
+        for session_id, title in rows:
+            if not isinstance(session_id, str) or not session_id or session_id in decided:
                 continue
-            if session_id and title.strip():
-                titles.setdefault(session_id, title.strip())
+            if isinstance(title, str) and title.strip():
+                titles[session_id] = title.strip()
+        decided.update(row[0] for row in rows if isinstance(row[0], str))
     return titles
 
 
-def parse_opencode_session_names(db_path: Path) -> list[dict]:
+def parse_opencode_session_names(db_path: Path) -> list[dict] | None:
     """Session titles for the sessions the usage extractor reports events for.
 
     One ``generated`` record per (provider id, session): a session whose messages
     were served by several backends is retagged per message, so its events (and
     therefore its name) live under several runway provider ids. Only ``title`` is
-    read; no message text. Read-only, like the event extraction.
+    read; no message text. Read-only, like the event extraction. ``None`` means
+    the read failed (locked or unreadable database), which a caller must not
+    treat as "scanned"; ``[]`` means a successful read with nothing to report.
     """
     if not db_path.exists():
         return []
     try:
         conn = sqlite3.connect(f"{db_path.resolve().as_uri()}?mode=ro", uri=True)
     except Exception:
-        return []
+        return None
     try:
         cur = conn.cursor()
         v2 = _is_v2(cur)
@@ -621,7 +632,7 @@ def parse_opencode_session_names(db_path: Path) -> list[dict]:
                 event_provider_id(str(oc_provider), str(model_id))
             )
     except Exception:
-        return []
+        return None
     finally:
         conn.close()
     records: list[dict] = []

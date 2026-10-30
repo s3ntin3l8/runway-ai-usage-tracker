@@ -377,7 +377,7 @@ MiniMax Code: `parse_minimax_code_session_names` reads
 `local_runtime_sessions.title` (not `agent_name`, not the FTS index) from every
 runtime store, including per-profile roots, kind `generated`, provider
 `minimax`, source app `minimax_code`. It is registered under the ledger's
-scheduling id `minimax_code`. A background-task session whose parent is in the
+scheduling id `minimax_code` and under `minimax`. A background-task session whose parent is in the
 store is skipped, because its events are filed under the parent.
 
 ## Implementation Notes
