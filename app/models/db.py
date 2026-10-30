@@ -771,6 +771,15 @@ class ProviderPricing(SQLModel, table=True):  # type: ignore[call-arg]
     # compute_event_cost_breakdown falls back to cache_create_per_mtok for any
     # 1h-flagged tokens too (matches pre-split behavior for other providers).
     cache_create_1h_per_mtok: float = Field(default=0.0)
+    # Optional long-prompt tier (Haiku 5.5): when an event's prompt size
+    # (input + cache read + cache create tokens) is GREATER than the threshold,
+    # the whole event bills at the long_* rates. NULL threshold = no tier.
+    long_prompt_threshold_tokens: int | None = None
+    long_input_per_mtok: float | None = None
+    long_output_per_mtok: float | None = None
+    long_cache_read_per_mtok: float | None = None
+    long_cache_create_per_mtok: float | None = None
+    long_cache_create_1h_per_mtok: float | None = None
     notes: str | None = None
 
 

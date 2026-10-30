@@ -331,6 +331,13 @@ _DEFERRED_COLUMNS: list[tuple[str, str, str]] = [
     ("usage_events", "web_search_requests", "INTEGER NOT NULL DEFAULT 0"),
     ("usage_events", "web_fetch_requests", "INTEGER NOT NULL DEFAULT 0"),
     ("provider_pricing", "cache_create_1h_per_mtok", "FLOAT NOT NULL DEFAULT 0"),
+    # Optional long-prompt tier (NULL = no tier); see ProviderPricing.
+    ("provider_pricing", "long_prompt_threshold_tokens", "INTEGER"),
+    ("provider_pricing", "long_input_per_mtok", "FLOAT"),
+    ("provider_pricing", "long_output_per_mtok", "FLOAT"),
+    ("provider_pricing", "long_cache_read_per_mtok", "FLOAT"),
+    ("provider_pricing", "long_cache_create_per_mtok", "FLOAT"),
+    ("provider_pricing", "long_cache_create_1h_per_mtok", "FLOAT"),
     # Per-account webhook scoping: NULL = applies to all accounts (legacy rows).
     ("webhook_configs", "account_id", "VARCHAR"),
     # Opt-in (default on) for credential-health (expired/invalid) alerts,

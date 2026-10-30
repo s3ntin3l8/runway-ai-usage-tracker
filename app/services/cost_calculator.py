@@ -55,6 +55,12 @@ class PricingRowSnapshot:
     cache_read_per_mtok: float
     cache_create_per_mtok: float
     cache_create_1h_per_mtok: float
+    long_prompt_threshold_tokens: int | None = None
+    long_input_per_mtok: float | None = None
+    long_output_per_mtok: float | None = None
+    long_cache_read_per_mtok: float | None = None
+    long_cache_create_per_mtok: float | None = None
+    long_cache_create_1h_per_mtok: float | None = None
 
 
 class PricingIndex:
@@ -80,6 +86,12 @@ class PricingIndex:
             ProviderPricing.cache_read_per_mtok,
             ProviderPricing.cache_create_per_mtok,
             ProviderPricing.cache_create_1h_per_mtok,
+            ProviderPricing.long_prompt_threshold_tokens,
+            ProviderPricing.long_input_per_mtok,
+            ProviderPricing.long_output_per_mtok,
+            ProviderPricing.long_cache_read_per_mtok,
+            ProviderPricing.long_cache_create_per_mtok,
+            ProviderPricing.long_cache_create_1h_per_mtok,
         )
         statement = select(*columns)  # type: ignore[call-overload]
         if providers:
@@ -110,6 +122,24 @@ class PricingIndex:
 
 
 PricingRow = ProviderPricing | PricingRowSnapshot
+
+
+def is_aggregate_event_id(event_id: str | None) -> bool:
+    """True for a Claude cloud remainder event (`cloud:<digest>:r:<n>:<model>`).
+
+    A remainder aggregates the deltas of several calls, so it has no single
+    prompt size and must never trigger a long-prompt tier."""
+    return event_id is not None and event_id.startswith("cloud:") and ":r:" in event_id
+
+
+def _long_tier_applies(row: PricingRow, prompt_tokens: int) -> bool:
+    threshold = row.long_prompt_threshold_tokens
+    return (
+        threshold is not None
+        and prompt_tokens > threshold
+        and row.long_input_per_mtok is not None
+        and row.long_output_per_mtok is not None
+    )
 
 
 def _price_row(
@@ -258,6 +288,7 @@ def compute_event_cost_breakdown(  # noqa: PLR0913 — one param per priced toke
     tokens_reasoning: int = 0,
     tokens_cache_create_1h: int = 0,
     tokens_cache_create_5m: int = 0,
+    standard_tier_only: bool = False,
     _resolved_price_row: PricingRow | None = None,
     _price_row_resolved: bool = False,
 ) -> CostBreakdown:
@@ -283,6 +314,12 @@ def compute_event_cost_breakdown(  # noqa: PLR0913 — one param per priced toke
     dedicated 1h rate is seeded. When both split params are 0 (every other
     provider, and any event predating this split), behavior is unchanged from
     before this split existed.
+
+    Long-prompt tier: when the row has a `long_prompt_threshold_tokens` and
+    `tokens_input + tokens_cache_read + tokens_cache_create` is greater than
+    it, the whole event bills at the row's `long_*` rates. `standard_tier_only`
+    (set for aggregated events with no single prompt size, see
+    `is_aggregate_event_id`) forces the standard rates.
     """
     row = (
         _resolved_price_row
@@ -292,27 +329,44 @@ def compute_event_cost_breakdown(  # noqa: PLR0913 — one param per priced toke
     if row is None:
         return CostBreakdown(0.0, 0.0, 0.0, 0.0)
 
+    rate_in = row.input_per_mtok
+    rate_out = row.output_per_mtok
+    rate_read = row.cache_read_per_mtok
+    rate_5m = row.cache_create_per_mtok
+    rate_1h_row = row.cache_create_1h_per_mtok
+    if not standard_tier_only and _long_tier_applies(
+        row, tokens_input + tokens_cache_read + tokens_cache_create
+    ):
+        rate_in = row.long_input_per_mtok  # type: ignore[assignment]
+        rate_out = row.long_output_per_mtok  # type: ignore[assignment]
+        if row.long_cache_read_per_mtok is not None:
+            rate_read = row.long_cache_read_per_mtok
+        if row.long_cache_create_per_mtok is not None:
+            rate_5m = row.long_cache_create_per_mtok
+        if row.long_cache_create_1h_per_mtok is not None:
+            rate_1h_row = row.long_cache_create_1h_per_mtok
+
     split_total = tokens_cache_create_1h + tokens_cache_create_5m
     if split_total:
         # Split known: price the 1h portion at its own rate (falling back to
         # the 5m rate if unseeded) and the 5m portion — plus any remainder not
         # accounted for by the split, e.g. rounding — at the 5m rate.
-        rate_1h = row.cache_create_1h_per_mtok or row.cache_create_per_mtok
+        rate_1h = rate_1h_row or rate_5m
         remainder = max(tokens_cache_create - split_total, 0)
         cache_create_cost = round(
             tokens_cache_create_1h / 1_000_000 * rate_1h
-            + (tokens_cache_create_5m + remainder) / 1_000_000 * row.cache_create_per_mtok,
+            + (tokens_cache_create_5m + remainder) / 1_000_000 * rate_5m,
             6,
         )
     else:
         # No split provided — treat the whole total as 5m-rate, identical to
         # every call site before this split was introduced.
-        cache_create_cost = round(tokens_cache_create / 1_000_000 * row.cache_create_per_mtok, 6)
+        cache_create_cost = round(tokens_cache_create / 1_000_000 * rate_5m, 6)
 
     return CostBreakdown(
-        input=round(tokens_input / 1_000_000 * row.input_per_mtok, 6),
-        output=round((tokens_output + tokens_reasoning) / 1_000_000 * row.output_per_mtok, 6),
-        cache_read=round(tokens_cache_read / 1_000_000 * row.cache_read_per_mtok, 6),
+        input=round(tokens_input / 1_000_000 * rate_in, 6),
+        output=round((tokens_output + tokens_reasoning) / 1_000_000 * rate_out, 6),
+        cache_read=round(tokens_cache_read / 1_000_000 * rate_read, 6),
         cache_create=cache_create_cost,
     )
 

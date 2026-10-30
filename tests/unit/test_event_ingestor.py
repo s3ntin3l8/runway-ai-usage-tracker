@@ -810,3 +810,28 @@ class TestNativeIdentityResolution:
 
         assert s.exec(select(PendingUsageEvent)).all() == []
         assert s.exec(select(UsageEvent)).one().account_id == "me@example.com"
+
+
+def test_ingest_prices_a_long_prompt_haiku_55_message_at_the_long_tier():
+    s = _seeded_session()
+    pushes = [
+        _make_push(
+            event_id=eid,
+            model_id="haiku-5.5",
+            tokens_input=tin,
+            tokens_output=1_000_000,
+        )
+        for eid, tin in (
+            ("cloud:abc:m:short", 90_000),
+            ("cloud:abc:m:edge", 100_000),
+            ("cloud:abc:m:long", 150_000),
+            ("cloud:abc:r:1:haiku-5.5", 150_000),
+        )
+    ]
+    EventIngestor(s).ingest(pushes, sidecar_id="dev-01")
+    costs = {e.event_id: e.cost_usd for e in s.exec(select(UsageEvent)).all()}
+    assert costs["cloud:abc:m:short"] == round(0.009 + 0.50, 6)
+    assert costs["cloud:abc:m:edge"] == round(0.01 + 0.50, 6)
+    assert costs["cloud:abc:m:long"] == round(0.075 + 2.50, 6)
+    # A remainder aggregates several calls: standard tier regardless of size.
+    assert costs["cloud:abc:r:1:haiku-5.5"] == round(0.015 + 0.50, 6)

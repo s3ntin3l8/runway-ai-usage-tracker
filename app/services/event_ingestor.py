@@ -18,6 +18,7 @@ from app.core.date_utils import parse_iso8601_utc
 from app.models.db import PendingUsageEvent, ProviderConfig, UsageEvent
 from app.models.schemas import UsageEventPush
 from app.services.account_identity import canonical_account_id, is_redirect_source_provider
+from app.services.cost_calculator import is_aggregate_event_id
 from app.services.credential_tags import CredentialTagRepo, ParkedMapping
 from app.services.maintenance.event_cost import resolve_event_cost
 from app.services.model_normalization import normalize_ag_model
@@ -354,6 +355,7 @@ class EventIngestor:
                     tokens_cache_create_5m=push.tokens_cache_create_5m,
                     billing_type=billing_type,
                     reported_cost=push.cost_usd,
+                    standard_tier_only=is_aggregate_event_id(push.event_id),
                 )
                 breakdown = resolved.breakdown
                 ev = UsageEvent(
