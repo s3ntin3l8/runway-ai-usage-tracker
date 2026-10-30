@@ -1398,8 +1398,11 @@ def test_incomplete_long_tier_bills_standard_and_warns_once(caplog):
     s.add(row)
     s.commit()
     cost_calculator._PARTIAL_TIER_WARNED.clear()
-    with caplog.at_level("WARNING", logger="app.services.cost_calculator"):
-        b1 = _haiku_55_cost(s, tokens_input=150_000)
-        _haiku_55_cost(s, tokens_input=150_000)
+    try:
+        with caplog.at_level("WARNING", logger="app.services.cost_calculator"):
+            b1 = _haiku_55_cost(s, tokens_input=150_000)
+            _haiku_55_cost(s, tokens_input=150_000)
+    finally:
+        cost_calculator._PARTIAL_TIER_WARNED.clear()
     assert b1.output == 0.50
     assert len([r for r in caplog.records if "incomplete tier" in r.getMessage()]) == 1
