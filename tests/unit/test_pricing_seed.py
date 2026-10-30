@@ -878,31 +878,44 @@ def test_seed_chatgpt_gpt6_1_terra_rates():
 
 
 def test_seed_opencode_routed_aliases_match_canonical_rows():
-    """OpenCode-routed MiniMax/Kimi rows must track their canonical provider's rates."""
+    """OpenCode-routed MiniMax/Kimi rows must track their canonical provider's rates.
+
+    Alias rows are backdated, so compare the rate in effect at every canonical
+    revision date rather than the newest row alone — a repriced canonical row
+    with no matching alias revision must fail here.
+    """
     s = _make_session()
     seed_pricing_table(s)
 
-    def latest(provider: str, model: str) -> ProviderPricing:
-        # Newest revision, so a second (repriced) canonical row is compared, not an arbitrary one.
-        row = s.exec(
-            select(ProviderPricing)
-            .where(
-                ProviderPricing.provider_id == provider,
-                ProviderPricing.model_id == model,
+    def revisions(provider: str, model: str) -> list[ProviderPricing]:
+        rows = list(
+            s.exec(
+                select(ProviderPricing)
+                .where(
+                    ProviderPricing.provider_id == provider,
+                    ProviderPricing.model_id == model,
+                )
+                .order_by(ProviderPricing.effective_from)  # type: ignore[arg-type]
             )
-            .order_by(ProviderPricing.effective_from.desc())  # type: ignore[attr-defined]
-        ).first()
-        assert row is not None, (provider, model)
-        return row
+        )
+        assert rows, (provider, model)
+        return rows
+
+    def rates(r: ProviderPricing) -> tuple[float, float, float, float]:
+        return (
+            r.input_per_mtok,
+            r.output_per_mtok,
+            r.cache_read_per_mtok,
+            r.cache_create_per_mtok,
+        )
 
     for alias, canonical in (
         (("opencode", "minimax-m3"), ("minimax", "MiniMax-M3")),
         (("opencode", "minimax-m3.1-flash"), ("minimax", "MiniMax-M3.1-Flash")),
         (("opencode", "kimi-for-coding"), ("kimi_coding", "kimi-for-coding")),
     ):
-        a, c = latest(*alias), latest(*canonical)
-        assert a.effective_from <= c.effective_from, alias
-        assert a.input_per_mtok == c.input_per_mtok, alias
-        assert a.output_per_mtok == c.output_per_mtok, alias
-        assert a.cache_read_per_mtok == c.cache_read_per_mtok, alias
-        assert a.cache_create_per_mtok == c.cache_create_per_mtok, alias
+        alias_rows = revisions(*alias)
+        for canon in revisions(*canonical):
+            in_effect = [a for a in alias_rows if a.effective_from <= canon.effective_from]
+            assert in_effect, (alias, canon.effective_from)
+            assert rates(in_effect[-1]) == rates(canon), (alias, canon.effective_from)
