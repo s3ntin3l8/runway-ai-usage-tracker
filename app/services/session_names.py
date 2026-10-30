@@ -68,7 +68,9 @@ def _upsert_once(session: Session, latest: dict[tuple[str, str, str], SessionNam
                     )
                 )
                 changed += 1
-            elif row.name != entry.name:
+            elif row.name != entry.name or (
+                entry.source_app and row.source_app != entry.source_app
+            ):
                 row.name = entry.name
                 if entry.source_app:
                     row.source_app = entry.source_app

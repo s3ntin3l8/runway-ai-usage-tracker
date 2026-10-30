@@ -1,5 +1,6 @@
 import html
 import re
+import unicodedata
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -254,6 +255,7 @@ SESSION_NAME_MAX_LENGTH = 200
 SESSION_NAMES_MAX_PER_REQUEST = 2000
 
 _WHITESPACE_RUN = re.compile(r"\s+")
+_BIDI_CONTROLS = frozenset("\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069")
 
 
 class SessionNameIn(BaseModel):
@@ -277,8 +279,15 @@ class SessionNameIn(BaseModel):
         """Control characters out, whitespace collapsed, bounded. May end up empty."""
         if value is None:
             return ""
+        # Only control (Cc), surrogate (Cs) and bidi-override characters go;
+        # other format characters (ZWJ/ZWNJ) are kept so emoji sequences and
+        # Persian/Arabic/Indic shaping survive.
         text = "".join(" " if char.isspace() else char for char in str(value))
-        text = "".join(char for char in text if char.isprintable())
+        text = "".join(
+            char
+            for char in text
+            if unicodedata.category(char) not in ("Cc", "Cs") and char not in _BIDI_CONTROLS
+        )
         return _WHITESPACE_RUN.sub(" ", text).strip()[:SESSION_NAME_MAX_LENGTH].strip()
 
 

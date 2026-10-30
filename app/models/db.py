@@ -1088,8 +1088,8 @@ class SessionName(SQLModel, table=True):  # type: ignore[call-arg]
 
     __tablename__ = "session_names"
     __table_args__ = (
+        # Its autoindex also serves the (provider_id, session_id) page lookup.
         UniqueConstraint("provider_id", "session_id", "kind", name="uq_session_names_key"),
-        Index("ix_session_names_lookup", "provider_id", "session_id"),
     )
     id: int | None = Field(default=None, primary_key=True)
     provider_id: str

@@ -34,6 +34,18 @@ def test_cleaning_strips_controls_collapses_whitespace_and_truncates():
     assert _n("   \x00\x01 ").name == ""
 
 
+def test_cleaning_keeps_joiners_and_drops_bidi_overrides():
+    family = "\U0001f468\u200d\U0001f469\u200d\U0001f467"
+    assert _n(f"Fake {family}").name == f"Fake {family}"
+    assert _n("a\u202eb\u2066c").name == "abc"
+
+
+def test_source_app_is_refreshed_with_the_row(db):
+    upsert_session_names(db, [_n("Same", app="old_app")])
+    assert upsert_session_names(db, [_n("Same", app="new_app")]) == 1
+    assert db.exec(select(SessionName)).one().source_app == "new_app"
+
+
 def test_kind_is_validated():
     with pytest.raises(ValueError):
         SessionNameIn(provider_id="p", session_id="s", name="n", kind="other")  # type: ignore[arg-type]
