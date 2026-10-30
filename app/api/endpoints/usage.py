@@ -54,6 +54,7 @@ from app.services.queries import (
     query_cumulative_live,
     query_global_stats,
     query_projects,
+    query_session_filter_options,
     query_sessions_paginated,
     query_source_apps,
     rank_top_hosts,
@@ -1561,10 +1562,16 @@ async def get_usage_sessions_paginated(  # noqa: PLR0913, PLR0917 — known-debt
     sort_by: Literal["recent", "tokens", "duration", "messages", "cost"] = Query(default="recent"),
     sort_dir: Literal["asc", "desc"] = Query(default="desc"),
     sidecar_id: str | None = None,
+    model: str | None = Query(default=None, min_length=1, max_length=200),
+    branch: str | None = Query(default=None, min_length=1, max_length=250),
+    subagents: Literal["exclude"] | None = Query(default=None),
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
     """One page of sessions (default 25) plus the total count, for the Sessions
-    browser tab. Optional `project` filters to one working directory. Sorting is
+    browser tab. Optional `project` filters to one working directory
+    (`__none__` selects events without a project); `model` and `branch` narrow
+    to events of that model id / git branch; `subagents=exclude` drops subagent
+    events from the totals. All are event-level and intersect. Sorting is
     server-side over the full result set; `sort_by` picks the column (duration /
     messages / tokens / cost / recent) and `sort_dir` the direction."""
     return query_sessions_paginated(
@@ -1579,7 +1586,94 @@ async def get_usage_sessions_paginated(  # noqa: PLR0913, PLR0917 — known-debt
         sort_dir=sort_dir,
         project=project,
         sidecar_id=sidecar_id,
+        model=model,
+        branch=branch,
+        exclude_subagents=subagents == "exclude",
     )
+
+
+async def _session_options(
+    kind: str,
+    *,
+    provider_id: str,
+    account_id: str,
+    since: str | None,
+    until: str | None,
+    sidecar_id: str | None,
+    q: str | None,
+    limit: int,
+    session: Session,
+) -> list[str]:
+    return await asyncio.to_thread(
+        query_session_filter_options,
+        session,
+        kind=kind,
+        provider_id=provider_id,
+        account_id=account_id,
+        since=parse_iso8601_utc(since) if since else None,
+        until=parse_iso8601_utc(until) if until else None,
+        sidecar_id=sidecar_id,
+        search=q.strip() if q and q.strip() else None,
+        limit=limit,
+    )
+
+
+@router.get("/session-models")
+@limiter.limit("60/minute")
+async def get_session_models(  # noqa: PLR0913 — mirrors the sessions window filters
+    request: Request,
+    provider_id: str = Query(...),
+    account_id: str = Query(...),
+    since: str | None = Query(default=None),
+    until: str | None = Query(default=None),
+    sidecar_id: str | None = None,
+    q: str | None = Query(default=None, max_length=100),
+    limit: int = Query(default=50, ge=1, le=200),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    """Top models (by event count) in the sessions window, for the Model filter."""
+    return {
+        "models": await _session_options(
+            "model",
+            provider_id=provider_id,
+            account_id=account_id,
+            since=since,
+            until=until,
+            sidecar_id=sidecar_id,
+            q=q,
+            limit=limit,
+            session=session,
+        )
+    }
+
+
+@router.get("/session-branches")
+@limiter.limit("60/minute")
+async def get_session_branches(  # noqa: PLR0913 — mirrors the sessions window filters
+    request: Request,
+    provider_id: str = Query(...),
+    account_id: str = Query(...),
+    since: str | None = Query(default=None),
+    until: str | None = Query(default=None),
+    sidecar_id: str | None = None,
+    q: str | None = Query(default=None, max_length=100),
+    limit: int = Query(default=50, ge=1, le=200),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    """Top git branches (by event count) in the sessions window, for the Branch filter."""
+    return {
+        "branches": await _session_options(
+            "branch",
+            provider_id=provider_id,
+            account_id=account_id,
+            since=since,
+            until=until,
+            sidecar_id=sidecar_id,
+            q=q,
+            limit=limit,
+            session=session,
+        )
+    }
 
 
 @router.get("/top-projects")

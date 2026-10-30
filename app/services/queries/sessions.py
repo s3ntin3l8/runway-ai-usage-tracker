@@ -2,6 +2,7 @@
 See app/services/queries/__init__.py for the public surface.
 """
 
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -30,7 +31,88 @@ _SORT_COLUMNS = {
 }
 
 
-def query_sessions(  # noqa: PLR0913 — sidecar_id extends the existing filter signature
+# Documented `project` sentinel: select events that carry no project label
+# (NULL or empty). Emitted as a fixed clause, never as a bound parameter.
+NO_PROJECT = "__none__"
+
+
+@dataclass(frozen=True)
+class SessionFilters:
+    """The event-level filter set shared by every sessions query.
+
+    One builder feeds the per-session aggregate, the total count and both
+    per-session breakdowns, so the page rows, the total and the breakdowns
+    always describe the same events. A later cache keys on `cache_key()`.
+    """
+
+    provider_id: str
+    account_id: str
+    since: datetime
+    until: datetime | None = None
+    project: str | None = None
+    sidecar_id: str | None = None
+    model: str | None = None
+    branch: str | None = None
+    exclude_subagents: bool = False
+
+    def where(self) -> str:
+        """The WHERE body (no leading keyword). Fixed fragments only; every
+        request value is a bound parameter (see `params`)."""
+        parts = [
+            "provider_id = :provider_id",
+            "account_id  = :account_id",
+            "session_id IS NOT NULL",
+            "ts >= :since",
+        ]
+        if self.until is not None:
+            parts.append("ts < :until")
+        if self.project == NO_PROJECT:
+            parts.append("(project IS NULL OR project = '')")
+        elif self.project is not None:
+            parts.append("project = :project")
+        if self.sidecar_id:
+            parts.append("sidecar_id = :sidecar_id")
+        if self.model:
+            parts.append("model_id = :model")
+        if self.branch:
+            parts.append("git_branch = :branch")
+        if self.exclude_subagents:
+            parts.append("subagent_type IS NULL")
+        return "\n          AND ".join(parts)
+
+    def params(self) -> dict[str, Any]:
+        out: dict[str, Any] = {
+            "provider_id": self.provider_id,
+            "account_id": self.account_id,
+            "since": sqlite_utc_timestamp(self.since),
+        }
+        if self.until is not None:
+            out["until"] = sqlite_utc_timestamp(self.until)
+        if self.project is not None and self.project != NO_PROJECT:
+            out["project"] = self.project
+        if self.sidecar_id:
+            out["sidecar_id"] = self.sidecar_id
+        if self.model:
+            out["model"] = self.model
+        if self.branch:
+            out["branch"] = self.branch
+        return out
+
+    def cache_key(self) -> tuple[Any, ...]:
+        return (
+            self.provider_id,
+            self.account_id,
+            self.since,
+            self.until,
+            self.project,
+            self.sidecar_id,
+            self.model,
+            self.branch,
+            self.exclude_subagents,
+        )
+
+
+def query_sessions(  # noqa: PLR0913 — the event-level filters extend the signature
     session: Session,
     *,
     provider_id: str,
@@ -43,6 +125,9 @@ def query_sessions(  # noqa: PLR0913 — sidecar_id extends the existing filter 
     sort_dir: str = "desc",
     project: str | None = None,
     sidecar_id: str | None = None,
+    model: str | None = None,
+    branch: str | None = None,
+    exclude_subagents: bool = False,
 ) -> list[dict[str, Any]]:
     """Return top-N sessions by total tokens, newest first within the window.
 
@@ -54,6 +139,9 @@ def query_sessions(  # noqa: PLR0913 — sidecar_id extends the existing filter 
     covering all events with a non-NULL model_id in the session.
 
     `project` filters to sessions whose events carry that project label.
+    `model`, `branch` and `exclude_subagents` are event-level like `project`:
+    totals, breakdowns and the count all describe only the matching events.
+    `project=NO_PROJECT` selects events without a project label.
     `offset` pages the result (for the paginated Sessions browser).
 
     Events with NULL session_id are excluded.
@@ -68,9 +156,18 @@ def query_sessions(  # noqa: PLR0913 — sidecar_id extends the existing filter 
     order_clause = f"{col} {direction}, ts_end DESC, session_id"
     # Exclusive upper bound — only emitted when an `until` is supplied so the
     # default (open-ended) window is byte-identical to the original query.
-    until_clause = "AND ts < :until" if until is not None else ""
-    project_clause = "AND project = :project" if project is not None else ""
-    sidecar_clause = "AND sidecar_id = :sidecar_id" if sidecar_id else ""
+    filters = SessionFilters(
+        provider_id=provider_id,
+        account_id=account_id,
+        since=since,
+        until=until,
+        project=project,
+        sidecar_id=sidecar_id,
+        model=model,
+        branch=branch,
+        exclude_subagents=exclude_subagents,
+    )
+    where = filters.where()
 
     # These SQL f-strings interpolate only server-built clauses from fixed
     # conditions above; all request values stay in bound parameters below.
@@ -112,13 +209,7 @@ def query_sessions(  # noqa: PLR0913 — sidecar_id extends the existing filter 
             COUNT(DISTINCT CASE WHEN subagent_type IS NOT NULL
                 THEN COALESCE(NULLIF(turn_id, ''), event_id) END) AS subagent_msgs
         FROM usage_events
-        WHERE provider_id = :provider_id
-          AND account_id  = :account_id
-          AND session_id IS NOT NULL
-          AND ts >= :since
-          {until_clause}
-          {project_clause}
-          {sidecar_clause}
+        WHERE {where}
         GROUP BY session_id
         ORDER BY {order_clause}
         LIMIT :limit OFFSET :offset
@@ -151,13 +242,9 @@ def query_sessions(  # noqa: PLR0913 — sidecar_id extends the existing filter 
             SUM(cost_cache_read)                                AS cost_cache_read,
             SUM(cost_cache_create)                              AS cost_cache_create
         FROM usage_events
-        WHERE provider_id = :provider_id
-          AND account_id  = :account_id
+        WHERE {where}
           AND session_id  = :session_id
           AND subagent_type IS NOT NULL
-          AND ts >= :since
-          {until_clause}
-          {sidecar_clause}
         GROUP BY subagent_type
         ORDER BY turns DESC
         """
@@ -183,13 +270,9 @@ def query_sessions(  # noqa: PLR0913 — sidecar_id extends the existing filter 
             SUM(cost_cache_read)                                AS cost_cache_read,
             SUM(cost_cache_create)                              AS cost_cache_create
         FROM usage_events
-        WHERE provider_id = :provider_id
-          AND account_id  = :account_id
+        WHERE {where}
           AND session_id  = :session_id
           AND model_id IS NOT NULL
-          AND ts >= :since
-          {until_clause}
-          {sidecar_clause}
         GROUP BY model_id
         ORDER BY tokens_total DESC
         """
@@ -197,16 +280,7 @@ def query_sessions(  # noqa: PLR0913 — sidecar_id extends the existing filter 
 
     rows = session.exec(  # type: ignore[call-overload]
         agg_sql,
-        params={
-            "provider_id": provider_id,
-            "account_id": account_id,
-            "since": sqlite_utc_timestamp(since),
-            **({"until": sqlite_utc_timestamp(until)} if until is not None else {}),
-            **({"project": project} if project is not None else {}),
-            **({"sidecar_id": sidecar_id} if sidecar_id else {}),
-            "limit": limit,
-            "offset": offset,
-        },
+        params={**filters.params(), "limit": limit, "offset": offset},
     ).all()
 
     results: list[dict[str, Any]] = []
@@ -231,17 +305,12 @@ def query_sessions(  # noqa: PLR0913 — sidecar_id extends the existing filter 
 
         subagent_msgs = int(row.subagent_msgs or 0)
         subagents: list[dict[str, Any]] = []
+        # `subagents=exclude` already removed those events from the aggregate
+        # (subagent_msgs is 0), so the block is skipped without a query.
         if subagent_msgs > 0:
             sa_rows = session.exec(  # type: ignore[call-overload]
                 subagent_sql,
-                params={
-                    "provider_id": provider_id,
-                    "account_id": account_id,
-                    "session_id": row.session_id,
-                    "since": sqlite_utc_timestamp(since),
-                    **({"until": sqlite_utc_timestamp(until)} if until is not None else {}),
-                    **({"sidecar_id": sidecar_id} if sidecar_id else {}),
-                },
+                params={**filters.params(), "session_id": row.session_id},
             ).all()
             subagents = [
                 {
@@ -271,14 +340,7 @@ def query_sessions(  # noqa: PLR0913 — sidecar_id extends the existing filter 
         if models:
             bm_rows = session.exec(  # type: ignore[call-overload]
                 model_breakdown_sql,
-                params={
-                    "provider_id": provider_id,
-                    "account_id": account_id,
-                    "session_id": row.session_id,
-                    "since": sqlite_utc_timestamp(since),
-                    **({"until": sqlite_utc_timestamp(until)} if until is not None else {}),
-                    **({"sidecar_id": sidecar_id} if sidecar_id else {}),
-                },
+                params={**filters.params(), "session_id": row.session_id},
             ).all()
             by_model = [
                 {
@@ -335,7 +397,7 @@ def query_sessions(  # noqa: PLR0913 — sidecar_id extends the existing filter 
     return results
 
 
-def count_sessions(
+def count_sessions(  # noqa: PLR0913 — the event-level filters extend the signature
     session: Session,
     *,
     provider_id: str,
@@ -344,41 +406,36 @@ def count_sessions(
     until: datetime | None = None,
     project: str | None = None,
     sidecar_id: str | None = None,
+    model: str | None = None,
+    branch: str | None = None,
+    exclude_subagents: bool = False,
 ) -> int:
     """COUNT(DISTINCT session_id) for the same window/filters as query_sessions."""
     if since is None:
         since = datetime.now(UTC) - timedelta(days=7)
-    until_clause = "AND ts < :until" if until is not None else ""
-    project_clause = "AND project = :project" if project is not None else ""
-    sidecar_clause = "AND sidecar_id = :sidecar_id" if sidecar_id else ""
+    filters = SessionFilters(
+        provider_id=provider_id,
+        account_id=account_id,
+        since=since,
+        until=until,
+        project=project,
+        sidecar_id=sidecar_id,
+        model=model,
+        branch=branch,
+        exclude_subagents=exclude_subagents,
+    )
     sql = text(
         f"""
         SELECT COUNT(DISTINCT session_id) AS n
         FROM usage_events
-        WHERE provider_id = :provider_id
-          AND account_id  = :account_id
-          AND session_id IS NOT NULL
-          AND ts >= :since
-          {until_clause}
-          {project_clause}
-          {sidecar_clause}
+        WHERE {filters.where()}
         """
     )
-    row = session.exec(  # type: ignore[call-overload]
-        sql,
-        params={
-            "provider_id": provider_id,
-            "account_id": account_id,
-            "since": sqlite_utc_timestamp(since),
-            **({"until": sqlite_utc_timestamp(until)} if until is not None else {}),
-            **({"project": project} if project is not None else {}),
-            **({"sidecar_id": sidecar_id} if sidecar_id else {}),
-        },
-    ).first()
+    row = session.exec(sql, params=filters.params()).first()  # type: ignore[call-overload]
     return int(row.n or 0) if row else 0
 
 
-def query_sessions_paginated(  # noqa: PLR0913 — sidecar_id extends the existing filter signature
+def query_sessions_paginated(  # noqa: PLR0913 — the event-level filters extend the signature
     session: Session,
     *,
     provider_id: str,
@@ -391,6 +448,9 @@ def query_sessions_paginated(  # noqa: PLR0913 — sidecar_id extends the existi
     sort_dir: str = "desc",
     project: str | None = None,
     sidecar_id: str | None = None,
+    model: str | None = None,
+    branch: str | None = None,
+    exclude_subagents: bool = False,
 ) -> dict[str, Any]:
     """One page of sessions + the total count, for the Sessions browser tab."""
     total = count_sessions(
@@ -401,6 +461,9 @@ def query_sessions_paginated(  # noqa: PLR0913 — sidecar_id extends the existi
         until=until,
         project=project,
         sidecar_id=sidecar_id,
+        model=model,
+        branch=branch,
+        exclude_subagents=exclude_subagents,
     )
     sessions = query_sessions(
         session,
@@ -414,5 +477,62 @@ def query_sessions_paginated(  # noqa: PLR0913 — sidecar_id extends the existi
         sort_dir=sort_dir,
         project=project,
         sidecar_id=sidecar_id,
+        model=model,
+        branch=branch,
+        exclude_subagents=exclude_subagents,
     )
     return {"sessions": sessions, "total": total, "limit": page_size, "offset": page * page_size}
+
+
+_OPTION_COLUMNS = {"model": "model_id", "branch": "git_branch"}
+
+
+def query_session_filter_options(  # noqa: PLR0913 — mirrors the sessions window filters
+    session: Session,
+    *,
+    kind: str,
+    provider_id: str,
+    account_id: str,
+    since: datetime | None = None,
+    until: datetime | None = None,
+    sidecar_id: str | None = None,
+    search: str | None = None,
+    limit: int = 50,
+) -> list[str]:
+    """Top-`limit` distinct models or branches for the sessions filter lists.
+
+    Ranked by event count within the same account/window the sessions list
+    uses; NULL and empty values are excluded. `search` is a case-insensitive
+    substring match so a capped list stays reachable by typing.
+    """
+    column = _OPTION_COLUMNS[kind]
+    if since is None:
+        since = datetime.now(UTC) - timedelta(days=7)
+    filters = SessionFilters(
+        provider_id=provider_id,
+        account_id=account_id,
+        since=since,
+        until=until,
+        sidecar_id=sidecar_id,
+    )
+    params = {**filters.params(), "limit": limit}
+    needle = ""
+    if search:
+        escaped = search.lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        needle = f"AND LOWER({column}) LIKE :needle ESCAPE '\\'"
+        params["needle"] = f"%{escaped}%"
+    sql = text(
+        f"""
+        SELECT {column} AS value
+        FROM usage_events
+        WHERE {filters.where()}
+          AND {column} IS NOT NULL
+          AND {column} != ''
+          {needle}
+        GROUP BY {column}
+        ORDER BY COUNT(*) DESC, {column}
+        LIMIT :limit
+        """
+    )
+    rows = session.exec(sql, params=params).all()  # type: ignore[call-overload]
+    return [r.value for r in rows]

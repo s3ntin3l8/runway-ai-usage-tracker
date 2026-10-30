@@ -106,6 +106,12 @@ export const fetchTopTools = (params: Params = {}) =>
 export const fetchProjects = (params: Params = {}) =>
   api<{ projects: string[] }>(`/api/v1/usage/projects${qs(params)}`);
 
+export const fetchSessionModels = (params: Params) =>
+  api<{ models: string[] }>(`/api/v1/usage/session-models${qs(params)}`);
+
+export const fetchSessionBranches = (params: Params) =>
+  api<{ branches: string[] }>(`/api/v1/usage/session-branches${qs(params)}`);
+
 export const fetchEvents = (params: Params) =>
   api<EventsResponse>(`/api/v1/usage/events${qs(params)}`);
 

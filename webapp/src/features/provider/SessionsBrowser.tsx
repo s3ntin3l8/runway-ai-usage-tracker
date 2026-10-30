@@ -10,6 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { useExcludeCache } from '@/hooks/useExcludeCache';
 import { useProjectFilter } from '@/hooks/useProjectFilter';
+import { useBranchFilter, useHideSubagents, useModelFilter } from '@/hooks/useSessionFilters';
 import { useUsageSource } from '@/hooks/useUsageSource';
 import { SessionsTable, type SessionSortKey, type SortDir } from './SessionsTable';
 import type { TabScope } from './period';
@@ -31,12 +32,15 @@ export function SessionsBrowser({
   const { excludeCache } = useExcludeCache();
   const [sidecarId] = useUsageSource();
   const [project, setProject] = useProjectFilter();
+  const [model] = useModelFilter();
+  const [branch] = useBranchFilter();
+  const [hideSubagents] = useHideSubagents();
   const [page, setPage] = useState(0);
   // Default sort mirrors the server default ('recent' desc) — no header is
   // marked active until the user clicks one.
   const [sortBy, setSortBy] = useState<SessionSortKey | 'recent'>('recent');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
-  // Reset to the first page whenever the scope, project, or sort changes — the
+  // Reset to the first page whenever the scope, a filter, or the sort changes — the
   // old offset is meaningless against a reordered or differently-sized result.
   // A project only exists within one source, so switching source clears it —
   // but not on mount, or a reload would drop the project from the URL.
@@ -47,7 +51,7 @@ export function SessionsBrowser({
     setPage(0);
     setProject(undefined);
   }, [sidecarId, setProject]);
-  useEffect(() => setPage(0), [scope.key, project, sortBy, sortDir]);
+  useEffect(() => setPage(0), [scope.key, project, model, branch, hideSubagents, sortBy, sortDir]);
 
   // Toggle direction when re-clicking the active column; otherwise switch
   // column and start descending (largest-first, the common intent).
@@ -66,6 +70,9 @@ export function SessionsBrowser({
     since: scope.range.since,
     until: scope.range.until,
     project: project ?? null,
+    model: model ?? null,
+    branch: branch ?? null,
+    hideSubagents,
     sortBy,
     sortDir,
     enabled: active,

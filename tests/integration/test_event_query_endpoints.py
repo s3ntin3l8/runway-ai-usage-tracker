@@ -1132,3 +1132,68 @@ class TestSessionsEndpoint:
             },
         )
         assert r.status_code == 422
+
+
+# ===========================================================================
+# Sessions filters: model / branch / subagents / __none__ + option lists
+# ===========================================================================
+
+
+class TestSessionsFilters:
+    _P = {"provider_id": "anthropic", "account_id": "user@example.com"}
+
+    def _seed(self, session):
+        now = datetime.now(UTC)
+        for i, (sid, model, branch, project, sub) in enumerate(
+            [
+                ("s1", "opus", "main", "runway", None),
+                ("s1", "sonnet", "feat", "runway", "Explore"),
+                ("s2", "opus", "main", None, None),
+            ]
+        ):
+            ev = _event(
+                event_id=f"f{i}", session_id=sid, model_id=model, ts=now - timedelta(minutes=i)
+            )
+            ev.git_branch = branch
+            ev.project = project
+            ev.subagent_type = sub
+            session.add(ev)
+        session.commit()
+
+    def _get(self, **extra):
+        r = _client().get("/api/v1/usage/sessions/paginated", params={**self._P, **extra})
+        return r
+
+    def test_filters_narrow_and_intersect(self, session):
+        self._seed(session)
+        assert self._get().json()["total"] == 2
+        assert self._get(model="sonnet").json()["total"] == 1
+        assert self._get(branch="main").json()["total"] == 2
+        assert self._get(project="__none__").json()["total"] == 1
+        body = self._get(subagents="exclude", model="opus", project="runway").json()
+        assert body["total"] == 1
+        assert body["sessions"][0]["subagents"] == []
+        assert self._get(model="sonnet", branch="main").json()["total"] == 0
+
+    def test_validation(self, session):
+        assert self._get(subagents="include").status_code == 422
+        assert self._get(model="").status_code == 422
+        assert self._get(branch="x" * 251).status_code == 422
+
+    def test_option_endpoints(self, session):
+        self._seed(session)
+        c = _client()
+        r = c.get("/api/v1/usage/session-models", params=self._P)
+        assert r.status_code == 200, r.text
+        assert r.json() == {"models": ["opus", "sonnet"]}
+        r = c.get("/api/v1/usage/session-branches", params={**self._P, "q": "FE"})
+        assert r.json() == {"branches": ["feat"]}
+        r = c.get("/api/v1/usage/session-branches", params={**self._P, "limit": 1})
+        assert r.json() == {"branches": ["main"]}
+        assert (
+            c.get("/api/v1/usage/session-models", params={**self._P, "limit": 0}).status_code == 422
+        )
+        assert (
+            c.get("/api/v1/usage/session-models", params={"provider_id": "anthropic"}).status_code
+            == 422
+        )

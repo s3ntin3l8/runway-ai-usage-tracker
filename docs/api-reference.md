@@ -112,7 +112,9 @@ See [Sidecar Documentation](sidecar.md) for ingest authentication and payload fo
 | `GET` | `/api/v1/usage/window-history` | Admin | Closed-window history with per-model & per-sidecar splits; optional `series_model_id` and `series_variant` scope to a quota series and retain legacy unscoped rows; for scoped requests, an omitted/empty variant means `default` |
 | `GET` | `/api/v1/usage/heatmap` | Admin | 7×24 hour-of-day activity grid; optional `sidecar_id` and `exclude_cache` filters |
 | `GET` | `/api/v1/usage/sessions` | Admin | Top-N sessions (`sort_by=tokens` or `recent`), optionally scoped by `sidecar_id` |
-| `GET` | `/api/v1/usage/sessions/paginated` | Admin | Paginated session browser with server-side sort (`sort_by=recent\|tokens\|duration\|messages\|cost`, `sort_dir=asc\|desc`) and optional `project` / `sidecar_id` filters |
+| `GET` | `/api/v1/usage/sessions/paginated` | Admin | Paginated session browser with server-side sort (`sort_by=recent\|tokens\|duration\|messages\|cost`, `sort_dir=asc\|desc`) and optional event-level filters that intersect: `project` (`__none__` selects events with no project label), `sidecar_id`, `model` (normalized model id), `branch` (git branch), `subagents=exclude` (drops subagent events from the totals and breakdowns). Totals, breakdowns and `total` all describe only the matching events |
+| `GET` | `/api/v1/usage/session-models` | Admin | Top models by event count for `provider_id` + `account_id` in the `since`/`until` window (optional `sidecar_id`, `q` substring search, `limit` 1-200, default 50); feeds the Sessions Model filter. Response `{"models": [...]}` |
+| `GET` | `/api/v1/usage/session-branches` | Admin | Same for git branches; response `{"branches": [...]}` |
 | `GET` | `/api/v1/usage/projects` | Admin | Distinct project names seen in events, optionally scoped by `sidecar_id` |
 | `GET` | `/api/v1/usage/top-projects` | Admin | Top projects ranked by `metric=tokens\|cost\|sessions`, optionally scoped by `sidecar_id` |
 | `GET` | `/api/v1/usage/top-tools` | Admin | Top tools by invocation volume, optionally scoped by `sidecar_id` |
