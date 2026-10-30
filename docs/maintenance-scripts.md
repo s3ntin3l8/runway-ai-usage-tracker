@@ -37,6 +37,7 @@ Reconstruct data that was not recorded when the event was first ingested.
 | `backfill_rollups.py` | Rebuild `usage_period_rollup` from existing `usage_events`. |
 | `backfill_cache_costs.py` | Backfill the per-component cost columns on `usage_events`, then rebuild the rollups. |
 | `backfill_project_context.py` | Backfill the working-directory / project context onto existing events. |
+| `consolidate_session_projects.py` | Relabel each session's events to its root project (the repository name the session reported, else its root directory, cut at `.claude`/`.wt`/`.worktrees`/`.worktree`/`.mullion-worktrees`). Applies by default; `--dry-run` only reports. The in-app equivalent is the `worktree_project_labels` Data Health check. |
 | `backfill_claude_billing_type.py` | Price the Claude accounts that were created **before** billing detection existed. |
 | `backfill_claude_dimensions.py` | Backfill the Claude Code per-message dimensions onto already-ingested events. |
 | `backfill_argon_models.py` | Repair already-ingested Gemini 4 Argon rows — rewrite the stored `model_id` to `gemini-4-argon` and re-price the event in the same pass. |

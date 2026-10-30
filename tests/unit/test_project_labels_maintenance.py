@@ -17,6 +17,7 @@ from app.services.maintenance.project_labels import (
     _path_shaped_filter,
     apply_path_shaped_projects,
     apply_repo_relabels,
+    apply_session_relabels,
     plan_path_shaped_projects,
     plan_repo_relabels,
     plan_session_relabels,
@@ -507,3 +508,77 @@ class TestRepoRelabels:
         assert projects["older"] == "current-name"
         assert projects["other"] == "other-name"  # its own repository, untouched
         assert projects["current"] == "current-name"
+
+
+class TestWorktreeSessions:
+    def test_worktree_cwds_are_relabelled_to_the_repository_directory(self):
+        s = _session()
+        _add(s, "a", session_id="s1", cwd="/home/u/repo/.wt/feat-x/app", project="feat-x")
+        _add(s, "b", session_id="s2", cwd="/home/u/other/.mullion-worktrees/t1", project="t1")
+        _add(s, "c", session_id="s3", cwd="/home/u/third/.worktrees/w", project="w")
+
+        apply_session_relabels(s, plan_session_relabels(s))
+
+        assert _projects(s) == {"a": "repo", "b": "other", "c": "third"}
+
+    def test_a_reported_repository_beats_the_cwd(self):
+        s = _session()
+        _add(s, "a", session_id="s1", cwd="/home/u/folder/.wt/x", project="x")
+        _add(
+            s,
+            "b",
+            session_id="s1",
+            cwd="/home/u/folder/.wt/x",
+            project="real-repo",
+            project_ref="real-repo",
+        )
+
+        apply_session_relabels(s, plan_session_relabels(s))
+
+        assert _projects(s) == {"a": "real-repo", "b": "real-repo"}
+        refs = {r.event_id: r.project_ref for r in s.exec(select(UsageEvent)).all()}
+        assert refs == {"a": None, "b": "real-repo"}
+
+    def test_the_newest_reported_repository_wins(self):
+        s = _session()
+        later = datetime(2026, 5, 9, tzinfo=UTC)
+        _add(s, "a", session_id="s1", cwd="/h/f", project="old", project_ref="old")
+        _add(s, "b", session_id="s1", cwd="/h/f", project="new", project_ref="new", ts=later)
+
+        apply_session_relabels(s, plan_session_relabels(s))
+
+        assert set(_projects(s).values()) == {"new"}
+
+    def test_the_apply_is_idempotent_and_moves_no_total(self):
+        s = _session()
+        _add(s, "a", session_id="s1", cwd="/home/u/repo/.wt/x", project="x", tokens=7, cost=2.5)
+
+        first = apply_session_relabels(s, plan_session_relabels(s))
+        second = plan_session_relabels(s)
+
+        assert first.relabeled == 1
+        assert second.rows_to_relabel == 0
+        row = s.exec(select(UsageEvent)).one()
+        assert (row.tokens_input, row.cost_usd, row.cwd) == (7, 2.5, "/home/u/repo/.wt/x")
+
+    def test_it_and_the_repository_pass_do_not_undo_each_other(self):
+        def build():
+            s = _session()
+            _add(s, "a", session_id="s1", cwd="/home/u/folder/.wt/x", project="x")
+            _add(
+                s,
+                "b",
+                session_id="s1",
+                cwd="/home/u/folder/.wt/x",
+                project="real-repo",
+                project_ref="real-repo",
+            )
+            return s
+
+        s = build()
+        apply_session_relabels(s, plan_session_relabels(s))
+        assert plan_repo_relabels(s).total == 0
+
+        s = build()
+        apply_repo_relabels(s, plan_repo_relabels(s))
+        assert plan_session_relabels(s).rows_to_relabel == 0

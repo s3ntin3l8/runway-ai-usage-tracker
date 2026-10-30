@@ -36,6 +36,9 @@ from app.services.data_health.checks.unpriced_claude_accounts import (
     UnpricedClaudeAccountsCheck,
 )
 from app.services.data_health.checks.unpriced_models import UnpricedModelsCheck
+from app.services.data_health.checks.worktree_project_labels import (
+    WorktreeProjectLabelsCheck,
+)
 
 REGISTRY: list[Check] = [
     ConfigDefaultKeyedCheck(),
@@ -54,6 +57,7 @@ REGISTRY: list[Check] = [
     MinimaxBackgroundSessionsCheck(),
     PathShapedProjectsCheck(),
     InconsistentProjectLabelsCheck(),
+    WorktreeProjectLabelsCheck(),
     CloudCoarseEventsCheck(),
     PendingEventsCheck(),
     AlertChannelsCheck(),

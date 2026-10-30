@@ -26,7 +26,9 @@ Three scopes, one implementation:
   host and sends its name; the rows collected before it did keep the folder's
   name, and this pass moves them onto the repository.
 
-Both relabel a session as a whole: the canonical label is
+Both relabel a session as a whole: the canonical label is the repository name
+the session's newest row reported (`project_ref`, the same precedence the
+ingestor applies) and, for a session that reported none,
 `derive_project(pick_canonical_cwd(<the session's cwds>))` — rule 1 plus rule
 2 — and every row of the session takes it, including the rows whose `cwd` is
 NULL. That is what makes one session one project.
@@ -180,11 +182,13 @@ def _plan(
     sample_size: int,
 ) -> PathShapedProjectPlan:
     """The sessions to relabel, with the label each should carry."""
-    stmt = select(
-        UsageEvent.id,
+    stmt = sa_select(
+        col(UsageEvent.id),
         col(UsageEvent.session_id),
         col(UsageEvent.cwd),
         col(UsageEvent.project),
+        col(UsageEvent.project_ref),
+        col(UsageEvent.ts),
     ).where(col(UsageEvent.session_id).is_not(None))
     if providers is not None:
         stmt = stmt.where(col(UsageEvent.provider_id).in_(providers))
@@ -198,22 +202,42 @@ def _plan(
         shaped_sessions = select(col(UsageEvent.session_id)).where(_path_shaped_filter()).distinct()
         if providers is not None:
             shaped_sessions = shaped_sessions.where(col(UsageEvent.provider_id).in_(providers))
-        rows = session.exec(stmt.where(col(UsageEvent.session_id).in_(shaped_sessions))).all()
+        rows = session.execute(stmt.where(col(UsageEvent.session_id).in_(shaped_sessions))).all()
     else:
-        rows = session.exec(stmt).all()
+        rows = session.execute(stmt).all()
 
     by_session: dict[str, list[tuple[int, str | None, str | None]]] = defaultdict(list)
+    # The repository name a session's newest reporting row carries, with the
+    # (ts, id) it was reported at.
+    session_refs: dict[str, tuple[Any, int, str]] = {}
     for row in rows:
-        # The columns were selected in a fixed order: id, session_id, cwd, project.
+        # The columns were selected in a fixed order: id, session_id, cwd,
+        # project, project_ref, ts.
         row_id, session_id, cwd, project = row[0], row[1], row[2], row[3]
+        project_ref, ts = row[4], row[5]
         if row_id is None or session_id is None:
             continue
         by_session[session_id].append((row_id, cwd, project))
+        if project_ref:
+            stamp = (ts, row_id)
+            known = session_refs.get(session_id)
+            if known is None or stamp > (known[0], known[1]):
+                session_refs[session_id] = (ts, row_id, project_ref)
 
     plan = PathShapedProjectPlan()
     label_counts: dict[tuple[str, str], int] = defaultdict(int)
     for session_id, entries in sorted(by_session.items()):
-        canonical = derive_project(pick_canonical_cwd(cwd for _, cwd, _ in entries))
+        # The ingestor labels an event with the repository name the client
+        # reported (`project_ref`) before it falls back to the cwd, so the
+        # session plan does the same: a session that reported a repository
+        # keeps it. Deriving from the cwd alone would overwrite those labels and
+        # undo `inconsistent_project_labels`, which moves rows onto them.
+        reported = session_refs.get(session_id)
+        canonical = (
+            reported[2]
+            if reported is not None
+            else derive_project(pick_canonical_cwd(cwd for _, cwd, _ in entries))
+        )
         path_shaped_rows = sum(1 for _, _, project in entries if _is_path_shaped(project))
         if canonical is None:
             # No usable cwd anywhere in the session: no label can be derived, so
