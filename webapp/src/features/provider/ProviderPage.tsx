@@ -20,6 +20,7 @@ import { Skeleton, SkeletonRegion } from '@/components/ui/Skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/Tabs';
 import { TimeRangePicker } from '@/components/ui/TimeRangePicker';
 import { ExcludeCacheToggle } from '@/components/ui/ExcludeCacheToggle';
+import { ProjectFilter } from '@/components/ui/ProjectFilter';
 import { SidecarFilter } from '@/components/ui/SidecarFilter';
 import { Popover } from '@/components/ui/Popover';
 import { useFleet, useProviderConfigs } from '@/features/home/queries';
@@ -33,14 +34,16 @@ import { ForecastTab } from './ForecastTab';
 import { OverviewTab } from './OverviewTab';
 import { SessionsBrowser } from './SessionsBrowser';
 import { resolveScope } from './period';
-import { useProviderEventRange } from './queries';
+import { useProviderEventRange, type DateRange } from './queries';
 import { labelOrMaskedId } from '@/lib/accountDisplay';
+import { useProjectFilter } from '@/hooks/useProjectFilter';
 import { useUsageSource } from '@/hooks/useUsageSource';
 import { useExcludeCache } from '@/hooks/useExcludeCache';
 
 // Tabs whose data is scoped by the shared time-range picker.
 const PERIOD_AWARE_TABS = new Set(['overview', 'activity', 'sessions', 'events', 'cost']);
 const SOURCE_AWARE_TABS = new Set(['overview', 'activity', 'sessions', 'events', 'cost']);
+const PROJECT_AWARE_TABS = new Set(['sessions']);
 const CACHE_AWARE_TABS = new Set(['overview', 'activity', 'sessions', 'forecast', 'cost']);
 
 // Why the provider has no data, when a machine reported a credential source it could
@@ -213,7 +216,13 @@ export function ProviderPage() {
               />
             ) : null}
             {(showSourceFilter || (entry && CACHE_AWARE_TABS.has(tab))) ? (
-              <ProviderFilters showSource={Boolean(showSourceFilter)} showCache={Boolean(entry && CACHE_AWARE_TABS.has(tab))} />
+              <ProviderFilters
+                providerId={providerId}
+                range={scope.range}
+                showSource={Boolean(showSourceFilter)}
+                showProject={Boolean(entry && PROJECT_AWARE_TABS.has(tab))}
+                showCache={Boolean(entry && CACHE_AWARE_TABS.has(tab))}
+              />
             ) : null}
             {entries.length > 1 ? (
               <Select
@@ -432,11 +441,25 @@ export function ProviderPage() {
   );
 }
 
-function ProviderFilters({ showSource, showCache }: { showSource: boolean; showCache: boolean }) {
+function ProviderFilters({
+  providerId,
+  range,
+  showSource,
+  showProject,
+  showCache,
+}: {
+  providerId: string;
+  range: DateRange;
+  showSource: boolean;
+  showProject: boolean;
+  showCache: boolean;
+}) {
   const [sidecarId] = useUsageSource();
+  const [project] = useProjectFilter();
   const { excludeCache } = useExcludeCache();
   const filters = [
     { visible: showSource, active: Boolean(sidecarId) },
+    { visible: showProject, active: Boolean(project) },
     { visible: showCache, active: excludeCache },
   ];
   // Count only exposed filters so the badge stays aligned as controls are added.
@@ -452,6 +475,7 @@ function ProviderFilters({ showSource, showCache }: { showSource: boolean; showC
         <p className="text-[11px] text-fg-muted">Filters apply to the current tab where supported.</p>
       </div>
       {showSource ? <div className="space-y-1"><div className="text-[11px] text-fg-muted">Source</div><SidecarFilter /></div> : null}
+      {showProject ? <div className="space-y-1"><div className="text-[11px] text-fg-muted">Project</div><ProjectFilter providerId={providerId} range={range} /></div> : null}
       {showCache ? <div className="space-y-1"><div className="text-[11px] text-fg-muted">Cached tokens</div><ExcludeCacheToggle /></div> : null}
     </Popover>
   );
