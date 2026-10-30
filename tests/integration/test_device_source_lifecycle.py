@@ -218,6 +218,22 @@ def test_legacy_key_cannot_claim_reserved_device_registry(setup):
     assert response.status_code == 403
 
 
+def test_sidecar_cannot_claim_the_server_owned_cloud_source_id(setup):
+    from app.services.claude_cloud_support import CLOUD_SIDECAR_ID
+
+    assert CLOUD_SIDECAR_ID in sidecar_devices.SERVER_SIDECAR_IDS
+    client, session, local = setup
+    legacy = {"api_url": local["api_url"], "api_key": local["api_key"]}
+    response = post(
+        client,
+        legacy,
+        "/api/v1/fleet/ingest",
+        "ingest",
+        {"provider": "synthetic", "sidecar_id": CLOUD_SIDECAR_ID, "metrics": []},
+    )
+    assert response.status_code == 403
+
+
 def test_configured_engine_can_write_after_durable_auth_receipt(tmp_path, monkeypatch):
     from app.core import replay
 

@@ -38,7 +38,8 @@ with its own table (`provider_pricing`), exactly as for local events.
 
 Two kinds of `usage_events`, both `provider_id = "anthropic"`, `source_app = "claude_code"`,
 `entrypoint = "cloud"`, `kind = "message"`, `cost_usd = None`, ingested through
-`EventIngestor(...).ingest(..., sidecar_id="server")` (dedup on `(provider_id, event_id)`).
+`EventIngestor(...).ingest(..., sidecar_id="anthropic-cloud")` (`CLOUD_SIDECAR_ID`; a sidecar cannot claim
+that id; dedup on `(provider_id, event_id)`).
 
 - **Message event**: one per distinct assistant `message.id` (the last record of that id).
 - **Remainder event**: one per closed turn and model, holding what `modelUsage` reports for that turn
@@ -155,16 +156,19 @@ ISO 8601 UTC.
 ### 5.5 Project, branch, working directory
 
 - `cwd`: the most recent `system` record's `cwd` before the message (init records carry it). It is
-  only passed on together with a `project_ref`: with none, the ingestor would label the project with
-  the last path segment, and a bare `/home/user` would become the project `user`.
+  only passed on when the event has a `project_ref` and a path segment of the `cwd` equals it: with
+  none, the ingestor would label the project with the last path segment, and a bare `/home/user`
+  would become the project `user`.
 - `project_ref`: a repository **name** (the last path segment of
   `config.outcomes[].git_info.repo`, else `config.sources[].url`; never a URL or owner). With exactly
-  one repository named: that name when the `cwd` has a segment equal to it or no `cwd` was seen (19 of
-  21 sessions); with several: the one whose name is a segment of the `cwd`; otherwise None.
+  one repository named, every event of the session carries that name, whatever its `cwd` (a session
+  that ran mostly in a bare home directory still belongs to its repository); with several: the one
+  whose name is a segment of the `cwd`; otherwise None.
 - `git_branch`: `system.branch` when present, else the row's `external_metadata.current_branches` entry
   for the repository, else None.
-- A session whose `cwd` is a bare home directory keeps `project_ref` and `cwd` None: an unattributed
-  session is better than a wrong project.
+- A single-repository session whose `cwd` is a bare home directory or an unrelated directory keeps
+  its `project_ref` and has `cwd` None. A session with several repositories and no matching `cwd`
+  stays unattributed: that is better than a wrong project.
 
 ### 5.6 Cross-check, never a gate
 
@@ -203,8 +207,9 @@ cross-check result. No content, no ids. The coarse-collector tables are replaced
    appears as remainder events.
 4. **Time.** No event is dated at the sweep time, and no message event is dated after the result of
    its turn.
-5. **Project.** Every event of a session with a single repository has that `project_ref`; sessions with
-   none have NULL, not a guess.
+5. **Project.** Every event of a session with a single repository has that `project_ref`, whatever
+   its `cwd` (and `cwd` NULL where no segment is the repository); sessions with none, or with several
+   repositories and no matching `cwd`, have NULL, not a guess.
 6. **Replay.** Running the collector again adds zero rows, and the cycle log reports zero new events.
 7. **Scope.** No bridge sessions produce events; no event carries a cloud session id.
 8. **Cost sanity.** For sessions with a block, Runway's priced cost is within a few percent of the
@@ -227,6 +232,17 @@ counts, sums and the windows it would rebuild; apply is idempotent.
 **Guard:** while events of the old form exist, the new collector writes nothing and reports the outcome
 `migration_required`, so the order of deploy, migration and enabling cannot double count. The new
 collector then backfills from history.
+
+### 8.1 Relabelling stored events
+
+Events are deduplicated on `(provider_id, event_id)`, so events stored before a labelling change (the
+`anthropic-cloud` sidecar id, the single-repository project rule) keep their old labels. The
+`cloud_events_reset` Data Health fix (`scripts/reset_cloud_events.py`) removes the history-based events
+(`cloud:%:m:%` and `cloud:%:r:%`) **and** the per-session checkpoints (events alone would leave nothing
+to re-emit; checkpoints alone would replay into the old rows), rebuilds the Anthropic rollups and the
+closed windows that overlapped them, and drops the collector's in-memory backlog. The collector then
+reads every session's history again. It never touches the first collector's events, so the migration
+guard is unaffected; applying it twice is a no-op.
 
 ## 9. Known limits and open items
 

@@ -43,13 +43,23 @@ from app.services.maintenance.cloud_coarse_events import (  # noqa: E402
 )
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     force_utf8_console()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--apply", action="store_true", help="remove the rows (default: report only)"
     )
-    args = parser.parse_args()
+    parser.add_argument(
+        "--windows-from",
+        help="replay the window rebuild for an interrupted run: start of the removed range (ISO 8601)",
+    )
+    parser.add_argument(
+        "--windows-to",
+        help="replay the window rebuild for an interrupted run: end of the removed range (ISO 8601)",
+    )
+    args = parser.parse_args(argv)
+    if bool(args.windows_from) != bool(args.windows_to):
+        parser.error("--windows-from and --windows-to must be given together")
 
     init_db()
     with Session(engine) as session:

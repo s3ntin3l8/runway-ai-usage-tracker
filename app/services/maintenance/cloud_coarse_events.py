@@ -73,7 +73,7 @@ class CoarseResult:
     ts_max: datetime | None = None
 
 
-def _moment(value: object) -> datetime | None:
+def moment(value: object) -> datetime | None:
     if value is None:
         return None
     return value if isinstance(value, datetime) else parse_iso8601_utc(str(value))
@@ -99,7 +99,7 @@ def plan_cloud_coarse_events(session: Session, *, sample_size: int = 5) -> Coars
     samples: list[str] = []
     accounts: list[str] = []
     windows = 0
-    first_ts, last_ts = _moment(first), _moment(last)
+    first_ts, last_ts = moment(first), moment(last)
     if events:
         accounts = sorted(
             session.exec(select(UsageEvent.account_id).where(*where).distinct()).all()
@@ -108,7 +108,7 @@ def plan_cloud_coarse_events(session: Session, *, sample_size: int = 5) -> Coars
             windows = session.exec(
                 select(func.count())
                 .select_from(UsageWindow)
-                .where(*_window_where(accounts, first_ts, last_ts))
+                .where(*window_where(accounts, first_ts, last_ts))
             ).one()
         samples = list(
             session.exec(
@@ -133,7 +133,7 @@ def plan_cloud_coarse_events(session: Session, *, sample_size: int = 5) -> Coars
     )
 
 
-def _window_where(
+def window_where(
     accounts: list[str], ts_min: datetime, ts_max: datetime
 ) -> list[ColumnElement[bool]]:
     return [
@@ -144,7 +144,7 @@ def _window_where(
     ]
 
 
-def _derived_pairs(session: Session) -> set[tuple[str, str]]:
+def derived_pairs(session: Session) -> set[tuple[str, str]]:
     """Every Anthropic (provider, account) with events, rollup rows or closed windows."""
     pairs: set[tuple[str, str]] = set()
     for model in (UsageEvent, UsagePeriodRollup, UsageWindow):
@@ -174,7 +174,7 @@ def apply_cloud_coarse_events(
         result.events_deleted = chunked_delete(session, UsageEvent, coarse_event_where())
     # Pairs come from every derived table too, so one whose events are all gone still has its
     # rollup rows rebuilt (to nothing) instead of lingering as drift orphans.
-    pairs = _derived_pairs(session)
+    pairs = derived_pairs(session)
     if pairs:
         rebuild_rollups_for_pairs(session, pairs)
         result.rollup_pairs_rebuilt = len(pairs)

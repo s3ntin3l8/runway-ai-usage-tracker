@@ -231,6 +231,7 @@ async def test_a_cloud_session_is_written_from_its_history(environment):
     assert report.events == len(rows)
     assert per_model(rows) == {"opus-5.5": [20, 140, 400, 30]}  # equals the final modelUsage
     assert {r.entrypoint for r in rows} == {"cloud"}
+    assert {r.sidecar_id for r in rows} == {"anthropic-cloud"}
     assert {r.session_id for r in rows} == {session_digest(SECRET_ID)}
     assert {r.project for r in rows} == {"the-repo"} and {r.cwd for r in rows} == {
         "/home/user/the-repo"

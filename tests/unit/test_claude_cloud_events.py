@@ -15,6 +15,7 @@ from app.services.claude_cloud_events import (
     SessionFacts,
     session_digest,
 )
+from app.services.claude_cloud_support import CLOUD_SIDECAR_ID
 from app.services.event_ingestor import EventIngestor
 from app.services.pricing_seed import seed_pricing_table
 from app.services.project_label import derive_project
@@ -336,8 +337,10 @@ def test_invalid_numbers_count_as_zero():
     [
         (("the-repo",), "/home/user/the-repo", ("the-repo", "/home/user/the-repo")),
         (("the-repo",), "/home/user/the-repo/src", ("the-repo", "/home/user/the-repo/src")),
-        (("the-repo",), "/home/user", (None, None)),  # a bare home is not a project
-        (("the-repo",), "/home/user/other", (None, None)),
+        # One named repository owns the session whatever the directory; only a cwd that is the
+        # repository is passed on, so a bare home cannot be labelled `user`.
+        (("the-repo",), "/home/user", ("the-repo", None)),
+        (("the-repo",), "/home/user/other", ("the-repo", None)),
         (("the-repo",), None, ("the-repo", None)),
         (("a", "b", "c"), "/home/user", (None, None)),
         (("a", "b", "c"), "/home/user/b", ("b", "/home/user/b")),
@@ -356,9 +359,19 @@ def test_project_context_follows_the_repository(repos, cwd, expected):
     history += turn(2, [msg(message_id="m1")], {OPUS: {}})
     events, _ = run(history, repos=repos)
     assert (events[0].project_ref, events[0].cwd) == expected
-    if expected == (None, None):
-        # The ingestor would label a bare home `user`; nothing is passed that could.
+    # The ingestor would label a bare home `user`; no cwd is passed that could.
+    if expected[1] is None:
         assert derive_project(events[0].cwd) is None
+
+
+@pytest.mark.parametrize("cwd", ["/home/user", "/home/user/other", None])
+def test_every_event_of_a_single_repository_session_carries_the_repository(cwd):
+    history = [system(1, cwd=cwd)] if cwd is not None else []
+    history += turn(2, [msg(message_id="m1"), msg(message_id="m2")], {OPUS: {"outputTokens": 99}})
+    events, _ = run(history, repos=("the-repo",))
+    assert len(events) >= 3  # two messages and the remainder
+    assert {e.project_ref for e in events} == {"the-repo"} and {e.cwd for e in events} == {None}
+    assert all(derive_project(e.cwd) is None for e in events)  # never labelled `user`
 
 
 def test_the_branch_comes_from_the_session_or_the_list_row():
@@ -700,7 +713,7 @@ def test_the_events_ingest_exactly_and_replay_adds_nothing():
     ]
     events, _ = run(history)
     database = _database()
-    ingested = EventIngestor(database).ingest(events, sidecar_id="server")
+    ingested = EventIngestor(database).ingest(events, sidecar_id=CLOUD_SIDECAR_ID)
     assert ingested.events_inserted == len(events) and ingested.events_duplicate == 0
     rows = database.exec(select(UsageEvent)).all()
     sums: dict[str, int] = {}
@@ -708,8 +721,9 @@ def test_the_events_ingest_exactly_and_replay_adds_nothing():
         sums[row.model_id] = sums.get(row.model_id, 0) + row.tokens_output
         assert row.cost_usd is not None and row.cost_usd > 0
         assert row.project == "the-repo" and row.entrypoint == "cloud"
+        assert row.sidecar_id == "anthropic-cloud"
     assert sums == {"opus-5.5": 800, "haiku-4.5": 4}
-    again = EventIngestor(database).ingest(events, sidecar_id="server")
+    again = EventIngestor(database).ingest(events, sidecar_id=CLOUD_SIDECAR_ID)
     assert again.events_inserted == 0 and again.events_duplicate == len(events)
 
 
@@ -728,7 +742,7 @@ def test_the_sessions_view_counts_messages_not_remainders():
     )
     events, _ = run(history)
     database = _database()
-    EventIngestor(database).ingest(events, sidecar_id="server")
+    EventIngestor(database).ingest(events, sidecar_id=CLOUD_SIDECAR_ID)
     rows = query_sessions(
         database,
         provider_id="anthropic",
