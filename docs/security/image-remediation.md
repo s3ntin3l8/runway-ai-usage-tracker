@@ -318,12 +318,53 @@ The `digests-*` artifacts record the per-platform build output rather than the
 published manifests. The two digest families, and why they differ, are
 explained under *The published baseline this replaces* above.
 
-This is the versioned release rather than the rolling `edge` tag on purpose.
-`edge` is rebuilt from `main` on every push, so its digest moves with every
-unrelated change and cannot be the record the exception document is anchored
-to; a versioned tag is immutable. The findings are the same either way — the
-`edge` build of the same base reports the same 166 matches, the same 55 High
-and the same absence of Critical findings — so the document describes both.
+The fixture was first anchored to the versioned release rather than the rolling
+`edge` tag, on purpose: `edge` is rebuilt from `main` on every push, so the tag
+moves with every unrelated change and cannot be the record the exception
+document is anchored to, while a versioned tag is immutable. Against the
+2026-10-23 database the `edge` build of the same base reported the same 166
+matches, the same 55 High and no Critical, so the document described both. That
+equivalence no longer holds, which is why the fixture moved (next subsection).
+
+#### Re-recorded 2026-10-31 for CVE-2026-84243
+
+The scan fixture is now anchored to an immutable `edge` index digest, not to
+`v3.0.0-beta.13`. A digest is as immutable as a versioned tag, so the rule above
+about the moving tag still holds. The reason for the move is not the tag: a new
+advisory, CVE-2026-84243 (glibc `gettext`, High, unfixed in Debian trixie),
+needed four new entries, and the fixture has to describe an image that carries
+exactly the findings the document waives. Re-scanning `v3.0.0-beta.13` against
+today's database also reports a Critical, CVE-2026-115557 in the bundled
+Python `3.12.15`. The Python in the current base image (`3.12.16`) is not
+affected, so the Critical is fixed in this image and an exception for it would be a false
+record.
+
+| Reference | Digest |
+| --- | --- |
+| Published index (`edge`) | `sha256:567f8c081adeaa83bafa63d20780e6dcd123b2b5e1ef7a75c7a6bff0cd325eff` |
+| linux/amd64 manifest | `sha256:4cd69b47bb4d9f25cf43de5a3533a7bed814f9780144923e4518c58214a6d947` |
+| linux/arm64 manifest | `sha256:36ebf0d134fbde265be8047a79df4c62e624038a20c2a9373bc91c1e40a305e8` |
+
+| | amd64 | arm64 |
+| --- | --- | --- |
+| passed | true | true |
+| blocked | 0 | 0 |
+| accepted exceptions | 57 | 57 |
+| expired exceptions | 0 | 0 |
+| Critical | 0 | 0 |
+| High | 57 | 57 |
+| Medium | 53 | 53 |
+| Low | 11 | 11 |
+| Negligible | 47 | 47 |
+
+Scanned at `2026-10-31T12:13:15Z` against the database built
+`2026-10-31T06:18:17Z`, with the same scanners as above. The four new entries
+(`libc6` and `libc-bin`, both architectures) carry the document's single
+expiry horizon, `2026-11-21T12:00:00Z`, and track
+[issue #1130](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1130).
+The published `v3.0.0-beta.15` release keeps failing the daily release scan on
+the Python Critical until the next release is cut from this base
+([issue #1131](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1131)).
 
 ### Advisories Debian lists as fixed in trixie
 

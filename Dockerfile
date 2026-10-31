@@ -94,7 +94,11 @@ USER runway
 ARG COMMIT_SHA=""
 
 # Environment variables
-ENV PYTHONUNBUFFERED=1 \
+# The base image's default, stated here so a base bump cannot drop it:
+# image-exceptions.json waives CVE-2026-84243 (glibc gettext honouring a
+# crafted LANGUAGE) on the grounds that LC_MESSAGES resolves to C.UTF-8.
+ENV LANG=C.UTF-8 \
+    PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONFAULTHANDLER=1 \
     MALLOC_ARENA_MAX=4 \
