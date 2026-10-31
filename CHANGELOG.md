@@ -5,6 +5,60 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0-beta.16](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v3.0.0-beta.15...v3.0.0-beta.16) (2026-10-31)
+
+
+### Features
+
+* **claude:** collect cloud-runner usage from session history ([#1076](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1076)) ([73abe84](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/73abe8452ec6931978c0c799ee83c2b8714006ab))
+* **claude:** derive cloud-runner usage events from session history ([#1074](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1074)) ([b730012](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/b730012e12ef0425af3fa6999ef9872bc9f5fd4d))
+* **claude:** label cloud-runner usage as anthropic-cloud and attribute it to the session's repository ([#1102](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1102)) ([b4a51b7](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/b4a51b764e955b579ac4eefacda55019454e6b9b))
+* **claude:** store cloud session titles as session names ([#1109](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1109)) ([a9d4c49](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/a9d4c49a389119c7d4c24613725aadfec062a9bf))
+* **data-health:** re-price events whose estimate is stale, without a full recost ([#1116](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1116)) ([#1117](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1117)) ([d659896](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/d659896b4c508cfff4239bc9fb9fe3720065da63))
+* **data-health:** remove the first cloud collector's coarse events ([#1075](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1075)) ([6843642](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/68436429c491493c2af2f939d09c0053ffea6b90))
+* **fleet:** merge a re-paired machine from either card, and keep its push counts ([#1053](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1053)) ([a524063](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/a524063f8b285aa3ae3a9aa815b68724e98446c4))
+* **fleet:** show a paired device's hostname and offer to adopt its legacy sidecar ([#1028](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1028)) ([45d4e27](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/45d4e2724745deb5385490fc4a0abfac1069bbc5))
+* **fleet:** store and show session names ([#1107](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1107)) ([bccb1ab](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/bccb1abe0351b8d2bc62f453df7b0beabedf09ce))
+* **fleet:** tabbed sidecar settings with a compact Keychain sources table ([#1066](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1066)) ([ad88daa](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/ad88daaca8d7e45839c85d03f10bcc494f4d16ef))
+* **fleet:** warn when a paired device never completes a source sync ([#1058](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1058)) ([8d3e16c](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/8d3e16cdba7756df1e9aa50d31109e311240e8c4))
+* **pricing:** price Haiku 5.5 prompts over 100k tokens at the higher tier ([#1106](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1106)) ([e48c9a3](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/e48c9a34453061d1cb2832c513cf90534de1f15d))
+* **settings:** configurable worktree directory patterns for project labels ([#1105](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1105)) ([cb81b2e](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/cb81b2e900bd3cffb9be9c7788f4b529dbd9fab3))
+* **sidecar:** compact Keychain scrapers section with Authorize all enabled ([#1067](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1067)) ([61a0ead](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/61a0ead19154d7ee10e9b39722db1426b9260cfd))
+* **sidecar:** send Claude Code session names ([#1111](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1111)) ([8355099](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/8355099ec88bee1f4179f330d0250113e5b04a53))
+* **sidecar:** send session names from Codex and agy ([#1114](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1114)) ([cb6cb5e](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/cb6cb5eb90e59444bf27677d2a9c1249b08fd410))
+* **sidecar:** send session titles from opencode and MiniMax Code ([#1115](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1115)) ([280b79f](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/280b79f15cbbc3f6b27be46431c6ac09b80d7e88))
+* **webapp:** filter sessions by model, branch, subagent use and unattributed project ([#1103](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1103)) ([66d9c9a](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/66d9c9a7ea1a3491ed837f4be5e1c3e46badd529))
+* **webapp:** move the Sessions project filter into the provider Filters popover ([#1098](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1098)) ([b0e519a](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/b0e519a444e995492862ea2ce0079ef2c31f091b))
+
+
+### Bug Fixes
+
+* **claude:** keep the cloud collector's catch-up cadence when a cycle cannot see its login ([#1100](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1100)) ([f3f1bc1](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/f3f1bc1d2d367744858975be28936b873f794d7f))
+* **claude:** log each login's outcome in the cloud collector cycle ([#1062](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1062)) ([c5d1969](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/c5d1969f68c0cf567a582c23fefdfcadbe72a05b))
+* **claude:** name the failing step of a cloud collector sweep in its log ([#1064](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1064)) ([562d422](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/562d42203bb872a949965ba3b4c86e302e885758))
+* **claude:** treat an omitted terminal next_cursor as the end of the cloud session list ([#1069](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1069)) ([cbfbb35](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/cbfbb35b4a24cccee1ccfe797225564ce46f37af))
+* **credentials:** name Git Credential Manager as owner of the GitHub Windows credential ([#1056](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1056)) ([3402af0](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/3402af03d49b2529d3aa98df198cdbb01a9d1d26))
+* **data-health:** label events from worktree directories (.wt, .worktrees) by their repository directory ([#1101](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1101)) ([23ededd](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/23ededda2ede5dcb8d85f2135c473d183317e0ff))
+* **data-health:** re-price old events that were billed through the family fallback ([#1118](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1118)) ([#1119](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1119)) ([2d74466](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/2d7446642e963aa7b4ceac93cebb3dbd35f1a545))
+* **docker:** bump python base to 3.12.16 (CVE-2026-115557) ([#1079](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1079)) ([92f05de](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/92f05ded1af532a7954d1e2b5bedbe0f996b4716))
+* **fleet:** keep per-source enabled/priority when a legacy sidecar is merged ([#1061](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1061)) ([80b3933](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/80b3933445aaf35e5189b7d4c94c5724979a768b))
+* **fleet:** retry on SQLite lock contention during chunked maintenance updates ([#1055](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1055)) ([8e100de](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/8e100de4c7eefdf5553cc9f71042841c9084c9bf))
+* **fleet:** tell the sidecar when the server failed to store session names ([#1113](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1113)) ([7737fae](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/7737fae91d9ecde7b9be7c8ea65ca38b60e25407))
+* **github:** read the actual Windows credential target ([#1052](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1052)) ([93cb313](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/93cb313669151e68f6156623fbdea28a35a55658))
+* **poller:** keep the Mac pairing hint for keychain and origin-less sources ([#1032](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1032)) ([53e0e56](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/53e0e568c7ec99184350ed6cabedcf8ee7b1a0e3))
+* **poller:** say a credential stopped reporting instead of "collector no longer active" ([#1029](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1029)) ([0187864](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/0187864c3c96f2397e896821374e9edcf705b01a))
+* **pricing:** add the haiku-5.5 row, correct the sonnet-5.5 cache-read rate, warn once on an unknown model ([#1099](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1099)) ([6f09574](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/6f09574c16541912c35f8a94d21a72aafbd9e655))
+* **pricing:** seed gpt-6.1-terra and OpenCode-routed MiniMax M3 / Kimi rates ([#1077](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1077)) ([0a90400](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/0a90400cc61d92c0be89ce60a1318802839f44f9))
+* **sidecar:** keep an authorized sibling when a later member of its Keychain item fails ([#1070](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1070)) ([c34a3ec](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/c34a3ecfa3daf0cd600c11f57a1d76c18e3a7201)), closes [#1068](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1068)
+* **sidecar:** persist the cwd -&gt; repository cache and find out why recent events still lack project_ref ([#1104](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1104)) ([561b5b1](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/561b5b132aaa774f6453c16bbfb2970e060e99d7))
+* **tests:** give oversized chat-fixture params a short id so Windows can run them ([#1036](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1036)) ([b540360](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/b54036070114dcd9e11ae65bb4aa2595b0c932ef))
+* **web:** show machine names instead of device ids, and fit tall dialogs on screen ([#1054](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1054)) ([e85de71](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/e85de715db43d9c08ed3179bbed8a3f2f905f48f))
+
+
+### Performance Improvements
+
+* **webapp:** make the Sessions browser sort cheap ([#1110](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1110)) ([0b9bfcd](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/0b9bfcdeb16282034bc2e1fa6851b1f88c618b5a))
+
 ## [3.0.0-beta.15](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v3.0.0-beta.14...v3.0.0-beta.15) (2026-10-27)
 
 
