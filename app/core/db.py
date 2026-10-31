@@ -200,12 +200,29 @@ def init_db() -> None:
         _drop_redundant_credential_tag_indexes(conn)
         _scrub_residual_stale_health(conn)
 
+    from app.services.maintenance.recost import apply_recost
     from app.services.pricing_seed import seed_pricing_table
 
     with Session(engine) as session:
-        inserted = seed_pricing_table(session)
-        if inserted:
-            logger.info(f"Seeded provider_pricing with {inserted} new rows")
+        inserted_pairs = seed_pricing_table(session)
+        if inserted_pairs:
+            logger.info(f"Seeded provider_pricing with {len(inserted_pairs)} new rows")
+            for provider_id, model_id in inserted_pairs:
+                try:
+                    result = apply_recost(
+                        session,
+                        providers=[provider_id],
+                        only_zero_cost=True,
+                        models=[model_id],
+                    )
+                    logger.info(
+                        f"Repriced zero-cost events for {provider_id}/{model_id}: "
+                        f"{result.updated} event(s)"
+                    )
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(
+                        f"Recost for {provider_id}/{model_id} failed; Data Health Fix still covers it: {e}"
+                    )
 
     # Rewrite legacy non-canonical account_ids (e.g. mixed-case emails that
     # split one account into card + events-only twins). Idempotent.

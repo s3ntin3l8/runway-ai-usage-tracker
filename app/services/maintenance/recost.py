@@ -171,16 +171,22 @@ def _event_pages(
             yield ev
 
 
-def _legacy_reported_cost(ev: _RecostEvent) -> float | None:
+def legacy_reported_cost(
+    cost_reported_usd: float | None, provider_id: str, cost_usd: float
+) -> float | None:
     """What `reported_cost` should be for an event that may predate the
     `cost_reported_usd` column: OpenCode's legacy backends logged their
     subscription amount straight into `cost_usd`, so an event with no
     `cost_reported_usd` yet gets that value read back as its report."""
-    if ev.cost_reported_usd is not None:
-        return ev.cost_reported_usd
-    if ev.provider_id.startswith("opencode"):
-        return ev.cost_usd
+    if cost_reported_usd is not None:
+        return cost_reported_usd
+    if provider_id.startswith("opencode"):
+        return cost_usd
     return None
+
+
+def _legacy_reported_cost(ev: _RecostEvent) -> float | None:
+    return legacy_reported_cost(ev.cost_reported_usd, ev.provider_id, ev.cost_usd)
 
 
 @dataclass(frozen=True)
