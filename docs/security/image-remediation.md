@@ -318,7 +318,7 @@ The `digests-*` artifacts record the per-platform build output rather than the
 published manifests. The two digest families, and why they differ, are
 explained under *The published baseline this replaces* above.
 
-The fixture first anchored to the versioned release rather than the rolling
+The fixture was first anchored to the versioned release rather than the rolling
 `edge` tag, on purpose: `edge` is rebuilt from `main` on every push, so the tag
 moves with every unrelated change and cannot be the record the exception
 document is anchored to, while a versioned tag is immutable. Against the
@@ -337,8 +337,7 @@ exactly the findings the document waives. Re-scanning `v3.0.0-beta.13` against
 today's database also reports a Critical, CVE-2026-115557 in the bundled
 Python `3.12.15`. The Python in the current base image (`3.12.16`) is not
 affected, so the Critical is fixed in this image and an exception for it would be a false
-record. The digest is immutable, so it stays a stable anchor even though the tag
-moves.
+record.
 
 | Reference | Digest |
 | --- | --- |
