@@ -624,3 +624,82 @@ class TestWorktreeSessions:
         s = build()
         apply_repo_relabels(s, plan_repo_relabels(s))
         assert plan_session_relabels(s).rows_to_relabel == 0
+
+
+class TestSessionThatMovedIntoAWorktree:
+    """A session that started in a parent folder and then moved into a worktree
+    of a repository belongs to that repository — not to the parent folder, which
+    is shallower and would win the shallowest-cwd rule."""
+
+    def test_the_repository_wins_over_the_parent_folder(self):
+        s = _session()
+        _add(s, "a", session_id="s1", cwd="/home/u", project="u")
+        _add(s, "b", session_id="s1", cwd="/home/u/demo-repo/.wt/feat-x", project="demo-repo")
+
+        plan = plan_session_relabels(s)
+
+        assert plan.relabels[0].canonical == "demo-repo"
+        assert plan.rows_to_relabel == 1
+
+    def test_the_whole_session_takes_the_repository_label(self):
+        s = _session()
+        _add(s, "a", session_id="s1", cwd="/home/u", project="u")
+        _add(s, "b", session_id="s1", cwd="/home/u/demo-repo/.wt/feat-x", project="demo-repo")
+
+        apply_session_relabels(s, plan_session_relabels(s))
+
+        assert _projects(s) == {"a": "demo-repo", "b": "demo-repo"}
+
+    def test_the_apply_is_idempotent(self):
+        s = _session()
+        _add(s, "a", session_id="s1", cwd="/home/u", project="u")
+        _add(s, "b", session_id="s1", cwd="/home/u/demo-repo/.wt/feat-x", project="demo-repo")
+
+        apply_session_relabels(s, plan_session_relabels(s))
+        second = plan_session_relabels(s)
+
+        assert second.rows_to_relabel == 0
+
+    def test_a_session_without_a_container_keeps_the_shallowest_cwd(self):
+        s = _session()
+        _add(s, "a", session_id="s1", cwd="/home/u/repo", project="repo")
+        _add(s, "b", session_id="s1", cwd="/home/u/repo/services/api", project="api")
+
+        plan = plan_session_relabels(s)
+
+        assert plan.relabels[0].canonical == "repo"
+
+    def test_a_reported_repository_still_beats_the_container(self):
+        s = _session()
+        _add(s, "a", session_id="s1", cwd="/home/u", project="u")
+        _add(
+            s,
+            "b",
+            session_id="s1",
+            cwd="/home/u/demo-repo/.wt/feat-x",
+            project="real-repo",
+            project_ref="real-repo",
+        )
+
+        plan = plan_session_relabels(s)
+
+        assert plan.relabels[0].canonical == "real-repo"
+
+    def test_a_row_with_its_own_different_repository_is_left_alone(self):
+        s = _session()
+        _add(s, "a", session_id="s1", cwd="/home/u", project="u")
+        _add(
+            s,
+            "b",
+            session_id="s1",
+            cwd="/home/u/demo-repo/.wt/feat-x",
+            project="demo-repo",
+            project_ref="demo-repo",
+        )
+
+        apply_session_relabels(s, plan_session_relabels(s))
+
+        # The row that reported a repository of its own keeps it.
+        assert _projects(s) == {"a": "demo-repo", "b": "demo-repo"}
+        refs = {r.event_id: r.project_ref for r in s.exec(select(UsageEvent)).all()}
+        assert refs == {"a": None, "b": "demo-repo"}

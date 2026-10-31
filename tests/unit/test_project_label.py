@@ -7,6 +7,7 @@ from app.services.project_label import (
     WORKTREE_CONTAINERS,
     clean_worktree_patterns,
     derive_project,
+    is_worktree_container_cwd,
     normalize_cwd,
     pick_canonical_cwd,
     validate_worktree_pattern,
@@ -195,6 +196,57 @@ class TestWorktreeContainers:
         assert (
             pick_canonical_cwd(["/home/u/repo/.wt/a/src", "/home/u/repo/.wt/b"]) == "/home/u/repo"
         )
+
+
+class TestIsWorktreeContainerCwd:
+    """The evidence that a cwd runs through a worktree container.
+
+    Read from the RAW cwd: `normalize_cwd` cuts the container away, so the
+    normalised form no longer carries it.
+    """
+
+    @pytest.mark.parametrize("name", WORKTREE_CONTAINERS)
+    def test_every_default_container_is_detected(self, name):
+        assert is_worktree_container_cwd(f"/home/u/repo/{name}/slug/app")
+
+    @pytest.mark.parametrize("name", WORKTREE_CONTAINERS)
+    def test_windows_separators_and_drive(self, name):
+        assert is_worktree_container_cwd(rf"C:\Users\u\repo\{name}\slug\app")
+
+    @pytest.mark.parametrize("name", WORKTREE_CONTAINERS)
+    def test_case_insensitive(self, name):
+        assert is_worktree_container_cwd(f"/home/u/repo/{name.upper()}/slug")
+
+    def test_a_plain_path_is_not_a_container(self):
+        assert not is_worktree_container_cwd("/home/u/repo")
+        assert not is_worktree_container_cwd("/home/u/repo/services/api")
+
+    def test_a_relative_path_starting_with_a_container_is_not_a_container(self):
+        # No separator before the segment, so there is no root to cut back to —
+        # the same rule `normalize_cwd` applies.
+        assert not is_worktree_container_cwd(".wt/x")
+
+    def test_a_bare_worktrees_folder_is_not_a_container(self):
+        assert not is_worktree_container_cwd("/home/u/repo/worktrees/x")
+
+    def test_a_longer_segment_name_is_not_a_container(self):
+        assert not is_worktree_container_cwd("/home/u/repo/.wtx/y")
+        assert not is_worktree_container_cwd("/home/u/repo/my.wt/y")
+
+    def test_none_and_empty(self):
+        assert not is_worktree_container_cwd(None)
+        assert not is_worktree_container_cwd("")
+
+    def test_an_operator_pattern_counts_as_a_container(self):
+        assert is_worktree_container_cwd("/home/u/repo/worktrees-extra/s", ["worktrees-extra"])
+        assert is_worktree_container_cwd("/home/u/repo-wt/slug/app", ["*-wt"])
+
+    def test_a_pattern_must_match_the_whole_segment(self):
+        assert not is_worktree_container_cwd("/home/u/repo/worktrees-extra2/s", ["worktrees-extra"])
+        assert not is_worktree_container_cwd("/home/u/my-wt-notes/app", ["*-wt"])
+
+    def test_the_defaults_still_apply_when_a_pattern_is_given(self):
+        assert is_worktree_container_cwd("/home/u/repo/.wt/slug", ["*-wt"])
 
 
 class TestWorktreePatterns:

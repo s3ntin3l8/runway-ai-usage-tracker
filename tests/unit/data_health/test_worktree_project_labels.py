@@ -9,6 +9,10 @@ from app.services.data_health.checks.inconsistent_project_labels import (
     InconsistentProjectLabelsCheck,
 )
 from app.services.data_health.checks.worktree_project_labels import WorktreeProjectLabelsCheck
+from app.services.maintenance.project_labels import (
+    plan_session_relabels,
+    plan_worktree_relabels,
+)
 from tests.unit.data_health.conftest import make_event
 
 _KEY = "worktree_project_labels"
@@ -132,3 +136,34 @@ def test_the_scope_prefilter_handles_like_metacharacters(session):
 
     plan = WorktreeProjectLabelsCheck().detect(session)
     assert plan.total_count == 2
+
+
+def test_a_session_that_moved_into_a_worktree_is_labelled_by_its_repository(session):
+    """The session started in the parent folder and then moved into a worktree
+    of `demo-repo`. The parent folder is shallower, so the shallowest-cwd rule
+    would label the session after it."""
+    _event(session, "1", cwd="/home/u", project="u")
+    _event(session, "2", cwd="/home/u/demo-repo/.wt/feat-x", project="demo-repo")
+
+    check = WorktreeProjectLabelsCheck()
+
+    report = check.detect(session)
+    assert report.total_count == 1
+    assert report.groups[0].samples[0].detail == {"from": "u", "to": "demo-repo", "rows": 1}
+
+    check.apply(session, _KEY, {})
+    assert {e.project for e in session.exec(select(UsageEvent)).all()} == {"demo-repo"}
+    assert check.detect(session).groups == []
+
+
+def test_both_planners_agree_on_a_session_that_moved_into_a_worktree(session):
+    """`worktree_project_labels` and `inconsistent_project_labels` share one
+    planner, so they cannot name different targets for the same session."""
+    _event(session, "1", cwd="/home/u", project="u")
+    _event(session, "2", cwd="/home/u/demo-repo/.wt/feat-x", project="demo-repo")
+
+    worktree = plan_worktree_relabels(session)
+    session_wide = plan_session_relabels(session)
+
+    assert [r.canonical for r in worktree.relabels] == ["demo-repo"]
+    assert [r.canonical for r in session_wide.relabels] == ["demo-repo"]

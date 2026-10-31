@@ -23,6 +23,11 @@ make that non-trivial, so they live here as the single source of truth shared by
   the offline migration, never the hot path. Deliberately NOT a global
   longest-prefix collapse — that would swallow projects launched under shared
   ancestors like `/home` or `/home/user/projects`.
+  A session that started in a parent folder and then moved into a worktree is the
+  one case where the shallowest cwd is the *wrong* one: the parent folder is
+  shallower than the repository the worktree belongs to. `is_worktree_container_cwd`
+  exposes the evidence for that, and the caller narrows the candidates to the
+  container's cwds before picking the shallowest of them.
 
 **The derivation is host-independent.** A client's `cwd` is a path *on that
 client's machine*: a Windows sidecar reports `D:\\Projects\\repo`, a macOS or
@@ -201,6 +206,29 @@ def normalize_cwd(cwd: str | None, extra_patterns: Sequence[str] = ()) -> str | 
         break
     cwd = cwd.rstrip("/\\")
     return cwd or None
+
+
+def is_worktree_container_cwd(cwd: str | None, extra_patterns: Sequence[str] = ()) -> bool:
+    """True when `cwd` runs through a worktree-container directory.
+
+    The evidence that a session worked inside a worktree of a repository. It has
+    to be read from the **raw** cwd: `normalize_cwd` cuts the container away, so
+    the normalised form no longer carries it.
+
+    The segment rules are `normalize_cwd`'s own — a whole segment, preceded by a
+    separator, in either separator form, any case — plus the operator's extra
+    patterns, so the two can never disagree about what a container is.
+    """
+    if not cwd:
+        return False
+    patterns = _compile_patterns(tuple(extra_patterns)) if extra_patterns else ()
+    for match in _SEGMENT_RE.finditer(cwd):
+        segment = match.group(1)
+        if segment.lower() in _CONTAINER_NAMES:
+            return True
+        if any(p.regex.fullmatch(segment) for p in patterns):
+            return True
+    return False
 
 
 def derive_project(cwd: str | None, extra_patterns: Sequence[str] = ()) -> str | None:
