@@ -91,11 +91,11 @@ from scripts.sidecar_pkg.event_extractors.opencode import (  # noqa: E402
     _OC_CANONICAL_MAP,
     _OC_PROVIDER_MAP,
     _V2_QUERY,
+    _canonical_for,
     _classify_opencode_error,
     _is_v2,
     _normalize_v2_message,
     _v2_row_status,
-    map_opencode_canonical,
     map_opencode_provider_id,
 )
 
@@ -188,7 +188,8 @@ def _read_opencode_db(db_path: Path) -> _ReclassifyMap:
         rows = _iter_v2_messages(cur) if _is_v2(cur) else _iter_v1_messages(cur)
         for msg_id, data in rows:
             oc_provider_id = data.get("providerID") or ""
-            canonical = map_opencode_canonical(oc_provider_id)
+            model_id = data.get("modelID") or data.get("model", {}).get("id") or ""
+            canonical = _canonical_for(oc_provider_id, model_id)
             if canonical is not None:
                 provider_id, account_id_override = canonical
             else:

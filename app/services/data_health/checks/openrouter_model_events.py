@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlmodel import Session, col, select
+from sqlmodel import Session, select
 
 from app.models.db import UsageEvent
 from app.services.data_health.base import (
@@ -23,12 +23,11 @@ from app.services.data_health.base import (
     Severity,
 )
 from app.services.maintenance.openrouter_retag import (
-    SOURCE_PROVIDER_IDS,
     TARGET_PROVIDER_ID,
     NoTargetAccountError,
     OpenRouterRetagPlan,
+    _source_where,
     apply_openrouter_retag,
-    model_clause,
     plan_openrouter_retag,
 )
 
@@ -67,9 +66,7 @@ class OpenRouterModelEventsCheck(Check):
         present = {
             row[0]
             for row in session.execute(
-                select(UsageEvent.provider_id)
-                .distinct()
-                .where(col(UsageEvent.provider_id).in_(SOURCE_PROVIDER_IDS), model_clause())
+                select(UsageEvent.provider_id).distinct().where(*_source_where())
             )
         }
         groups: list[FindingGroup] = []

@@ -169,7 +169,7 @@ def test_migration_reclassifies_byok_openrouter_and_errors(engine):
         assert by_id["msg_go"].tokens_input == 500
 
         # BYOK usage moves to its own dedicated card, usage numbers preserved.
-        assert by_id["msg_byok"].provider_id == "opencode-byok"
+        assert by_id["msg_byok"].provider_id == "openrouter"
         assert by_id["msg_byok"].kind == "message"
         assert by_id["msg_byok"].tokens_input == 999
 
@@ -195,9 +195,9 @@ def test_migration_reclassifies_byok_openrouter_and_errors(engine):
         rollup_providers = {
             r.provider_id for r in s.exec(select(UsagePeriodRollup)).all() if r.msgs > 0
         }
-        assert "opencode-byok" in rollup_providers
+        assert "openrouter" in rollup_providers
         assert "opencode" in rollup_providers
-        assert "openrouter" not in rollup_providers
+        assert "opencode-byok" not in rollup_providers
 
 
 def test_migration_retags_minimax_coding_plan_preserves_account_id(engine):
@@ -650,7 +650,7 @@ def test_migration_reclassifies_a_compaction_that_carries_usage(engine):
     with Session(engine) as s:
         ev = s.exec(select(UsageEvent)).one()
         # The provider came from the session's model, not the message's.
-        assert ev.provider_id == "opencode-byok"
+        assert ev.provider_id == "openrouter"
         assert ev.kind == "message"
         assert ev.tokens_input == 4242
 

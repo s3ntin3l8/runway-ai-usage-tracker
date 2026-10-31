@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from sqlalchemy import ColumnElement, and_, func, or_
 from sqlmodel import Session, col, select
 
+from app.core.source_apps import HERMES
 from app.models.db import UsageEvent
 from app.services.data_health._provider_accounts import candidate_targets
 from app.services.maintenance._chunked_sql import chunked_update
@@ -51,7 +52,22 @@ def model_clause() -> ColumnElement[bool]:
 
 def _source_where(provider_id: str | None = None) -> list[ColumnElement[bool]]:
     providers = (provider_id,) if provider_id else SOURCE_PROVIDER_IDS
-    return [col(UsageEvent.provider_id).in_(providers), model_clause()]
+    # Hermes reaches OpenCode Zen directly; never treat its events as
+    # OpenRouter traffic even when the model id looks like one.
+    clauses: list[ColumnElement[bool]] = [
+        col(UsageEvent.provider_id).in_(providers),
+        or_(col(UsageEvent.source_app).is_(None), col(UsageEvent.source_app) != HERMES),
+    ]
+    # Prefer the stored raw OpenCode providerID when present; fall back to
+    # the model-id shape test when it is absent (old events / old sidecars).
+    raw = col(UsageEvent.raw_provider_id)
+    clauses.append(
+        or_(
+            raw == "openrouter",
+            and_(raw.is_(None), model_clause()),
+        )
+    )
+    return clauses
 
 
 class NoTargetAccountError(ValueError):

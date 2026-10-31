@@ -594,6 +594,7 @@ class UsageEvent(SQLModel, table=True):  # type: ignore[call-arg]
     tool_calls: int = Field(default=0)  # number of tool_use blocks
     latency_ms: int | None = None  # request duration if logged
     raw_json: str | None = None  # original log line for debugging
+    raw_provider_id: str | None = None  # OpenCode's raw providerID (gateway tag)
     # Claude Code per-message dimensions (Anthropic JSONL; None/0 elsewhere).
     effort: str | None = None  # "low" | "medium" | "high" | "xhigh" | "max"
     speed: str | None = None  # "fast" when fast mode was active, else "standard"

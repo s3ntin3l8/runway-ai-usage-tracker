@@ -22,8 +22,8 @@ The data JSON contains:
   - role: "assistant" | "user"
   - modelID: model name string
   - providerID: "opencode-go" | "opencode" | "opencode-zen" | "open-design-byok"
-    | "openrouter" | "ollama-cloud" | ... (OpenCode's own backend/billing-tier tag — NOT the
-    upstream model maker)
+    | "openrouter" | "ollama-cloud" | ... (OpenCode's gateway/billing-tier tag — which gateway
+    served the message, NOT the upstream model maker or backend)
   - cost: float (USD — authoritative; skip pricing table lookup)
   - tokens: {input, output, reasoning, cache: {read, write}, total}
   - finish: stop reason
@@ -516,6 +516,7 @@ def parse_opencode_events(
                             cwd=cwd,
                             kind="error",
                             error_reason=_classify_opencode_error(err),
+                            raw_provider_id=oc_provider_id or None,
                         )
                     )
                     continue
@@ -541,6 +542,7 @@ def parse_opencode_events(
                         tool_calls=0,
                         effort=effort,
                         cost_usd=cost_usd,
+                        raw_provider_id=oc_provider_id or None,
                     )
                 )
         except CursorReadError:
