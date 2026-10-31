@@ -67,6 +67,19 @@ describe('CheckRow', () => {
     expect(screen.queryByRole('button', { name: /^fix$/i })).not.toBeInTheDocument();
   });
 
+  it('keeps the label span carrying the inline basis class for long labels', async () => {
+    renderWithProviders(
+      <CheckRow
+        check={check({
+          groups: [group({ label: 'a'.repeat(200) })],
+        })}
+      />,
+    );
+    await userEvent.click(screen.getByRole('button', { name: /provider account uses a generic id/i }));
+    const label = screen.getByText('a'.repeat(200));
+    expect(label).toHaveClass('sm:basis-0');
+  });
+
   it('opens the FixDialog when Fix is clicked', async () => {
     renderWithProviders(<CheckRow check={check()} />);
     await userEvent.click(screen.getByRole('button', { name: /provider account uses a generic id/i }));
