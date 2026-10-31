@@ -87,6 +87,8 @@
     "fsevents": true
   },
   "overrides": {
-    "sharp": "$sharp"
+    "sharp": "$sharp",
+    "minimatch": "^11.0.3",
+    "glob": "^14.0.3"
   }
 }

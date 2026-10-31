@@ -1430,6 +1430,58 @@
       "issue": "https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/805",
       "reviewed_at": "2026-10-23T12:00:00Z",
       "expires_at": "2026-11-21T12:00:00Z"
+    },
+    {
+      "id": "CVE-2026-84243",
+      "namespace": "debian:distro:debian:13",
+      "package": "libc-bin",
+      "version": "2.41-12+deb13u4",
+      "architecture": "amd64",
+      "reason": "Affected component is glibc gettext honouring a LANGUAGE entry that contains '/' or '..'. The advisory applies only when LC_MESSAGES is not C, C.<encoding> or POSIX, and the image sets LANG=C.UTF-8 and nothing overrides it. Runway is a non-root Python HTTP server whose environment is fixed by the deployment: no SSH or AcceptEnv, no client-supplied environment, no setuid programs (setuid/setgid stripped from /usr), and an attacker would also need to plant a crafted .mo file in a path the process can read.",
+      "evidence": "https://security-tracker.debian.org/tracker/CVE-2026-84243",
+      "owner": "s3ntin3l8",
+      "issue": "https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1130",
+      "reviewed_at": "2026-10-31T12:00:00Z",
+      "expires_at": "2026-11-21T12:00:00Z"
+    },
+    {
+      "id": "CVE-2026-84243",
+      "namespace": "debian:distro:debian:13",
+      "package": "libc-bin",
+      "version": "2.41-12+deb13u4",
+      "architecture": "arm64",
+      "reason": "Affected component is glibc gettext honouring a LANGUAGE entry that contains '/' or '..'. The advisory applies only when LC_MESSAGES is not C, C.<encoding> or POSIX, and the image sets LANG=C.UTF-8 and nothing overrides it. Runway is a non-root Python HTTP server whose environment is fixed by the deployment: no SSH or AcceptEnv, no client-supplied environment, no setuid programs (setuid/setgid stripped from /usr), and an attacker would also need to plant a crafted .mo file in a path the process can read.",
+      "evidence": "https://security-tracker.debian.org/tracker/CVE-2026-84243",
+      "owner": "s3ntin3l8",
+      "issue": "https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1130",
+      "reviewed_at": "2026-10-31T12:00:00Z",
+      "expires_at": "2026-11-21T12:00:00Z"
+    },
+    {
+      "id": "CVE-2026-84243",
+      "namespace": "debian:distro:debian:13",
+      "package": "libc6",
+      "version": "2.41-12+deb13u4",
+      "architecture": "amd64",
+      "reason": "Affected component is glibc gettext honouring a LANGUAGE entry that contains '/' or '..'. The advisory applies only when LC_MESSAGES is not C, C.<encoding> or POSIX, and the image sets LANG=C.UTF-8 and nothing overrides it. Runway is a non-root Python HTTP server whose environment is fixed by the deployment: no SSH or AcceptEnv, no client-supplied environment, no setuid programs (setuid/setgid stripped from /usr), and an attacker would also need to plant a crafted .mo file in a path the process can read.",
+      "evidence": "https://security-tracker.debian.org/tracker/CVE-2026-84243",
+      "owner": "s3ntin3l8",
+      "issue": "https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1130",
+      "reviewed_at": "2026-10-31T12:00:00Z",
+      "expires_at": "2026-11-21T12:00:00Z"
+    },
+    {
+      "id": "CVE-2026-84243",
+      "namespace": "debian:distro:debian:13",
+      "package": "libc6",
+      "version": "2.41-12+deb13u4",
+      "architecture": "arm64",
+      "reason": "Affected component is glibc gettext honouring a LANGUAGE entry that contains '/' or '..'. The advisory applies only when LC_MESSAGES is not C, C.<encoding> or POSIX, and the image sets LANG=C.UTF-8 and nothing overrides it. Runway is a non-root Python HTTP server whose environment is fixed by the deployment: no SSH or AcceptEnv, no client-supplied environment, no setuid programs (setuid/setgid stripped from /usr), and an attacker would also need to plant a crafted .mo file in a path the process can read.",
+      "evidence": "https://security-tracker.debian.org/tracker/CVE-2026-84243",
+      "owner": "s3ntin3l8",
+      "issue": "https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1130",
+      "reviewed_at": "2026-10-31T12:00:00Z",
+      "expires_at": "2026-11-21T12:00:00Z"
     }
   ]
 }
