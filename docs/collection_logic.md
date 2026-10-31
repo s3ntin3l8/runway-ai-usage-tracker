@@ -248,8 +248,9 @@ their history. The rules are specified in
 - **On by default; turning it off.** The collector runs unless `CLAUDE_CLOUD_COLLECTOR_ENABLED=false`
   is set. Enabled, it reads cloud-runner sessions only (`environment_kind == anthropic_cloud`),
   never scrapes local files, and needs one eligible Claude Code OAuth login already held by the
-  server (exact source, account and organization checks; read-only, no refresh). Without one a
-  cycle logs `outcome=source_ineligible` and does nothing. It first runs about two minutes after
+  server (exact source, account and organization checks; read-only, no refresh). With no Claude
+  login at all a cycle does nothing and logs nothing; with a login that is not eligible it logs
+  `outcome=source_ineligible` and does nothing. Neither makes a provider request. It first runs about two minutes after
   start, then every `CLAUDE_CLOUD_COLLECTOR_INTERVAL_SECONDS` (default 1800, about 30 minutes;
   sooner while it has work left). Turning it off stops new collection; events already written stay.
 - **Which sessions.** `GET /v1/code/sessions` is listed page by page (the real API omits
