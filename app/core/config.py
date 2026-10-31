@@ -177,9 +177,10 @@ class Settings(BaseSettings):
     TOKEN_AUTO_REFRESH_THRESHOLD_SECONDS: int = 600
 
     # Server-side collector for Claude Code cloud-runner sessions (message and per-turn events
-    # from each session's history). Off by default until it has been validated on real data;
-    # see docs/collection_logic.md and docs/claude-cloud-event-contract.md.
-    CLAUDE_CLOUD_COLLECTOR_ENABLED: bool = False
+    # from each session's history). On by default; it does nothing without an eligible Code
+    # OAuth login. Set CLAUDE_CLOUD_COLLECTOR_ENABLED=false to turn it off. See
+    # docs/collection_logic.md and docs/claude-cloud-event-contract.md.
+    CLAUDE_CLOUD_COLLECTOR_ENABLED: bool = True
     CLAUDE_CLOUD_COLLECTOR_INTERVAL_SECONDS: int = 1800
 
     KEYCHAIN_PROMPT_MODE: str = "always"

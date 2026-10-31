@@ -240,11 +240,19 @@ never change the quota percentage — only the token and message breakdown.
 
 Local scraping already covers CLI, Desktop and bridge sessions. Claude Code sessions that run
 on Anthropic's cloud runner leave no local transcript, so a server-side collector
-(`app/services/claude_cloud_collector.py`, `CLAUDE_CLOUD_COLLECTOR_ENABLED`, default off) reads
+(`app/services/claude_cloud_collector.py`, `CLAUDE_CLOUD_COLLECTOR_ENABLED`, on by default) reads
 their history. The rules are specified in
 [the cloud event contract](claude-cloud-event-contract.md); the wire facts behind them are in
 [the source-shape evidence](evidence/acceptance/claude-cloud-source-shape-20261029.md).
 
+- **On by default; turning it off.** The collector runs unless `CLAUDE_CLOUD_COLLECTOR_ENABLED=false`
+  is set. Enabled, it reads cloud-runner sessions only (`environment_kind == anthropic_cloud`),
+  never scrapes local files, and needs one eligible Claude Code OAuth login already held by the
+  server (exact source, account and organization checks; read-only, no refresh). With no Claude
+  login at all a cycle does nothing and logs nothing; with a login that is not eligible it logs
+  `outcome=source_ineligible` and does nothing. Neither makes a provider request. It first runs about two minutes after
+  start, then every `CLAUDE_CLOUD_COLLECTOR_INTERVAL_SECONDS` (default 1800, about 30 minutes;
+  sooner while it has work left). Turning it off stops new collection; events already written stay.
 - **Which sessions.** `GET /v1/code/sessions` is listed page by page (the real API omits
   `next_cursor` on the last page, which the collector, like the verifier, treats as the end; a
   declared `has_more` that disagrees with the cursor fails the cycle as `unsupported_contract`). Only

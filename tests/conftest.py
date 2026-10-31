@@ -424,6 +424,9 @@ def setup_test_settings(monkeypatch):
         "DB_ENCRYPTION_KEY",
     ):
         monkeypatch.setattr(settings, field, Settings.model_fields[field].default)
+    # The cloud collector is on by default, but no test should start its background loop
+    # (and so never reach the provider); tests of the flag itself build a fresh Settings.
+    monkeypatch.setattr(settings, "CLAUDE_CLOUD_COLLECTOR_ENABLED", False)
 
 
 @pytest.fixture(autouse=True)
