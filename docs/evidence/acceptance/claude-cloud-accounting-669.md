@@ -2,7 +2,7 @@
 
 The general cloud collector is not enabled. A narrower server-side collector for **cloud-runner
 sessions only** (`environment_kind == anthropic_cloud`) exists behind
-`CLAUDE_CLOUD_COLLECTOR_ENABLED` (default off): it reads each session's history and writes message
+`CLAUDE_CLOUD_COLLECTOR_ENABLED` (on by default since #1006; `false` turns it off): it reads each session's history and writes message
 and per-turn events, per [the event contract](../../claude-cloud-event-contract.md) and
 [the wire-shape evidence](claude-cloud-source-shape-20261029.md); see
 [collection logic](../../collection_logic.md#claude-cloud-runner-sessions). It does not replace

@@ -601,7 +601,7 @@ another module's private member.
 
 `app/services/claude_cloud_collector.py` is the one server-side API collector that writes
 `usage_events` itself (all other collectors return cards): for Claude Code cloud-runner
-sessions only, behind `CLAUDE_CLOUD_COLLECTOR_ENABLED` (default off). It subclasses the
+sessions only, behind `CLAUDE_CLOUD_COLLECTOR_ENABLED` (on by default; `false` turns it off). It subclasses the
 probe's read-only client, so it inherits the exact-source, no-refresh and account checks, and
 keeps one checkpoint row per session in `claude_cloud_session_checkpoint`. The two tables of the
 first collector (`claude_cloud_session_usage`, `claude_cloud_collector_state`) stay in the schema,

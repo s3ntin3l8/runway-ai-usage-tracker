@@ -167,7 +167,7 @@ async def lifespan(app: FastAPI):
     # every 24h so the fleet view can flag outdated sidecars).
     sidecar_version_checker.start()
 
-    # Opt-in: collect usage for Claude Code cloud-runner sessions from the session list.
+    # On by default (CLAUDE_CLOUD_COLLECTOR_ENABLED=false disables it): collect usage for Claude Code cloud-runner sessions from the session list.
     claude_cloud_collector = ClaudeCloudCollector(settings.CLAUDE_CLOUD_COLLECTOR_INTERVAL_SECONDS)
     if settings.CLAUDE_CLOUD_COLLECTOR_ENABLED:
         claude_cloud_collector.start()
