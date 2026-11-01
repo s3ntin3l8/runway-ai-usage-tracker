@@ -322,7 +322,7 @@ def test_reset_provider_invalidates_a_stale_top_models_cache(session):
 
     from unittest.mock import AsyncMock, patch
 
-    with patch("app.api.endpoints.usage.manager.reset_collector", new_callable=AsyncMock):
+    with patch("app.api.endpoints.usage_overview.manager.reset_collector", new_callable=AsyncMock):
         client.post("/api/v1/usage/reset/anthropic")
 
     _event(session, "e2", now, model_id="sonnet")

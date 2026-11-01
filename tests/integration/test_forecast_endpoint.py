@@ -188,7 +188,7 @@ class TestForecastEndpoint:
         from unittest.mock import AsyncMock, patch
 
         with patch(
-            "app.api.endpoints.usage.manager.collect_all", new_callable=AsyncMock
+            "app.api.endpoints.usage_forecast.manager.collect_all", new_callable=AsyncMock
         ) as mock_collect_all:
             mock_collect_all.return_value = []
             client = TestClient(fastapi_app)
