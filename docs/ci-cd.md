@@ -93,14 +93,48 @@ Workflows live in `.github/workflows/`.
     `build-docker` needs `test-python`, `test-frontend` and
     `dependency-audit` to pass on `main`. It audits the shipped (non-dev) frontend
     dependencies at any severity and the whole tree, build tooling included, at
-    moderate and up: a low-severity finding with no patched release that is
-    reachable only through a dev-only package would otherwise keep the job, and
-    with it the edge image, red (#1033). So that finding does not vanish with the
-    job log, the weekly `npm-audit-weekly.yml` audits the whole tree at every
-    severity, writes the list to its job summary and keeps it in one tracking
-    issue labelled `npm-audit` (edited, closed when clean, reopened on
-    findings). It is advisory: nothing depends on it and it is not a required
-    check (#1035).
+    moderate and up. The gate stops at moderate on purpose, even though the tree
+    now audits clean at every severity: a low-severity finding with no patched
+    release that is reachable only through a dev-only package would otherwise keep
+    the job, and with it the edge image, red (#1033, #744). A resilient job beats
+    full low-severity coverage, so that finding does not vanish with the job log:
+    the weekly `npm-audit-weekly.yml` audits the whole tree at every severity,
+    writes the list to its job summary and keeps it in one tracking issue
+    labelled `npm-audit` (edited, closed when clean, reopened on findings). It is
+    advisory: nothing depends on it and it is not a required check (#1035).
+
+    The one low finding that used to sit in the dev tree — `deepmerge`
+    (GHSA-gcqx-w48m-w2h4), reached through the dev-only `vite-plugin-pwa` →
+    `workbox-build` → `@rollup/plugin-node-resolve` chain — is gone.
+    `webapp/package.json` overrides `deepmerge` to a patched fork, because the
+    advisory has no patched upstream release (4.3.1 is the latest and is in
+    range) and upstream closed the fix pull request unmerged; downgrading is not
+    an option either, since the versions below the affected range predate the
+    guard. The shipped tree was never affected: `npm audit --omit=dev` reports
+    0 either way.
+
+    **The override, and what it was checked against.** The baseline for the next
+    bump is recorded here because the check that justifies accepting a third-party
+    fork otherwise lives only in a pull-request thread:
+
+    | | |
+    | --- | --- |
+    | Override | `deepmerge` → `npm:@afeisite/deepmerge-clone@4.3.2` |
+    | Tarball | `https://registry.npmjs.org/@afeisite/deepmerge-clone/-/deepmerge-clone-4.3.2.tgz` |
+    | Integrity | `sha512-qu46OwxL9O2JrCoKOwdUVYX7GGaCDXLh1PPPmw0o4Zn+NqyJFEfR5xmonC92qVEOygBdEqzpY1ozGMiRAePcOQ==` |
+    | Diffed against | upstream `deepmerge` 4.3.1 — all three shipped builds: `index.js`, `dist/cjs.js` and `dist/umd.js` |
+    | The diff | in each of the three, one `getKeys()` filter dropping `__proto__`, `constructor` and `prototype` — the key-name deny-list the advisory's remediation section recommends |
+    | Contents | eight files: `package.json`, `index.js`, `index.d.ts`, `dist/cjs.js`, `dist/umd.js`, `changelog.md`, `readme.md`, `license.txt`. No dependencies, no install script |
+    | Advisory read | [GHSA-gcqx-w48m-w2h4](https://github.com/advisories/GHSA-gcqx-w48m-w2h4) (CVE-2026-93753), 2026-11-01: `>= 4.2.0, <= 4.3.1`, no patched version |
+    | Licence | MIT |
+    | Provenance | no SLSA attestation; single maintainer (`w530385371`); repository `MrMoveon/deepmerge-clone` |
+
+    The fork is trusted on the strength of that diff and the pinned integrity
+    hash, not on the publisher's track record. A bump has to repeat the diff
+    against the same upstream baseline, in all three shipped builds, and it has
+    to keep the integrity hash in step with `webapp/package-lock.json` — the
+    lockfile test asserts that the two agree. Removing the override is tracked
+    in #1144.
 
     Moving the repositories to an organization would enable the queue, but
     that is not only a settings change: the workflows that produce the

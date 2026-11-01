@@ -29,6 +29,7 @@ import json
 from pathlib import Path
 
 import pytest
+from packaging.version import Version
 
 ROOT = Path(__file__).resolve().parents[2]
 WEBAPP_PACKAGE_JSON = ROOT / "webapp" / "package.json"
@@ -95,6 +96,17 @@ def _read_json(path: Path) -> dict:
 def _bare_package_name(path: str) -> str:
     """The package name without the node_modules path that holds it."""
     return path.rsplit("node_modules/", 1)[-1]
+
+
+def _installed_name(path: str, meta: dict) -> str:
+    """The name a lockfile entry installs under.
+
+    npm writes an explicit ``name`` only when it differs from the name the
+    path implies - which is exactly what an alias does. A plain entry carries
+    no ``name`` key at all, so reading one there would report every ordinary
+    package as nameless and miss the very entry this test looks for.
+    """
+    return meta.get("name") or _bare_package_name(path)
 
 
 def _split_policy_key(key: str) -> tuple[str, str]:
@@ -274,6 +286,146 @@ class TestWebappInstallScriptPolicy:
             "to running an uncovered install script with a notice instead of "
             "failing the install."
         )
+
+
+class TestWebappDeepmergeOverride:
+    """The deepmerge advisory has no patched upstream release, so it is overridden.
+
+    GHSA-gcqx-w48m-w2h4 (CVE-2026-93753) covers deepmerge 4.2.0 through 4.3.1 and
+    carries no ``first_patched_version``: 4.3.1 is the latest release, and upstream
+    closed the fix pull request unmerged. There is nothing to upgrade to.
+
+    Downgrading is not a fix either. 4.1.2 predates the guard that
+    ``propertyIsUnsafe`` provides, so it fails the exploit on every bypass shape
+    the advisory describes -- it is strictly worse than 4.3.1. Its advisory goes
+    unreported only because the affected range starts at 4.2.0.
+
+    The tree reaches deepmerge through the dev-only PWA chain (``vite-plugin-pwa``
+    > ``workbox-build`` > ``@rollup/plugin-node-resolve``), and the shipped tree
+    audits clean, but ``npm audit`` matches on the package name and the version,
+    so the whole tree stays red until that identity changes. The override points
+    it at a patched fork instead. These tests keep that pin honest: dropping the
+    override fails here rather than quietly reintroducing the advisory.
+    """
+
+    # The advisory's affected range, as published: GHSA-gcqx-w48m-w2h4
+    # (CVE-2026-93753), read 2026-11-01, which gives ">= 4.2.0, <= 4.3.1" and no
+    # patched version. It marks which versions are the vulnerable ones, not which
+    # are safe: everything below 4.2.0 is unpatched too. Re-read the advisory
+    # when the range moves - a wider one has to widen this bound too, or the
+    # test keeps asserting the old bounds and stays green.
+    ADVISORY_RANGE = (Version("4.2.0"), Version("4.3.1"))
+    VULNERABLE_NAME = "deepmerge"
+
+    def _override_target(self) -> tuple[str, str]:
+        """The name and version the override resolves to.
+
+        An alias reads ``npm:<name>@<version>``. The name may be scoped, so the
+        version separator is the *last* ``@`` - the same rule the policy key
+        parser above follows.
+        """
+        overrides = _read_json(WEBAPP_PACKAGE_JSON).get("overrides", {})
+        spec = overrides.get(self.VULNERABLE_NAME)
+
+        assert spec, (
+            "webapp/package.json no longer overrides deepmerge, so the tree "
+            "resolves the vulnerable release again (GHSA-gcqx-w48m-w2h4). There "
+            "is no patched upstream release to move to, so keep the override or "
+            "replace it deliberately."
+        )
+        assert spec.startswith("npm:"), (
+            f"the deepmerge override reads {spec!r} rather than an npm: alias. "
+            "The advisory is matched on the package name, so a plain version pin "
+            "leaves the finding in place."
+        )
+
+        rest = spec[len("npm:") :]
+        separator = rest.rfind("@")
+        assert separator > 0, f"the deepmerge override {spec!r} names no version"
+        return rest[:separator], rest[separator + 1 :]
+
+    def test_the_tree_resolves_deepmerge_to_the_overridden_package(self):
+        """The overridden package must be what the tree actually installs."""
+        name, version = self._override_target()
+        packages = _read_json(WEBAPP_LOCKFILE)["packages"]
+
+        found = sorted(
+            {
+                f"{_installed_name(path, packages[path])}@{packages[path].get('version')}"
+                for path in packages
+                if _bare_package_name(path) == self.VULNERABLE_NAME
+            }
+        )
+        # An empty tree is not allowed here. If a future @rollup/plugin-node-resolve
+        # drops the dependency, the override is inert and the tree audits clean -
+        # but the baseline recorded in docs/ci-cd.md would still describe a fork
+        # nothing installs. The record and this test have to be updated together,
+        # rather than one of the two passing quietly while the other demands an
+        # edit.
+        assert found == [f"{name}@{version}"], (
+            f"webapp/package-lock.json resolves deepmerge to {found}, but "
+            f"webapp/package.json overrides it to {name}@{version}. Three routes "
+            "get here: the lockfile drifted from the manifest and wants "
+            "regenerating; the override no longer covers the copy the tree "
+            "installs; or the dependency left the tree entirely, in which case "
+            "this test and the baseline in docs/ci-cd.md have to be edited "
+            "together."
+        )
+
+    def test_no_package_in_the_tree_carries_the_vulnerable_identity(self):
+        """The advisory is matched on the name and the version, so both must be gone."""
+        low, high = self.ADVISORY_RANGE
+        packages = _read_json(WEBAPP_LOCKFILE)["packages"]
+
+        vulnerable = sorted(
+            f"{path} -> {_installed_name(path, meta)}@{meta.get('version')}"
+            for path, meta in packages.items()
+            if _installed_name(path, meta) == self.VULNERABLE_NAME
+            and meta.get("version")
+            and low <= Version(meta["version"]) <= high
+        )
+        assert not vulnerable, (
+            "these packages are the vulnerable deepmerge release "
+            "(GHSA-gcqx-w48m-w2h4, deepmerge 4.2.0-4.3.1):\n"
+            + "\n".join(f"  - {entry}" for entry in vulnerable)
+            + "\nnpm audit matches the advisory on the package name and the version, "
+            "so these entries keep the whole tree red. The override in "
+            "webapp/package.json is what removes them."
+        )
+
+    def test_the_recorded_baseline_matches_the_lockfile(self):
+        """docs/ci-cd.md records the fork's integrity hash; it must not drift.
+
+        The record is the durable copy of the check that justifies accepting a
+        third-party fork - what was diffed against upstream, and the hash of
+        what was diffed. A bump that changes the lockfile without updating the
+        document leaves the record pointing at a tarball nobody reviewed, and
+        the drift is invisible: the hash is a line of prose, and nothing reads
+        it back.
+        """
+        name, version = self._override_target()
+        packages = _read_json(WEBAPP_LOCKFILE)["packages"]
+        document = (ROOT / "docs" / "ci-cd.md").read_text(encoding="utf-8")
+
+        # The fork's name comes from the override rather than from a literal
+        # here, so it is written down once.
+        recorded = sorted(
+            meta["integrity"]
+            for meta in packages.values()
+            if meta.get("name") == name and meta.get("version") == version and meta.get("integrity")
+        )
+        assert recorded, (
+            f"the lockfile installs no {name}@{version}, so the baseline recorded "
+            "in docs/ci-cd.md is stale. Either the override went away or the fork "
+            "was renamed; update the document and this test to match."
+        )
+        for integrity in recorded:
+            assert integrity in document, (
+                f"docs/ci-cd.md does not record the integrity hash {integrity} of "
+                "the deepmerge override the lockfile installs. The document is the "
+                "durable copy of what was checked against upstream, so it has to "
+                "carry the hash of the tarball that was checked."
+            )
 
 
 class TestFrontendToolchainPin:
