@@ -1,13 +1,9 @@
-from typing import TYPE_CHECKING, Any
-
-from app.api.endpoints._shared import _validate_iso_param
-
-if TYPE_CHECKING:
-    pass
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlmodel import Session
 
+from app.api.endpoints._shared import _validate_iso_param
 from app.core.date_utils import parse_iso8601_utc
 from app.core.db import get_session
 from app.core.rate_limit import limiter
@@ -21,7 +17,6 @@ from app.services.event_query import (
 
 # Window type rank for selecting the "longest" window among multiple cards.
 # Higher rank = longer / more authoritative window.
-WINDOW_RANK: dict[str, int] = {"monthly": 4, "weekly": 3, "daily": 2, "session": 1}
 
 router = APIRouter()
 

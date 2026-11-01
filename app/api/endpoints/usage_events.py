@@ -1,8 +1,5 @@
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    pass
+from typing import Any
 
 from fastapi import APIRouter, Depends, Query, Request
 from sqlmodel import Session
@@ -23,7 +20,6 @@ from app.services.queries import (
 
 # Window type rank for selecting the "longest" window among multiple cards.
 # Higher rank = longer / more authoritative window.
-WINDOW_RANK: dict[str, int] = {"monthly": 4, "weekly": 3, "daily": 2, "session": 1}
 
 router = APIRouter()
 

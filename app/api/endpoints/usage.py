@@ -11,5 +11,3 @@ from app.api.endpoints.usage_sessions import *  # noqa: F401,F403
 
 router = _r
 
-from app.services.collector_manager import manager  # noqa: F401
-from app.services.queries.sessions import query_sessions_paginated  # noqa: F401

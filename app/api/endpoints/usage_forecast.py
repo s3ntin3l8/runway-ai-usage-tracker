@@ -1,16 +1,12 @@
 import asyncio
 import json
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
-
-from app.api.endpoints._shared import _FORECAST_CACHE_TTL, _normalize_filter
-
-if TYPE_CHECKING:
-    pass
+from typing import Any
 
 from fastapi import APIRouter, Depends, Query, Request
 from sqlmodel import Session, select
 
+from app.api.endpoints._shared import _FORECAST_CACHE_TTL, _normalize_filter
 from app.core.cache import cache_get, cache_set
 from app.core.db import get_session
 from app.core.rate_limit import limiter
@@ -26,7 +22,6 @@ from app.services.forecast import compute_all_forecasts
 
 # Window type rank for selecting the "longest" window among multiple cards.
 # Higher rank = longer / more authoritative window.
-WINDOW_RANK: dict[str, int] = {"monthly": 4, "weekly": 3, "daily": 2, "session": 1}
 
 router = APIRouter()
 

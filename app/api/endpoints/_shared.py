@@ -1,10 +1,7 @@
 import re
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from zoneinfo import ZoneInfo
-
-if TYPE_CHECKING:
-    pass
 
 from fastapi import HTTPException
 from sqlmodel import Session
@@ -14,7 +11,6 @@ from app.core.utils import resolve_user_tz
 
 # Window type rank for selecting the "longest" window among multiple cards.
 # Higher rank = longer / more authoritative window.
-WINDOW_RANK: dict[str, int] = {"monthly": 4, "weekly": 3, "daily": 2, "session": 1}
 
 
 def _validate_iso_param(name: str, value: str | None) -> None:
