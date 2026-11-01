@@ -730,6 +730,28 @@ class TestSessionThatMovedIntoAWorktree:
 
         assert plan.relabels[0].canonical == "repo-a"
 
+    def test_an_operator_pattern_narrows_the_same_way(self):
+        """The sibling pattern form (`*-wt`) narrows the same way the built-in
+        containers do, so the two scans stay honest where they combine."""
+        import json
+
+        from app.models.db import SystemConfig
+        from app.services.worktree_patterns import invalidate_worktree_patterns
+
+        s = _session()
+        s.add(SystemConfig(worktree_patterns_json=json.dumps(["*-wt"])))
+        s.commit()
+        invalidate_worktree_patterns()
+        try:
+            _add(s, "a", session_id="s1", cwd="/home/u", project="u")
+            _add(s, "b", session_id="s1", cwd="/home/u/demo-wt/slug/app", project="app")
+
+            plan = plan_session_relabels(s)
+
+            assert plan.relabels[0].canonical == "demo"
+        finally:
+            invalidate_worktree_patterns()
+
     def test_a_worktree_that_normalises_to_nothing_does_not_lose_the_label(self):
         """A cwd that is nothing but a container has no repository name left; the
         session keeps the label it had."""

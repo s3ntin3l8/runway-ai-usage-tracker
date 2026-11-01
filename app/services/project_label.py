@@ -15,7 +15,7 @@ make that non-trivial, so they live here as the single source of truth shared by
   separator, so a relative path that starts with `.claude` is left alone: there
   is no root to cut back to, and cutting it would lose the label entirely.
   The operator can add more worktree directory names (`worktree_patterns` in
-  Settings); `normalize_cwd` is the only place that applies them. See
+  Settings); the worktree-segment scan is the only place that applies them. See
   `docs/collection_logic.md` for the cut rule.
 - **Rule 2 — per-session shallowest cwd**: Claude Code records a `cwd` that drifts
   into subfolders (`services/api`, `apps/web`, …) mid-session. The shallowest cwd
