@@ -53,8 +53,8 @@ Before pushing, run the full lint/typecheck/test/format gate.
 - Hermes reviews every PR automatically when it opens; asking through the relay
   afterwards is still safe, since it refuses a review that is already running or
   already landed.
-- PRs are squash-merged and Release Please parses the PR title: an unprefixed
-  title silently drops out of the changelog.
+- Release Please parses the squash-merged PR title: an unprefixed title
+  silently drops out of the changelog.
 - The full gate is `make lint && make test && make web-lint && make web-test`
   (native Windows: `python scripts/dev_checks.py gate`). `make install` wires
   the same checks into git hooks — pre-commit runs ruff, mypy, detect-secrets
@@ -65,6 +65,9 @@ Before pushing, run the full lint/typecheck/test/format gate.
 - The branch requires every conversation resolved, and an `APPROVED` review can
   still carry an open inline thread. The REST `PUT /pulls/<n>/merge` endpoint
   silently skips that gate, so don't merge through it.
+- Worktrees live at `.wt/<slug>`, a flat slug rather than the branch name (`.wt`
+  is a container `app/services/project_label.py` knows about, and a branch such
+  as `feat/foo` would nest a directory).
 - Remove a worktree with `python scripts/dev_checks.py remove-worktree <path>`,
   never `git worktree remove`: a worktree that links the main checkout's
   `.venv` holds a directory junction, and `git worktree remove` follows it and
