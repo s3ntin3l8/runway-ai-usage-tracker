@@ -308,8 +308,12 @@ class TestWebappDeepmergeOverride:
     override fails here rather than quietly reintroducing the advisory.
     """
 
-    # The advisory's affected range. It marks which versions are the vulnerable
-    # ones, not which are safe: everything below 4.2.0 is unpatched too.
+    # The advisory's affected range, as published: GHSA-gcqx-w48m-w2h4
+    # (CVE-2026-93753), read 2026-11-01, which gives ">= 4.2.0, <= 4.3.1" and no
+    # patched version. It marks which versions are the vulnerable ones, not which
+    # are safe: everything below 4.2.0 is unpatched too. Re-read the advisory
+    # when the range moves - a wider one has to widen this bound too, or the
+    # test keeps asserting the old bounds and stays green.
     ADVISORY_RANGE = (Version("4.2.0"), Version("4.3.1"))
     VULNERABLE_NAME = "deepmerge"
 

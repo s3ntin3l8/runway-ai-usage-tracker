@@ -113,6 +113,28 @@ Workflows live in `.github/workflows/`.
     guard. The shipped tree was never affected: `npm audit --omit=dev` reports
     0 either way.
 
+    **The override, and what it was checked against.** The baseline for the next
+    bump is recorded here because the check that justifies accepting a third-party
+    fork otherwise lives only in a pull-request thread:
+
+    | | |
+    | --- | --- |
+    | Override | `deepmerge` → `npm:@afeisite/deepmerge-clone@4.3.2` |
+    | Tarball | `https://registry.npmjs.org/@afeisite/deepmerge-clone/-/deepmerge-clone-4.3.2.tgz` |
+    | Integrity | `sha512-qu46OwxL9O2JrCoKOwdUVYX7GGaCDXLh1PPPmw0o4Zn+NqyJFEfR5xmonC92qVEOygBdEqzpY1ozGMiRAePcOQ==` |
+    | Diffed against | upstream `deepmerge` 4.3.1's `dist/cjs.js` |
+    | The diff | one `getKeys()` filter dropping `__proto__`, `constructor` and `prototype` — the key-name deny-list the advisory's remediation section recommends |
+    | Contents | three files, no dependencies, no install script |
+    | Advisory read | [GHSA-gcqx-w48m-w2h4](https://github.com/advisories/GHSA-gcqx-w48m-w2h4) (CVE-2026-93753), 2026-11-01: `>= 4.2.0, <= 4.3.1`, no patched version |
+    | Licence | MIT |
+    | Provenance | no SLSA attestation; single maintainer (`w530385371`); repository `MrMoveon/deepmerge-clone` |
+
+    The fork is trusted on the strength of that diff and the pinned integrity
+    hash, not on the publisher's track record. A bump has to repeat the diff
+    against the same upstream baseline, and it has to keep the integrity hash in
+    step with `webapp/package-lock.json`. Removing the override is tracked in
+    #1144.
+
     Moving the repositories to an organization would enable the queue, but
     that is not only a settings change: the workflows that produce the
     required checks would need a `merge_group` trigger, and the advisory jobs
