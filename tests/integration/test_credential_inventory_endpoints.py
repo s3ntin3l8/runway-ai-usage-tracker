@@ -36,7 +36,7 @@ def session_fixture():
 @pytest.fixture(name="cache")
 def cache_fixture(monkeypatch) -> TokenCache:
     fresh = TokenCache()
-    monkeypatch.setattr("app.api.endpoints.system.token_cache", fresh)
+    monkeypatch.setattr("app.api.endpoints.system_credentials.token_cache", fresh)
     monkeypatch.setattr(credential_inventory, "token_cache", fresh)
     return fresh
 

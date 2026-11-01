@@ -435,7 +435,7 @@ def test_credential_source_audit_is_committed_when_collector_reset_fails(
     )
     session.commit()
     monkeypatch.setattr(
-        "app.api.endpoints.system.manager.reset_collector",
+        "app.api.endpoints.system_provider_config.manager.reset_collector",
         AsyncMock(side_effect=RuntimeError("reset failed")),
     )
 
@@ -2237,7 +2237,7 @@ CONSOLE_ORG_ID = "11111111-1111-4111-8111-111111111111"
 
 
 def _mock_console_access(monkeypatch):
-    from app.api.endpoints import system
+    from app.api.endpoints import system_provider_config as system
 
     orgs = [{"id": CONSOLE_ORG_ID, "name": "API organization"}]
     monkeypatch.setattr(system, "console_organizations", AsyncMock(return_value=orgs))
@@ -2311,7 +2311,7 @@ def test_console_discovery_preview_and_save_keep_organization_identity(
 
 
 def test_console_creation_requires_accessible_org_and_billing(client, monkeypatch):
-    from app.api.endpoints import system
+    from app.api.endpoints import system_provider_config as system
     from app.services.collectors.anthropic_console import ConsoleAPIError
 
     _mock_console_access(monkeypatch)
@@ -2337,7 +2337,7 @@ def test_console_creation_requires_accessible_org_and_billing(client, monkeypatc
 def test_console_unchanged_cookie_allows_settings_edits_during_outage(client, session, monkeypatch):
     from fastapi import HTTPException
 
-    from app.api.endpoints import system
+    from app.api.endpoints import system_provider_config as system
     from app.models.db import ProviderConfig
 
     _mock_console_access(monkeypatch)

@@ -12,7 +12,7 @@ import json
 from pathlib import Path
 
 from app import __version__
-from app.api.endpoints import system as system_endpoint
+from app.api.endpoints import system_health as system_endpoint
 from app.main import app
 from tests.fixtures.test_client import TestClient
 
