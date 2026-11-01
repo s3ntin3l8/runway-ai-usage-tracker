@@ -46,7 +46,25 @@ def _is_excluded(provider_id: str, model_id: str) -> bool:
     return is_priced_on_purpose_free(provider_id, model_id)
 
 
-def _classify_events(session: Session) -> dict[tuple[str, str], dict[str, int]]:
+class _Buckets(dict[str, int]):
+    """The four public categories for one (provider_id, model_id) pair.
+
+    A plain mapping of counter name to count, so that the memory benchmark's
+    digest of `_classify_events` keeps matching a baseline it compares
+    against (see `docs/server-memory.md`) — the extra fact below is an
+    attribute, not a fifth counter.
+
+    `seed_proof` counts the `needs_seed_row` events that a PRICING_SEED row
+    would not help: the account is billed pay-as-you-go and has a reported
+    cost of $0, so the report wins over any estimate and re-costing computes
+    the same $0. The group reason needs that distinction — advising a seed
+    row there would be a dead end.
+    """
+
+    seed_proof: int = 0
+
+
+def _classify_events(session: Session) -> dict[tuple[str, str], _Buckets]:
     configs = {
         (provider_id, account_id): billing_type
         for provider_id, account_id, billing_type in session.execute(
@@ -55,7 +73,7 @@ def _classify_events(session: Session) -> dict[tuple[str, str], dict[str, int]]:
             )
         ).all()
     }
-    result: dict[tuple[str, str], dict[str, int]] = {}
+    result: dict[tuple[str, str], _Buckets] = {}
     pricing_index = PricingIndex.load(session)
     price_rows = {}
     events = session.execute(
@@ -110,16 +128,26 @@ def _classify_events(session: Session) -> dict[tuple[str, str], dict[str, int]]:
         if _is_excluded(provider_id, model_id):
             continue
         key = (provider_id, model_id)
-        buckets = result.setdefault(
-            key,
-            {"recost_fixes_it": 0, "verified_zero": 0, "source_reported": 0, "needs_seed_row": 0},
-        )
+        buckets = result.get(key)
+        if buckets is None:
+            # Not `setdefault`: it evaluates its default eagerly, so every
+            # event would allocate a throwaway `_Buckets`. The classify case
+            # is what the memory benchmark tunes for (docs/server-memory.md).
+            buckets = _Buckets(
+                recost_fixes_it=0,
+                verified_zero=0,
+                source_reported=0,
+                needs_seed_row=0,
+            )
+            result[key] = buckets
         cache_key = (provider_id, model_id, ts.date())
         if cache_key not in price_rows:
             price_rows[cache_key] = resolve_price_row(
                 session, provider_id, model_id, ts, index=pricing_index
             )
         price = price_rows[cache_key]
+        reported = legacy_reported_cost(cost_reported_usd, provider_id, cost_usd)
+        billing_type = configs.get((provider_id, account_id), "unknown")
         resolved = resolve_event_cost(
             session,
             provider_id=provider_id,
@@ -132,8 +160,8 @@ def _classify_events(session: Session) -> dict[tuple[str, str], dict[str, int]]:
             tokens_reasoning=tokens_reasoning,
             tokens_cache_create_1h=tokens_cache_create_1h,
             tokens_cache_create_5m=tokens_cache_create_5m,
-            billing_type=configs.get((provider_id, account_id), "unknown"),
-            reported_cost=legacy_reported_cost(cost_reported_usd, provider_id, cost_usd),
+            billing_type=billing_type,
+            reported_cost=reported,
             standard_tier_only=is_aggregate_event_id(event_id),
             resolved_price_row=price,
             price_row_resolved=True,
@@ -151,8 +179,37 @@ def _classify_events(session: Session) -> dict[tuple[str, str], dict[str, int]]:
             category = "source_reported"
         else:
             category = "needs_seed_row"
+            if reported == 0 and billing_type == "pay_as_you_go":
+                # A $0 report on a pay-as-you-go account wins over any
+                # estimate, so re-costing computes $0 again and a
+                # PRICING_SEED row would not help. The group reason must
+                # not send the operator after one.
+                buckets.seed_proof += 1
         buckets[category] += 1
     return result
+
+
+def _not_fixable_reason(seed_proof: int, unseeded: int) -> str:
+    """Why a provider's zero-cost events cannot be recosted.
+
+    Two different situations end up in `needs_seed_row`, and they need
+    different advice. A model with no rate at all needs a PRICING_SEED row. A
+    model on a pay-as-you-go account that reported $0 is not something a price
+    row can change — the report wins over the estimate, so re-costing
+    recomputes the same $0.
+    """
+    if not seed_proof:
+        return "no resolvable price row for any model under this provider — add a PRICING_SEED row"
+    if not unseeded:
+        return (
+            "the source reported $0 and this account is billed pay-as-you-go, so the "
+            "report wins over the price estimate — re-costing will not change these events"
+        )
+    return (
+        "no resolvable price row for some models under this provider — add a "
+        "PRICING_SEED row; for the others the source reported $0 and this account "
+        "is billed pay-as-you-go, so re-costing will not change them"
+    )
 
 
 class UnpricedModelsCheck(Check):
@@ -168,6 +225,12 @@ class UnpricedModelsCheck(Check):
         # Classification uses each event's effective pricing date. Grouping by
         # provider/model alone would mislabel older events when prices change.
         by_provider: dict[str, list[dict[str, Any]]] = {}
+        # Per provider, how the zero-cost events split: those a $0 report on a
+        # pay-as-you-go account keeps at $0 (no seed row would help), and those
+        # with no rate at all (a seed row would). Only the group's reason text
+        # uses these.
+        seed_proof: dict[str, int] = {}
+        unseeded: dict[str, int] = {}
         for (provider_id, model_id), counts in _classify_events(session).items():
             count = sum(counts.values())
             populated = [name for name, value in counts.items() if value > 0]
@@ -178,6 +241,10 @@ class UnpricedModelsCheck(Check):
                     "classification": populated[0] if len(populated) == 1 else "mixed_evidence",
                     **counts,
                 }
+            )
+            seed_proof[provider_id] = seed_proof.get(provider_id, 0) + counts.seed_proof
+            unseeded[provider_id] = unseeded.get(provider_id, 0) + (
+                counts["needs_seed_row"] - counts.seed_proof
             )
 
         groups: list[FindingGroup] = []
@@ -217,8 +284,9 @@ class UnpricedModelsCheck(Check):
                         not_fixable_reason=(
                             None
                             if any_fixable
-                            else "no resolvable price row for any model under this provider "
-                            "— add a PRICING_SEED row"
+                            else _not_fixable_reason(
+                                seed_proof.get(provider_id, 0), unseeded.get(provider_id, 0)
+                            )
                         ),
                         samples=[
                             Finding(label=f"{provider_id}/{m['model_id']}", detail=m)

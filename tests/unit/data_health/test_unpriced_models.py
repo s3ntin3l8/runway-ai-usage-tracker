@@ -7,6 +7,7 @@ from sqlmodel import select
 
 from app.models.db import UsageEvent
 from app.services.data_health.checks.unpriced_models import UnpricedModelsCheck
+from app.services.maintenance.recost import apply_recost, plan_recost
 from tests.unit.data_health.conftest import make_config, make_event, make_price
 
 
@@ -442,3 +443,191 @@ def test_apply_never_touches_a_nonzero_cost_event(session):
 
     reported = session.exec(select(UsageEvent).where(UsageEvent.event_id == "msg_reported")).one()
     assert reported.cost_usd == 50.0  # untouched
+
+
+def _opencode_zero_cost_event(session, event_id: str, account_id: str = "acct") -> None:
+    """A zero-cost opencode event with no reported cost of its own."""
+    make_event(
+        session,
+        event_id=event_id,
+        provider_id="opencode",
+        account_id=account_id,
+        model_id="gpt-6-sol",
+        cost_usd=0.0,
+        cost_reported_usd=None,
+        tokens_input=1_000_000,
+        tokens_output=0,
+    )
+    make_price(session, provider_id="opencode", model_id="gpt-6-sol", rate=2.0)
+
+
+def test_payg_opencode_event_is_not_fixable_and_recost_agrees(session):
+    """#1125: the check and the recost plan must agree.
+
+    On a pay-as-you-go opencode account the legacy report (the stored cost) is
+    $0 and the billing type trusts that report over the price estimate, so
+    recost computes $0 again. The check must not call such an event fixable
+    while recost skips it — the two would disagree about the same event.
+    """
+    make_config(session, provider_id="opencode", account_id="acct", billing_type="pay_as_you_go")
+    _opencode_zero_cost_event(session, "payg")
+
+    report = _check().detect(session)
+
+    group = report.groups[0]
+    assert group.fixable is False
+    model = group.detail["by_model"][0]
+    assert model["classification"] == "needs_seed_row"
+    assert model["needs_seed_row"] == 1
+    assert model["recost_fixes_it"] == 0
+
+    plan = plan_recost(session, ["opencode"], only_zero_cost=True)
+    assert plan.updated == 0
+    assert plan.skipped_still_unpriced == 1
+
+
+def test_subscription_opencode_event_is_still_recosted(session):
+    """#1125: the existing subscription case must keep working.
+
+    A subscription account has no report to trust, so the price estimate
+    applies — the check classifies the event as fixable and recost reprices it.
+    """
+    make_config(session, provider_id="opencode", account_id="acct", billing_type="subscription")
+    _opencode_zero_cost_event(session, "sub")
+
+    report = _check().detect(session)
+
+    group = report.groups[0]
+    assert group.fixable is True
+    assert group.detail["by_model"][0]["classification"] == "recost_fixes_it"
+
+    result = apply_recost(session, ["opencode"], only_zero_cost=True)
+    assert result.updated == 1
+    ev = session.exec(select(UsageEvent)).one()
+    assert ev.cost_usd == pytest.approx(2.0)
+
+
+def test_reason_does_not_advise_a_seed_row_when_a_price_row_already_resolves(session):
+    """#1125: the group reason must not send the operator down a dead end.
+
+    A price row resolves for this model; the cost stays $0 because the
+    pay-as-you-go account trusts the source's $0 over the estimate. Adding a
+    PRICING_SEED row would change nothing, so the reason must say so instead
+    of asking for one.
+    """
+    make_config(session, provider_id="opencode", account_id="acct", billing_type="pay_as_you_go")
+    _opencode_zero_cost_event(session, "payg")
+
+    group = _check().detect(session).groups[0]
+
+    assert group.fixable is False
+    assert "PRICING_SEED" not in group.not_fixable_reason
+    assert "pay-as-you-go" in group.not_fixable_reason
+
+
+def test_reason_still_advises_a_seed_row_for_a_model_with_no_rate(session):
+    """#1125: the unseeded case keeps its advice — a rate really is missing."""
+    make_event(
+        session,
+        event_id="unseeded",
+        provider_id="chatgpt",
+        model_id="gpt-6-luna",
+        cost_usd=0.0,
+    )
+
+    group = _check().detect(session).groups[0]
+
+    assert group.fixable is False
+    assert "PRICING_SEED" in group.not_fixable_reason
+
+
+def test_the_payload_keys_are_stable(session):
+    """#1125: the per-model payload must not grow a counter.
+
+    The memory benchmark digests `_classify_events`'s output and the webapp
+    reads these keys, so a counter leaking into the mapping would change
+    both. `seed_proof` stays an attribute of the bucket, not a key.
+    """
+    make_config(session, provider_id="opencode", account_id="acct", billing_type="pay_as_you_go")
+    _opencode_zero_cost_event(session, "payg")
+
+    model = _check().detect(session).groups[0].detail["by_model"][0]
+
+    assert sorted(model) == [
+        "classification",
+        "count",
+        "model_id",
+        "needs_seed_row",
+        "recost_fixes_it",
+        "source_reported",
+        "verified_zero",
+    ]
+
+
+def test_reason_explains_a_payg_zero_report_even_without_a_price_row(session):
+    """#1125: a seed row cannot help a pay-as-you-go account that reported $0.
+
+    The report wins over any estimate, so the cost stays $0 whether or not a
+    price row exists. The reason must say that instead of asking for a seed
+    row — adding one leaves the event at $0.
+    """
+    make_config(session, provider_id="opencode", account_id="acct", billing_type="pay_as_you_go")
+    # A model with no price row at all: the reported $0 still decides.
+    make_event(
+        session,
+        event_id="payg",
+        provider_id="opencode",
+        account_id="acct",
+        model_id="gpt-6-luna",
+        cost_usd=0.0,
+        cost_reported_usd=None,
+        tokens_input=1_000_000,
+    )
+
+    group = _check().detect(session).groups[0]
+
+    assert group.fixable is False
+    assert "PRICING_SEED" not in group.not_fixable_reason
+    assert "pay-as-you-go" in group.not_fixable_reason
+
+    # Seeding a rate does not rescue it either — the report still wins.
+    make_price(session, provider_id="opencode", model_id="gpt-6-luna", rate=2.0)
+    plan = plan_recost(session, ["opencode"], only_zero_cost=True)
+    assert plan.updated == 0
+    assert plan.skipped_still_unpriced == 1
+
+
+def test_reason_covers_both_kinds_of_zero_cost_event_in_one_group(session):
+    """#1125: a provider can hold both kinds at once, and the reason must
+    cover both — the events a seed row would rescue and the ones it would not."""
+    make_config(session, provider_id="opencode", account_id="sub", billing_type="subscription")
+    make_config(session, provider_id="opencode", account_id="payg", billing_type="pay_as_you_go")
+    # A subscription account has no report to trust, so a seed row rescues it.
+    make_event(
+        session,
+        event_id="unseeded",
+        provider_id="opencode",
+        account_id="sub",
+        model_id="gpt-6-luna",
+        cost_usd=0.0,
+        cost_reported_usd=None,
+        tokens_input=1_000_000,
+    )
+    # A pay-as-you-go account that reported $0 keeps it at $0 either way.
+    make_event(
+        session,
+        event_id="payg",
+        provider_id="opencode",
+        account_id="payg",
+        model_id="gpt-6-sol",
+        cost_usd=0.0,
+        cost_reported_usd=None,
+        tokens_input=1_000_000,
+    )
+
+    group = _check().detect(session).groups[0]
+
+    assert group.fixable is False
+    reason = group.not_fixable_reason
+    assert "PRICING_SEED" in reason
+    assert "pay-as-you-go" in reason
