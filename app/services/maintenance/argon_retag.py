@@ -31,11 +31,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from sqlalchemy import update
 from sqlmodel import Session, col, select
 
 from app.models.db import ProviderConfig, UsageEvent, UsagePeriodRollup
 from app.services.cost_calculator import PricingIndex, is_aggregate_event_id, resolve_price_row
+from app.services.maintenance._rebuild import rebuild_pairs_best_effort
+from app.services.maintenance._retry import (
+    DEFAULT_LOCK_PROFILE,
+    LockRetryProfile,
+    commit_batch,
+)
 from app.services.maintenance.event_cost import ResolvedCost, resolve_event_cost
 from app.services.maintenance.windows import rebuild_windows_for_providers
 from app.services.model_normalization import ARGON_MODEL_ID, is_argon_model_id
@@ -47,6 +52,10 @@ from app.services.period_rollups import rebuild_rollups_for_pairs
 ARGON_PROVIDER_IDS: tuple[str, ...] = ("antigravity", "gemini")
 
 _BATCH = 500
+
+#: What the batch write is called in the retry log — never the SQL or the
+#: bound parameters.
+_BATCH_ACTION = "argon retag batch update of UsageEvent"
 
 
 @dataclass(frozen=True)
@@ -240,6 +249,7 @@ def apply_argon_retag(
     *,
     skip_rollups: bool = False,
     skip_windows: bool = False,
+    lock_profile: LockRetryProfile = DEFAULT_LOCK_PROFILE,
 ) -> ArgonRetagResult:
     """Rewrite the affected events' model id and re-price them from provider_pricing.
 
@@ -249,57 +259,93 @@ def apply_argon_retag(
     run rewrote, so the repeat still finds the stale rollup grain. The rollups
     of every affected (provider_id, account_id) pair are rebuilt from events
     afterwards, and the closed windows of the affected providers are replayed.
+
+    Each batch is retried when the database is locked (`lock_profile`), and a
+    run that dies half-way still rebuilds the derived tables of the batches it
+    did commit, so they do not lag until the next successful run.
     """
     changes = _changes(session, providers)
     result = ArgonRetagResult()
     writes: list[dict[str, object]] = []
-
-    for change in changes:
-        resolved = change.resolved
-        writes.append(
-            {
-                "id": change.id,
-                "model_id": ARGON_MODEL_ID,
-                "cost_usd": resolved.cost_usd,
-                "cost_reported_usd": resolved.cost_reported_usd,
-                "cost_estimated_usd": resolved.cost_estimated_usd,
-                "cost_input": resolved.breakdown.input,
-                "cost_output": resolved.breakdown.output,
-                "cost_cache_read": resolved.breakdown.cache_read,
-                "cost_cache_create": resolved.breakdown.cache_create,
-            }
-        )
-        result.retagged += 1
-        if resolved.cost_usd == 0.0 and change.old_cost_usd == 0.0:
-            result.unpriced += 1
-        else:
-            result.repriced += 1
-        result.cost_delta_usd += resolved.cost_usd - change.old_cost_usd
-        if len(writes) == _BATCH:
-            session.execute(update(UsageEvent), writes)
-            session.commit()
+    # The pairs of the batch being written, and of every batch already
+    # committed — the latter is what a failed run rebuilds.
+    batch_pairs: set[tuple[str, str]] = set()
+    committed_pairs: set[tuple[str, str]] = set()
+    batches_done = False
+    try:
+        for change in changes:
+            resolved = change.resolved
+            writes.append(
+                {
+                    "id": change.id,
+                    "model_id": ARGON_MODEL_ID,
+                    "cost_usd": resolved.cost_usd,
+                    "cost_reported_usd": resolved.cost_reported_usd,
+                    "cost_estimated_usd": resolved.cost_estimated_usd,
+                    "cost_input": resolved.breakdown.input,
+                    "cost_output": resolved.breakdown.output,
+                    "cost_cache_read": resolved.breakdown.cache_read,
+                    "cost_cache_create": resolved.breakdown.cache_create,
+                }
+            )
+            batch_pairs.add((change.provider_id, change.account_id))
+            result.retagged += 1
+            if resolved.cost_usd == 0.0 and change.old_cost_usd == 0.0:
+                result.unpriced += 1
+            else:
+                result.repriced += 1
+            result.cost_delta_usd += resolved.cost_usd - change.old_cost_usd
+            if len(writes) == _BATCH:
+                commit_batch(
+                    session,
+                    UsageEvent,
+                    writes,
+                    action_desc=_BATCH_ACTION,
+                    profile=lock_profile,
+                )
+                committed_pairs |= batch_pairs
+                writes.clear()
+                batch_pairs.clear()
+        if writes:
+            commit_batch(
+                session,
+                UsageEvent,
+                writes,
+                action_desc=_BATCH_ACTION,
+                profile=lock_profile,
+            )
+            committed_pairs |= batch_pairs
             writes.clear()
-    if writes:
-        session.execute(update(UsageEvent), writes)
-    session.commit()
+            batch_pairs.clear()
+        else:
+            # Nothing left to write — end the read transaction, as the
+            # single-commit path this replaced did.
+            session.commit()
+        batches_done = True
 
-    # The rebuild scope comes from the drift, not from the rows this run
-    # rewrote: an interrupted run leaves the events canonical but the rollups
-    # stale, and the repeat still has to find that scope to finish the repair.
-    # A run with nothing to rewrite and no stale grain left is a no-op, so a
-    # repeat on a repaired database does not replay the derived tables.
-    stale_pairs = _stale_rollup_pairs(session, providers)
-    pairs: set[tuple[str, str]] = set()
-    if result.retagged or stale_pairs:
-        pairs = _rebuild_scope(session, providers)
+        # The rebuild scope comes from the drift, not from the rows this run
+        # rewrote: an interrupted run leaves the events canonical but the rollups
+        # stale, and the repeat still has to find that scope to finish the repair.
+        # A run with nothing to rewrite and no stale grain left is a no-op, so a
+        # repeat on a repaired database does not replay the derived tables.
+        stale_pairs = _stale_rollup_pairs(session, providers)
+        pairs: set[tuple[str, str]] = set()
+        if result.retagged or stale_pairs:
+            pairs = _rebuild_scope(session, providers)
 
-    if not skip_rollups and pairs:
-        rebuild_rollups_for_pairs(session, pairs)
-        session.commit()
-        result.rollups_rebuilt_pairs = len(pairs)
+        if not skip_rollups and pairs:
+            rebuild_rollups_for_pairs(session, pairs)
+            session.commit()
+            result.rollups_rebuilt_pairs = len(pairs)
 
-    if not skip_windows and pairs:
-        touched_providers = sorted({p for p, _a in pairs})
-        result.windows_rebuilt = rebuild_windows_for_providers(session, touched_providers)
+        if not skip_windows and pairs:
+            touched_providers = sorted({p for p, _a in pairs})
+            result.windows_rebuilt = rebuild_windows_for_providers(session, touched_providers)
+    finally:
+        if not batches_done:
+            # The run died before it could rebuild the derived tables. Rebuild
+            # the pairs it did commit, best effort: the original failure is
+            # what the caller must see.
+            rebuild_pairs_best_effort(session, committed_pairs, action_desc="argon retag")
 
     return result

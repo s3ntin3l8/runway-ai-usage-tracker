@@ -4,13 +4,17 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 
+import pytest
 from sqlalchemy import event
+from sqlalchemy.exc import OperationalError
 from sqlmodel import Session, SQLModel, create_engine, select
 from sqlmodel.pool import StaticPool
 
 from app.models.db import ProviderConfig, ProviderPricing, UsageEvent, UsagePeriodRollup
 from app.services.maintenance import recost
+from app.services.maintenance._retry import LockRetryProfile
 from app.services.maintenance.recost import RecostChange, apply_recost, plan_recost
+from tests.unit.lock_contention import lock_batches_after, lock_every_batch
 
 
 def _session() -> Session:
@@ -382,3 +386,73 @@ def test_recost_reprices_a_long_prompt_haiku_55_event_but_not_a_remainder():
     costs = {e.event_id: e.cost_usd for e in session.exec(select(UsageEvent)).all()}
     assert costs["cloud:abc:m:msg_1"] == round(0.15 * 0.50 + 2.50, 6)
     assert costs["cloud:abc:r:1:haiku-5.5"] == round(0.15 * 0.10 + 0.50, 6)
+
+
+# ---------------------------------------------------------------------------
+# Lock contention (#1121)
+# ---------------------------------------------------------------------------
+
+
+def test_apply_recost_retries_a_locked_batch_and_succeeds():
+    """A transient lock on the batch write is retried, not fatal."""
+    session = _session()
+    _event(session)
+    _price(session, "chatgpt", "gpt-6-sol", rate=2.0)
+    state = lock_every_batch(session, 2)
+
+    result = apply_recost(
+        session,
+        ["chatgpt"],
+        lock_profile=LockRetryProfile(max_retries=6, initial_backoff=0.001),
+    )
+
+    assert state["failed"] == 2
+    assert result.updated == 1
+    assert session.exec(select(UsageEvent)).one().cost_usd == 2.0
+
+
+def test_apply_recost_gives_up_after_the_configured_attempts():
+    """A lock that never clears fails the repair — after the configured tries."""
+    session = _session()
+    _event(session)
+    _price(session, "chatgpt", "gpt-6-sol", rate=2.0)
+    state = lock_every_batch(session, 99)
+
+    with pytest.raises(OperationalError):
+        apply_recost(
+            session,
+            ["chatgpt"],
+            lock_profile=LockRetryProfile(max_retries=3, initial_backoff=0.001),
+        )
+
+    assert state["failed"] == 3
+
+
+def test_apply_recost_rebuilds_the_derived_tables_of_the_batches_it_committed(
+    monkeypatch,
+):
+    """A run that dies half-way still leaves the rollups of the batches it did
+    commit in step with the events — and the original failure still surfaces."""
+    session = _session()
+    _price(session, "chatgpt", "gpt-6-sol", rate=2.0)
+    for index in range(5):
+        _event(session, event_id=str(index))
+    monkeypatch.setattr(recost, "_EVENT_BATCH", 2)
+    state = lock_batches_after(session, 3)
+
+    with pytest.raises(OperationalError):
+        apply_recost(session, ["chatgpt"])
+
+    assert state["written"] >= 3
+    # The first four events were committed and re-priced; the fifth was not.
+    costs = sorted(ev.cost_usd for ev in session.exec(select(UsageEvent)).all())
+    assert costs == [0.0, 2.0, 2.0, 2.0, 2.0]
+    # ... and the rollup of that pair was rebuilt from them.
+    lifetime = session.exec(
+        select(UsagePeriodRollup).where(
+            UsagePeriodRollup.period_type == "lifetime",
+            UsagePeriodRollup.model_id == "",
+            UsagePeriodRollup.sidecar_id == "",
+        )
+    ).one()
+    assert lifetime.cost_usd == 8.0

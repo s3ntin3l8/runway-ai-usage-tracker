@@ -28,6 +28,7 @@ from app.services.data_health.base import (
     FixResult,
     Severity,
 )
+from app.services.maintenance._retry import DATA_HEALTH_LOCK_PROFILE
 from app.services.maintenance.event_cost import resolve_event_cost
 from app.services.maintenance.recost import (
     apply_recost,
@@ -268,7 +269,9 @@ class UnpricedModelsCheck(Check):
         if group_key.endswith("::informational-zero"):
             raise ValueError("informational zero-cost findings cannot be recosted")
         provider_id = group_key
-        result = apply_recost(session, [provider_id], only_zero_cost=True)
+        result = apply_recost(
+            session, [provider_id], only_zero_cost=True, lock_profile=DATA_HEALTH_LOCK_PROFILE
+        )
         return (
             FixResult(
                 check_id=self.id,

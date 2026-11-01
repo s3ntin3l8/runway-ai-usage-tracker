@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 
 import pytest
+from sqlalchemy.exc import OperationalError
 from sqlmodel import Session, SQLModel, create_engine, select
 from sqlmodel.pool import StaticPool
 
@@ -12,6 +13,8 @@ import scripts.reprice_fallback_priced_events as script
 from app.models.db import UsageEvent, UsagePeriodRollup
 from app.services.cost_calculator import PricingIndex, resolve_price_row
 from app.services.data_health.checks.fallback_priced_events import FallbackPricedEventsCheck
+from app.services.maintenance import fallback_priced_events
+from app.services.maintenance._retry import LockRetryProfile
 from app.services.maintenance.fallback_priced_events import (
     FallbackPlan,
     _tally,
@@ -20,6 +23,7 @@ from app.services.maintenance.fallback_priced_events import (
     plan_fallback_priced_events,
 )
 from tests.unit.data_health.conftest import make_event, make_price
+from tests.unit.lock_contention import lock_batches_after, lock_every_batch
 
 _CHECK = FallbackPricedEventsCheck()
 _TS = datetime(2026, 9, 1, tzinfo=UTC)
@@ -352,3 +356,70 @@ def test_script_wrapper_dry_run_and_apply(monkeypatch, capsys):
     assert "Re-priced 1 event(s)" in capsys.readouterr().out
     with Session(engine) as check:
         assert _get(check, ev).cost_usd == pytest.approx(2.0)
+
+
+# ---------------------------------------------------------------------------
+# Lock contention (#1121)
+# ---------------------------------------------------------------------------
+
+
+def test_the_apply_retries_a_locked_batch_and_succeeds(session):
+    """A transient lock on the batch write is retried, not fatal."""
+    _prices(session)
+    _ev(session, "1", cost=3.0)
+    state = lock_every_batch(session, 2)
+
+    result = apply_fallback_priced_events(
+        session,
+        "anthropic",
+        "sonnet-5",
+        lock_profile=LockRetryProfile(max_retries=6, initial_backoff=0.001),
+    )
+
+    assert state["failed"] == 2
+    assert result.events == 1
+    assert _get(session, 1).cost_usd == pytest.approx(2.0)
+
+
+def test_the_apply_gives_up_after_the_configured_attempts(session):
+    """A lock that never clears fails the repair — after the configured tries."""
+    _prices(session)
+    _ev(session, "1", cost=3.0)
+    state = lock_every_batch(session, 99)
+
+    with pytest.raises(OperationalError):
+        apply_fallback_priced_events(
+            session,
+            "anthropic",
+            "sonnet-5",
+            lock_profile=LockRetryProfile(max_retries=3, initial_backoff=0.001),
+        )
+
+    assert state["failed"] == 3
+
+
+def test_the_apply_rebuilds_the_derived_tables_of_the_batches_it_committed(session, monkeypatch):
+    """A run that dies half-way still rebuilds the rollups of the batches it
+    did commit — and the original failure still surfaces."""
+    _prices(session)
+    for index in range(5):
+        _ev(session, str(index), cost=3.0)
+    monkeypatch.setattr(fallback_priced_events, "_EVENT_BATCH", 2)
+    state = lock_batches_after(session, 3)
+
+    with pytest.raises(OperationalError):
+        apply_fallback_priced_events(session, "anthropic", "sonnet-5")
+
+    assert state["written"] >= 3
+    # The first four events were committed and re-priced; the fifth was not.
+    costs = sorted(ev.cost_usd for ev in session.exec(select(UsageEvent)).all())
+    assert costs == [2.0, 2.0, 2.0, 2.0, 3.0]
+    # ... and the rollup of that pair was rebuilt from them.
+    lifetime = session.exec(
+        select(UsagePeriodRollup).where(
+            UsagePeriodRollup.period_type == "lifetime",
+            UsagePeriodRollup.model_id == "",
+            UsagePeriodRollup.sidecar_id == "",
+        )
+    ).one()
+    assert lifetime.cost_usd == pytest.approx(11.0)

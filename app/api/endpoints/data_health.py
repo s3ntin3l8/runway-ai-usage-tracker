@@ -231,6 +231,8 @@ async def get_job_status(
         status=record.status,
         result=result,
         error=record.error,
+        error_kind=record.error_kind,
+        retryable=record.retryable,
         started_at=record.started_at.isoformat(),
         finished_at=record.finished_at.isoformat() if record.finished_at else None,
     )

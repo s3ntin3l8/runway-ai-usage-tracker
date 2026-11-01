@@ -48,6 +48,11 @@ function sameParams(a: Record<string, string>, b: Record<string, string>): boole
   return [...keys].every((k) => cleanA[k] === cleanB[k]);
 }
 
+// Keep a message short enough for a toast, whatever it turned out to be.
+function clamp(message: string, max: number): string {
+  return message.length > max ? `${message.slice(0, max - 1)}…` : message;
+}
+
 export function FixDialog({ open, onOpenChange, checkId, group }: FixDialogProps) {
   const queryClient = useQueryClient();
   const [values, setValues] = useState<Record<string, string>>({});
@@ -92,7 +97,9 @@ export function FixDialog({ open, onOpenChange, checkId, group }: FixDialogProps
       toast.success(job.data.result?.summary ?? 'Fix applied');
       queryClient.invalidateQueries({ queryKey: dataHealthKey });
     } else if (job.data?.status === 'failed') {
-      toast.error(job.data.error ?? 'Fix failed');
+      // The server sends a plain-language reason; the clamp is a safety net
+      // for any other message that ever reaches this path.
+      toast.error(clamp(job.data.error ?? 'Fix failed', 200));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [job.data?.status]);
@@ -125,6 +132,24 @@ export function FixDialog({ open, onOpenChange, checkId, group }: FixDialogProps
         onError: (err) => toast.error(err.message),
       },
     );
+  };
+
+  // Run the same fix again after a failure the server marked retryable (the
+  // database was busy). The confirmation the operator already gave for these
+  // exact params still stands, so it is not asked for again — but the preview
+  // is refreshed first, so it shows how much is left to do.
+  const retryFix = () => {
+    const failedJobId = jobId;
+    setJobId(null);
+    if (failedJobId !== null) {
+      queryClient.removeQueries({ queryKey: ['system', 'data-health', 'job', failedJobId] });
+    }
+    const snapshot = { ...values };
+    preview.mutate(
+      { checkId, groupKey: group.key, params: cleanParams(values) },
+      { onSuccess: () => setPreviewedValues(snapshot) },
+    );
+    runApply();
   };
 
   const jobDone = job.data?.status === 'succeeded' || job.data?.status === 'failed';
@@ -284,6 +309,20 @@ export function FixDialog({ open, onOpenChange, checkId, group }: FixDialogProps
             </div>
             {job.data?.status === 'failed' && job.data.error && (
               <p className="text-[12px] text-critical">{job.data.error}</p>
+            )}
+            {job.data?.status === 'failed' && job.data.retryable && (
+              // "Retry fix", not "Retry": the dialog's other retry button
+              // ("Retry status") only re-polls the job status, and two buttons
+              // with the same name in one dialog is a trap for anyone tabbing
+              // through it.
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[12px] text-fg-muted">
+                  Nothing was lost — the fix can be run again.
+                </p>
+                <Button size="sm" variant="secondary" onClick={retryFix} loading={apply.isPending}>
+                  Retry fix
+                </Button>
+              </div>
             )}
             {job.isError && !jobDone && (
               <div className="flex items-center justify-between gap-2">

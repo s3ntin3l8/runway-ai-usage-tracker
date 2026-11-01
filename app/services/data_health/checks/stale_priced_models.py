@@ -44,6 +44,7 @@ from app.services.data_health.base import (
     FixResult,
     Severity,
 )
+from app.services.maintenance._retry import DATA_HEALTH_LOCK_PROFILE
 from app.services.maintenance.recost import (
     apply_recost,
     is_priced_on_purpose_free,
@@ -340,7 +341,13 @@ class StalePricedModelsCheck(Check):
         self, session: Session, group_key: str, params: dict[str, Any]
     ) -> tuple[FixResult, list[AsyncHook]]:
         provider_id, model_id = _split_key(group_key)
-        result = apply_recost(session, [provider_id], estimate_only=True, models=[model_id])
+        result = apply_recost(
+            session,
+            [provider_id],
+            estimate_only=True,
+            models=[model_id],
+            lock_profile=DATA_HEALTH_LOCK_PROFILE,
+        )
         return (
             FixResult(
                 check_id=self.id,

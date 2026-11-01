@@ -721,7 +721,12 @@ class DataHealthJobStatusResponse(BaseModel):
     group_key: str
     status: str  # "running" | "succeeded" | "failed"
     result: DataHealthFixResultSchema | None = None
+    #: The plain-language reason the fix failed — never the raw exception.
     error: str | None = None
+    #: What kind of failure it was: "db_busy" or "unknown".
+    error_kind: str | None = None
+    #: Whether running the same fix again could succeed.
+    retryable: bool = False
     started_at: str
     finished_at: str | None = None
 

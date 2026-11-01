@@ -31,6 +31,11 @@ checks waiting on another repair. Pending events include a direct link to Fleet.
    parameters you're about to apply, plus an explicit confirmation. It
    returns immediately with a job id; the dialog polls that job until it
    finishes and shows the result.
+4. **A failed fix.** The dialog says what went wrong in plain language —
+   never the SQL behind it. When the failure was a busy database, the
+   progress the fix had already made is saved and the dialog offers a
+   **Retry fix** button that runs the same fix again; the preview then shows
+   how much is left to do.
 
 A check with unresolved findings can block another check from being
 applied until it's fixed — the dependency order below reflects that.
