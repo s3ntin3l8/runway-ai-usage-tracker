@@ -80,7 +80,9 @@ gha-creds-*.json
 
 # --- AI & TEMP ---
 .gemini/
-.claude/
+.claude/*
+!.claude/skills/
+!.claude/agents/
 .codex/
 .anthropic/
 .codex

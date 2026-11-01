@@ -166,7 +166,7 @@ make lint && make test && make web-lint && make web-test
 - **Branch off `origin/main`**, never your local `main`. A stale local `main`
   means your checks validate against an old base, and `main` does not require
   branches to be up to date, so they will not re-run before merge — though a
-  PR that is merely behind still merges without a rebase (see the workflow rules in [AGENTS.md](AGENTS.md)
+  PR that is merely behind still merges without a rebase (see the Workflow Conventions in [AGENTS.md](AGENTS.md)
   and [docs/ci-cd.md](docs/ci-cd.md)).
 - **PR title must use a
   [Conventional Commits](https://www.conventionalcommits.org/) prefix**
@@ -185,7 +185,10 @@ make lint && make test && make web-lint && make web-test
 ## Review process
 
 Hermes reviews each PR once automatically when it opens; after pushing fixes,
-request another look with a `@s3ntin3l8-hermes Review` comment. Addressing
+request another look with a `@s3ntin3l8-hermes Review` comment (humans; an
+agent in a Mullion session uses the review relay instead, as AGENTS.md's
+Workflow Conventions describe, because an agent `@mention` queues a second round
+behind the running one). Addressing
 review feedback (reply + resolve each inline thread via the GitHub API) and
 post-merge cleanup (delete local and remote branch, remove the worktree) are
 documented in [AGENTS.md](AGENTS.md) — follow them rather than improvising.
@@ -202,3 +205,29 @@ Remote development: Vite defaults to `127.0.0.1`; set `VITE_HOST` explicitly
 when remote access is needed. Configure the API in network mode with an admin
 key, explicit CORS origins and TLS (see `docs/SECURITY.md`). A remote browser
 cannot use the API's localhost administrator bypass through Vite.
+
+<!-- mullion:pointer:start -->
+See `AGENTS.md`'s Workflow Conventions section for our process rules.
+<!-- mullion:pointer:end -->
+
+<!-- mullion:moved:start -->
+## External CI action pins
+
+- `scripts/action_pins.json` — the recorded revision of every external CI
+  action (except `s3ntin3l8/.github` callers on `@main`, which are not recorded). A workflow pin that is well-formed but wrong fails the job at action
+  resolution, before any step in it runs, so the pin is checked against this
+  record rather than only for shape. **Bumping an action means editing the
+  workflow and this record in the same change**, then re-running
+  `make secrets-baseline` (the record holds commit SHAs, which detect-secrets
+  reads as high-entropy strings). Dependabot's `github-actions` group cannot
+  update the record, so its pull request stays red until a human reviews the
+  new revision, copies it into the record and regenerates the baseline. That
+  is the intended cost: an action bump is a supply-chain decision, not a
+  mechanical one.
+  **Verify a SHA before you record it**, especially the first time an action
+  appears: `gh api repos/<owner>/<repo>/commits/<sha>` answers 422 for a
+  well-formed SHA that does not exist, and the SHA the upstream repository
+  reports is the one to pin. The record vouches for the revisions it already
+  carries, so a *new* action's typo lands in the workflow and the record
+  together and passes the check — the upstream lookup is what catches it.
+<!-- mullion:moved:end -->
