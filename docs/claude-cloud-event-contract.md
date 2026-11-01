@@ -174,6 +174,13 @@ ISO 8601 UTC.
 - A single-repository session whose `cwd` is a bare home directory or an unrelated directory keeps
   its `project_ref` and has `cwd` None. A session with several repositories and no matching `cwd`
   stays unattributed: that is better than a wrong project.
+- A multi-repository session's unlabelled events stay unlabelled at collection time — the
+  reducer never guesses from the order of the repositories in the session list, which is
+  alphabetical and carries no meaning. The lead repository is applied afterwards by the
+  `cloud_session_lead_repo` Data Health check: the repository the session's *labelled* events
+  name most often. A session whose leading repositories tie, or that carries no label at all, is
+  left alone rather than guessed. The stored rows are never relabelled by a re-collection
+  (events are deduplicated on `(provider_id, event_id)`), so the repair sticks.
 
 ### 5.6 Cross-check, never a gate
 

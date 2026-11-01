@@ -47,6 +47,7 @@ Reconstruct data that was not recorded when the event was first ingested.
 | `backfill_claude_billing_type.py` | Price the Claude accounts that were created **before** billing detection existed. |
 | `backfill_claude_dimensions.py` | Backfill the Claude Code per-message dimensions onto already-ingested events. |
 | `backfill_argon_models.py` | Repair already-ingested Gemini 4 Argon rows — rewrite the stored `model_id` to `gemini-4-argon` and re-price the event in the same pass. |
+| `label_cloud_session_lead_repo.py` | Label a multi-repository Claude cloud session's unlabelled events with the repository its labelled events name most often (a session whose leading repositories tie is left alone). The in-app equivalent is the `cloud_session_lead_repo` Data Health check. |
 | `backfill_opencode_effort.py` | Backfill the OpenCode message `variant` onto already-ingested `usage_events.effort`. |
 
 ## Cleanups
