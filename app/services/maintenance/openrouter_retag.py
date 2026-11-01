@@ -53,18 +53,26 @@ def model_clause() -> ColumnElement[bool]:
 def _source_where(provider_id: str | None = None) -> list[ColumnElement[bool]]:
     providers = (provider_id,) if provider_id else SOURCE_PROVIDER_IDS
     # Hermes reaches OpenCode Zen directly; never treat its events as
-    # OpenRouter traffic even when the model id looks like one.
+    # OpenRouter traffic even when the model id looks like one. Older rows
+    # were backfilled with source_app = provider_id, so also key off the
+    # durable `hermes|` event-id prefix.
     clauses: list[ColumnElement[bool]] = [
         col(UsageEvent.provider_id).in_(providers),
         or_(col(UsageEvent.source_app).is_(None), col(UsageEvent.source_app) != HERMES),
+        ~col(UsageEvent.event_id).like("hermes|%"),
     ]
     # Prefer the stored raw OpenCode providerID when present; fall back to
-    # the model-id shape test when it is absent (old events / old sidecars).
-    raw = col(UsageEvent.raw_provider_id)
+    # the model-id shape test when it is absent/blank (old events / old
+    # sidecars). Normalize case/whitespace so a stored "OpenRouter" or ""
+    # does not silently drop the event out of the check.
+    raw = func.lower(func.trim(col(UsageEvent.raw_provider_id)))
     clauses.append(
         or_(
             raw == "openrouter",
-            and_(raw.is_(None), model_clause()),
+            and_(
+                or_(col(UsageEvent.raw_provider_id).is_(None), raw == ""),
+                model_clause(),
+            ),
         )
     )
     return clauses
