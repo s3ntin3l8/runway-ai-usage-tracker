@@ -14,87 +14,70 @@ semantics), [`CONTRIBUTING.md`](CONTRIBUTING.md) (contributor workflow),
 [`docs/SECURITY.md`](docs/SECURITY.md), and
 [`docs/data-health.md`](docs/data-health.md).
 
-## Workflow rules
+<!-- mullion:briefing:start -->
+Runway's cross-component correctness contracts live in `.claude/skills/runway/SKILL.md`; consult it when implementing, debugging, refactoring, testing, or reviewing changes to collection, credentials, ingestion, accounting, and shared schemas. The reviewer role at `.claude/agents/runway-reviewer.md` reads that skill first and applies the same contracts when review is delegated.
 
-- **Branch off the latest remote default branch, never off your local one.**
-  `git fetch` updates `origin/*` but never fast-forwards local `main`, so a
-  local `main` is routinely stale. Always:
-  `git fetch origin && git checkout -b <branch> origin/main`.
-  Branching off local `main` drags stale history into the PR. `main` does
+## Workflow Conventions
+
+Never commit directly to the default branch. Always branch and open a PR.
+
+Branch off the latest remote default branch, never off your local one: `git fetch origin && git checkout -b <branch> origin/<default>`. A local default branch is routinely stale, which is what makes a PR show up as "out-of-date with the base branch" the moment it's opened.
+
+Work in a dedicated worktree per branch, under `.wt/<branch>`, off the latest remote default branch: `git fetch origin && git worktree add .wt/<branch> -b <branch> origin/<default>`. A fresh worktree does not inherit installed dependencies — reinstall them there before testing or building.
+
+Commit and PR titles need a Conventional Commits prefix (`feat:`, `fix:`, `chore:`, ...).
+
+Squash-merge PRs — the PR title becomes the commit message on the default branch.
+
+Require green CI before merging.
+
+Run a self-review pass on your own diff before declaring done.
+
+Request an automated/bot review through the review relay (`mullion review`, or the `request_review` tool) — once after opening the pull request, and again per head commit after pushing fixes for a changes-requested review, then wait for it. A review comment that mentions the review bot is for humans, not agents; if no relay is set up, tell the human instead. One review per pull request at a time: a review that is already running is not re-requested — the request is refused with its run id, and that refusal is the answer, not an error to retry: wait for it, or stop it with stop_review. A review takes 10-30 minutes; check review_status once instead of asking again. After pushing fixes for a changes-requested review, ask again only when no review is in flight. Once the review bot has approved, apply its remaining suggestions and push without requesting another review, even though the head moved: small targeted fixes do not change the verdict, and re-reviewing them only breeds more nits. Never re-trigger a review with an @mention of the review bot: that path is for humans, and it queues another round behind the running one.
+
+Fixing the code is not enough to address review feedback — reply to each inline comment via the GitHub API, then resolve the thread via the GraphQL `resolveReviewThread` mutation, rather than pushing a silent fix. Reply with `gh api repos/{owner}/{repo}/pulls/<pr>/comments/<comment_id>/replies -f body="…"`; resolve with `gh api graphql -f query='mutation { resolveReviewThread(input: {threadId: "<thread_id>"}) { thread { isResolved } } }'`, taking the thread id from a `reviewThreads` query on the pull request, not from the REST comment id.
+
+File a tracked issue for anything a plan defers, blocks, or descopes, and link it from the PR (using the repository's issue template if it has one) — a footnote in a plan doc is not a durable record. Write each one as a spec an agent can implement on its own (scope, acceptance criteria), not as a note. Title it the way this repo titles commits and PRs, reusing its existing scope names rather than coining new ones; attach it as a sub-issue to the matching open epic when one exists; and set GitHub's `blocked_by` dependency where one issue cannot start before another closes.
+
+After a merge, delete the local and remote branch and remove any associated worktree.
+
+Before pushing, run the full lint/typecheck/test/format gate.
+<!-- mullion:briefing:end -->
+
+## Repo specifics
+
+- `main` does
   *not* require branches to be up to date (`required_status_checks.strict =
   false`, deliberately — see [`docs/ci-cd.md`](docs/ci-cd.md)), so a PR that
-  is merely behind still merges without a rebase. (Exception: deliberately
-  stacking on another feature branch.) Work in a dedicated git worktree per branch — this repo
-  conventionally uses the gitignored `.wt/<slug>`.
-- **Never commit directly to `main`.** Branch and open a PR.
-- **PR title needs a Conventional Commits prefix** (`feat:`, `fix:`, `chore:`,
-  ...). This repo squash-merges, so the PR title becomes the commit message on
+  is merely behind still merges without a rebase.
+- This repo squash-merges, so the PR title becomes the commit message on
   `main` — Release Please parses it to cut versions/changelogs, and an
   unprefixed title silently drops out of the changelog.
-- **Before pushing, run the full gate:**
+- The full gate is
   `make lint && make test && make web-lint && make web-test` (or on native Windows,
   `python scripts/dev_checks.py gate`).
   `make install` wires the same checks into git hooks: pre-commit runs ruff,
   mypy, detect-secrets, and the unit tests; pre-push runs the full suite.
   Both run the suite in four workers, so the gates take about a minute
   rather than five.
-  CI must stay green — `test-python / lint`, `test-python / type-and-test`,
+  The CI checks are `test-python / lint`, `test-python / type-and-test`,
   `test-frontend / lint-and-test`, `dependency-review / dependency-review`,
   and CodeQL — with coverage floors of 85%
   (Python) and 85% (frontend).
-- **Get a review, and close the loop on it.** Hermes auto-reviews each PR
-  once on open (`.github/workflows/hermes.yml`) — don't request another one
-  right away. After pushing fixes, ask for a re-review with a
-  `@s3ntin3l8-hermes Review` comment on the PR, and keep that to a couple of
-  rounds. Fixing the code is not enough to address feedback — reply to each
-  inline comment, then resolve the thread:
-
-  1. Reply:
-     ```bash
-     gh api repos/s3ntin3l8/runway-ai-usage-tracker/pulls/<PR>/comments/<comment_id>/replies -f body="Fixed in <commit>"
-     ```
-  2. Resolve (GraphQL-only concept):
-     ```bash
-     gh api graphql -f query='mutation { resolveReviewThread(input: {threadId: "<thread_id>"}) { thread { isResolved } } }'
-     ```
-     Get `thread_id` from a `reviewThreads` query on the PR, not the REST
-     comment id.
-  An `APPROVED` review can still carry an open inline comment, so check
-  `reviewThreads`/`isResolved` — not just the review state — before merging:
-  the branch requires every conversation resolved
+- An `APPROVED` review can still carry an open inline comment.
+  The branch requires every conversation resolved
   (`required_conversation_resolution`), so an open thread blocks the merge.
-  Don't merge through the REST `PUT /pulls/<n>/merge` endpoint: it accepts a
+  The REST `PUT /pulls/<n>/merge` endpoint accepts a
   PR with an unresolved thread and silently skips that gate.
-- **Run a review pass on your own diff before declaring done.**
-- **File a GitHub issue for anything a plan defers, blocks, or descopes**, and
-  link it from the PR — a footnote in a plan doc is not a durable record.
-- **Post-merge cleanup:** `git branch -d <branch>`,
-  `git push origin --delete <branch>`, and `python scripts/dev_checks.py
-  remove-worktree <path>` if a worktree was used. Skipping this lets stale
-  references accumulate. Remove the worktree with that helper, not with
-  `git worktree remove`: a worktree that links the main checkout's `.venv`
+- The worktree removal helper is
+  `python scripts/dev_checks.py remove-worktree <path>`.
+  A worktree that links the main checkout's `.venv`
   into itself holds a directory junction, and `git worktree remove` follows
   it and deletes the main checkout's virtualenv.
-- **Fresh clone or worktree:** run `make install` first (venv, Python + webapp
-  dependencies, git hooks) — none of it is inherited. On native Windows use
-  `python scripts/dev_checks.py install` instead. Git hooks are shared by every
-  worktree of the repository, so install them once (`make install-hooks`); the
-  hook resolves its interpreter when it runs, so installing it from a worktree
-  is no longer a trap — the interpreter it uses is the worktree's own `.venv`
-  if it has one, and the main checkout's otherwise. A worktree that commits
-  still needs its own `.venv`, because the mypy and pytest hooks resolve the
-  interpreter from the checkout being committed. The hook script itself lives
-  in the repository (`scripts/hooks/git-hook.sh`) and is **copied** into
-  `.git/hooks`, so re-run `make install-hooks` after changing it.
-  The frontend half of the gate (`make web-test`, `make web`) needs Node 22.22.2+
-  on PATH (vitest 5 pins `^22.12.0 || ^24.0.0 || >=26.0.0`, `react-router` pins
-  `>=22.22.0`, and the `jsdom` 30 upgrade pins
-  `^22.22.2 || ^24.15.0 || >=26.0.0`) and npm 11.11+ (Node 24 ships npm 11.19) —
-  `webapp/package.json`
-  pins both with `devEngines`, so a mismatched toolchain refuses to install
-  rather than quietly rewriting the lockfile. On Windows
-  `winget install OpenJS.NodeJS.LTS` puts it in the per-user PATH, and a new
-  shell (or session) is needed for that to take effect.
+
+Fresh clone/worktree installation, hook interpreter details, frontend toolchain
+requirements, and action-pin update procedures are documented in
+[`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## Everyday commands
 
@@ -130,23 +113,9 @@ semantics), [`CONTRIBUTING.md`](CONTRIBUTING.md) (contributor workflow),
   `docs/audit/` under the name `YYYY-MM-<scope>-<topic>.md`, and
   [`docs/audit/README.md`](docs/audit/README.md) is the convention — read it
   before writing one.
-- `scripts/action_pins.json` — the recorded revision of every external CI
-  action (except `s3ntin3l8/.github` callers on `@main`, which are not recorded). A workflow pin that is well-formed but wrong fails the job at action
-  resolution, before any step in it runs, so the pin is checked against this
-  record rather than only for shape. **Bumping an action means editing the
-  workflow and this record in the same change**, then re-running
-  `make secrets-baseline` (the record holds commit SHAs, which detect-secrets
-  reads as high-entropy strings). Dependabot's `github-actions` group cannot
-  update the record, so its pull request stays red until a human reviews the
-  new revision, copies it into the record and regenerates the baseline. That
-  is the intended cost: an action bump is a supply-chain decision, not a
-  mechanical one.
-  **Verify a SHA before you record it**, especially the first time an action
-  appears: `gh api repos/<owner>/<repo>/commits/<sha>` answers 422 for a
-  well-formed SHA that does not exist, and the SHA the upstream repository
-  reports is the one to pin. The record vouches for the revisions it already
-  carries, so a *new* action's typo lands in the workflow and the record
-  together and passes the check — the upstream lookup is what catches it.
+
+The `scripts/action_pins.json` record and its update procedure are documented in
+[`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## Core invariants
 

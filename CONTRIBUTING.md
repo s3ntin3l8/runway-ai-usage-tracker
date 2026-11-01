@@ -202,3 +202,52 @@ Remote development: Vite defaults to `127.0.0.1`; set `VITE_HOST` explicitly
 when remote access is needed. Configure the API in network mode with an admin
 key, explicit CORS origins and TLS (see `docs/SECURITY.md`). A remote browser
 cannot use the API's localhost administrator bypass through Vite.
+
+<!-- mullion:pointer:start -->
+See `AGENTS.md`'s Workflow Conventions section for our process rules.
+<!-- mullion:pointer:end -->
+
+<!-- mullion:moved:start -->
+## Installation and hook details from AGENTS.md
+
+- **Fresh clone or worktree:** run `make install` first (venv, Python + webapp
+  dependencies, git hooks) — none of it is inherited. On native Windows use
+  `python scripts/dev_checks.py install` instead. Git hooks are shared by every
+  worktree of the repository, so install them once (`make install-hooks`); the
+  hook resolves its interpreter when it runs, so installing it from a worktree
+  is no longer a trap — the interpreter it uses is the worktree's own `.venv`
+  if it has one, and the main checkout's otherwise. A worktree that commits
+  still needs its own `.venv`, because the mypy and pytest hooks resolve the
+  interpreter from the checkout being committed. The hook script itself lives
+  in the repository (`scripts/hooks/git-hook.sh`) and is **copied** into
+  `.git/hooks`, so re-run `make install-hooks` after changing it.
+  The frontend half of the gate (`make web-test`, `make web`) needs Node 22.22.2+
+  on PATH (vitest 5 pins `^22.12.0 || ^24.0.0 || >=26.0.0`, `react-router` pins
+  `>=22.22.0`, and the `jsdom` 30 upgrade pins
+  `^22.22.2 || ^24.15.0 || >=26.0.0`) and npm 11.11+ (Node 24 ships npm 11.19) —
+  `webapp/package.json`
+  pins both with `devEngines`, so a mismatched toolchain refuses to install
+  rather than quietly rewriting the lockfile. On Windows
+  `winget install OpenJS.NodeJS.LTS` puts it in the per-user PATH, and a new
+  shell (or session) is needed for that to take effect.
+
+## External CI action pins
+
+- `scripts/action_pins.json` — the recorded revision of every external CI
+  action (except `s3ntin3l8/.github` callers on `@main`, which are not recorded). A workflow pin that is well-formed but wrong fails the job at action
+  resolution, before any step in it runs, so the pin is checked against this
+  record rather than only for shape. **Bumping an action means editing the
+  workflow and this record in the same change**, then re-running
+  `make secrets-baseline` (the record holds commit SHAs, which detect-secrets
+  reads as high-entropy strings). Dependabot's `github-actions` group cannot
+  update the record, so its pull request stays red until a human reviews the
+  new revision, copies it into the record and regenerates the baseline. That
+  is the intended cost: an action bump is a supply-chain decision, not a
+  mechanical one.
+  **Verify a SHA before you record it**, especially the first time an action
+  appears: `gh api repos/<owner>/<repo>/commits/<sha>` answers 422 for a
+  well-formed SHA that does not exist, and the SHA the upstream repository
+  reports is the one to pin. The record vouches for the revisions it already
+  carries, so a *new* action's typo lands in the workflow and the record
+  together and passes the check — the upstream lookup is what catches it.
+<!-- mullion:moved:end -->
