@@ -7,4 +7,3 @@ from app.api.endpoints.usage_history import *  # noqa: F401,F403
 from app.api.endpoints.usage_overview import *  # noqa: F401,F403
 from app.api.endpoints.usage_rankings import *  # noqa: F401,F403
 from app.api.endpoints.usage_sessions import *  # noqa: F401,F403
-
