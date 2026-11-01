@@ -92,7 +92,7 @@ def test_sidecar_pushed_card_lands_in_latest_usage(session):
 
     with (
         patch("app.core.config.settings") as mock_settings,
-        patch("app.api.endpoints.fleet.token_cache") as mock_tc,
+        patch("app.api.endpoints.fleet_ingest.token_cache") as mock_tc,
     ):
         mock_settings.INGEST_API_KEY = TEST_KEY
         mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
@@ -140,7 +140,7 @@ def test_local_credential_ingest_registers_source_without_sidecar_id(session):
     }
     with (
         patch("app.core.config.settings") as mock_settings,
-        patch("app.api.endpoints.fleet.token_cache") as mock_tc,
+        patch("app.api.endpoints.fleet_ingest.token_cache") as mock_tc,
         patch("app.services.credential_sources.touch_source") as mock_touch,
     ):
         mock_settings.INGEST_API_KEY = TEST_KEY
@@ -194,7 +194,7 @@ def test_ingest_keeps_bundled_cookie_credentials(session):
     }
     with (
         patch("app.core.config.settings") as mock_settings,
-        patch("app.api.endpoints.fleet.token_cache") as mock_tc,
+        patch("app.api.endpoints.fleet_ingest.token_cache") as mock_tc,
     ):
         mock_settings.INGEST_API_KEY = TEST_KEY
         mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
@@ -255,7 +255,7 @@ def test_ingest_retires_default_placeholder_source_once_identity_resolves(sessio
     }
     with (
         patch("app.core.config.settings") as mock_settings,
-        patch("app.api.endpoints.fleet.token_cache") as mock_tc,
+        patch("app.api.endpoints.fleet_ingest.token_cache") as mock_tc,
     ):
         mock_settings.INGEST_API_KEY = TEST_KEY
         mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
@@ -314,7 +314,7 @@ def test_ingest_drops_default_placeholder_when_real_account_row_already_exists(s
     }
     with (
         patch("app.core.config.settings") as mock_settings,
-        patch("app.api.endpoints.fleet.token_cache") as mock_tc,
+        patch("app.api.endpoints.fleet_ingest.token_cache") as mock_tc,
     ):
         mock_settings.INGEST_API_KEY = TEST_KEY
         mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
@@ -361,7 +361,7 @@ def test_ingest_applies_existing_verified_tag_to_stale_pending_heartbeat(session
     }
     with (
         patch("app.core.config.settings") as mock_settings,
-        patch("app.api.endpoints.fleet.token_cache") as mock_tc,
+        patch("app.api.endpoints.fleet_ingest.token_cache") as mock_tc,
         patch("app.services.credential_sources.touch_source") as mock_touch,
     ):
         mock_settings.INGEST_API_KEY = TEST_KEY
@@ -411,7 +411,7 @@ def test_claude_oauth_email_requires_matching_account(session, configured):
     }
     with (
         patch("app.core.config.settings") as mock_settings,
-        patch("app.api.endpoints.fleet.token_cache") as mock_tc,
+        patch("app.api.endpoints.fleet_ingest.token_cache") as mock_tc,
     ):
         mock_settings.INGEST_API_KEY = TEST_KEY
         mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
@@ -452,7 +452,7 @@ async def test_claude_oauth_source_moves_to_matching_account(session):
     }
     with (
         patch("app.core.config.settings") as mock_settings,
-        patch("app.api.endpoints.fleet.token_cache", cache),
+        patch("app.api.endpoints.fleet_ingest.token_cache", cache),
     ):
         mock_settings.INGEST_API_KEY = TEST_KEY
         mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
@@ -523,7 +523,7 @@ async def test_claude_oauth_resolution_retires_pending_cache_without_source_row(
     }
     with (
         patch("app.core.config.settings") as mock_settings,
-        patch("app.api.endpoints.fleet.token_cache", cache),
+        patch("app.api.endpoints.fleet_ingest.token_cache", cache),
     ):
         mock_settings.INGEST_API_KEY = TEST_KEY
         mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
@@ -549,8 +549,8 @@ def test_empty_completed_providers_heartbeat_skips_latest_usage_write_block(sess
     }
     with (
         patch("app.core.config.settings") as mock_settings,
-        patch("app.api.endpoints.fleet.token_cache") as mock_tc,
-        patch("app.api.endpoints.fleet.prune_stale_latest_usage") as prune,
+        patch("app.api.endpoints.fleet_ingest.token_cache") as mock_tc,
+        patch("app.api.endpoints.fleet_ingest.prune_stale_latest_usage") as prune,
     ):
         mock_settings.INGEST_API_KEY = TEST_KEY
         mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
@@ -613,7 +613,7 @@ def test_complete_empty_provider_snapshot_retires_sidecar_card(session):
 
     with (
         patch("app.core.config.settings") as mock_settings,
-        patch("app.api.endpoints.fleet.token_cache") as mock_tc,
+        patch("app.api.endpoints.fleet_ingest.token_cache") as mock_tc,
     ):
         mock_settings.INGEST_API_KEY = TEST_KEY
         mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
@@ -680,7 +680,7 @@ def test_legacy_mixed_cookie_and_cli_card_does_not_cache_cookie(session):
     }
     with (
         patch("app.core.config.settings") as mock_settings,
-        patch("app.api.endpoints.fleet.token_cache") as mock_tc,
+        patch("app.api.endpoints.fleet_ingest.token_cache") as mock_tc,
     ):
         mock_settings.INGEST_API_KEY = TEST_KEY
         mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
@@ -718,7 +718,7 @@ def test_sidecar_pushed_card_merges_on_second_push(session):
 
     with (
         patch("app.core.config.settings") as mock_settings,
-        patch("app.api.endpoints.fleet.token_cache") as mock_tc,
+        patch("app.api.endpoints.fleet_ingest.token_cache") as mock_tc,
     ):
         mock_settings.INGEST_API_KEY = TEST_KEY
         mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
@@ -783,7 +783,7 @@ def test_sidecar_pushed_card_skipped_without_provider_id(session):
 
     with (
         patch("app.core.config.settings") as mock_settings,
-        patch("app.api.endpoints.fleet.token_cache") as mock_tc,
+        patch("app.api.endpoints.fleet_ingest.token_cache") as mock_tc,
     ):
         mock_settings.INGEST_API_KEY = TEST_KEY
         mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
@@ -830,7 +830,7 @@ def test_two_sidecars_different_accounts_produce_separate_rows(session):
 
     with (
         patch("app.core.config.settings") as mock_settings,
-        patch("app.api.endpoints.fleet.token_cache") as mock_tc,
+        patch("app.api.endpoints.fleet_ingest.token_cache") as mock_tc,
     ):
         mock_settings.INGEST_API_KEY = TEST_KEY
         mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
@@ -902,7 +902,7 @@ def test_ingest_prunes_ghost_model_rows_with_past_reset_at(session):
 
     with (
         patch("app.core.config.settings") as mock_settings,
-        patch("app.api.endpoints.fleet.token_cache") as mock_tc,
+        patch("app.api.endpoints.fleet_ingest.token_cache") as mock_tc,
     ):
         mock_settings.INGEST_API_KEY = TEST_KEY
         mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
@@ -984,7 +984,7 @@ def test_ingest_does_not_prune_other_provider_rows(session):
 
     with (
         patch("app.core.config.settings") as mock_settings,
-        patch("app.api.endpoints.fleet.token_cache") as mock_tc,
+        patch("app.api.endpoints.fleet_ingest.token_cache") as mock_tc,
     ):
         mock_settings.INGEST_API_KEY = TEST_KEY
         mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
@@ -1061,7 +1061,7 @@ def test_passive_provider_added_to_poll_providers(session):
 
     with (
         patch("app.core.config.settings") as mock_settings,
-        patch("app.api.endpoints.fleet.token_cache") as mock_tc,
+        patch("app.api.endpoints.fleet_ingest.token_cache") as mock_tc,
     ):
         mock_settings.INGEST_API_KEY = TEST_KEY
         mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
@@ -1083,7 +1083,7 @@ def _hermes_ingest(client: TestClient, sidecar_id: str) -> dict:
     }
     with (
         patch("app.core.config.settings") as mock_settings,
-        patch("app.api.endpoints.fleet.token_cache") as mock_tc,
+        patch("app.api.endpoints.fleet_ingest.token_cache") as mock_tc,
     ):
         mock_settings.INGEST_API_KEY = TEST_KEY
         mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
@@ -1177,7 +1177,7 @@ def test_sidecar_quota_guard_rejects_non_lsp(session):
 
     with (
         patch("app.core.config.settings") as mock_settings,
-        patch("app.api.endpoints.fleet.token_cache") as mock_tc,
+        patch("app.api.endpoints.fleet_ingest.token_cache") as mock_tc,
     ):
         mock_settings.INGEST_API_KEY = TEST_KEY
         mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
@@ -1220,7 +1220,7 @@ def test_hmac_mismatch_log_is_crlf_clean(session, caplog):
 
     with (
         patch("app.core.config.settings") as mock_settings,
-        patch("app.api.endpoints.fleet.token_cache") as mock_tc,
+        patch("app.api.endpoints.fleet_ingest.token_cache") as mock_tc,
     ):
         mock_settings.INGEST_API_KEY = TEST_KEY
         mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
@@ -1277,7 +1277,7 @@ async def test_ingest_resets_verification_backoff_only_when_the_secret_changes(s
 
     with (
         patch("app.core.config.settings") as mock_settings,
-        patch("app.api.endpoints.fleet.token_cache", cache),
+        patch("app.api.endpoints.fleet_ingest.token_cache", cache),
     ):
         mock_settings.INGEST_API_KEY = TEST_KEY
         mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
@@ -1347,7 +1347,7 @@ async def test_ingest_ends_a_rejected_sources_rest_only_when_its_secret_changes(
 
     with (
         patch("app.core.config.settings") as mock_settings,
-        patch("app.api.endpoints.fleet.token_cache", cache),
+        patch("app.api.endpoints.fleet_ingest.token_cache", cache),
     ):
         mock_settings.INGEST_API_KEY = TEST_KEY
         mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
@@ -1393,7 +1393,7 @@ async def test_a_re_login_on_an_oauth_file_origin_moves_the_source_to_the_new_cl
 
     with (
         patch("app.core.config.settings") as mock_settings,
-        patch("app.api.endpoints.fleet.token_cache", cache),
+        patch("app.api.endpoints.fleet_ingest.token_cache", cache),
     ):
         mock_settings.INGEST_API_KEY = TEST_KEY
         mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
@@ -1416,7 +1416,7 @@ def test_ingest_response_no_longer_carries_the_unread_identity_and_hint_maps(ses
     ``test_config_response_carries_account_tag_hints`` pins."""
     with (
         patch("app.core.config.settings") as mock_settings,
-        patch("app.api.endpoints.fleet.token_cache") as mock_tc,
+        patch("app.api.endpoints.fleet_ingest.token_cache") as mock_tc,
     ):
         mock_settings.INGEST_API_KEY = TEST_KEY
         mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
@@ -1433,14 +1433,14 @@ def test_ingest_response_no_longer_carries_the_unread_identity_and_hint_maps(ses
 
 @pytest.mark.asyncio
 async def test_bundle_holds_compares_the_access_token_when_nothing_else_identifies_the_login():
-    from app.api.endpoints.fleet import _bundle_holds
+    from app.api.endpoints.fleet_ingest import _bundle_holds
     from app.services.token_cache import TokenCache
 
     cache = TokenCache()
     await cache.store(
         "xai", {"access_token": "tok-one"}, "alice@example.com", source_id="sidecar:h:o"
     )
-    with patch("app.api.endpoints.fleet.token_cache", cache):
+    with patch("app.api.endpoints.fleet_ingest.token_cache", cache):
         # Same account slot: the very same token is held; a different one is a new login.
         assert await _bundle_holds(
             "xai", "alice@example.com", "sidecar:h:o", {"access_token": "tok-one"}
@@ -1454,7 +1454,7 @@ async def test_bundle_holds_compares_the_access_token_when_nothing_else_identifi
 async def test_bundle_holds_finds_a_source_filed_under_its_resolved_account():
     """A push without an account lands under its resolved identity; comparing against the
     ``default`` slot would call every heartbeat a re-login."""
-    from app.api.endpoints.fleet import _bundle_holds
+    from app.api.endpoints.fleet_ingest import _bundle_holds
     from app.services.token_cache import TokenCache
 
     cache = TokenCache()
@@ -1464,7 +1464,7 @@ async def test_bundle_holds_finds_a_source_filed_under_its_resolved_account():
         "bob@example.com",
         source_id="sidecar:h:o",
     )
-    with patch("app.api.endpoints.fleet.token_cache", cache):
+    with patch("app.api.endpoints.fleet_ingest.token_cache", cache):
         assert await _bundle_holds(
             "openrouter", "default", "sidecar:h:o", {"oauth_token": "tok-one"}
         )

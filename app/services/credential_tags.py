@@ -678,7 +678,7 @@ class CredentialTagRepo:
         The single source of truth for the ``/fleet/config`` /
         ``/fleet/ingest`` ``account_tag_hints`` shape (PR #288 / #290).
         Production callers — ``_account_tag_hints_for_providers`` in
-        ``app/api/endpoints/fleet.py`` — invoke this method so the
+        ``app/api/endpoints/fleet_shared.py`` — invoke this method so the
         lookup key lives in one place (the repo). Origins without a
         stored tag are silently omitted — the sidecar's silent-listener
         block guard treats missing hints the same way as no hints at

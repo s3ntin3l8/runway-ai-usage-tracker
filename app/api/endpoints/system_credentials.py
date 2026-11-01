@@ -37,7 +37,7 @@ async def get_credential_inventory(
     """Every discovered credential — provider → account → source — with the machine it
     came from, why it maps to its account, its status, and which source is currently
     feeding the data. Never returns secret values."""
-    from app.api.endpoints.fleet import visible_pending_rows
+    from app.api.endpoints.fleet_credentials import visible_pending_rows
     from app.services.blocked_collection import blocked_collection
     from app.services.blocked_sources import source_block_rows, source_blocks
 

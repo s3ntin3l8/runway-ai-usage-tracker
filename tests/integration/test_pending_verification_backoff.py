@@ -8,7 +8,7 @@ import httpx
 import pytest
 from sqlmodel import Session, select
 
-from app.api.endpoints.fleet import _bundle_holds
+from app.api.endpoints.fleet_ingest import _bundle_holds
 from app.models.db import PendingCredentialTag
 from app.services.collector_manager import MAX_VERIFICATIONS_PER_CYCLE
 from app.services.credential_tags import PendingCredentialTagRepo

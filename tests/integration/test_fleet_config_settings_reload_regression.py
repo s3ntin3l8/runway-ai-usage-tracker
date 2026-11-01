@@ -93,7 +93,7 @@ def test_fleet_config_issues_token_after_explicit_settings_reload(monkeypatch, c
     4. Assert ``/fleet/config`` issues a ``credential_token``.
 
     If anyone reverts the late-import fix in
-    ``app/api/endpoints/fleet.py``'s ``/fleet/config`` handler, the
+    ``app/api/endpoints/fleet_sidecars.py``'s ``/fleet/config`` handler, the
     endpoint reads the bound snapshot (which has ``INGEST_API_KEY = ""``
     after the reload because ``importlib.reload`` re-instantiates
     ``settings`` with default values), and ``can_issue_tokens`` is
@@ -137,10 +137,10 @@ def test_fleet_config_issues_token_after_explicit_settings_reload(monkeypatch, c
     token = accounts[0].get("credential_token")
     assert token, (
         "endpoint read stale settings — late-import in "
-        "app/api/endpoints/fleet.py regressed; "
+        "app/api/endpoints/fleet_sidecars.py regressed; "
         "INGEST_API_KEY was patched via dotted-path on the LIVE "
         "module but the endpoint read the bound snapshot from the "
         "pre-reload module. Restore the late-import pattern in "
-        "app/api/endpoints/fleet.py's /fleet/config handler "
+        "app/api/endpoints/fleet_sidecars.py's /fleet/config handler "
         "(PR #297 fix)."
     )

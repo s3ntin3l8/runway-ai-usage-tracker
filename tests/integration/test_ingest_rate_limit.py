@@ -1,6 +1,6 @@
 """POST /api/v1/fleet/ingest must be rate-limited.
 
-Closes audit finding S9. Every other route in fleet.py carries a
+Closes audit finding S9. Every other route in the fleet modules carries a
 `@limiter.limit(...)` decorator; `/ingest` did not. HMAC verification
 rejects bad signatures cheaply, but the server still reads the body,
 runs constant-time compare, and parses Pydantic on every request — an
@@ -18,7 +18,7 @@ from app.main import (
 )
 from tests.fixtures.test_client import TestClient
 
-_INGEST_ROUTE_KEY = "app.api.endpoints.fleet.ingest_metrics"
+_INGEST_ROUTE_KEY = "app.api.endpoints.fleet_ingest.ingest_metrics"
 
 
 def test_ingest_endpoint_is_registered_with_limiter():

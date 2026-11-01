@@ -8,7 +8,7 @@ an operator deliberately moved to a second real account stays put.
 
 from __future__ import annotations
 
-from app.api.endpoints.fleet import _can_reconcile_row
+from app.api.endpoints.fleet_ingest import _can_reconcile_row
 
 HASH_ACCOUNT = "bd6d58cf00000000"
 

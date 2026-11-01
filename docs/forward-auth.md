@@ -110,7 +110,8 @@ services:
       # Sidecar endpoints bypass SSO — each request has its own HMAC auth (the
       # pairing route authenticates by its one-time code instead).
       # Runway applies its own request checks to every listed route.
-      # Keep this exact list aligned with the HMAC-only fleet routes in fleet.py
+      # Keep this exact list aligned with the HMAC-only fleet routes in the
+      # app/api/endpoints/fleet_*.py modules
       # plus the code-authenticated pairing route; tests/unit/test_forward_auth_routes.py
       # checks route and doc parity. Newly added routes stay behind Authentik
       # until explicitly listed here.

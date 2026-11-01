@@ -8,7 +8,7 @@ targets declared in the sidecar's embedded registry.
 import re
 from pathlib import Path
 
-from app.api.endpoints.fleet import _INGEST_CREDENTIAL_KEYS, _is_cookie_key
+from app.api.endpoints.fleet_ingest import _INGEST_CREDENTIAL_KEYS, _is_cookie_key
 
 SIDECAR = Path(__file__).resolve().parents[2] / "scripts" / "sidecar.py"
 
