@@ -121,7 +121,7 @@ function GroupRow({
   return (
     <div className="flex flex-col gap-1.5">
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-        <span className="min-w-0 basis-full break-words text-[12px] text-fg sm:flex-1 sm:basis-auto sm:truncate">{group.label}</span>
+        <span className="min-w-0 basis-full break-words text-[12px] text-fg sm:flex-1 sm:basis-0 sm:truncate">{group.label}</span>
         {group.samples.length > 0 && (
           <Button size="sm" variant="ghost" onClick={() => setShowSamples((s) => !s)}>
             {showSamples ? 'Hide samples' : 'Show samples'}
@@ -134,7 +134,7 @@ function GroupRow({
         ) : (
           <span className="flex min-w-0 flex-wrap items-center gap-x-2">
             <span
-              className={cn('text-[11px] text-fg-subtle', 'sm:max-w-64 sm:truncate')}
+              className={cn('text-[11px] text-fg-subtle', 'sm:flex-1 sm:basis-0 sm:max-w-64 sm:truncate')}
               title={group.not_fixable_reason ?? undefined}
             >
               {group.not_fixable_reason ?? 'not fixable'}
