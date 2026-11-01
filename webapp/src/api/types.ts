@@ -1086,7 +1086,7 @@ export interface ProviderConfig {
 
 // Wizard (#287) preview-endpoint types — keep in sync with
 // `_AccountPreviewRequest` / preview_account_identity response in
-// `app/api/endpoints/system.py`.
+// `app/api/endpoints/system_provider_config.py`.
 export type AccountPreviewLabelSource = 'email' | 'credential_hash' | 'default' | 'organization';
 
 export interface AccountPreviewRequest {

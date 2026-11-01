@@ -238,7 +238,7 @@ async def test_a_refresh_result_is_never_written_into_a_machines_rotating_bundle
 
 
 def _client_with(monkeypatch, cache):
-    monkeypatch.setattr("app.api.endpoints.system.token_cache", cache)
+    monkeypatch.setattr("app.api.endpoints.system_credentials.token_cache", cache)
     monkeypatch.setattr("app.services.token_cache.token_cache", cache)
     return TestClient(app)
 

@@ -474,7 +474,7 @@ class TestSourceRefresh:
             source_id="config:xai:alice",
             source="config",
         )
-        monkeypatch.setattr("app.api.endpoints.system.token_cache", fresh)
+        monkeypatch.setattr("app.api.endpoints.system_credentials.token_cache", fresh)
         monkeypatch.setattr("app.services.token_cache.token_cache", fresh)
         refresh = AsyncMock(return_value={"xai_access": "new", "xai_refresh": "rt2"})
         monkeypatch.setattr("app.services.token_refresher.refresh_oauth_token", refresh)
@@ -501,7 +501,7 @@ class TestSourceRefresh:
             source_id="config:gemini:default",
             source="config",
         )
-        monkeypatch.setattr("app.api.endpoints.system.token_cache", fresh)
+        monkeypatch.setattr("app.api.endpoints.system_credentials.token_cache", fresh)
 
         resp = TestClient(app).post(
             "/api/v1/system/credentials/gemini/nobody@example.com/config:gemini:nobody/refresh"

@@ -12,7 +12,7 @@ def client():
 
 
 def test_get_status(client):
-    with patch("app.api.endpoints.system.manager.get_collector_stats") as mock_stats:
+    with patch("app.api.endpoints.system_health.manager.get_collector_stats") as mock_stats:
         mock_stats.return_value = {"collectors": [{"collector": "test", "status": "ok"}]}
         response = client.get("/api/v1/system/status")
         assert response.status_code == 200
