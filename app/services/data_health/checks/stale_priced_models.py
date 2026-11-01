@@ -22,7 +22,6 @@ one `(provider, model)` group.
 
 from __future__ import annotations
 
-from bisect import bisect_right
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
@@ -36,7 +35,6 @@ from app.models.db import UsageEvent
 from app.services.cost_calculator import (
     PricingIndex,
     PricingRow,
-    PricingRowSnapshot,
     resolve_price_row,
 )
 from app.services.data_health.base import (
@@ -85,50 +83,6 @@ def _split_key(group_key: str) -> tuple[str, str]:
     return provider_id, model_id
 
 
-def _expected_estimate(
-    row: PricingRowSnapshot | Any,
-    *,
-    aggregate: bool,
-    long_flag: bool,
-    tokens_input: int,
-    tokens_output: int,
-    tokens_cache_read: int,
-    cache_create_1h: int,
-    cache_create_5m_all: int,
-) -> float:
-    """The estimate `compute_event_cost_breakdown` would produce, applied to
-    bucket sums. The cost is linear in each token dimension within a bucket of
-    events sharing a price row and tier, so the sum of per-event estimates
-    equals the estimate of the sums (up to per-event rounding)."""
-    rate_in = row.input_per_mtok
-    rate_out = row.output_per_mtok
-    rate_read = row.cache_read_per_mtok
-    rate_5m = row.cache_create_per_mtok
-    rate_1h = row.cache_create_1h_per_mtok
-    if (
-        not aggregate
-        and long_flag
-        and row.long_input_per_mtok is not None
-        and row.long_output_per_mtok is not None
-    ):
-        rate_in = row.long_input_per_mtok
-        rate_out = row.long_output_per_mtok
-        if row.long_cache_read_per_mtok is not None:
-            rate_read = row.long_cache_read_per_mtok
-        if row.long_cache_create_per_mtok is not None:
-            rate_5m = row.long_cache_create_per_mtok
-        if row.long_cache_create_1h_per_mtok is not None:
-            rate_1h = row.long_cache_create_1h_per_mtok
-    rate_1h = rate_1h or rate_5m
-    return (
-        tokens_input * rate_in
-        + tokens_output * rate_out
-        + tokens_cache_read * rate_read
-        + cache_create_1h * rate_1h
-        + cache_create_5m_all * rate_5m
-    ) / 1_000_000
-
-
 def _price_intervals(
     session: Session, index: PricingIndex
 ) -> list[tuple[str, str, date, date, PricingRow]]:
@@ -146,15 +100,11 @@ def _price_intervals(
         .order_by(UsageEvent.provider_id, UsageEvent.model_id, day)
     )
     intervals: list[tuple[str, str, date, date, PricingRow]] = []
-    provider_dates: dict[str, list[date]] = {}
     for provider_id, model_id, day_text in session.execute(stmt):
         assert model_id is not None
         if is_priced_on_purpose_free(provider_id, model_id):
             continue
         on = date.fromisoformat(day_text)
-        if provider_id not in provider_dates:
-            provider_dates[provider_id] = index.effective_dates(provider_id)
-        bisect_right(provider_dates[provider_id], on)
         ts = datetime.combine(on, time.min, tzinfo=UTC)
         row = resolve_price_row(session, provider_id, model_id, ts, index=index)
         if row is None:
@@ -188,8 +138,6 @@ def _aggregate_buckets(session: Session) -> dict[tuple[str, str], _Bucket]:
             ),
             else_=UsageEvent.tokens_cache_create,
         )
-        # long condition per event
-        pass
         stmt = sa_select(  # type: ignore[call-overload]
             func.count(),
             func.sum(UsageEvent.tokens_input),
@@ -231,12 +179,6 @@ def _aggregate_buckets(session: Session) -> dict[tuple[str, str], _Bucket]:
         ) = row_result
         if not events:
             continue
-        # expected via bucket sums at row rates (linear, so equals sum of per-event)
-        # Use _expected_estimate with agg=False? We need per-event aggregate/long mix.
-        # Compute expected as sum over events using base rates; long-tier events
-        # use long rates. Approximate: use the row's base rates for the whole
-        # interval (the previous code split by long flag). To preserve accuracy,
-        # instead compute expected per-event via sql_cost sum:
         stored = stored or 0.0
         expected = expected or 0.0
         bucket = buckets[(provider_id, model_id)]
@@ -273,7 +215,9 @@ class StalePricedModelsCheck(Check):
         groups: list[FindingGroup] = []
         for (provider_id, model_id), bucket in sorted(_aggregate_buckets(session).items()):
             delta = bucket.expected - bucket.stored
-            if abs(delta) <= max(_MIN_DELTA_USD, _MIN_DELTA_FRACTION * abs(bucket.stored)):
+            if bucket.stale_events == 0 and abs(delta) <= max(
+                _MIN_DELTA_USD, _MIN_DELTA_FRACTION * abs(bucket.stored)
+            ):
                 continue
             detail = {
                 "provider_id": provider_id,
