@@ -1666,13 +1666,20 @@ export interface DataHealthFixResult {
 
 export type DataHealthJobStatus = 'running' | 'succeeded' | 'failed';
 
+/** What kind of failure a fix ended in. */
+export type DataHealthErrorKind = 'db_busy' | 'unknown';
+
 export interface DataHealthJob {
   id: string;
   check_id: string;
   group_key: string;
   status: DataHealthJobStatus;
   result?: DataHealthFixResult | null;
+  /** The plain-language reason the fix failed — never the raw exception. */
   error?: string | null;
+  error_kind?: DataHealthErrorKind | null;
+  /** Whether running the same fix again could succeed. */
+  retryable?: boolean;
   started_at: string;
   finished_at?: string | null;
 }

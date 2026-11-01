@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from typing import Any
 
-from sqlalchemy import func, or_, update
+from sqlalchemy import func, or_
 from sqlmodel import Session, col, select
 
 from app.models.db import ProviderConfig, UsageEvent
@@ -29,12 +29,22 @@ from app.services.cost_calculator import (
     is_aggregate_event_id,
     resolve_price_row,
 )
+from app.services.maintenance._rebuild import rebuild_pairs_best_effort
+from app.services.maintenance._retry import (
+    DEFAULT_LOCK_PROFILE,
+    LockRetryProfile,
+    commit_batch,
+)
 from app.services.maintenance.event_cost import ResolvedCost, resolve_event_cost
 from app.services.maintenance.windows import rebuild_windows_for_providers
 from app.services.model_normalization import is_free_tier_model_id
 from app.services.period_rollups import rebuild_rollups_for_pairs
 
 _EVENT_BATCH = 1000
+
+#: What the batch write is called in the retry log — never the SQL or the
+#: bound parameters.
+_BATCH_ACTION = "recost batch update of UsageEvent"
 
 
 def is_priced_on_purpose_free(provider_id: str, model_id: str) -> bool:
@@ -361,54 +371,95 @@ def apply_recost(
     models: list[str] | None = None,
     skip_rollups: bool = False,
     skip_windows: bool = False,
+    lock_profile: LockRetryProfile = DEFAULT_LOCK_PROFILE,
 ) -> RecostResult:
     """Recompute cost_usd for events in scope, then rebuild the rollups and
     windows for every affected (provider_id, account_id) pair. Commits as it
     goes (batched every 1000 events, matching the prior script's behavior).
+
+    Each batch is retried when the database is locked (`lock_profile` — the
+    Data Health checks pass a longer one, since they run against a live
+    server). A run that dies half-way still rebuilds the derived tables of the
+    batches it did commit, so they do not lag until the next successful run.
     """
     _check_modes(only_zero_cost, estimate_only)
     result = RecostResult()
     writes: list[dict[str, Any]] = []
-    for item in _compute_changes(session, providers, since, only_zero_cost, estimate_only, models):
-        if isinstance(item, RecostSkip):
-            if item.reason == "unchanged":
-                result.unchanged += 1
+    # The pairs of the batch being written, and of every batch already
+    # committed — the latter is what a failed run rebuilds.
+    batch_pairs: set[tuple[str, str]] = set()
+    committed_pairs: set[tuple[str, str]] = set()
+    batches_done = False
+    try:
+        for item in _compute_changes(
+            session, providers, since, only_zero_cost, estimate_only, models
+        ):
+            if isinstance(item, RecostSkip):
+                if item.reason == "unchanged":
+                    result.unchanged += 1
+                else:
+                    result.skipped_unpopulated += item.reason == "unpopulated"
+                    result.skipped_still_unpriced += item.reason == "still_unpriced"
+                continue
+            writes.append(
+                {
+                    "id": item.event_id,
+                    "cost_usd": item.resolved.cost_usd,
+                    "cost_reported_usd": item.resolved.cost_reported_usd,
+                    "cost_estimated_usd": item.resolved.cost_estimated_usd,
+                    "cost_input": item.resolved.breakdown.input,
+                    "cost_output": item.resolved.breakdown.output,
+                    "cost_cache_read": item.resolved.breakdown.cache_read,
+                    "cost_cache_create": item.resolved.breakdown.cache_create,
+                }
+            )
+            batch_pairs.add((item.provider_id, item.account_id))
+            result.affected_pairs.add((item.provider_id, item.account_id))
+            if item.resolved.cost_usd == 0.0:
+                result.zeroed += 1
             else:
-                result.skipped_unpopulated += item.reason == "unpopulated"
-                result.skipped_still_unpriced += item.reason == "still_unpriced"
-            continue
-        writes.append(
-            {
-                "id": item.event_id,
-                "cost_usd": item.resolved.cost_usd,
-                "cost_reported_usd": item.resolved.cost_reported_usd,
-                "cost_estimated_usd": item.resolved.cost_estimated_usd,
-                "cost_input": item.resolved.breakdown.input,
-                "cost_output": item.resolved.breakdown.output,
-                "cost_cache_read": item.resolved.breakdown.cache_read,
-                "cost_cache_create": item.resolved.breakdown.cache_create,
-            }
-        )
-        result.affected_pairs.add((item.provider_id, item.account_id))
-        if item.resolved.cost_usd == 0.0:
-            result.zeroed += 1
-        else:
-            result.updated += 1
-        if len(writes) == _EVENT_BATCH:
-            session.execute(update(UsageEvent), writes)
-            session.commit()
+                result.updated += 1
+            if len(writes) == _EVENT_BATCH:
+                commit_batch(
+                    session,
+                    UsageEvent,
+                    writes,
+                    action_desc=_BATCH_ACTION,
+                    profile=lock_profile,
+                )
+                committed_pairs |= batch_pairs
+                writes.clear()
+                batch_pairs.clear()
+        if writes:
+            commit_batch(
+                session,
+                UsageEvent,
+                writes,
+                action_desc=_BATCH_ACTION,
+                profile=lock_profile,
+            )
+            committed_pairs |= batch_pairs
             writes.clear()
-    if writes:
-        session.execute(update(UsageEvent), writes)
-    session.commit()
+            batch_pairs.clear()
+        else:
+            # Nothing left to write — end the read transaction, as the
+            # single-commit path this replaced did.
+            session.commit()
+        batches_done = True
 
-    if not skip_rollups and result.affected_pairs:
-        rebuild_rollups_for_pairs(session, result.affected_pairs)
-        session.commit()
-        result.rollups_rebuilt_pairs = len(result.affected_pairs)
+        if not skip_rollups and result.affected_pairs:
+            rebuild_rollups_for_pairs(session, result.affected_pairs)
+            session.commit()
+            result.rollups_rebuilt_pairs = len(result.affected_pairs)
 
-    if not skip_windows and result.affected_pairs:
-        touched_providers = sorted({p for p, _a in result.affected_pairs})
-        result.windows_rebuilt = rebuild_windows_for_providers(session, touched_providers)
+        if not skip_windows and result.affected_pairs:
+            touched_providers = sorted({p for p, _a in result.affected_pairs})
+            result.windows_rebuilt = rebuild_windows_for_providers(session, touched_providers)
+    finally:
+        if not batches_done:
+            # The run died before it could rebuild the derived tables. Rebuild
+            # the pairs it did commit, best effort: the original failure is
+            # what the caller must see.
+            rebuild_pairs_best_effort(session, committed_pairs, action_desc="recost")
 
     return result

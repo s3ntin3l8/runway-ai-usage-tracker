@@ -7,8 +7,10 @@ hook-awaiting), not check business logic.
 from __future__ import annotations
 
 import importlib
+import logging
 
 import pytest
+from sqlalchemy.exc import OperationalError
 from sqlmodel import Session, SQLModel, create_engine, select
 from sqlmodel.pool import StaticPool
 
@@ -36,12 +38,14 @@ class _FakeCheck(Check):
         findings: int = 0,
         blocked_by: tuple[str, ...] = (),
         fails: bool = False,
+        raises: BaseException | None = None,
     ):
         self.id = check_id
         self.severity = Severity.WARN
         self.blocked_by = blocked_by
         self._findings = findings
         self._fails = fails
+        self._raises = raises
         self.hooks: list = []
         self.apply_calls: list[tuple[str, dict]] = []
 
@@ -52,6 +56,8 @@ class _FakeCheck(Check):
 
     def apply(self, session, group_key, params):
         self.apply_calls.append((group_key, params))
+        if self._raises is not None:
+            raise self._raises
         if self._fails:
             raise RuntimeError("boom")
         return (
@@ -79,7 +85,61 @@ def checks():
 
 
 @pytest.fixture
+def refusing_checks():
+    """`a` refuses the apply with its own message — the checks raise a
+    `ValueError` for the operator, not for the log."""
+    return {
+        "a": _FakeCheck(
+            "a",
+            findings=1,
+            raises=ValueError("Confirm that the source and target are the same provider account"),
+        ),
+    }
+
+
+@pytest.fixture
+def empty_refusal_checks():
+    """`a` refuses the apply with an empty message."""
+    return {"a": _FakeCheck("a", findings=1, raises=ValueError())}
+
+
+@pytest.fixture
+def locked_checks():
+    """`a` fails on apply with a locked database and the SQL that caused it."""
+    return {
+        "a": _FakeCheck(
+            "a",
+            findings=1,
+            raises=OperationalError(
+                "UPDATE usage_events SET cost_usd = ? WHERE usage_events.id IN (?)",
+                {"cost_usd": 0.4242, "id_1": 918273},
+                Exception("database is locked"),
+            ),
+        ),
+    }
+
+
+@pytest.fixture
 def jobs(monkeypatch, checks):
+    return _jobs(monkeypatch, checks)
+
+
+@pytest.fixture
+def locked_jobs(monkeypatch, locked_checks):
+    return _jobs(monkeypatch, locked_checks)
+
+
+@pytest.fixture
+def refusing_jobs(monkeypatch, refusing_checks):
+    return _jobs(monkeypatch, refusing_checks)
+
+
+@pytest.fixture
+def empty_refusal_jobs(monkeypatch, empty_refusal_checks):
+    return _jobs(monkeypatch, empty_refusal_checks)
+
+
+def _jobs(monkeypatch, checks):
     monkeypatch.setattr(jobs_module, "REGISTRY", list(checks.values()))
     monkeypatch.setattr(jobs_module, "get_check", lambda check_id: checks[check_id])
     monkeypatch.setattr(jobs_module, "engine", _engine())
@@ -189,10 +249,96 @@ async def test_apply_failure_records_failed_status_and_audit(jobs):
     record = await jobs.wait_for_job(job_id)
 
     assert record.status == "failed"
-    assert "boom" in (record.error or "")
+    # The dialog gets a plain-language reason; the detail goes to the audit
+    # log, never to the job record.
+    assert record.error
+    assert "boom" not in record.error
     with Session(jobs_module.engine) as session:
         rows = list(session.exec(select(AuditLog)))
-    assert any(r.action == "data_health.fix_failed" for r in rows)
+    failed = next(r for r in rows if r.action == "data_health.fix_failed")
+    assert "boom" in (failed.payload_json or "")
+
+
+async def test_a_locked_database_is_a_retryable_db_busy(locked_jobs):
+    await locked_jobs.wait_for_scan()
+
+    job_id = await locked_jobs.start_apply(
+        check_id="a", group_key="g1", params={}, actor="t", actor_ip=None
+    )
+    record = await locked_jobs.wait_for_job(job_id)
+
+    assert record.status == "failed"
+    assert record.error_kind == "db_busy"
+    assert record.retryable is True
+    assert "busy" in (record.error or "").lower()
+    assert "UPDATE" not in (record.error or "")
+    assert "parameters" not in (record.error or "")
+
+
+async def test_an_unrelated_failure_is_an_unknown_kind(jobs):
+    await jobs.wait_for_scan()
+
+    job_id = await jobs.start_apply(
+        check_id="c", group_key="g1", params={}, actor="t", actor_ip=None
+    )
+    record = await jobs.wait_for_job(job_id)
+
+    assert record.status == "failed"
+    assert record.error_kind == "unknown"
+    assert record.retryable is False
+    assert "UPDATE" not in (record.error or "")
+
+
+async def test_a_refusal_shows_the_checks_own_message(refusing_jobs):
+    """A `ValueError` is a check's refusal, written for this dialog — it must
+    not be collapsed into a generic sentence."""
+    await refusing_jobs.wait_for_scan()
+
+    job_id = await refusing_jobs.start_apply(
+        check_id="a", group_key="g1", params={}, actor="t", actor_ip=None
+    )
+    record = await refusing_jobs.wait_for_job(job_id)
+
+    assert record.status == "failed"
+    assert record.error == "Confirm that the source and target are the same provider account"
+    assert record.error_kind == "unknown"
+    assert record.retryable is False
+
+
+async def test_an_empty_refusal_falls_back_to_the_generic_sentence(empty_refusal_jobs):
+    """An empty refusal would leave the dialog with no reason at all."""
+    await empty_refusal_jobs.wait_for_scan()
+
+    job_id = await empty_refusal_jobs.start_apply(
+        check_id="a", group_key="g1", params={}, actor="t", actor_ip=None
+    )
+    record = await empty_refusal_jobs.wait_for_job(job_id)
+
+    assert record.status == "failed"
+    assert record.error == "The fix failed. The audit log has the details."
+
+
+async def test_the_failure_detail_keeps_the_bound_parameters_out(locked_jobs, caplog):
+    await locked_jobs.wait_for_scan()
+
+    with caplog.at_level(logging.WARNING):
+        job_id = await locked_jobs.start_apply(
+            check_id="a", group_key="g1", params={}, actor="t", actor_ip=None
+        )
+        await locked_jobs.wait_for_job(job_id)
+
+    with Session(jobs_module.engine) as session:
+        rows = list(session.exec(select(AuditLog)))
+    failed = next(r for r in rows if r.action == "data_health.fix_failed")
+    payload = failed.payload_json or ""
+    log_text = "\n".join(record.getMessage() for record in caplog.records)
+
+    for text in (payload, log_text):
+        assert "UPDATE" not in text
+        assert "0.4242" not in text
+        assert "918273" not in text
+    # The part that says what went wrong survives.
+    assert "database is locked" in log_text
 
 
 async def test_apply_triggers_a_rescan_after_completing(jobs):

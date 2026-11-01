@@ -11,11 +11,14 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 
 import pytest
+from sqlalchemy.exc import OperationalError
 from sqlmodel import Session, SQLModel, create_engine, select
 from sqlmodel.pool import StaticPool
 
 from app.models.db import ProviderConfig, ProviderPricing, UsageEvent, UsagePeriodRollup
 from app.services.cost_calculator import resolve_price_row
+from app.services.maintenance import argon_retag
+from app.services.maintenance._retry import LockRetryProfile
 from app.services.maintenance.argon_retag import apply_argon_retag, plan_argon_retag
 from app.services.model_normalization import (
     ARGON_MODEL_ID,
@@ -24,6 +27,7 @@ from app.services.model_normalization import (
 )
 from app.services.period_rollups import rebuild_rollups_for_pairs
 from app.services.pricing_seed import seed_pricing_table
+from tests.unit.lock_contention import lock_batches_after, lock_every_batch
 
 TS = datetime(2026, 10, 18, 12, 0, tzinfo=UTC)
 
@@ -332,3 +336,68 @@ def test_provider_config_billing_type_is_respected():
     assert ev is not None
     assert ev.cost_usd == pytest.approx(1.5)
     assert ev.cost_estimated_usd == pytest.approx(12.0)
+
+
+# ---------------------------------------------------------------------------
+# Lock contention (#1121)
+# ---------------------------------------------------------------------------
+
+
+def test_apply_argon_retag_retries_a_locked_batch_and_succeeds():
+    """A transient lock on the batch write is retried, not fatal."""
+    session = _session()
+    seed_pricing_table(session)
+    _event(session)
+    state = lock_every_batch(session, 2)
+
+    result = apply_argon_retag(
+        session, lock_profile=LockRetryProfile(max_retries=6, initial_backoff=0.001)
+    )
+
+    assert state["failed"] == 2
+    assert result.retagged == 1
+    ev = session.exec(select(UsageEvent)).first()
+    assert ev is not None
+    assert ev.model_id == ARGON_MODEL_ID
+
+
+def test_apply_argon_retag_gives_up_after_the_configured_attempts():
+    """A lock that never clears fails the repair — after the configured tries."""
+    session = _session()
+    seed_pricing_table(session)
+    _event(session)
+    state = lock_every_batch(session, 99)
+
+    with pytest.raises(OperationalError):
+        apply_argon_retag(
+            session, lock_profile=LockRetryProfile(max_retries=3, initial_backoff=0.001)
+        )
+
+    assert state["failed"] == 3
+
+
+def test_apply_argon_retag_rebuilds_the_derived_tables_of_the_batches_it_committed(
+    monkeypatch,
+):
+    """A run that dies half-way still rebuilds the rollups of the batches it
+    did commit — and the original failure still surfaces."""
+    session = _session()
+    seed_pricing_table(session)
+    for index in range(5):
+        _event(session, event_id=f"conv-{index}|gen_0")
+    monkeypatch.setattr(argon_retag, "_BATCH", 2)
+    state = lock_batches_after(session, 3)
+
+    with pytest.raises(OperationalError):
+        apply_argon_retag(session)
+
+    assert state["written"] >= 3
+    # The first four events were committed and re-priced; the fifth was not.
+    costs = sorted(ev.cost_usd for ev in session.exec(select(UsageEvent)).all())
+    assert costs == [0.0, 12.0, 12.0, 12.0, 12.0]
+    canonical = [
+        row
+        for row in session.exec(select(UsagePeriodRollup)).all()
+        if row.model_id == ARGON_MODEL_ID
+    ]
+    assert canonical

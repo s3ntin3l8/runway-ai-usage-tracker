@@ -426,7 +426,7 @@ See [docs/data-health.md](data-health.md) for what each check finds and fixes.
 | `POST` | `/api/v1/system/data-health/rescan` | Admin | Start a fresh scan (`202`; no-op if one is already running) |
 | `POST` | `/api/v1/system/data-health/{check_id}/preview` | Admin | Read-only preview of a fix for one finding group — body: `{group_key, params}`; may include safe samples and a required `confirmation_text` |
 | `POST` | `/api/v1/system/data-health/{check_id}/apply` | Admin | Apply a fix (`202`, returns `job_id`) — body: `{group_key, params, confirm: true}`. `400` when the `confirm` field is missing or when no scan has run yet; `404` for an unknown `check_id`; `409` if the latest scan failed, a scan/job is running, or the check is blocked by an upstream finding |
-| `GET` | `/api/v1/system/data-health/jobs/{job_id}` | Admin | Poll a started fix job's status/result |
+| `GET` | `/api/v1/system/data-health/jobs/{job_id}` | Admin | Poll a started fix job's status/result. A failed job carries a plain-language `error` (never the raw exception), an `error_kind` (`db_busy` when the database was busy with other writes, `unknown` otherwise) and a `retryable` flag that says whether running the same fix again could succeed |
 
 ## LimitCard Schema
 

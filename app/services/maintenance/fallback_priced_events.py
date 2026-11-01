@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Any
 
-from sqlalchemy import func, or_, update
+from sqlalchemy import func, or_
 from sqlmodel import Session, col, select
 
 from app.models.db import UsageEvent
@@ -43,12 +43,22 @@ from app.services.cost_calculator import (
     compute_event_cost_breakdown,
     is_aggregate_event_id,
 )
+from app.services.maintenance._rebuild import rebuild_pairs_best_effort
+from app.services.maintenance._retry import (
+    DEFAULT_LOCK_PROFILE,
+    LockRetryProfile,
+    commit_batch,
+)
 from app.services.maintenance.event_cost import ResolvedCost, resolve_event_cost
 from app.services.maintenance.windows import rebuild_windows_for_providers
 from app.services.model_normalization import is_free_tier_model_id
 from app.services.period_rollups import rebuild_rollups_for_pairs
 
 _EVENT_BATCH = 1000
+
+#: What the batch write is called in the retry log — never the SQL or the
+#: bound parameters.
+_BATCH_ACTION = "fallback re-price batch update of UsageEvent"
 
 # An event matches the fallback when its stored cost is this close to it.
 FALLBACK_TOLERANCE = 0.02
@@ -295,42 +305,82 @@ def apply_fallback_priced_events(
     *,
     skip_rollups: bool = False,
     skip_windows: bool = False,
+    lock_profile: LockRetryProfile = DEFAULT_LOCK_PROFILE,
 ) -> FallbackResult:
     """Re-price the group's matching events, commit in batches, then rebuild
     rollups and windows for the affected pairs. Idempotent: a re-priced event
-    carries a stored estimate and so leaves the rule's scope."""
+    carries a stored estimate and so leaves the rule's scope.
+
+    Each batch is retried when the database is locked (`lock_profile` — the
+    Data Health check passes a longer one, since it runs against a live
+    server). A run that dies half-way still rebuilds the derived tables of the
+    batches it did commit, so they do not lag until the next successful run.
+    """
     result = FallbackResult()
     writes: list[dict[str, Any]] = []
-    for item in _scan(session, provider_id, model_id):
-        if not _tally(result, item):
-            continue
-        assert isinstance(item, FallbackChange)
-        resolved = item.resolved
-        writes.append(
-            {
-                "id": item.event_id,
-                "cost_usd": resolved.cost_usd,
-                "cost_estimated_usd": resolved.cost_estimated_usd,
-                "cost_input": resolved.breakdown.input,
-                "cost_output": resolved.breakdown.output,
-                "cost_cache_read": resolved.breakdown.cache_read,
-                "cost_cache_create": resolved.breakdown.cache_create,
-            }
-        )
-        if len(writes) == _EVENT_BATCH:
-            session.execute(update(UsageEvent), writes)
-            session.commit()
+    # The pairs of the batch being written, and of every batch already
+    # committed — the latter is what a failed run rebuilds.
+    batch_pairs: set[tuple[str, str]] = set()
+    committed_pairs: set[tuple[str, str]] = set()
+    batches_done = False
+    try:
+        for item in _scan(session, provider_id, model_id):
+            if not _tally(result, item):
+                continue
+            assert isinstance(item, FallbackChange)
+            resolved = item.resolved
+            writes.append(
+                {
+                    "id": item.event_id,
+                    "cost_usd": resolved.cost_usd,
+                    "cost_estimated_usd": resolved.cost_estimated_usd,
+                    "cost_input": resolved.breakdown.input,
+                    "cost_output": resolved.breakdown.output,
+                    "cost_cache_read": resolved.breakdown.cache_read,
+                    "cost_cache_create": resolved.breakdown.cache_create,
+                }
+            )
+            batch_pairs.add((item.provider_id, item.account_id))
+            if len(writes) == _EVENT_BATCH:
+                commit_batch(
+                    session,
+                    UsageEvent,
+                    writes,
+                    action_desc=_BATCH_ACTION,
+                    profile=lock_profile,
+                )
+                committed_pairs |= batch_pairs
+                writes.clear()
+                batch_pairs.clear()
+        if writes:
+            commit_batch(
+                session,
+                UsageEvent,
+                writes,
+                action_desc=_BATCH_ACTION,
+                profile=lock_profile,
+            )
+            committed_pairs |= batch_pairs
             writes.clear()
-    if writes:
-        session.execute(update(UsageEvent), writes)
-    session.commit()
+            batch_pairs.clear()
+        else:
+            # Nothing left to write — end the read transaction, as the
+            # single-commit path this replaced did.
+            session.commit()
+        batches_done = True
 
-    if not skip_rollups and result.affected_pairs:
-        rebuild_rollups_for_pairs(session, result.affected_pairs)
-        session.commit()
-        result.rollups_rebuilt_pairs = len(result.affected_pairs)
-    if not skip_windows and result.affected_pairs:
-        result.windows_rebuilt = rebuild_windows_for_providers(
-            session, sorted({p for p, _a in result.affected_pairs})
-        )
+        if not skip_rollups and result.affected_pairs:
+            rebuild_rollups_for_pairs(session, result.affected_pairs)
+            session.commit()
+            result.rollups_rebuilt_pairs = len(result.affected_pairs)
+        if not skip_windows and result.affected_pairs:
+            result.windows_rebuilt = rebuild_windows_for_providers(
+                session, sorted({p for p, _a in result.affected_pairs})
+            )
+    finally:
+        if not batches_done:
+            # The run died before it could rebuild the derived tables. Rebuild
+            # the pairs it did commit, best effort: the original failure is
+            # what the caller must see.
+            rebuild_pairs_best_effort(session, committed_pairs, action_desc="fallback re-price")
     return result

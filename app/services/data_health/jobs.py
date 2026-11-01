@@ -25,16 +25,36 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Literal
 
+from sqlalchemy.exc import OperationalError
 from sqlmodel import Session
 
 from app.core.db import engine
+from app.core.log_redaction import scrub_pii
 from app.services import audit_log
 from app.services.data_health.base import AsyncHook, Check, CheckReport, FixResult
 from app.services.data_health.registry import REGISTRY, get_check
+from app.services.maintenance._retry import _is_sqlite_locked_or_busy
 
 logger = logging.getLogger(__name__)
 
 JobStatus = Literal["running", "succeeded", "failed"]
+
+#: What kind of failure a fix ended in. `db_busy` is the one the operator can
+#: act on: the database was busy with other writes, the progress so far was
+#: saved, and the fix can simply be run again.
+ErrorKind = Literal["db_busy", "unknown"]
+
+_DB_BUSY_MESSAGE = "The database was busy with other writes. Progress so far was saved — run Fix again to continue."
+_UNKNOWN_MESSAGE = "The fix failed. The audit log has the details."
+
+#: How much of the failure detail is kept in the log line and the audit
+#: payload. The detail is what an operator needs to diagnose the failure; it
+#: is not what the dialog shows.
+_DETAIL_LIMIT = 500
+
+#: How long a check's own refusal may be. It is shown in the dialog, so it
+#: stays the length of a sentence.
+_MESSAGE_LIMIT = 200
 
 
 class CheckBlockedError(ValueError):
@@ -54,6 +74,46 @@ class ScanFailedError(RuntimeError):
     """Raised when the latest scan failed and the cached findings are stale."""
 
 
+def _classify(exc: Exception) -> tuple[ErrorKind, str]:
+    """The failure's kind and the plain-language sentence the operator sees.
+
+    A `ValueError` is a check's own refusal — "Confirm the stranded rows are
+    stale before deleting them" — written for this dialog, so its message is
+    what the operator is shown (the preview endpoint surfaces the same
+    messages as a 400).
+
+    Every other failure gets a plain sentence of its own: the exception's text
+    never reaches the dialog, because a SQLAlchemy error renders the whole
+    `UPDATE` statement and its bound parameters. The detail lives in the log
+    and the audit payload instead.
+    """
+    if isinstance(exc, ValueError):
+        # An empty refusal is still a refusal: the generic sentence is the
+        # floor, so the dialog never shows an empty reason.
+        return "unknown", _safe_detail(exc, limit=_MESSAGE_LIMIT) or _UNKNOWN_MESSAGE
+    if isinstance(exc, OperationalError) and _is_sqlite_locked_or_busy(exc):
+        return "db_busy", _DB_BUSY_MESSAGE
+    return "unknown", _UNKNOWN_MESSAGE
+
+
+def _safe_detail(exc: Exception, *, limit: int = _DETAIL_LIMIT) -> str:
+    """The failure detail without the SQL statement or its bound parameters.
+
+    SQLAlchemy renders both as `[SQL: ...]` and `[parameters: ...]` sections
+    of the exception's text. They are cut before the text is truncated, so a
+    bound value can never reach the log or the audit payload.
+    """
+    text = str(exc)
+    for marker in ("[SQL:", "[parameters:"):
+        index = text.find(marker)
+        if index != -1:
+            text = text[:index]
+    text = " ".join(text.split())
+    if len(text) > limit:
+        text = text[:limit] + "…"
+    return text
+
+
 @dataclass
 class JobRecord:
     id: str
@@ -62,7 +122,13 @@ class JobRecord:
     params: dict[str, Any]
     status: JobStatus = "running"
     result: FixResult | None = None
+    #: The plain-language reason the fix failed — never the exception's text.
     error: str | None = None
+    #: What kind of failure it was: "db_busy" (the operator can run it again)
+    #: or "unknown".
+    error_kind: ErrorKind | None = None
+    #: Whether running the same fix again could succeed.
+    retryable: bool = False
     started_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     finished_at: datetime | None = None
 
@@ -210,9 +276,20 @@ class DataHealthJobs:
             )
         except Exception as exc:  # noqa: BLE001 — recorded on the job + audit log, not swallowed
             record.status = "failed"
-            record.error = str(exc)
+            kind, message = _classify(exc)
+            record.error = message
+            record.error_kind = kind
+            record.retryable = kind == "db_busy"
+            # The detail keeps the SQL and the bound parameters out of it; the
+            # operator gets it from the log and the audit payload, not from the
+            # dialog.
+            detail = _safe_detail(exc)
             logger.warning(
-                "Data health apply failed for %s/%s: %s", record.check_id, record.group_key, exc
+                "Data health apply failed for %s/%s (%s): %s",
+                record.check_id,
+                record.group_key,
+                kind,
+                scrub_pii(detail),
             )
             await asyncio.to_thread(
                 self._audit,
@@ -220,7 +297,7 @@ class DataHealthJobs:
                 actor_ip=actor_ip,
                 action="data_health.fix_failed",
                 target_id=f"{record.check_id}:{record.group_key}",
-                payload={"params": record.params, "error": str(exc)},
+                payload={"params": record.params, "error": detail, "error_kind": kind},
             )
         finally:
             record.finished_at = datetime.now(UTC)

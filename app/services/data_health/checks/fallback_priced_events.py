@@ -31,6 +31,7 @@ from app.services.data_health.base import (
     FixResult,
     Severity,
 )
+from app.services.maintenance._retry import DATA_HEALTH_LOCK_PROFILE
 from app.services.maintenance.fallback_priced_events import (
     FALLBACK_TOLERANCE,
     apply_fallback_priced_events,
@@ -252,7 +253,9 @@ class FallbackPricedEventsCheck(Check):
         self, session: Session, group_key: str, params: dict[str, Any]
     ) -> tuple[FixResult, list[AsyncHook]]:
         provider_id, model_id = split_group_key(group_key)
-        result = apply_fallback_priced_events(session, provider_id, model_id)
+        result = apply_fallback_priced_events(
+            session, provider_id, model_id, lock_profile=DATA_HEALTH_LOCK_PROFILE
+        )
         return (
             FixResult(
                 check_id=self.id,
