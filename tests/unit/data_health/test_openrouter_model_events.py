@@ -233,6 +233,9 @@ HERMES_MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free"
         ),
         # The same for a row that predates the backfill entirely.
         (None, "hermes|review-bot|api-3|nvidia/nemotron-3-ultra-550b-a55b:free|title|c1s1"),
+        # A Hermes row whose id does not carry the `hermes|` prefix: only
+        # `source_app` identifies it, so the clause has to stand on its own.
+        ("hermes", "msg_hermes-without-the-prefix"),
     ],
 )
 def test_hermes_opencode_free_event_is_not_detected_planned_or_moved(session, source_app, event_id):
@@ -240,11 +243,12 @@ def test_hermes_opencode_free_event_is_not_detected_planned_or_moved(session, so
     OpenRouter usage — even though the model id has the `vendor/model:free`
     shape the check keys off.
 
-    All three shapes must be excluded: the current one (`source_app` set to
+    All four shapes must be excluded: the current one (`source_app` set to
     `hermes`), the backfilled one (`source_app` rewritten to the provider id
-    by `_backfill_source_app`), and the pre-backfill one (`source_app` still
-    NULL). The last two are only recognisable by the durable `hermes|`
-    event-id prefix.
+    by `_backfill_source_app`), the pre-backfill one (`source_app` still
+    NULL), and one identified by `source_app` alone. The middle two are only
+    recognisable by the durable `hermes|` event-id prefix; the last one only
+    by `source_app`, so neither marker can be dropped.
     """
     _target(session)
     _raw_ev(
@@ -305,6 +309,37 @@ def test_opencode_vendor_free_model_is_still_detected_and_moved(session):
     assert ev.account_id == ME
 
 
+def test_hermes_row_does_not_hide_a_genuine_row_under_the_same_provider(session):
+    """#1126: excluding Hermes rows must not drop the provider's real findings.
+
+    A Hermes row and a genuine `vendor/model:free` row under `opencode`
+    together: only the genuine one is counted, and only it is moved. An
+    implementation that discarded the whole group on seeing a Hermes row
+    would report nothing and move nothing.
+    """
+    _target(session)
+    _raw_ev(
+        session,
+        "hermes|review-bot|api-5|nvidia/nemotron-3-ultra-550b-a55b:free|title|c1s1",
+        "opencode",
+        model_id=HERMES_MODEL,
+        source_app="hermes",
+    )
+    _raw_ev(session, "genuine-openrouter", "opencode", model_id="vendor/x:free")
+
+    report = _check().detect(session)
+    assert [(g.key, g.count) for g in report.groups] == [("opencode", 1)]
+    assert [s.label for s in report.groups[0].samples] == ["opencode/vendor/x:free"]
+
+    result, _ = _check().apply(session, "opencode", {})
+    assert result.counts["retagged"] == 1
+    moved = {(e.provider_id, e.event_id) for e in session.exec(select(UsageEvent)).all()}
+    assert moved == {
+        ("opencode", "hermes|review-bot|api-5|nvidia/nemotron-3-ultra-550b-a55b:free|title|c1s1"),
+        ("openrouter", "genuine-openrouter"),
+    }
+
+
 def test_raw_provider_openrouter_is_flagged_whatever_the_model_id(session):
     """#1122: the stored raw providerID is the gateway tag, so an `openrouter`
     row is OpenRouter traffic even when the model id has no vendor prefix."""
@@ -317,12 +352,25 @@ def test_raw_provider_openrouter_is_flagged_whatever_the_model_id(session):
     assert [(g.key, g.count) for g in report.groups] == [("opencode", 1)]
 
 
-def test_raw_provider_opencode_is_not_flagged_whatever_the_model_id(session):
+@pytest.mark.parametrize(
+    "raw_provider_id",
+    ["opencode", "opencode-go", "open-design-byok"],
+)
+def test_raw_provider_opencode_is_not_flagged_whatever_the_model_id(session, raw_provider_id):
     """#1122: a Zen (`opencode`) row is not OpenRouter traffic, even when the
-    model id has the `vendor/model:free` shape the check used to guess from."""
+    model id has the `vendor/model:free` shape the check used to guess from.
+
+    The set is the one `docs/data-health.md` names: `opencode`,
+    `opencode-go` and `open-design-byok` are the gateway tags that are not
+    OpenRouter.
+    """
     _target(session)
     _raw_ev(
-        session, "raw-opencode", "opencode", model_id="vendor/x:free", raw_provider_id="opencode"
+        session,
+        "raw-opencode",
+        "opencode",
+        model_id="vendor/x:free",
+        raw_provider_id=raw_provider_id,
     )
 
     report = _check().detect(session)
