@@ -6,7 +6,9 @@ the server. The server stores them, calls the providers' APIs with the
 credentials it holds, and pushes remote control back.
 
 This document describes the protocol in one place. The pieces are implemented
-in `app/api/endpoints/fleet.py` and `app/api/endpoints/fleet_sources.py`, and
+in the `app/api/endpoints/fleet_*.py` modules (ingest, credentials, pending
+events, sidecars, pairing and their shared helpers) and in
+`app/api/endpoints/fleet_sources.py`, and
 on the client side in `scripts/sidecar.py` and `scripts/sidecar_pkg/`.
 
 > Every fleet route lives under the `/api/v1/fleet` prefix.

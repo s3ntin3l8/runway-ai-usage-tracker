@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.api.endpoints import fleet
+from app.api.endpoints import fleet_credentials as fleet
 from scripts import sidecar
 
 

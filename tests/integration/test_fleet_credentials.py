@@ -24,7 +24,7 @@ from pydantic import ValidationError
 from sqlmodel import Session, SQLModel, create_engine, select
 from sqlmodel.pool import StaticPool
 
-from app.api.endpoints.fleet import CredentialManifestRequest
+from app.api.endpoints.fleet_credentials import CredentialManifestRequest
 from app.core.db import get_session
 from app.main import app
 from app.models.db import CredentialSource, ProviderConfig
@@ -405,7 +405,7 @@ def test_manifest_ignores_pass_through_hermes_and_drops_its_stale_row(
     a pending row, a row an earlier report left behind must go, and neither may
     show on the Untagged list.
     """
-    from app.api.endpoints.fleet import visible_pending_rows
+    from app.api.endpoints.fleet_credentials import visible_pending_rows
     from app.models.db import PendingCredentialTag
     from app.services.credential_tags import PendingCredentialTagRepo
 
@@ -2648,7 +2648,7 @@ def test_pending_event_assignment_accepts_a_known_discovered_account(
         return [("antigravity", "alice@example.com", "Alice")]
 
     monkeypatch.setattr(
-        "app.api.endpoints.fleet.token_cache.get_all_active_accounts",
+        "app.api.endpoints.fleet_pending_events.token_cache.get_all_active_accounts",
         active_accounts,
     )
     push = UsageEventPush(
@@ -2736,7 +2736,7 @@ def test_pending_event_assignment_does_not_resurrect_hidden_historical_identity(
         return []
 
     monkeypatch.setattr(
-        "app.api.endpoints.fleet.token_cache.get_all_active_accounts",
+        "app.api.endpoints.fleet_pending_events.token_cache.get_all_active_accounts",
         no_active_accounts,
     )
     session.add(
@@ -3264,7 +3264,7 @@ def test_config_issues_no_credential_tokens_for_unsigned_remote_caller(
 
     monkeypatch.setattr("app.core.config.settings.APP_HOST", "0.0.0.0")
     _seed_identity_state(session)
-    with patch("app.api.endpoints.fleet.issue_credential_token") as issue:
+    with patch("app.api.endpoints.fleet_sidecars.issue_credential_token") as issue:
         assert client.get("/api/v1/fleet/config").status_code == 200
     issue.assert_not_called()
 
@@ -3969,7 +3969,9 @@ def _known_antigravity(monkeypatch: pytest.MonkeyPatch, account_id: str = "me@ex
 
     # Same instance-level patch as the neighbouring tests: earlier ones leave a
     # bound-method instance attribute behind that would shadow a class patch.
-    monkeypatch.setattr("app.api.endpoints.fleet.token_cache.get_all_active_accounts", _accounts)
+    monkeypatch.setattr(
+        "app.api.endpoints.fleet_pending_events.token_cache.get_all_active_accounts", _accounts
+    )
 
 
 def test_gemini_event_assigns_to_antigravity_and_redirects_future_events(
@@ -4328,7 +4330,7 @@ async def test_ingest_accepts_device_only_in_kimi_cli_bundle(
     from app.services.token_cache import TokenCache
 
     cache = TokenCache()
-    monkeypatch.setattr("app.api.endpoints.fleet.token_cache", cache)
+    monkeypatch.setattr("app.api.endpoints.fleet_ingest.token_cache", cache)
     payload = {
         "provider": "sidecar",
         "sidecar_id": "device-host",
@@ -4373,7 +4375,8 @@ async def test_claude_same_store_cookie_sources_survive_ingest_and_completed_man
     from app.services.token_cache import TokenCache
 
     cache = TokenCache()
-    monkeypatch.setattr("app.api.endpoints.fleet.token_cache", cache)
+    monkeypatch.setattr("app.api.endpoints.fleet_ingest.token_cache", cache)
+    monkeypatch.setattr("app.api.endpoints.fleet_credentials.token_cache", cache)
     base = f"cookie:{provider}/chrome/Default/store"
     origins = [base + "#aaaaaaaaaaaa", base + "#bbbbbbbbbbbb"]
     CredentialTagRepo.set_tag(
@@ -4495,7 +4498,7 @@ async def test_completed_claude_manifest_keeps_reported_resolved_siblings(
 
     cache = TokenCache()
     manager = CollectorManager()
-    monkeypatch.setattr("app.api.endpoints.fleet.token_cache", cache)
+    monkeypatch.setattr("app.api.endpoints.fleet_credentials.token_cache", cache)
     monkeypatch.setattr("app.services.collector_manager.manager", manager)
     first = await _tagged_claude_manifest_source(
         session, cache, manager, provider, "aaaaaaaaaaaa", set_by
@@ -4565,7 +4568,7 @@ async def test_failed_manifest_commit_retains_claude_cache_and_preferences(
 
     cache = TokenCache()
     manager = CollectorManager()
-    monkeypatch.setattr("app.api.endpoints.fleet.token_cache", cache)
+    monkeypatch.setattr("app.api.endpoints.fleet_credentials.token_cache", cache)
     monkeypatch.setattr("app.services.collector_manager.manager", manager)
     origin, source_id, account = await _tagged_claude_manifest_source(
         session, cache, manager, provider, "aaaaaaaaaaaa", "identity_verification"
@@ -4610,7 +4613,7 @@ async def test_native_oauth_changed_generation_reenters_pending_despite_old_veri
     from app.services.token_cache import TokenCache
 
     cache = TokenCache()
-    monkeypatch.setattr("app.api.endpoints.fleet.token_cache", cache)
+    monkeypatch.setattr("app.api.endpoints.fleet_ingest.token_cache", cache)
     origin = "keychain:Claude Code-credentials"
     sid = sidecar_source_id("native-host", origin)
     session.add(

@@ -6,7 +6,11 @@ from app.api.endpoints.claude_cloud_list_boundary import router as claude_cloud_
 from app.api.endpoints.claude_cloud_probe import router as claude_cloud_probe_router
 from app.api.endpoints.claude_cloud_verification import router as claude_cloud_verification_router
 from app.api.endpoints.data_health import router as data_health_router
-from app.api.endpoints.fleet import router as fleet_router
+from app.api.endpoints.fleet_credentials import router as fleet_credentials_router
+from app.api.endpoints.fleet_ingest import router as fleet_ingest_router
+from app.api.endpoints.fleet_pairing import router as fleet_pairing_router
+from app.api.endpoints.fleet_pending_events import router as fleet_pending_events_router
+from app.api.endpoints.fleet_sidecars import router as fleet_sidecars_router
 from app.api.endpoints.fleet_sources import router as fleet_sources_router
 from app.api.endpoints.system_account_merges import router as system_account_merges_router
 from app.api.endpoints.system_app_config import router as system_app_config_router
@@ -41,7 +45,14 @@ for _ur in (
     v1_router.include_router(
         _ur, prefix="/usage", tags=["usage"], dependencies=[Depends(require_admin_key)]
     )
-v1_router.include_router(fleet_router, prefix="/fleet", tags=["fleet"])
+for _fr in (
+    fleet_ingest_router,
+    fleet_credentials_router,
+    fleet_pending_events_router,
+    fleet_sidecars_router,
+    fleet_pairing_router,
+):
+    v1_router.include_router(_fr, prefix="/fleet", tags=["fleet"])
 v1_router.include_router(fleet_sources_router, prefix="/fleet", tags=["fleet"])
 v1_router.include_router(auth_router, prefix="/auth", tags=["auth"])
 for _sr in (

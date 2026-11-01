@@ -6,7 +6,7 @@ still keyed `account_id="default"` whose `account_label` is already a real
 identity (an email) — the credential works, but every write path that keys
 on `(provider_id, account_id)` (most importantly `POST
 /fleet/events/pending/assign`, which 404s unless a ProviderConfig row exists
-for the target account — see app/api/endpoints/fleet.py) can't address the
+for the target account — see app/api/endpoints/fleet_pending_events.py) can't address the
 real account until the row's own key catches up with its label.
 
 Follows the collision-handling pattern in

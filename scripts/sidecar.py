@@ -1609,7 +1609,7 @@ def _queue_limit_mb(value: Any) -> float | None:
 
 
 # Cards that exist only to carry a credential to the server (never displayed).
-# Mirrors `is_token_only` in app/api/endpoints/fleet.py.
+# Mirrors `is_token_only` in app/api/endpoints/fleet_ingest.py.
 _TOKEN_ONLY_UNITS = frozenset({"oauth", "api_key", "cookie"})
 
 
@@ -5871,7 +5871,7 @@ def run_collection(config: dict[str, Any], providers: list[str] | None = None) -
             )
             provider_cycle_complete = True
             blocked_origins_this_cycle.extend(blocked)
-            # Mirror the server's token-only predicate (fleet.py:118) so the
+            # Mirror the server's token-only predicate (see fleet_ingest.py) so the
             # log lines line up with what the ingest endpoint actually does.
             token_cards = sum(
                 1

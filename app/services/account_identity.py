@@ -193,7 +193,7 @@ _FINGERPRINT_RE = re.compile(rf"^[0-9a-f]{{{FINGERPRINT_LEN}}}$")
 # Both halves need this set: the sidecar to suffix origins
 # (``fingerprinted_credential_origin`` in ``scripts/sidecar.py``), and the
 # server (``_fingerprinted_credential_hints`` in
-# ``app/api/endpoints/fleet.py``) to know which rows it may answer a
+# ``app/api/endpoints/fleet_shared.py``) to know which rows it may answer a
 # ``provider:<pid>#<fp>`` hint for. Mirrored in
 # ``scripts/sidecar_pkg/identity.py`` — keep the two in sync.
 FINGERPRINTED_ORIGIN_PROVIDERS: frozenset[str] = frozenset(

@@ -68,7 +68,7 @@ def test_ingest_events_inserts_rows_and_dedups(session):
 
     with (
         patch("app.core.config.settings") as mock_settings,
-        patch("app.api.endpoints.fleet.token_cache") as mock_tc,
+        patch("app.api.endpoints.fleet_ingest.token_cache") as mock_tc,
     ):
         mock_settings.INGEST_API_KEY = TEST_KEY
         mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
@@ -86,7 +86,7 @@ def test_ingest_events_inserts_rows_and_dedups(session):
     # Replay the same payload — both events should be deduped
     with (
         patch("app.core.config.settings") as mock_settings,
-        patch("app.api.endpoints.fleet.token_cache") as mock_tc,
+        patch("app.api.endpoints.fleet_ingest.token_cache") as mock_tc,
     ):
         mock_settings.INGEST_API_KEY = TEST_KEY
         mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
@@ -126,7 +126,7 @@ def test_ingest_normalizes_sidecar_id(session):
 
     with (
         patch("app.core.config.settings") as mock_settings,
-        patch("app.api.endpoints.fleet.token_cache") as mock_tc,
+        patch("app.api.endpoints.fleet_ingest.token_cache") as mock_tc,
     ):
         mock_settings.INGEST_API_KEY = TEST_KEY
         mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
@@ -221,7 +221,7 @@ def test_a_hermes_event_is_resolved_from_the_hosts_own_native_identity(session):
 
     with (
         patch("app.core.config.settings") as mock_settings,
-        patch("app.api.endpoints.fleet.token_cache") as mock_tc,
+        patch("app.api.endpoints.fleet_ingest.token_cache") as mock_tc,
     ):
         mock_settings.INGEST_API_KEY = TEST_KEY
         mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
@@ -241,7 +241,7 @@ def test_a_hermes_event_is_resolved_from_the_hosts_own_native_identity(session):
 def _post_ingest(payload: dict):
     with (
         patch("app.core.config.settings") as mock_settings,
-        patch("app.api.endpoints.fleet.token_cache") as mock_tc,
+        patch("app.api.endpoints.fleet_ingest.token_cache") as mock_tc,
     ):
         mock_settings.INGEST_API_KEY = TEST_KEY
         mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False

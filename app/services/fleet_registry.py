@@ -327,7 +327,7 @@ class FleetRegistryService:
         # `None` (not reported) stays permissive so already-deployed frozen
         # sidecars keep working; `False` (from-source / Docker) suppresses it.
         # A stale sidecar can't actually receive the push either way — delivery
-        # rides its next successful ingest response (see fleet.py:ingest_metrics)
+        # rides its next successful ingest response (see fleet_ingest.py:ingest_metrics)
         # — so a dead sidecar would otherwise show "update available" forever
         # even though nothing can apply it. Gate the offer on liveness too.
         # "A newer build exists" is independent of whether it can be pushed

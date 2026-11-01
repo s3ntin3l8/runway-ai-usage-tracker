@@ -220,7 +220,7 @@ class TestIngestEndpoint:
             mock_settings.INGEST_API_KEY = test_key
             mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
 
-            with patch("app.api.endpoints.fleet.token_cache") as mock_cache:
+            with patch("app.api.endpoints.fleet_ingest.token_cache") as mock_cache:
                 mock_cache.store = AsyncMock()
 
                 response = test_client.post("/api/v1/fleet/ingest", content=body, headers=headers)
@@ -295,7 +295,7 @@ class TestIngestEndpoint:
             mock_settings.INGEST_API_KEY = test_key
             mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
 
-            with patch("app.api.endpoints.fleet.token_cache") as mock_cache:
+            with patch("app.api.endpoints.fleet_ingest.token_cache") as mock_cache:
                 mock_cache.store = AsyncMock()
                 mock_cache.remove_source = AsyncMock(return_value=False)
                 response = test_client.post("/api/v1/fleet/ingest", content=body, headers=headers)

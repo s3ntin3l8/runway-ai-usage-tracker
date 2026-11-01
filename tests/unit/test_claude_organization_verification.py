@@ -152,7 +152,7 @@ async def test_source_organization_endpoint_rejects_unknown_source(claude_db):
     from fastapi import HTTPException
     from sqlmodel import Session
 
-    from app.api.endpoints.fleet import get_claude_source_organizations
+    from app.api.endpoints.fleet_credentials import get_claude_source_organizations
 
     with Session(claude_db) as session:
         with pytest.raises(HTTPException) as exc:
@@ -207,7 +207,7 @@ async def seed_claude_source(engine, provider="anthropic"):
 async def test_organization_picker_persists_exact_source_binding(claude_db, monkeypatch):
     from sqlmodel import select
 
-    from app.api.endpoints.fleet import (
+    from app.api.endpoints.fleet_credentials import (
         ClaudeOrganizationSelection,
         get_claude_source_organizations,
         select_claude_source_organization,
@@ -268,7 +268,7 @@ async def test_selection_rejects_wrong_provider_malformed_or_unavailable_org(
 ):
     from fastapi import HTTPException
 
-    from app.api.endpoints.fleet import (
+    from app.api.endpoints.fleet_credentials import (
         ClaudeOrganizationSelection,
         select_claude_source_organization,
     )
@@ -329,7 +329,7 @@ async def test_picker_rejects_missing_durable_source(claude_db):
     from fastapi import HTTPException
     from sqlmodel import select
 
-    from app.api.endpoints.fleet import _pending_claude_source
+    from app.api.endpoints.fleet_credentials import _pending_claude_source
     from app.models.db import CredentialSource
 
     source_id = await seed_claude_source(claude_db)
@@ -632,7 +632,7 @@ async def test_manual_cookie_fallback_honors_saved_subscription_organization(cla
     ],
 )
 async def test_pending_organization_metadata_is_robust_and_not_returned(claude_db, metadata, count):
-    from app.api.endpoints.fleet import list_pending_credential_tags
+    from app.api.endpoints.fleet_credentials import list_pending_credential_tags
     from app.models.db import PendingCredentialTag
 
     with RealSession(claude_db) as session:
@@ -1068,7 +1068,7 @@ async def test_the_organization_picker_names_and_prices_a_console_account(claude
     """A Console account the picker discovered is named and priced as well."""
     from sqlmodel import select
 
-    from app.api.endpoints.fleet import (
+    from app.api.endpoints.fleet_credentials import (
         ClaudeOrganizationSelection,
         get_claude_source_organizations,
         select_claude_source_organization,

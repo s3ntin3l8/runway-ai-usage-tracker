@@ -264,10 +264,12 @@ async def validate_ingest_auth(
     - 413 body larger than 8 MB
     """
     # Read settings via the canonical module path so test fixtures that
-    # ``patch("app.core.config.settings")`` (or ``app.api.endpoints.fleet.settings``)
-    # observe the same value the helper sees. Importing at call time also
-    # avoids a module-load race with conftest fixtures that swap settings
-    # before the app is constructed.
+    # ``patch("app.core.config.settings")`` observe the same value the
+    # helper sees. Importing at call time also avoids a module-load race
+    # with conftest fixtures that swap settings before the app is
+    # constructed. The fleet endpoints read settings the same way — a
+    # call-time import, never a module-level ``settings`` — so there is no
+    # second patch target to keep in sync.
     from app.core.config import settings as _settings
 
     if not _settings.INGEST_API_KEY:
