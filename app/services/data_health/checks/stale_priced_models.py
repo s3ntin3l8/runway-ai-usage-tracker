@@ -211,16 +211,13 @@ class StalePricedModelsCheck(Check):
                 "recomputed_usd": round(bucket.expected, 4),
                 "delta_usd": round(delta, 4),
             }
+            _suffix = f" ({delta:+.2f} USD)" if abs(delta) >= 0.005 else ""
             groups.append(
                 FindingGroup(
                     key=_group_key(provider_id, model_id),
                     label=(
                         f"{provider_id}/{model_id}: up to {bucket.stale_events} event(s) priced at an "
-                        + (
-                            f"outdated rate ({delta:+.2f} USD)"
-                            if abs(delta) >= 0.005
-                            else "outdated rate"
-                        )
+                        f"outdated rate{_suffix}"
                     ),
                     count=bucket.stale_events,
                     fixable=True,
@@ -240,6 +237,7 @@ class StalePricedModelsCheck(Check):
             session, [provider_id], estimate_only=True, models=[model_id], sample_size=0
         )
         delta = recost_plan.new_estimate_sum - recost_plan.stored_estimate_sum
+        _delta_text = f" ({delta:+.2f} USD)" if abs(delta) >= 0.005 else ""
         return FixPlan(
             check_id=self.id,
             group_key=group_key,
@@ -260,7 +258,7 @@ class StalePricedModelsCheck(Check):
                 "delta_usd": round(delta, 4),
             },
             confirmation_text=(
-                f"Refresh {provider_id}/{model_id} estimates ({delta:+.2f} USD)? Reported "
+                f"Refresh {provider_id}/{model_id} estimates{_delta_text}? Reported "
                 "costs and price changes dated after an event are not applied to it. "
                 "Back up the database first."
             ),
