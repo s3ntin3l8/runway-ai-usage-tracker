@@ -18,7 +18,7 @@ from sqlmodel.pool import StaticPool
 from app import __version__
 
 # Routes read this module binding, so patch it to emulate a beta server build.
-from app.api.endpoints import system as system_endpoint
+from app.api.endpoints import system_health as system_endpoint
 from app.core.db import get_session
 from app.main import app
 from app.models.db import AuditLog

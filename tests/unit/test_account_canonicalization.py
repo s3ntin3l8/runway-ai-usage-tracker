@@ -189,7 +189,7 @@ def test_provider_config_put_preserves_opencode_cookie_and_workspace(session: Se
 
 def test_provider_config_put_stores_xai_bearer_as_access_only(session: Session):
     """A manually pasted xAI bearer is not a refresh token."""
-    from app.api.endpoints.system import token_cache
+    from app.api.endpoints.system_provider_config import token_cache
     from app.core.db import get_session
     from app.main import app
     from tests.fixtures.test_client import TestClient

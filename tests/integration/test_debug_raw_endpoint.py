@@ -609,7 +609,7 @@ def test_probe_returns_each_sources_outcome_for_the_requested_account(client, mo
             {"source_id": "sidecar:b", "outcome": "disabled", "probed": False},
         ]
 
-    monkeypatch.setattr("app.api.endpoints.system.probe_sources", fake_probe)
+    monkeypatch.setattr("app.api.endpoints.system_health.probe_sources", fake_probe)
 
     r = client.post("/api/v1/system/debug/sources/deepseek?account_id=alice@example.com")
 
@@ -628,7 +628,7 @@ def test_probe_defaults_to_the_default_account(client, monkeypatch):
         seen.append(account_id)
         return []
 
-    monkeypatch.setattr("app.api.endpoints.system.probe_sources", fake_probe)
+    monkeypatch.setattr("app.api.endpoints.system_health.probe_sources", fake_probe)
     assert client.post("/api/v1/system/debug/sources/deepseek").status_code == 200
     assert seen == ["default"]
 
@@ -667,5 +667,5 @@ def test_probe_says_when_sources_were_left_out(client, monkeypatch):
             {"source_id": "b", "outcome": "over_limit", "probed": False},
         ]
 
-    monkeypatch.setattr("app.api.endpoints.system.probe_sources", fake_probe)
+    monkeypatch.setattr("app.api.endpoints.system_health.probe_sources", fake_probe)
     assert client.post("/api/v1/system/debug/sources/deepseek").json()["truncated"] is True
