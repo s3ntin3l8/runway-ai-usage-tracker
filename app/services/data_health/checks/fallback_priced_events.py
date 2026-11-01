@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import and_, case, func, literal
+from sqlalchemy import func
 from sqlalchemy import select as sa_select
 from sqlmodel import Session, col
 
@@ -32,7 +32,6 @@ from app.services.data_health.base import (
     Severity,
 )
 from app.services.maintenance._retry import DATA_HEALTH_LOCK_PROFILE
-from app.services.maintenance.sql_cost import sql_cost as _sql_cost
 from app.services.maintenance.fallback_priced_events import (
     FALLBACK_TOLERANCE,
     apply_fallback_priced_events,
@@ -44,6 +43,7 @@ from app.services.maintenance.fallback_priced_events import (
 from app.services.maintenance.fallback_priced_events import (
     group_key as make_group_key,
 )
+from app.services.maintenance.sql_cost import sql_cost as _sql_cost
 
 
 @dataclass
