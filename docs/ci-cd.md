@@ -93,14 +93,25 @@ Workflows live in `.github/workflows/`.
     `build-docker` needs `test-python`, `test-frontend` and
     `dependency-audit` to pass on `main`. It audits the shipped (non-dev) frontend
     dependencies at any severity and the whole tree, build tooling included, at
-    moderate and up: a low-severity finding with no patched release that is
-    reachable only through a dev-only package would otherwise keep the job, and
-    with it the edge image, red (#1033). So that finding does not vanish with the
-    job log, the weekly `npm-audit-weekly.yml` audits the whole tree at every
-    severity, writes the list to its job summary and keeps it in one tracking
-    issue labelled `npm-audit` (edited, closed when clean, reopened on
-    findings). It is advisory: nothing depends on it and it is not a required
-    check (#1035).
+    moderate and up. The gate stops at moderate on purpose, even though the tree
+    now audits clean at every severity: a low-severity finding with no patched
+    release that is reachable only through a dev-only package would otherwise keep
+    the job, and with it the edge image, red (#1033, #744). A resilient job beats
+    full low-severity coverage, so that finding does not vanish with the job log:
+    the weekly `npm-audit-weekly.yml` audits the whole tree at every severity,
+    writes the list to its job summary and keeps it in one tracking issue
+    labelled `npm-audit` (edited, closed when clean, reopened on findings). It is
+    advisory: nothing depends on it and it is not a required check (#1035).
+
+    The one low finding that used to sit in the dev tree — `deepmerge`
+    (GHSA-gcqx-w48m-w2h4), reached through the dev-only `vite-plugin-pwa` →
+    `workbox-build` → `@rollup/plugin-node-resolve` chain — is gone.
+    `webapp/package.json` overrides `deepmerge` to a patched fork, because the
+    advisory has no patched upstream release (4.3.1 is the latest and is in
+    range) and upstream closed the fix pull request unmerged; downgrading is not
+    an option either, since the versions below the affected range predate the
+    guard. The shipped tree was never affected: `npm audit --omit=dev` reports
+    0 either way.
 
     Moving the repositories to an organization would enable the queue, but
     that is not only a settings change: the workflows that produce the

@@ -172,14 +172,20 @@ jobs:
           npm --prefix webapp ci
           # What ships to the browser: any severity.
           npm --prefix webapp audit --omit=dev
-          # The whole tree, build tooling included: moderate and up. The one low finding
-          # there is deepmerge (GHSA-gcqx-w48m-w2h4), reached only through the dev-only
-          # vite-plugin-pwa -> workbox-build chain. It has no patched release (4.3.1 is
-          # the latest and is in range) and `npm audit fix` would downgrade the PWA plugin
-          # to 0.2.1, so a bare `npm audit` here would stay red until upstream moves.
-          # Drop `--audit-level` once it does:
+          # The whole tree, build tooling included: moderate and up. The gate stays at
+          # moderate on purpose even though the tree now audits clean at every severity:
+          # this job gates the edge image publish (needs: [..., dependency-audit, ...]),
+          # so a low-severity advisory in the dev tree would freeze the moving tag
+          # (#744). A resilient job beats full low-severity coverage; the weekly
+          # npm-audit-weekly.yml is what keeps low findings visible.
+          #
+          # The one low finding that used to be here -- deepmerge (GHSA-gcqx-w48m-w2h4),
+          # reached through the dev-only vite-plugin-pwa -> workbox-build chain -- is
+          # gone: webapp/package.json overrides deepmerge to a patched fork, because the
+          # advisory has no patched upstream release (4.3.1 is the latest and is in
+          # range) and upstream closed the fix pull request unmerged. The shipped tree
+          # was never affected either way: `npm audit --omit=dev` reports 0.
           # https://github.com/advisories/GHSA-gcqx-w48m-w2h4
-          # Low findings in the dev tree are not reported here; see #1035.
           npm --prefix webapp audit --audit-level=moderate
 
   installer-check:

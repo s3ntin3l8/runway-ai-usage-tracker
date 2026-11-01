@@ -2,11 +2,14 @@ name: npm audit (weekly)
 
 # Advisory only. `dependency-audit` in ci-cd.yml blocks on the shipped tree at any
 # severity and on the whole tree at moderate and up, so a low-severity finding in
-# the dev-only tree (for example GHSA-gcqx-w48m-w2h4 in deepmerge) shows up only in
-# a job log that expires. This run lists every finding, at every severity, in the
-# job summary and keeps it in one tracking issue that it edits, closes and reopens
-# rather than opening a new issue per run. Nothing needs this workflow and it is
-# not a required check (#1035).
+# the dev-only tree shows up only in a job log that expires. This run lists every
+# finding, at every severity, in the job summary and keeps it in one tracking issue
+# that it edits, closes and reopens rather than opening a new issue per run. Nothing
+# needs this workflow and it is not a required check (#1035).
+#
+# The gate it complements deliberately stops at moderate (see ci-cd.yml: the job gates
+# the edge image publish, so a low advisory would freeze the moving tag, #744), which is
+# why this run is the only place a low dev-tree finding is reported at all.
 
 on:
   schedule:
