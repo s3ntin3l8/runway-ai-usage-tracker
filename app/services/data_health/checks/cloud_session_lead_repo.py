@@ -45,8 +45,6 @@ from app.services.maintenance.cloud_session_lead_repo import (
     plan_cloud_session_lead_repos,
 )
 
-_GROUP = "cloud_session_lead_repo"
-
 _STALE_SUMMARY = "This finding is stale — rescan to see the current groups."
 
 _CONFIRMATION = (

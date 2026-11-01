@@ -24,12 +24,15 @@ Idempotent: a labelled event leaves the repair's scope, so a second run changes
 nothing. Only `usage_events.project` and `usage_events.project_ref` are
 written; the rollups are not project-keyed, so totals are unaffected.
 
+Reports only by default; `--apply` writes — the same convention as the other
+cloud repair scripts.
+
 Run against the dev DB or a snapshot — never the live prod DB while the server is
 writing (SQLite is single-writer):
 
   APP_HOST=127.0.0.1 python scripts/label_cloud_session_lead_repo.py
-  APP_HOST=127.0.0.1 python scripts/label_cloud_session_lead_repo.py --dry-run
-  APP_HOST=127.0.0.1 python scripts/label_cloud_session_lead_repo.py --session <digest>
+  APP_HOST=127.0.0.1 python scripts/label_cloud_session_lead_repo.py --apply
+  APP_HOST=127.0.0.1 python scripts/label_cloud_session_lead_repo.py --apply --session <digest>
 """
 
 from __future__ import annotations
@@ -52,7 +55,7 @@ from app.services.maintenance.cloud_session_lead_repo import (  # noqa: E402
 )
 
 
-def label(session: Session, session_id: str | None, dry_run: bool) -> int:
+def label(session: Session, session_id: str | None, apply: bool) -> int:
     """Label the unlabelled events of the matching cloud sessions.
 
     `session_id=None` means every cloud session with unlabelled events.
@@ -66,13 +69,13 @@ def label(session: Session, session_id: str | None, dry_run: bool) -> int:
     fixable = [plan for plan in plans if plan.fixable]
     events = sum(plan.unlabelled_events for plan in fixable)
 
-    verb = "would label" if dry_run else "labelled"
+    verb = "labelled" if apply else "would label"
     print(
         f"{len(fixable):,} session(s), {events:,} event(s) {verb}; {skipped:,} session(s) skipped",
         flush=True,
     )
 
-    if dry_run:
+    if not apply:
         return events
 
     labelled = 0
@@ -94,16 +97,21 @@ def main() -> None:
         "--session",
         help="only this cloud session digest (the session id stored on the events)",
     )
-    parser.add_argument("--dry-run", action="store_true", help="report counts, write nothing")
+    parser.add_argument(
+        "--apply", action="store_true", help="label the events (default: report only)"
+    )
     args = parser.parse_args()
 
     init_db()
 
     with Session(engine) as session:
-        changed = label(session, args.session, args.dry_run)
+        changed = label(session, args.session, args.apply)
 
-    verb = "would label" if args.dry_run else "labelled"
-    print(f"\nDone — {verb} {changed:,} event(s).", flush=True)
+    if not args.apply:
+        print("\nReport only; pass --apply to label them.", flush=True)
+        return
+
+    print(f"\nDone — labelled {changed:,} event(s).", flush=True)
 
 
 if __name__ == "__main__":

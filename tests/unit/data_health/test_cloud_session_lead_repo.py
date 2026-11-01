@@ -29,6 +29,7 @@ def _cloud_event(session, event_id: str, *, project=None, project_ref=None, sid=
             kind="message",
             session_id=sid,
             sidecar_id="anthropic-cloud",
+            entrypoint="cloud",
             cwd=None,
             project=project,
             project_ref=project_ref,

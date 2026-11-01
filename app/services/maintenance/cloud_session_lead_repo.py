@@ -26,6 +26,12 @@ project_ref IS NULL`) are touched, and they get the same repository in both
 columns. An event that already carries a label keeps it, whatever repository it
 names.
 
+**Only the history-based collector's events are in scope** — the
+`cloud:<digest>:m:...` and `cloud:<digest>:r:...` ids, through
+`cloud_events_reset.cloud_event_where()`. The first collector's coarse ids
+(`cloud:<digest>:<n>`) are not: those rows carry no project and no per-model
+detail, and `cloud_coarse_events` removes them.
+
 **No derived table is rebuilt.** `project` is a column of `usage_events` only —
 the rollups are keyed by provider, account and period, and the windows by
 provider and time — so relabelling events cannot leave a cached total behind.
@@ -43,22 +49,13 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 
-from sqlalchemy import ColumnElement, func
+from sqlalchemy import func
 from sqlalchemy import select as sa_select
 from sqlmodel import Session, col
 
 from app.models.db import UsageEvent
 from app.services.maintenance._chunked_sql import chunked_update
-
-#: The Claude cloud-runner events — ids `cloud:<digest>:m:<message id>` and
-#: `cloud:<digest>:r:<ordinal>:<slug>`. `substr` rather than `LIKE 'cloud:%'`:
-#: the sibling checks use it, and it avoids a leading-wildcard LIKE scan.
-_CLOUD_PREFIX = "cloud:"
-
-
-def _cloud_filter() -> ColumnElement[bool]:
-    """The predicate for a Claude cloud-runner event."""
-    return func.substr(col(UsageEvent.event_id), 1, len(_CLOUD_PREFIX)) == _CLOUD_PREFIX
+from app.services.maintenance.cloud_events_reset import cloud_event_where
 
 
 @dataclass
@@ -101,13 +98,14 @@ def _plans(session: Session, session_id: str | None = None) -> list[CloudSession
     counted per repository, and the unlabelled ones per session. A session with
     no unlabelled event has nothing to repair and never appears.
     """
+    cloud = cloud_event_where()
     labelled_stmt = (
         sa_select(
             col(UsageEvent.session_id),
             col(UsageEvent.project_ref),
             func.count().label("rows"),
         )
-        .where(_cloud_filter(), col(UsageEvent.project_ref).is_not(None))
+        .where(*cloud, col(UsageEvent.project_ref).is_not(None))
         .group_by(col(UsageEvent.session_id), col(UsageEvent.project_ref))
     )
     unlabelled_stmt = (
@@ -116,7 +114,7 @@ def _plans(session: Session, session_id: str | None = None) -> list[CloudSession
             func.count().label("rows"),
         )
         .where(
-            _cloud_filter(),
+            *cloud,
             col(UsageEvent.project).is_(None),
             col(UsageEvent.project_ref).is_(None),
         )
@@ -192,7 +190,7 @@ def apply_cloud_session_lead_repo(session: Session, session_id: str) -> CloudSes
         session,
         UsageEvent,
         [
-            _cloud_filter(),
+            *cloud_event_where(),
             col(UsageEvent.session_id) == session_id,
             col(UsageEvent.project).is_(None),
             col(UsageEvent.project_ref).is_(None),

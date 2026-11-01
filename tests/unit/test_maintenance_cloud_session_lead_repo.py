@@ -45,6 +45,7 @@ def _cloud_event(
             kind="message",
             session_id=session_id,
             sidecar_id="anthropic-cloud",
+            entrypoint="cloud",
             cwd=None,
             project=project,
             project_ref=project_ref,
@@ -69,6 +70,7 @@ def _message_event(
             kind="message",
             session_id=session_id,
             sidecar_id="anthropic-cloud",
+            entrypoint="cloud",
             cwd=None,
             project=project,
             project_ref=project_ref,
@@ -181,6 +183,70 @@ class TestPlan:
         s = _session()
         _plain_event(s, "plain-1")
 
+        assert plan_cloud_session_lead_repos(s) == []
+
+    def test_two_sessions_get_their_own_lead_repository(self):
+        """Each session's lead is its own — the count is per session."""
+        s = _session()
+        for index in range(3):
+            _cloud_event(s, f"cloud:{_DIGEST}:m:a-{index}", project="demo-a", project_ref="demo-a")
+        _cloud_event(s, f"cloud:{_DIGEST}:m:b")
+        for index in range(2):
+            _cloud_event(
+                s,
+                f"cloud:{_OTHER_DIGEST}:m:c-{index}",
+                session_id=_OTHER_DIGEST,
+                project="demo-b",
+                project_ref="demo-b",
+            )
+        _cloud_event(s, f"cloud:{_OTHER_DIGEST}:m:d", session_id=_OTHER_DIGEST)
+
+        plans = {plan.session_id: plan for plan in plan_cloud_session_lead_repos(s)}
+
+        assert plans[_DIGEST].lead_repo == "demo-a"
+        assert plans[_DIGEST].unlabelled_events == 1
+        assert plans[_OTHER_DIGEST].lead_repo == "demo-b"
+        assert plans[_OTHER_DIGEST].unlabelled_events == 1
+
+    def test_the_apply_of_one_session_leaves_the_other_alone(self):
+        s = _session()
+        _cloud_event(s, f"cloud:{_DIGEST}:m:a", project="demo-a", project_ref="demo-a")
+        _cloud_event(s, f"cloud:{_DIGEST}:m:b")
+        _cloud_event(s, f"cloud:{_OTHER_DIGEST}:m:c", session_id=_OTHER_DIGEST)
+
+        apply_cloud_session_lead_repo(s, _DIGEST)
+
+        assert _labels(s, _DIGEST)[f"cloud:{_DIGEST}:m:b"] == ("demo-a", "demo-a")
+        assert _labels(s, _OTHER_DIGEST)[f"cloud:{_OTHER_DIGEST}:m:c"] == (None, None)
+
+    def test_the_coarse_collector_events_are_out_of_scope(self):
+        """The first collector wrote `cloud:<digest>:<n>` ids — no project, no
+        per-model detail, and `cloud_coarse_events` removes them."""
+        s = _session()
+        _cloud_event(s, f"cloud:{_DIGEST}:m:a", project="demo-a", project_ref="demo-a")
+        s.add(
+            UsageEvent(
+                provider_id="anthropic",
+                account_id="acc",
+                event_id=f"cloud:{_DIGEST}:1",
+                ts=_TS,
+                kind="message",
+                session_id=_DIGEST,
+                sidecar_id="anthropic-cloud",
+                entrypoint="cloud",
+                cwd=None,
+                project=None,
+                project_ref=None,
+                tokens_input=10,
+                cost_usd=0.01,
+                attribution_source="default",
+            )
+        )
+        s.commit()
+
+        plan = plan_cloud_session_lead_repo(s, _DIGEST)
+
+        assert plan.unlabelled_events == 0
         assert plan_cloud_session_lead_repos(s) == []
 
 
