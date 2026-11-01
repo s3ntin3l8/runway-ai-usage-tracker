@@ -1,8 +1,10 @@
 """Shared per-event SQL cost expression.
 
-Both ``fallback_priced_events`` and ``stale_priced_models`` data-health checks
-need the same per-event cost arithmetic (``compute_event_cost_breakdown``'s
-total). Keeping a single copy here prevents the two from drifting.
+``fallback_priced_events`` uses this per-event cost arithmetic
+(``compute_event_cost_breakdown``'s total). ``stale_priced_models`` keeps its own
+bucket-sum estimate for its perf/query-count contract, but shares this module's
+expression if it ever moves to per-event detection. Keeping a single copy here
+prevents the two from drifting.
 """
 
 from __future__ import annotations
@@ -18,7 +20,9 @@ from app.services.cost_calculator import PricingRowSnapshot
 
 def sql_cost(row: PricingRowSnapshot) -> Any:
     """SQL expression for ``compute_event_cost_breakdown``'s total at ``row``,
-    evaluated per event. The row's rates are literals."""
+    evaluated per event. The row's rates are literals, so one aggregate query
+    can apply the exact per-event rule to every event of a price interval (a
+    day-level sum would hide events that match next to events that do not)."""
     prompt = (
         col(UsageEvent.tokens_input)
         + col(UsageEvent.tokens_cache_read)
