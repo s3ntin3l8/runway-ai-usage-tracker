@@ -299,7 +299,7 @@ def test_detect_issues_a_constant_number_of_queries(session, query_counter):
     query_counter.reset()
     _CHECK.detect(session)
 
-    assert query_counter.count == 3  # pricing preload + one aggregate + per-event stale count
+    assert query_counter.count == 3  # pricing preload + distinct days + one aggregate
 
 
 def test_an_estimate_that_drops_to_zero_is_reported_as_zeroed_not_updated(session):

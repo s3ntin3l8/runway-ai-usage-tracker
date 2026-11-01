@@ -28,12 +28,17 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 
-from sqlalchemy import and_, case, func, literal
+from sqlalchemy import case, func
 from sqlalchemy import select as sa_select
 from sqlmodel import Session, col
 
 from app.models.db import UsageEvent
-from app.services.cost_calculator import PricingIndex, PricingRowSnapshot, resolve_price_row
+from app.services.cost_calculator import (
+    PricingIndex,
+    PricingRow,
+    PricingRowSnapshot,
+    resolve_price_row,
+)
 from app.services.data_health.base import (
     AsyncHook,
     Check,
@@ -124,30 +129,58 @@ def _expected_estimate(
     ) / 1_000_000
 
 
+def _price_intervals(
+    session: Session, index: PricingIndex
+) -> list[tuple[str, str, date, date, PricingRow]]:
+    """Runs of consecutive event days that resolve to the same price row."""
+    day = func.date(UsageEvent.ts)
+    stmt = (
+        sa_select(UsageEvent.provider_id, UsageEvent.model_id, day)  # type: ignore[call-overload]
+        .where(
+            UsageEvent.kind == "message",
+            UsageEvent.cost_usd != 0.0,
+            UsageEvent.cost_estimated_usd > 0,
+            col(UsageEvent.model_id).is_not(None),
+        )
+        .group_by(UsageEvent.provider_id, UsageEvent.model_id, day)
+        .order_by(UsageEvent.provider_id, UsageEvent.model_id, day)
+    )
+    intervals: list[tuple[str, str, date, date, PricingRow]] = []
+    provider_dates: dict[str, list[date]] = {}
+    for provider_id, model_id, day_text in session.execute(stmt):
+        assert model_id is not None
+        if is_priced_on_purpose_free(provider_id, model_id):
+            continue
+        on = date.fromisoformat(day_text)
+        if provider_id not in provider_dates:
+            provider_dates[provider_id] = index.effective_dates(provider_id)
+        bisect_right(provider_dates[provider_id], on)
+        ts = datetime.combine(on, time.min, tzinfo=UTC)
+        row = resolve_price_row(session, provider_id, model_id, ts, index=index)
+        if row is None:
+            continue
+        last = intervals[-1] if intervals else None
+        if (
+            last
+            and last[:2] == (provider_id, model_id)
+            and last[4] == row
+            and (last[3] + timedelta(days=1)) == on
+        ):
+            intervals[-1] = (provider_id, model_id, last[2], on, row)
+        else:
+            intervals.append((provider_id, model_id, on, on, row))
+    return intervals
+
+
 def _aggregate_buckets(session: Session) -> dict[tuple[str, str], _Bucket]:
     index = PricingIndex.load(session)
-    thresholds = index.long_thresholds()
-
-    prompt = (
-        col(UsageEvent.tokens_input)
-        + col(UsageEvent.tokens_cache_read)
-        + col(UsageEvent.tokens_cache_create)
-    )
-    split = col(UsageEvent.tokens_cache_create_1h) + col(UsageEvent.tokens_cache_create_5m)
-    is_aggregate = and_(
-        func.substr(UsageEvent.event_id, 1, 6) == "cloud:",
-        func.instr(UsageEvent.event_id, ":m:") == 0,
-    )
-    day = func.date(UsageEvent.ts).label("day")
-    aggregate_flag = case((is_aggregate, 1), else_=0).label("agg")
-    long_flags = [
-        case((prompt > literal(t), 1), else_=0).label(f"long_{i}") for i, t in enumerate(thresholds)
-    ]
-    # Per-event split handling mirrors compute_event_cost_breakdown: an event
-    # with a 1h/5m split prices its unsplit remainder at the 5m rate, one
-    # without a split prices the whole total there.
-    cache_create_5m_all = func.sum(
-        case(
+    intervals = _price_intervals(session, index)
+    buckets: dict[tuple[str, str], _Bucket] = defaultdict(_Bucket)
+    for provider_id, model_id, first_day, last_day, row in intervals:
+        via_today = _sql_cost(row)
+        # Per-event split handling mirrors compute_event_cost_breakdown.
+        split = col(UsageEvent.tokens_cache_create_1h) + col(UsageEvent.tokens_cache_create_5m)
+        cache_create_5m_tokens = case(
             (
                 split > 0,
                 UsageEvent.tokens_cache_create_5m
@@ -155,45 +188,34 @@ def _aggregate_buckets(session: Session) -> dict[tuple[str, str], _Bucket]:
             ),
             else_=UsageEvent.tokens_cache_create,
         )
-    )
-    stmt = (
-        sa_select(  # type: ignore[call-overload]
-            UsageEvent.provider_id,
-            UsageEvent.model_id,
-            day,
-            aggregate_flag,
-            *long_flags,
+        # long condition per event
+        pass
+        stmt = sa_select(  # type: ignore[call-overload]
             func.count(),
             func.sum(UsageEvent.tokens_input),
             func.sum(UsageEvent.tokens_output + UsageEvent.tokens_reasoning),
             func.sum(UsageEvent.tokens_cache_read),
             func.sum(UsageEvent.tokens_cache_create_1h),
-            cache_create_5m_all,
+            func.sum(cache_create_5m_tokens),
             func.sum(UsageEvent.cost_estimated_usd),
             func.min(UsageEvent.ts),
             func.max(UsageEvent.ts),
+            func.sum(via_today),
+            func.sum(
+                case((func.abs(via_today - UsageEvent.cost_estimated_usd) > 2e-6, 1), else_=0)
+            ),
+        ).where(
+            col(UsageEvent.provider_id) == provider_id,
+            col(UsageEvent.model_id) == model_id,
+            col(UsageEvent.kind) == "message",
+            col(UsageEvent.cost_usd) != 0.0,
+            col(UsageEvent.cost_estimated_usd) > 0,
+            col(UsageEvent.ts)
+            >= datetime(first_day.year, first_day.month, first_day.day, tzinfo=UTC),
+            col(UsageEvent.ts)
+            < datetime(last_day.year, last_day.month, last_day.day, tzinfo=UTC) + timedelta(days=1),
         )
-        .where(
-            UsageEvent.kind == "message",
-            UsageEvent.cost_usd != 0.0,
-            # Events with no stored estimate (legacy rows) are left alone.
-            UsageEvent.cost_estimated_usd > 0,
-            col(UsageEvent.model_id).is_not(None),
-        )
-        .group_by(
-            UsageEvent.provider_id,
-            UsageEvent.model_id,
-            day,
-            aggregate_flag,
-            *long_flags,
-        )
-    )
-    buckets: dict[tuple[str, str], _Bucket] = defaultdict(_Bucket)
-    price_rows: dict[tuple[str, str, int], Any] = {}
-    provider_dates: dict[str, list[date]] = {}
-    n_flags = len(long_flags)
-    for provider_id, model_id, day_text, agg, *rest in session.execute(stmt):
-        flags = rest[:n_flags]
+        row_result = session.execute(stmt).one()
         (
             events,
             tokens_input,
@@ -204,90 +226,29 @@ def _aggregate_buckets(session: Session) -> dict[tuple[str, str], _Bucket]:
             stored,
             first_ts,
             last_ts,
-        ) = rest[n_flags:]
-        assert model_id is not None
-        if is_priced_on_purpose_free(provider_id, model_id):
+            expected,
+            stale_count,
+        ) = row_result
+        if not events:
             continue
-        # Resolution is constant between two of the provider's effective_from
-        # dates, so resolve once per interval (also keeps the fallback warnings
-        # in resolve_price_row to once per model and interval, not per day).
-        day_value = date.fromisoformat(day_text)
-        if provider_id not in provider_dates:
-            provider_dates[provider_id] = index.effective_dates(provider_id)
-        dates = provider_dates[provider_id]
-        interval = bisect_right(dates, day_value)
-        cache_key = (provider_id, model_id, interval)
-        if cache_key not in price_rows:
-            ts = datetime.combine(day_value, time.min, tzinfo=UTC)
-            price_rows[cache_key] = resolve_price_row(
-                session, provider_id, model_id, ts, index=index
-            )
-        row = price_rows[cache_key]
-        if row is None:
-            continue  # no rate resolves: nothing to refresh an estimate from
-        threshold = row.long_prompt_threshold_tokens
-        long_flag = bool(threshold is not None and flags and flags[thresholds.index(threshold)])
-        expected = _expected_estimate(
-            row,
-            aggregate=bool(agg),
-            long_flag=long_flag,
-            tokens_input=tokens_input or 0,
-            tokens_output=tokens_output or 0,
-            tokens_cache_read=tokens_cache_read or 0,
-            cache_create_1h=cache_create_1h or 0,
-            cache_create_5m_all=cache_create_5m_total or 0,
-        )
+        # expected via bucket sums at row rates (linear, so equals sum of per-event)
+        # Use _expected_estimate with agg=False? We need per-event aggregate/long mix.
+        # Compute expected as sum over events using base rates; long-tier events
+        # use long rates. Approximate: use the row's base rates for the whole
+        # interval (the previous code split by long flag). To preserve accuracy,
+        # instead compute expected per-event via sql_cost sum:
         stored = stored or 0.0
+        expected = expected or 0.0
         bucket = buckets[(provider_id, model_id)]
         bucket.events += events
         bucket.stored += stored
         bucket.expected += expected
+        bucket.stale_events += stale_count or 0
         first_ts_text, last_ts_text = str(first_ts), str(last_ts)
         if bucket.first_ts is None or first_ts_text < bucket.first_ts:
             bucket.first_ts = first_ts_text
         if bucket.last_ts is None or last_ts_text > bucket.last_ts:
             bucket.last_ts = last_ts_text
-        # Per-event staleness via the shared sql_cost expression: a bucket
-        # that mixes matching and stale events is still flagged.
-        via_today = _sql_cost(row)
-        # Mirror the bucket's aggregate/long-tier scope so we only count
-        # events in this same bucket.
-        is_agg_expr = and_(
-            func.substr(UsageEvent.event_id, 1, 6) == "cloud:",
-            func.instr(UsageEvent.event_id, ":m:") == 0,
-        )
-        prompt_expr = (
-            col(UsageEvent.tokens_input)
-            + col(UsageEvent.tokens_cache_read)
-            + col(UsageEvent.tokens_cache_create)
-        )
-        if agg:
-            agg_cond = is_agg_expr
-        else:
-            agg_cond = ~is_agg_expr
-        if long_flag and threshold is not None:
-            long_cond = prompt_expr > literal(threshold)
-        else:
-            long_cond = (
-                prompt_expr <= literal(threshold) if threshold is not None else literal(True)
-            )
-        stale_stmt = sa_select(func.count()).where(
-            col(UsageEvent.provider_id) == provider_id,
-            col(UsageEvent.model_id) == model_id,
-            col(UsageEvent.kind) == "message",
-            col(UsageEvent.cost_usd) != 0.0,
-            col(UsageEvent.cost_estimated_usd) > 0,
-            col(UsageEvent.ts)
-            >= datetime(day_value.year, day_value.month, day_value.day, tzinfo=UTC),
-            col(UsageEvent.ts)
-            < datetime(day_value.year, day_value.month, day_value.day, tzinfo=UTC)
-            + timedelta(days=1),
-            agg_cond,
-            long_cond,
-            func.abs(via_today - col(UsageEvent.cost_estimated_usd)) > 2e-6,
-        )
-        stale_count = session.execute(stale_stmt).scalar() or 0
-        bucket.stale_events += stale_count
     return buckets
 
 
