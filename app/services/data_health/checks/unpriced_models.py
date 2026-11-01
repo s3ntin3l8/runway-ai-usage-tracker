@@ -33,6 +33,7 @@ from app.services.maintenance.event_cost import resolve_event_cost
 from app.services.maintenance.recost import (
     apply_recost,
     is_priced_on_purpose_free,
+    legacy_reported_cost,
     plan_recost,
 )
 
@@ -70,6 +71,7 @@ def _classify_events(session: Session) -> dict[tuple[str, str], dict[str, int]]:
             UsageEvent.tokens_reasoning,
             UsageEvent.tokens_cache_create_1h,
             UsageEvent.tokens_cache_create_5m,
+            UsageEvent.cost_usd,
             UsageEvent.cost_reported_usd,
             UsageEvent.event_id,
         )
@@ -100,6 +102,7 @@ def _classify_events(session: Session) -> dict[tuple[str, str], dict[str, int]]:
         tokens_reasoning,
         tokens_cache_create_1h,
         tokens_cache_create_5m,
+        cost_usd,
         cost_reported_usd,
         event_id,
     ) in events:
@@ -130,7 +133,7 @@ def _classify_events(session: Session) -> dict[tuple[str, str], dict[str, int]]:
             tokens_cache_create_1h=tokens_cache_create_1h,
             tokens_cache_create_5m=tokens_cache_create_5m,
             billing_type=configs.get((provider_id, account_id), "unknown"),
-            reported_cost=cost_reported_usd,
+            reported_cost=legacy_reported_cost(cost_reported_usd, provider_id, cost_usd),
             standard_tier_only=is_aggregate_event_id(event_id),
             resolved_price_row=price,
             price_row_resolved=True,

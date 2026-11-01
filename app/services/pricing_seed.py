@@ -1309,8 +1309,10 @@ _LONG_TIER_COLUMNS = (
 )
 
 
-def seed_pricing_table(session: Session) -> int:
-    """Insert any seed rows missing from provider_pricing. Returns rows inserted.
+def seed_pricing_table(session: Session) -> list[tuple[str, str]]:
+    """Insert any seed rows missing from provider_pricing.
+
+    Returns the (provider_id, model_id) pairs newly inserted.
 
     Seed rule: a real price change is a NEW row with a new `effective_from`; an
     in-place edit of an existing row (the backfills below) is only for a seed
@@ -1319,7 +1321,7 @@ def seed_pricing_table(session: Session) -> int:
     `stale_priced_models` fix refreshes stored estimates against that table, so
     an in-place edit made for a real price change would rewrite history there.
     """
-    inserted = 0
+    inserted_pairs: list[tuple[str, str]] = []
     for row in PRICING_SEED:
         exists = session.exec(
             select(ProviderPricing).where(
@@ -1379,6 +1381,6 @@ def seed_pricing_table(session: Session) -> int:
                 notes=row.get("notes"),
             )
         )
-        inserted += 1
+        inserted_pairs.append((row["provider_id"], row["model_id"]))
     session.commit()
-    return inserted
+    return inserted_pairs
