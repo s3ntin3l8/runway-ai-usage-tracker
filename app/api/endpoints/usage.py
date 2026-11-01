@@ -10,4 +10,3 @@ from app.api.endpoints.usage_rankings import *  # noqa: F401,F403
 from app.api.endpoints.usage_sessions import *  # noqa: F401,F403
 
 router = _r
-
