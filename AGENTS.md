@@ -62,6 +62,8 @@ Before pushing, run the full lint/typecheck/test/format gate.
   85% frontend.
 - A fresh clone or worktree inherits nothing: run `make install` first (native
   Windows: `python scripts/dev_checks.py install`).
+  The frontend half of the gate needs Node 22.22.2+ and npm 11.11+
+  (`webapp/package.json` pins both with `devEngines`).
 - The branch requires every conversation resolved, and an `APPROVED` review can
   still carry an open inline thread. The REST `PUT /pulls/<n>/merge` endpoint
   silently skips that gate, so don't merge through it.
