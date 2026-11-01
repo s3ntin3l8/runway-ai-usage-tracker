@@ -366,3 +366,4 @@ def test_mixed_bucket_sub_cent_stale_event_is_flagged(session):
 
     groups = _groups(session)
     assert "anthropic::sonnet-5.5" in groups
+    assert groups["anthropic::sonnet-5.5"].count == 1
