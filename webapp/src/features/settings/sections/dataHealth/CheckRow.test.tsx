@@ -91,6 +91,7 @@ describe('CheckRow', () => {
     await userEvent.click(screen.getByRole('button', { name: /provider account uses a generic id/i }));
     const reason = screen.getByText('r'.repeat(200));
     expect(reason).toHaveClass('sm:basis-0');
+    expect(reason).toHaveClass('sm:flex-1');
   });
 
   it('opens the FixDialog when Fix is clicked', async () => {
