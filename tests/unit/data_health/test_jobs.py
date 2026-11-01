@@ -98,6 +98,12 @@ def refusing_checks():
 
 
 @pytest.fixture
+def empty_refusal_checks():
+    """`a` refuses the apply with an empty message."""
+    return {"a": _FakeCheck("a", findings=1, raises=ValueError())}
+
+
+@pytest.fixture
 def locked_checks():
     """`a` fails on apply with a locked database and the SQL that caused it."""
     return {
@@ -126,6 +132,11 @@ def locked_jobs(monkeypatch, locked_checks):
 @pytest.fixture
 def refusing_jobs(monkeypatch, refusing_checks):
     return _jobs(monkeypatch, refusing_checks)
+
+
+@pytest.fixture
+def empty_refusal_jobs(monkeypatch, empty_refusal_checks):
+    return _jobs(monkeypatch, empty_refusal_checks)
 
 
 def _jobs(monkeypatch, checks):
@@ -292,6 +303,19 @@ async def test_a_refusal_shows_the_checks_own_message(refusing_jobs):
     assert record.error == "Confirm that the source and target are the same provider account"
     assert record.error_kind == "unknown"
     assert record.retryable is False
+
+
+async def test_an_empty_refusal_falls_back_to_the_generic_sentence(empty_refusal_jobs):
+    """An empty refusal would leave the dialog with no reason at all."""
+    await empty_refusal_jobs.wait_for_scan()
+
+    job_id = await empty_refusal_jobs.start_apply(
+        check_id="a", group_key="g1", params={}, actor="t", actor_ip=None
+    )
+    record = await empty_refusal_jobs.wait_for_job(job_id)
+
+    assert record.status == "failed"
+    assert record.error == "The fix failed. The audit log has the details."
 
 
 async def test_the_failure_detail_keeps_the_bound_parameters_out(locked_jobs, caplog):

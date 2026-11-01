@@ -88,7 +88,9 @@ def _classify(exc: Exception) -> tuple[ErrorKind, str]:
     and the audit payload instead.
     """
     if isinstance(exc, ValueError):
-        return "unknown", _safe_detail(exc, limit=_MESSAGE_LIMIT)
+        # An empty refusal is still a refusal: the generic sentence is the
+        # floor, so the dialog never shows an empty reason.
+        return "unknown", _safe_detail(exc, limit=_MESSAGE_LIMIT) or _UNKNOWN_MESSAGE
     if isinstance(exc, OperationalError) and _is_sqlite_locked_or_busy(exc):
         return "db_busy", _DB_BUSY_MESSAGE
     return "unknown", _UNKNOWN_MESSAGE
