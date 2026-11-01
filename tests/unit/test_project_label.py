@@ -7,6 +7,7 @@ from app.services.project_label import (
     WORKTREE_CONTAINERS,
     clean_worktree_patterns,
     derive_project,
+    is_inside_path,
     is_worktree_container_cwd,
     normalize_cwd,
     pick_canonical_cwd,
@@ -247,6 +248,45 @@ class TestIsWorktreeContainerCwd:
 
     def test_the_defaults_still_apply_when_a_pattern_is_given(self):
         assert is_worktree_container_cwd("/home/u/repo/.wt/slug", ["*-wt"])
+
+    def test_a_sibling_pattern_is_a_worktree_directory_too(self):
+        """The two functions read the same segments: `normalize_cwd` cuts the
+        sibling pattern's suffix off, `is_worktree_container_cwd` only reports
+        that the segment is worktree-related."""
+        path = "/home/u/repo-wt/slug/app"
+        assert is_worktree_container_cwd(path, ["*-wt"])
+        assert normalize_cwd(path, ["*-wt"]) == "/home/u/repo"
+
+
+class TestIsInsidePath:
+    """Whether a path lies inside another one — segment-wise, so a sibling
+    directory that merely shares a name prefix is not inside."""
+
+    def test_a_path_is_inside_its_parent(self):
+        assert is_inside_path("/home/u/repo", "/home/u")
+        assert is_inside_path("/home/u/repo/services/api", "/home/u")
+
+    def test_a_path_is_inside_itself(self):
+        assert is_inside_path("/home/u/repo", "/home/u/repo")
+
+    def test_a_sibling_is_not_inside(self):
+        assert not is_inside_path("/home/u/repo-two", "/home/u/repo")
+        assert not is_inside_path("/home/u/repo", "/home/u/repo-two")
+
+    def test_a_parent_is_not_inside_its_child(self):
+        assert not is_inside_path("/home/u", "/home/u/repo")
+
+    def test_both_separator_forms(self):
+        assert is_inside_path(r"D:\Projects\repo\src", r"D:\Projects\repo")
+
+    def test_a_drive_spec_is_not_a_level(self):
+        assert is_inside_path(r"C:\repo", "C:\\")
+
+    def test_none_and_empty(self):
+        assert not is_inside_path(None, "/home/u")
+        assert not is_inside_path("/home/u", None)
+        assert not is_inside_path(None, None)
+        assert not is_inside_path("", "")
 
 
 class TestWorktreePatterns:

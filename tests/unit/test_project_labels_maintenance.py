@@ -686,6 +686,8 @@ class TestSessionThatMovedIntoAWorktree:
         assert plan.relabels[0].canonical == "real-repo"
 
     def test_a_row_with_its_own_different_repository_is_left_alone(self):
+        """A row that reported a repository of its own keeps it, even when the
+        session's canonical label is a different one."""
         s = _session()
         _add(s, "a", session_id="s1", cwd="/home/u", project="u")
         _add(
@@ -693,13 +695,48 @@ class TestSessionThatMovedIntoAWorktree:
             "b",
             session_id="s1",
             cwd="/home/u/demo-repo/.wt/feat-x",
-            project="demo-repo",
-            project_ref="demo-repo",
+            project="other-repo",
+            project_ref="other-repo",
+        )
+        _add(
+            s,
+            "c",
+            session_id="s1",
+            cwd="/home/u/demo-repo/.wt/feat-x",
+            project="newest-repo",
+            project_ref="newest-repo",
+            ts=datetime(2026, 5, 9, tzinfo=UTC),
         )
 
         apply_session_relabels(s, plan_session_relabels(s))
 
-        # The row that reported a repository of its own keeps it.
-        assert _projects(s) == {"a": "demo-repo", "b": "demo-repo"}
-        refs = {r.event_id: r.project_ref for r in s.exec(select(UsageEvent)).all()}
-        assert refs == {"a": None, "b": "demo-repo"}
+        # The session's label is the newest reported repository; the older row
+        # keeps the repository it reported for itself.
+        assert _projects(s) == {
+            "a": "newest-repo",
+            "b": "other-repo",
+            "c": "newest-repo",
+        }
+
+    def test_a_session_that_worked_in_one_repository_keeps_it_after_touching_another_worktree(self):
+        """The worktree only decides the session when the repository it holds
+        lives inside the session's shallowest working directory — otherwise it
+        is a different repository the session merely changed into."""
+        s = _session()
+        _add(s, "a", session_id="s1", cwd="/home/u/projects/repo-a", project="repo-a")
+        _add(s, "b", session_id="s1", cwd="/home/u/projects/repo-b/.wt/feat-x", project="repo-b")
+
+        plan = plan_session_relabels(s)
+
+        assert plan.relabels[0].canonical == "repo-a"
+
+    def test_a_worktree_that_normalises_to_nothing_does_not_lose_the_label(self):
+        """A cwd that is nothing but a container has no repository name left; the
+        session keeps the label it had."""
+        s = _session()
+        _add(s, "a", session_id="s1", cwd=r"\.wt\x", project="x")
+        _add(s, "b", session_id="s1", cwd="/home/u/projects/demo", project="demo")
+
+        plan = plan_session_relabels(s)
+
+        assert plan.relabels[0].canonical == "demo"

@@ -165,6 +165,53 @@ def _depth(path: str) -> int:
     return len(segments)
 
 
+@dataclass(frozen=True)
+class _WorktreeSegment:
+    """The first worktree-related segment of a path, and where it sits.
+
+    `sibling_suffix_len` is set for a repo-sibling pattern (`*-wt`): how many
+    trailing characters of the matched segment are the pattern's literal
+    suffix, to be stripped to get the repository folder's name. None for a
+    container.
+    """
+
+    segment: str
+    #: Where the segment starts in the path (the separator run before it).
+    start: int
+    #: Where the segment ends in the path.
+    end: int
+    sibling_suffix_len: int | None = None
+
+
+def _first_worktree_segment(
+    cwd: str, extra_patterns: Sequence[str] = ()
+) -> _WorktreeSegment | None:
+    """The first worktree-related segment of `cwd`, or None when it has none.
+
+    A segment is worktree-related when it is a built-in container
+    (`WORKTREE_CONTAINERS`) or matches an operator pattern
+    (`extra_patterns`, the `worktree_patterns` setting; `*` is the only
+    wildcard).
+
+    The segment has to be a whole one, and it has to be *preceded* by a
+    separator, so a relative path that starts with a container name is not one
+    — there is no root to cut back to, and cutting it would lose the label
+    entirely.
+
+    One scan, so `normalize_cwd` and `is_worktree_container_cwd` cannot
+    disagree about what a worktree directory is.
+    """
+    patterns = _compile_patterns(tuple(extra_patterns)) if extra_patterns else ()
+    for match in _SEGMENT_RE.finditer(cwd):
+        segment = match.group(1)
+        if segment.lower() in _CONTAINER_NAMES:
+            return _WorktreeSegment(segment, match.start(), match.end())
+        hit = next((p for p in patterns if p.regex.fullmatch(segment)), None)
+        if hit is not None:
+            return _WorktreeSegment(segment, match.start(), match.end(), hit.sibling_suffix_len)
+    return None
+
+
 def normalize_cwd(cwd: str | None, extra_patterns: Sequence[str] = ()) -> str | None:
     """Rule 1: strip the volatile suffix from a cwd. Path-only, stateless.
 
@@ -190,45 +237,51 @@ def normalize_cwd(cwd: str | None, extra_patterns: Sequence[str] = ()) -> str | 
     """
     if not cwd:
         return None
-    patterns = _compile_patterns(tuple(extra_patterns)) if extra_patterns else ()
-    for match in _SEGMENT_RE.finditer(cwd):
-        segment = match.group(1)
-        if segment.lower() in _CONTAINER_NAMES:
-            cwd = cwd[: match.start()]
-            break
-        hit = next((p for p in patterns if p.regex.fullmatch(segment)), None)
-        if hit is None:
-            continue
-        if hit.sibling_suffix_len is not None and len(segment) > hit.sibling_suffix_len:
-            cwd = cwd[: match.end() - hit.sibling_suffix_len]
+    hit = _first_worktree_segment(cwd, extra_patterns)
+    if hit is not None:
+        if hit.sibling_suffix_len is not None and len(hit.segment) > hit.sibling_suffix_len:
+            cwd = cwd[: hit.end - hit.sibling_suffix_len]
         else:
-            cwd = cwd[: match.start()]
-        break
+            cwd = cwd[: hit.start]
     cwd = cwd.rstrip("/\\")
     return cwd or None
 
 
 def is_worktree_container_cwd(cwd: str | None, extra_patterns: Sequence[str] = ()) -> bool:
-    """True when `cwd` runs through a worktree-container directory.
+    """True when `cwd` runs through a worktree directory.
 
-    The evidence that a session worked inside a worktree of a repository. It has
-    to be read from the **raw** cwd: `normalize_cwd` cuts the container away, so
-    the normalised form no longer carries it.
+    The evidence that a session worked inside a worktree of a repository. It
+    has to be read from the **raw** cwd: `normalize_cwd` cuts the container
+    away, so the normalised form no longer carries it.
 
     The segment rules are `normalize_cwd`'s own — a whole segment, preceded by a
     separator, in either separator form, any case — plus the operator's extra
-    patterns, so the two can never disagree about what a container is.
+    patterns, so the two cannot disagree about what a worktree directory is.
     """
     if not cwd:
         return False
-    patterns = _compile_patterns(tuple(extra_patterns)) if extra_patterns else ()
-    for match in _SEGMENT_RE.finditer(cwd):
-        segment = match.group(1)
-        if segment.lower() in _CONTAINER_NAMES:
-            return True
-        if any(p.regex.fullmatch(segment) for p in patterns):
-            return True
-    return False
+    return _first_worktree_segment(cwd, extra_patterns) is not None
+
+
+def is_inside_path(path: str | None, parent: str | None) -> bool:
+    """True when `path` is `parent` itself or lies inside it.
+
+    Segment-wise, so `/home/u/repo` is inside `/home/u` but
+    `/home/u/repo-two` is not, and a Windows drive spec does not count as a
+    level. Both paths are compared as they are given — normalize them first
+    when a worktree directory is involved.
+    """
+    if not path or not parent:
+        return False
+    path_segments = _segments(path)
+    parent_segments = _segments(parent)
+    if path_segments and _is_drive_spec(path_segments[0]):
+        path_segments = path_segments[1:]
+    if parent_segments and _is_drive_spec(parent_segments[0]):
+        parent_segments = parent_segments[1:]
+    return len(parent_segments) <= len(path_segments) and (
+        path_segments[: len(parent_segments)] == parent_segments
+    )
 
 
 def derive_project(cwd: str | None, extra_patterns: Sequence[str] = ()) -> str | None:
