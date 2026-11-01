@@ -17,7 +17,6 @@ from app.services.queries import (
     query_sessions_paginated,
 )
 
-# Window type rank for selecting the "longest" window among multiple cards.
 # Higher rank = longer / more authoritative window.
 
 router = APIRouter()

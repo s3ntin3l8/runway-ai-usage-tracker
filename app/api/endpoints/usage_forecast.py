@@ -20,7 +20,6 @@ from app.services.event_query import (
 )
 from app.services.forecast import compute_all_forecasts
 
-# Window type rank for selecting the "longest" window among multiple cards.
 # Higher rank = longer / more authoritative window.
 
 router = APIRouter()

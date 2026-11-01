@@ -14,7 +14,6 @@ from app.services.queries import (
     query_cumulative_live,
 )
 
-# Window type rank for selecting the "longest" window among multiple cards.
 # Higher rank = longer / more authoritative window.
 
 router = APIRouter()

@@ -15,7 +15,6 @@ from app.services.event_query import (
     query_windows,
 )
 
-# Window type rank for selecting the "longest" window among multiple cards.
 # Higher rank = longer / more authoritative window.
 
 router = APIRouter()
