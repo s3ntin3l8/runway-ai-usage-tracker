@@ -202,7 +202,7 @@ def test_entries_are_served_until_cleared(db, monkeypatch):
 
 
 def test_endpoint_runs_the_query_off_the_event_loop(db, monkeypatch):
-    from app.api.endpoints import usage as usage_mod
+    from app.api.endpoints import usage_sessions as usage_mod
     from app.core.db import get_session
     from app.main import app
     from tests.fixtures.test_client import TestClient

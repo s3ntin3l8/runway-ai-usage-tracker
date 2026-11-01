@@ -22,7 +22,7 @@ def test_get_status(client):
 @pytest.mark.asyncio
 async def test_reset_provider(client):
     with patch(
-        "app.api.endpoints.usage.manager.reset_collector", new_callable=AsyncMock
+        "app.api.endpoints.usage_overview.manager.reset_collector", new_callable=AsyncMock
     ) as mock_reset:
         response = client.post("/api/v1/usage/reset/anthropic")
         assert response.status_code == 200
@@ -33,7 +33,7 @@ async def test_reset_provider(client):
 @pytest.mark.asyncio
 async def test_reset_provider_with_account(client):
     with patch(
-        "app.api.endpoints.usage.manager.reset_collector", new_callable=AsyncMock
+        "app.api.endpoints.usage_overview.manager.reset_collector", new_callable=AsyncMock
     ) as mock_reset:
         response = client.post("/api/v1/usage/reset/anthropic?account_id=user123")
         assert response.status_code == 200
@@ -47,7 +47,7 @@ async def test_reset_provider_clears_response_cache(client):
     from app.core.cache import cache_get, cache_set
 
     cache_set("fleet", {"stale": True}, ttl_seconds=60.0)
-    with patch("app.api.endpoints.usage.manager.reset_collector", new_callable=AsyncMock):
+    with patch("app.api.endpoints.usage_overview.manager.reset_collector", new_callable=AsyncMock):
         response = client.post("/api/v1/usage/reset/anthropic")
         assert response.status_code == 200
     assert cache_get("fleet") is None
@@ -61,7 +61,7 @@ async def test_collect_provider_clears_response_cache(client):
 
     cache_set("fleet", {"stale": True}, ttl_seconds=60.0)
     with patch(
-        "app.api.endpoints.usage.manager.collect_one", new_callable=AsyncMock
+        "app.api.endpoints.usage_overview.manager.collect_one", new_callable=AsyncMock
     ) as mock_collect:
         mock_collect.return_value = []
         response = client.post("/api/v1/usage/collect/anthropic")
@@ -85,7 +85,7 @@ def test_reset_provider_requires_admin_key(client, monkeypatch):
         monkeypatch.setattr(f"{dotted}.APP_HOST", "0.0.0.0")
 
     with patch(
-        "app.api.endpoints.usage.manager.reset_collector", new_callable=AsyncMock
+        "app.api.endpoints.usage_overview.manager.reset_collector", new_callable=AsyncMock
     ) as mock_reset:
         response = client.post("/api/v1/usage/reset/anthropic")
         assert response.status_code == 403
@@ -106,7 +106,7 @@ def test_collect_provider_requires_admin_key(client, monkeypatch):
         monkeypatch.setattr(f"{dotted}.APP_HOST", "0.0.0.0")
 
     with patch(
-        "app.api.endpoints.usage.manager.collect_one", new_callable=AsyncMock
+        "app.api.endpoints.usage_overview.manager.collect_one", new_callable=AsyncMock
     ) as mock_collect:
         mock_collect.return_value = []
         response = client.post("/api/v1/usage/collect/anthropic")
