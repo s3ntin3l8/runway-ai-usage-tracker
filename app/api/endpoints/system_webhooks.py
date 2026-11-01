@@ -292,8 +292,6 @@ async def test_webhook(
 
 # --- Provider configuration ---
 
-# Icons for providers not in registry.json (fallback)
-
 __all__ = [
     "_WebhookCreate",
     "_WebhookUpdate",
