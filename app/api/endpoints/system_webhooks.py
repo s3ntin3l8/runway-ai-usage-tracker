@@ -1,4 +1,3 @@
-import logging
 from typing import Literal
 
 import httpx
@@ -18,7 +17,6 @@ from app.models.db import (
 )
 from app.models.schemas import LimitCard
 
-logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -295,21 +293,6 @@ async def test_webhook(
 # --- Provider configuration ---
 
 # Icons for providers not in registry.json (fallback)
-_PROVIDER_ICONS: dict[str, str] = {
-    "anthropic": "🟠",
-    "gemini": "🔵",
-    "github": "🐙",
-    "chatgpt": "💬",
-    "openrouter": "🚀",
-    "minimax": "🤖",
-    "kimi_api": "🌙",
-    "kimi_coding": "🌙",
-    "zai": "🌐",
-    "opencode": "⚡",
-    "antigravity": "🛸",
-    "ollama": "🦙",
-}
-
 
 __all__ = [
     "_WebhookCreate",

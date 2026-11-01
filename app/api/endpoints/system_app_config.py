@@ -1,5 +1,4 @@
 import json
-import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -19,7 +18,6 @@ from app.services.worktree_patterns import (
     parse_stored_patterns,
 )
 
-logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -147,8 +145,6 @@ async def upsert_app_config(
 @limiter.limit("30/minute")
 async def get_dashboard_layout(request: Request, session: Session = Depends(get_session)) -> dict:
     """Return the persisted dashboard layout. Empty default if unset."""
-    import json
-
     cfg = session.exec(select(SystemConfig)).first()
     raw = cfg.dashboard_layout_json if cfg else None
     if not raw:
@@ -171,8 +167,6 @@ async def put_dashboard_layout(
     session: Session = Depends(get_session),
 ) -> dict:
     """Store a new dashboard layout for an authenticated administrator."""
-    import json
-
     cfg = session.exec(select(SystemConfig)).first()
     if cfg is None:
         cfg = SystemConfig()

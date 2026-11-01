@@ -625,12 +625,6 @@ async def get_raw_provider_data(
         raise HTTPException(status_code=500, detail=safe_message)
 
 
-_RENEWED_BY_MACHINE = (
-    "This credential belongs to a machine's CLI, which renews it. Refreshing it here would "
-    "rotate the refresh token and sign that CLI out."
-)
-
-
 __all__ = [
     "CleanupRequest",
     "_capture_request_entry",
