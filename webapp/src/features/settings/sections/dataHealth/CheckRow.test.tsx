@@ -80,6 +80,19 @@ describe('CheckRow', () => {
     expect(label).toHaveClass('sm:basis-0');
   });
 
+  it('keeps the not-fixable reason span carrying the inline basis class', async () => {
+    renderWithProviders(
+      <CheckRow
+        check={check({
+          groups: [group({ fixable: false, not_fixable_reason: 'r'.repeat(200) })],
+        })}
+      />,
+    );
+    await userEvent.click(screen.getByRole('button', { name: /provider account uses a generic id/i }));
+    const reason = screen.getByText('r'.repeat(200));
+    expect(reason).toHaveClass('sm:basis-0');
+  });
+
   it('opens the FixDialog when Fix is clicked', async () => {
     renderWithProviders(<CheckRow check={check()} />);
     await userEvent.click(screen.getByRole('button', { name: /provider account uses a generic id/i }));

@@ -134,7 +134,7 @@ function GroupRow({
         ) : (
           <span className="flex min-w-0 flex-wrap items-center gap-x-2">
             <span
-              className={cn('text-[11px] text-fg-subtle', 'sm:basis-0 sm:max-w-64 sm:truncate')}
+              className={cn('text-[11px] text-fg-subtle', 'sm:flex-1 sm:basis-0 sm:max-w-64 sm:truncate')}
               title={group.not_fixable_reason ?? undefined}
             >
               {group.not_fixable_reason ?? 'not fixable'}
