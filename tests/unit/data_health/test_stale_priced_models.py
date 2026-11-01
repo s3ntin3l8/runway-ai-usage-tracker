@@ -299,7 +299,7 @@ def test_detect_issues_a_constant_number_of_queries(session, query_counter):
     query_counter.reset()
     _CHECK.detect(session)
 
-    assert query_counter.count == 2  # pricing preload + one aggregate
+    assert query_counter.count == 3  # pricing preload + distinct days + one aggregate
 
 
 def test_an_estimate_that_drops_to_zero_is_reported_as_zeroed_not_updated(session):
@@ -348,3 +348,22 @@ def test_a_mixed_group_only_changes_the_populated_events_and_hint_agrees(session
     assert _reload(session, stale).cost_estimated_usd == pytest.approx(0.05)
     untouched = _reload(session, legacy)
     assert untouched.cost_estimated_usd == 0.0 and untouched.cost_usd == 0.40
+
+
+def test_mixed_bucket_with_offsetting_stale_deltas_is_flagged(session):
+    make_price(session, provider_id="anthropic", model_id="sonnet-5.5", cache_read_per_mtok=1.0)
+    _ev(session, "high", estimated=1.95)
+    _ev(session, "low", estimated=0.05)
+
+    groups = _groups(session)
+    assert "anthropic::sonnet-5.5" in groups
+    assert groups["anthropic::sonnet-5.5"].count == 2
+
+
+def test_mixed_bucket_sub_cent_stale_event_is_flagged(session):
+    make_price(session, provider_id="anthropic", model_id="sonnet-5.5", cache_read_per_mtok=1.0)
+    _ev(session, "tiny", estimated=1.005)
+
+    groups = _groups(session)
+    assert "anthropic::sonnet-5.5" in groups
+    assert groups["anthropic::sonnet-5.5"].count == 1
