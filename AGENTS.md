@@ -50,9 +50,12 @@ Before pushing, run the full lint/typecheck/test/format gate.
   (`required_status_checks.strict = false`, deliberately — see
   [`docs/ci-cd.md`](docs/ci-cd.md)), so a PR that is merely behind still merges
   without a rebase.
-- Hermes reviews every PR automatically when it opens; asking through the relay
-  afterwards is still safe, since it refuses a review that is already running or
-  already landed.
+- Hermes reviews a PR automatically when it opens non-draft (a draft is reviewed
+  on `ready_for_review`), except `mullion/task-*` branches (Task Master's own
+  reviewer is the terminal review there), fork PRs and bot-authored PRs. In a
+  Mullion session ask for another round through the relay; it refuses a review
+  that is already running or already landed for this head SHA, and accepts a
+  new commit. Outside a Mullion session, comment `@s3ntin3l8-hermes Review`.
 - Release Please parses the squash-merged PR title: an unprefixed title
   silently drops out of the changelog.
 - The full gate is `make lint && make test && make web-lint && make web-test`
@@ -137,7 +140,8 @@ procedure (`scripts/action_pins.json`) are in [`CONTRIBUTING.md`](CONTRIBUTING.m
 - **Branding:** `assets/logo.svg` is canonical; every other surface (favicon,
   PWA/tray/installer art) is derived. Run `make logo` to regenerate; never
   hand-edit a derived asset. See [`docs/branding.md`](docs/branding.md).
-- **Style:** collectors degrade to an "Error Card" instead of crashing. The
+- **Style:** Python is `async` with explicit type hints, and collectors degrade
+  to an "Error Card" instead of crashing. The
   frontend (`webapp/`) uses semantic token utilities (`bg-surface-1`,
   `text-fg-muted`), never raw hex. Sidecars only extract/forward raw data; the
   server does the heavy lifting.
