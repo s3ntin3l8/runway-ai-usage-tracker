@@ -50,72 +50,52 @@ Before pushing, run the full lint/typecheck/test/format gate.
   (`required_status_checks.strict = false`, deliberately — see
   [`docs/ci-cd.md`](docs/ci-cd.md)), so a PR that is merely behind still merges
   without a rebase.
-- This repo squash-merges, so the PR title becomes the commit message on
-  `main` — Release Please parses it to cut versions/changelogs, and an
-  unprefixed title silently drops out of the changelog.
-- The full gate is
-  `make lint && make test && make web-lint && make web-test` (or on native Windows,
-  `python scripts/dev_checks.py gate`).
-  `make install` wires the same checks into git hooks: pre-commit runs ruff,
-  mypy, detect-secrets, and the unit tests; pre-push runs the full suite.
-  Both run the suite in four workers, so the gates take about a minute
-  rather than five.
-  The CI checks are `test-python / lint`, `test-python / type-and-test`,
-  `test-frontend / lint-and-test`, `dependency-review / dependency-review`,
-  and CodeQL — with coverage floors of 85%
-  (Python) and 85% (frontend).
-- An `APPROVED` review can still carry an open inline comment.
-  The branch requires every conversation resolved
-  (`required_conversation_resolution`), so an open thread blocks the merge.
-  The REST `PUT /pulls/<n>/merge` endpoint accepts a
-  PR with an unresolved thread and silently skips that gate.
-- The worktree removal helper is
-  `python scripts/dev_checks.py remove-worktree <path>`.
-  A worktree that links the main checkout's `.venv`
-  into itself holds a directory junction, and `git worktree remove` follows
-  it and deletes the main checkout's virtualenv.
+- Hermes reviews every PR automatically when it opens; asking through the relay
+  afterwards is still safe, since it refuses a review that is already running or
+  already landed.
+- PRs are squash-merged and Release Please parses the PR title: an unprefixed
+  title silently drops out of the changelog.
+- The full gate is `make lint && make test && make web-lint && make web-test`
+  (native Windows: `python scripts/dev_checks.py gate`). `make install` wires
+  the same checks into git hooks — pre-commit runs ruff, mypy, detect-secrets
+  and the unit tests, pre-push the full suite. Coverage floors: 85% Python,
+  85% frontend.
+- A fresh clone or worktree inherits nothing: run `make install` first (native
+  Windows: `python scripts/dev_checks.py install`).
+- The branch requires every conversation resolved, and an `APPROVED` review can
+  still carry an open inline thread. The REST `PUT /pulls/<n>/merge` endpoint
+  silently skips that gate, so don't merge through it.
+- Remove a worktree with `python scripts/dev_checks.py remove-worktree <path>`,
+  never `git worktree remove`: a worktree that links the main checkout's
+  `.venv` holds a directory junction, and `git worktree remove` follows it and
+  deletes the main checkout's virtualenv.
 
-Fresh clone/worktree installation, hook interpreter details, frontend toolchain
-requirements, and action-pin update procedures are documented in
-[`CONTRIBUTING.md`](CONTRIBUTING.md).
+Hook interpreter details, the frontend toolchain pins and the CI action-pin
+procedure (`scripts/action_pins.json`) are in [`CONTRIBUTING.md`](CONTRIBUTING.md)
+— read it before bumping a CI action or changing the hook script.
 
 ## Everyday commands
 
-`make help` lists them all; the ones you'll reach for:
+`make help` lists them all. The ones with a catch:
 
-- `make dev` / `make dev-all` — server with hot reload; or server + Vite
-  (:5173) + sidecar together. `make dev` alone no longer sees your local CLI
-  logins (the server reads no credential files); use `make dev-all` to collect
+- `make dev` alone no longer sees your local CLI logins (the server reads no
+  credential files); `make dev-all` (server + Vite on :5173 + sidecar) collects
   from them.
-- `make test` — pytest; a single file: `pytest tests/path/to/test_file.py`.
-- `make test-shard SHARD=1 SHARDS=4` — one shard of the suite, the split the
-  native Windows CI uses; `make shard-weights` re-measures the per-module
-  durations that balance it.
-- `make lint` / `make format` — ruff + mypy + pip-audit; auto-fix formatting.
-- `make web-lint` — eslint over the frontend. The shared CI workflow runs it
-  inside the required `test-frontend / lint-and-test` job, so a lint error
-  blocks a merge; the local gate runs it for the same reason.
-- `make web-test` / `make web` — frontend vitest; production SPA build into
-  `webapp/dist`.
-- `make sidecar` — run the sidecar agent against the dev config dir.
-- `make sidecar-registry` — regenerate the sidecar's baked credential rules after
-  editing `app/core/registry.json` (the baked block is generated, never hand-edited).
-- `make secrets` / `make secrets-baseline` — detect-secrets gate / regenerate
-  the baseline after vetting a new detection. detect-secrets matches a known
-  secret by **filename, hash and type** — not by line number — but it carries
-  the line number as metadata, and the hook rewrites it when it rescans. So
-  editing a baselined file moves that number: re-run `make secrets-baseline`
-  in the same change or the CI gate fails — and the baseline conflicts on the
-  next rebase.
-- `make screenshots-audit AUDIT=<slug>` — phone and tablet captures of every page for
-  one audit, into `docs/audit/assets/<slug>/`. The assets are **local only**
-  (gitignored); the audit *report* is the committed artifact. Reports live in
-  `docs/audit/` under the name `YYYY-MM-<scope>-<topic>.md`, and
-  [`docs/audit/README.md`](docs/audit/README.md) is the convention — read it
-  before writing one.
-
-The `scripts/action_pins.json` record and its update procedure are documented in
-[`CONTRIBUTING.md`](CONTRIBUTING.md).
+- A single test file: `pytest tests/path/to/test_file.py`.
+  `make test-shard SHARD=1 SHARDS=4` is the split native Windows CI uses;
+  `make shard-weights` re-measures the per-module durations that balance it.
+- `make sidecar-registry` regenerates the sidecar's baked credential rules after
+  editing `app/core/registry.json` — the baked block is generated, never
+  hand-edited.
+- `make secrets-baseline` regenerates the detect-secrets baseline after vetting
+  a new detection. A known secret is matched by filename, hash and type, but the
+  baseline stores its line number: editing a baselined file moves it, so re-run
+  in the same change or the CI gate fails (and the baseline conflicts on the next
+  rebase).
+- `make screenshots-audit AUDIT=<slug>` writes phone and tablet captures into
+  `docs/audit/assets/<slug>/`, which is **local only** (gitignored); the audit
+  *report* is the committed artifact, named `YYYY-MM-<scope>-<topic>.md` — read
+  [`docs/audit/README.md`](docs/audit/README.md) before writing one.
 
 ## Core invariants
 
@@ -152,8 +132,7 @@ The `scripts/action_pins.json` record and its update procedure are documented in
 - **Branding:** `assets/logo.svg` is canonical; every other surface (favicon,
   PWA/tray/installer art) is derived. Run `make logo` to regenerate; never
   hand-edit a derived asset. See [`docs/branding.md`](docs/branding.md).
-- **Style:** Python 3.12 + FastAPI + Pydantic v2 — `async` everywhere,
-  explicit type hints, graceful "Error Card" degradation instead of crashes.
-  Frontend is React 19 + TypeScript in `webapp/` using semantic token
-  utilities (`bg-surface-1`, `text-fg-muted`), never raw hex. Sidecars only
-  extract/forward raw data; the server does the heavy lifting.
+- **Style:** collectors degrade to an "Error Card" instead of crashing. The
+  frontend (`webapp/`) uses semantic token utilities (`bg-surface-1`,
+  `text-fg-muted`), never raw hex. Sidecars only extract/forward raw data; the
+  server does the heavy lifting.
