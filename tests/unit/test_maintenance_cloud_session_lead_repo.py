@@ -35,7 +35,12 @@ def _session():
 def _cloud_event(
     session, event_id: str, *, session_id: str = _DIGEST, project=None, project_ref=None
 ):
-    """A cloud-runner event: ids `cloud:<digest>:m:<message id>`."""
+    """A cloud-runner event.
+
+    The history collector writes two id forms — `cloud:<digest>:m:<message id>`
+    for a message and `cloud:<digest>:r:<ordinal>:<slug>` for a remainder —
+    and both are in scope.
+    """
     session.add(
         UsageEvent(
             provider_id="anthropic",
@@ -51,31 +56,6 @@ def _cloud_event(
             project_ref=project_ref,
             tokens_input=100,
             cost_usd=0.05,
-            attribution_source="default",
-        )
-    )
-    session.commit()
-
-
-def _message_event(
-    session, event_id: str, *, session_id: str = _DIGEST, project=None, project_ref=None
-):
-    """A cloud-runner remainder event: ids `cloud:<digest>:r:<ordinal>:<slug>`."""
-    session.add(
-        UsageEvent(
-            provider_id="anthropic",
-            account_id="acc",
-            event_id=event_id,
-            ts=_TS,
-            kind="message",
-            session_id=session_id,
-            sidecar_id="anthropic-cloud",
-            entrypoint="cloud",
-            cwd=None,
-            project=project,
-            project_ref=project_ref,
-            tokens_input=10,
-            cost_usd=0.01,
             attribution_source="default",
         )
     )
@@ -163,7 +143,7 @@ class TestPlan:
     def test_the_remainder_events_count_too(self):
         s = _session()
         _cloud_event(s, f"cloud:{_DIGEST}:m:a", project="demo-a", project_ref="demo-a")
-        _message_event(s, f"cloud:{_DIGEST}:r:0:demo-a")
+        _cloud_event(s, f"cloud:{_DIGEST}:r:0:demo-a")
 
         plan = plan_cloud_session_lead_repo(s, _DIGEST)
 

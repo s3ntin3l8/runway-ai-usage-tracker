@@ -92,6 +92,11 @@ class CloudSessionLeadRepoCheck(Check):
         "than guessed."
     )
     severity = Severity.WARN
+    # The repair's scope is the history collector's events — exactly the set
+    # `cloud_events_reset` removes when it finds a stale row. Applying this
+    # repair first would be undone by that reset, which then re-collects the
+    # same rows unlabelled. So the reset goes first.
+    blocked_by = ("cloud_events_reset",)
 
     def detect(self, session: Session) -> CheckReport:
         groups: list[FindingGroup] = []

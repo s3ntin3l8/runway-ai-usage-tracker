@@ -558,7 +558,9 @@ class UsageEvent(SQLModel, table=True):  # type: ignore[call-arg]
     # The git repository the working directory belongs to, as the name only.
     # The client resolves it on its own host and reports the name; the server
     # never reads the client's filesystem. NULL when the client could not
-    # resolve one (no git, not a repository, an older sidecar).
+    # resolve one (no git, not a repository, an older sidecar). A maintenance
+    # repair may also write it: the `cloud_session_lead_repo` check applies the
+    # repository a cloud session's own labelled events name most often.
     project_ref: str | None = None
     git_branch: str | None = None  # vcs branch at the time of the message, if logged
     tools_json: str | None = None  # JSON array of tool names used in the message (Anthropic)
