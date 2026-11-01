@@ -25,7 +25,7 @@ from __future__ import annotations
 from bisect import bisect_right
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 
 from sqlalchemy import and_, case, func, literal
@@ -50,6 +50,7 @@ from app.services.maintenance.recost import (
     is_priced_on_purpose_free,
     plan_recost,
 )
+from app.services.maintenance.sql_cost import sql_cost as _sql_cost
 
 _KEY_SEP = "::"
 # A group is flagged when the recomputed estimate is off by more than this
@@ -246,10 +247,47 @@ def _aggregate_buckets(session: Session) -> dict[tuple[str, str], _Bucket]:
             bucket.first_ts = first_ts_text
         if bucket.last_ts is None or last_ts_text > bucket.last_ts:
             bucket.last_ts = last_ts_text
-        # Per-event rounding (six decimals, four components) bounds the
-        # noise a clean bucket can show.
-        if abs(expected - stored) > events * 2e-6 + 1e-6:
-            bucket.stale_events += events
+        # Per-event staleness via the shared sql_cost expression: a bucket
+        # that mixes matching and stale events is still flagged.
+        via_today = _sql_cost(row)
+        # Mirror the bucket's aggregate/long-tier scope so we only count
+        # events in this same bucket.
+        is_agg_expr = and_(
+            func.substr(UsageEvent.event_id, 1, 6) == "cloud:",
+            func.instr(UsageEvent.event_id, ":m:") == 0,
+        )
+        prompt_expr = (
+            col(UsageEvent.tokens_input)
+            + col(UsageEvent.tokens_cache_read)
+            + col(UsageEvent.tokens_cache_create)
+        )
+        if agg:
+            agg_cond = is_agg_expr
+        else:
+            agg_cond = ~is_agg_expr
+        if long_flag and threshold is not None:
+            long_cond = prompt_expr > literal(threshold)
+        else:
+            long_cond = (
+                prompt_expr <= literal(threshold) if threshold is not None else literal(True)
+            )
+        stale_stmt = sa_select(func.count()).where(
+            col(UsageEvent.provider_id) == provider_id,
+            col(UsageEvent.model_id) == model_id,
+            col(UsageEvent.kind) == "message",
+            col(UsageEvent.cost_usd) != 0.0,
+            col(UsageEvent.cost_estimated_usd) > 0,
+            col(UsageEvent.ts)
+            >= datetime(day_value.year, day_value.month, day_value.day, tzinfo=UTC),
+            col(UsageEvent.ts)
+            < datetime(day_value.year, day_value.month, day_value.day, tzinfo=UTC)
+            + timedelta(days=1),
+            agg_cond,
+            long_cond,
+            func.abs(via_today - col(UsageEvent.cost_estimated_usd)) > 2e-6,
+        )
+        stale_count = session.execute(stale_stmt).scalar() or 0
+        bucket.stale_events += stale_count
     return buckets
 
 
