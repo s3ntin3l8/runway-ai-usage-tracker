@@ -1,10 +1,8 @@
 """Shared per-event SQL cost expression.
 
-``fallback_priced_events`` uses this per-event cost arithmetic
-(``compute_event_cost_breakdown``'s total). ``stale_priced_models`` keeps its own
-bucket-sum estimate for its perf/query-count contract, but shares this module's
-expression if it ever moves to per-event detection. Keeping a single copy here
-prevents the two from drifting.
+Both ``fallback_priced_events`` and ``stale_priced_models`` use this per-event
+cost arithmetic (``compute_event_cost_breakdown``'s total); keeping a single
+copy here prevents the two from drifting.
 """
 
 from __future__ import annotations

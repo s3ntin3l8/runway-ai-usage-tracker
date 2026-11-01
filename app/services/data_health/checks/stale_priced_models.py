@@ -14,9 +14,9 @@ changes `cost_usd` only where that already equals the old estimate and never
 touches `cost_reported_usd`, so reported costs and a `billing_type` change since
 ingest keep their history.
 
-`detect` is a cheap hint: one SQL aggregate over the message events (token sums
-per price-relevant bucket) compared with the estimate those sums price at today,
-never a per-event Python pass. `plan` runs the exact per-event computation for
+`detect` is a cheap hint: one SQL aggregate per contiguous-day price interval,
+applying the per-event rule (via the shared sql_cost expression) in SQL, never
+a per-event Python pass. `plan` runs the exact per-event computation for
 one `(provider, model)` group.
 """
 
@@ -57,7 +57,9 @@ from app.services.maintenance.sql_cost import sql_cost as _sql_cost
 
 _KEY_SEP = "::"
 # A group is flagged when the recomputed estimate is off by more than this
-# (absolute dollars or fraction of the stored estimate, whichever is larger).
+# (absolute dollars or fraction of the stored estimate, whichever is larger),
+# or when any individual event's stored estimate differs from today's rate
+# beyond the per-event tolerance.
 _MIN_DELTA_USD = 0.01
 _MIN_DELTA_FRACTION = 0.001
 
@@ -128,23 +130,8 @@ def _aggregate_buckets(session: Session) -> dict[tuple[str, str], _Bucket]:
     buckets: dict[tuple[str, str], _Bucket] = defaultdict(_Bucket)
     for provider_id, model_id, first_day, last_day, row in intervals:
         via_today = _sql_cost(row)
-        # Per-event split handling mirrors compute_event_cost_breakdown.
-        split = col(UsageEvent.tokens_cache_create_1h) + col(UsageEvent.tokens_cache_create_5m)
-        cache_create_5m_tokens = case(
-            (
-                split > 0,
-                UsageEvent.tokens_cache_create_5m
-                + func.max(UsageEvent.tokens_cache_create - split, 0),
-            ),
-            else_=UsageEvent.tokens_cache_create,
-        )
         stmt = sa_select(  # type: ignore[call-overload]
             func.count(),
-            func.sum(UsageEvent.tokens_input),
-            func.sum(UsageEvent.tokens_output + UsageEvent.tokens_reasoning),
-            func.sum(UsageEvent.tokens_cache_read),
-            func.sum(UsageEvent.tokens_cache_create_1h),
-            func.sum(cache_create_5m_tokens),
             func.sum(UsageEvent.cost_estimated_usd),
             func.min(UsageEvent.ts),
             func.max(UsageEvent.ts),
@@ -166,11 +153,6 @@ def _aggregate_buckets(session: Session) -> dict[tuple[str, str], _Bucket]:
         row_result = session.execute(stmt).one()
         (
             events,
-            tokens_input,
-            tokens_output,
-            tokens_cache_read,
-            cache_create_1h,
-            cache_create_5m_total,
             stored,
             first_ts,
             last_ts,
@@ -234,7 +216,11 @@ class StalePricedModelsCheck(Check):
                     key=_group_key(provider_id, model_id),
                     label=(
                         f"{provider_id}/{model_id}: up to {bucket.stale_events} event(s) priced at an "
-                        f"outdated rate ({delta:+.2f} USD)"
+                        + (
+                            f"outdated rate ({delta:+.2f} USD)"
+                            if abs(delta) >= 0.005
+                            else "outdated rate"
+                        )
                     ),
                     count=bucket.stale_events,
                     fixable=True,
