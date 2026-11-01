@@ -52,10 +52,12 @@ Before pushing, run the full lint/typecheck/test/format gate.
   without a rebase.
 - Hermes reviews a PR automatically when it opens non-draft (a draft is reviewed
   on `ready_for_review`), except `mullion/task-*` branches (Task Master's own
-  reviewer is the terminal review there), fork PRs and bot-authored PRs. In a
-  Mullion session ask for another round through the relay; it refuses a review
-  that is already running or already landed for this head SHA, and accepts a
-  new commit. Outside a Mullion session, comment `@s3ntin3l8-hermes Review`.
+  reviewer is the terminal review there), fork PRs, and PRs authored by
+  `s3ntin3l8-hermes[bot]` or `github-actions[bot]` (Dependabot PRs are reviewed
+  deliberately). In a Mullion session ask for another round through the relay;
+  it refuses a review that is already running or already landed for this head
+  SHA, and accepts a new commit. Outside a Mullion session, comment
+  `@s3ntin3l8-hermes Review`.
 - Release Please parses the squash-merged PR title: an unprefixed title
   silently drops out of the changelog.
 - The full gate is `make lint && make test && make web-lint && make web-test`

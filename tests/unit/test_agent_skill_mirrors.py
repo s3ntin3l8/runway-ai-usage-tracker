@@ -25,7 +25,9 @@ def _body(path: Path) -> str:
     """The text after the YAML frontmatter (the two copies differ only there)."""
     text = path.read_text(encoding="utf-8")
     assert text.startswith("---\n"), f"{path} has no frontmatter"
-    return text.split("\n---\n", 1)[1].strip()
+    _, sep, body = text.partition("\n---\n")
+    assert sep, f"{path} has an unterminated frontmatter block"
+    return body.strip()
 
 
 def test_the_skill_copies_are_identical():
@@ -49,7 +51,7 @@ def test_the_claude_copies_are_not_gitignored(path: Path):
         pytest.skip("git is required to test the ignore rules")
     # --no-index: ask what the rules say, whether or not the file is tracked.
     result = subprocess.run(
-        ["git", "check-ignore", "--no-index", "-q", str(path.relative_to(ROOT))],
+        ["git", "check-ignore", "--no-index", "-q", path.relative_to(ROOT).as_posix()],
         cwd=ROOT,
         capture_output=True,
     )
