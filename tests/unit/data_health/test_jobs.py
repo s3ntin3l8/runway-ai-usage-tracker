@@ -85,6 +85,19 @@ def checks():
 
 
 @pytest.fixture
+def refusing_checks():
+    """`a` refuses the apply with its own message — the checks raise a
+    `ValueError` for the operator, not for the log."""
+    return {
+        "a": _FakeCheck(
+            "a",
+            findings=1,
+            raises=ValueError("Confirm that the source and target are the same provider account"),
+        ),
+    }
+
+
+@pytest.fixture
 def locked_checks():
     """`a` fails on apply with a locked database and the SQL that caused it."""
     return {
@@ -108,6 +121,11 @@ def jobs(monkeypatch, checks):
 @pytest.fixture
 def locked_jobs(monkeypatch, locked_checks):
     return _jobs(monkeypatch, locked_checks)
+
+
+@pytest.fixture
+def refusing_jobs(monkeypatch, refusing_checks):
+    return _jobs(monkeypatch, refusing_checks)
 
 
 def _jobs(monkeypatch, checks):
@@ -258,6 +276,22 @@ async def test_an_unrelated_failure_is_an_unknown_kind(jobs):
     assert record.error_kind == "unknown"
     assert record.retryable is False
     assert "UPDATE" not in (record.error or "")
+
+
+async def test_a_refusal_shows_the_checks_own_message(refusing_jobs):
+    """A `ValueError` is a check's refusal, written for this dialog — it must
+    not be collapsed into a generic sentence."""
+    await refusing_jobs.wait_for_scan()
+
+    job_id = await refusing_jobs.start_apply(
+        check_id="a", group_key="g1", params={}, actor="t", actor_ip=None
+    )
+    record = await refusing_jobs.wait_for_job(job_id)
+
+    assert record.status == "failed"
+    assert record.error == "Confirm that the source and target are the same provider account"
+    assert record.error_kind == "unknown"
+    assert record.retryable is False
 
 
 async def test_the_failure_detail_keeps_the_bound_parameters_out(locked_jobs, caplog):

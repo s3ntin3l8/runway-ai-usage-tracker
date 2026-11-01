@@ -108,7 +108,11 @@ export function FixDialog({ open, onOpenChange, checkId, group }: FixDialogProps
     previewedValues !== null &&
     sameParams(previewedValues, values) &&
     confirmed &&
-    jobId === null;
+    jobId === null &&
+    // A retry clears the job id, so the preview panel comes back with the
+    // previous confirmation still on it — it must not be clickable while the
+    // retry is still in flight.
+    !apply.isPending;
   const requiredParamsReady = group.params.every(
     (param) => !param.required || Boolean(values[param.name]),
   );

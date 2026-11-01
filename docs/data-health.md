@@ -35,7 +35,11 @@ checks waiting on another repair. Pending events include a direct link to Fleet.
    never the SQL behind it. When the failure was a busy database, the
    progress the fix had already made is saved and the dialog offers a
    **Retry fix** button that runs the same fix again; the preview then shows
-   how much is left to do.
+   how much is left to do. A fix that was *refused* — a confirmation the
+   check asked for and did not get — says so in the check's own words.
+   A busy database is worth waiting for: the connection waits 30 s for the
+   lock before the error surfaces and the fix retries with a growing pause,
+   so a stuck apply can hold on for about four minutes before it gives up.
 
 A check with unresolved findings can block another check from being
 applied until it's fixed — the dependency order below reflects that.

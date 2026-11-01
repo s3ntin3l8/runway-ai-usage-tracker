@@ -52,6 +52,10 @@ _UNKNOWN_MESSAGE = "The fix failed. The audit log has the details."
 #: is not what the dialog shows.
 _DETAIL_LIMIT = 500
 
+#: How long a check's own refusal may be. It is shown in the dialog, so it
+#: stays the length of a sentence.
+_MESSAGE_LIMIT = 200
+
 
 class CheckBlockedError(ValueError):
     """Raised when an apply is requested for a check whose report is
@@ -73,11 +77,18 @@ class ScanFailedError(RuntimeError):
 def _classify(exc: Exception) -> tuple[ErrorKind, str]:
     """The failure's kind and the plain-language sentence the operator sees.
 
-    The sentence never carries the exception's text: a SQLAlchemy error
-    renders the whole `UPDATE` statement and its bound parameters, and those
-    do not belong in a toast. The detail lives in the log and the audit
-    payload instead.
+    A `ValueError` is a check's own refusal — "Confirm the stranded rows are
+    stale before deleting them" — written for this dialog, so its message is
+    what the operator is shown (the preview endpoint surfaces the same
+    messages as a 400).
+
+    Every other failure gets a plain sentence of its own: the exception's text
+    never reaches the dialog, because a SQLAlchemy error renders the whole
+    `UPDATE` statement and its bound parameters. The detail lives in the log
+    and the audit payload instead.
     """
+    if isinstance(exc, ValueError):
+        return "unknown", _safe_detail(exc, limit=_MESSAGE_LIMIT)
     if isinstance(exc, OperationalError) and _is_sqlite_locked_or_busy(exc):
         return "db_busy", _DB_BUSY_MESSAGE
     return "unknown", _UNKNOWN_MESSAGE

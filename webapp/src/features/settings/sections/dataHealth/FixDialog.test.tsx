@@ -314,7 +314,10 @@ describe('FixDialog', () => {
     expect(screen.queryByRole('button', { name: /retry fix/i })).not.toBeInTheDocument();
   });
 
-  it('never puts SQL in the toast', async () => {
+  it('clamps a long failure message in the toast', async () => {
+    // The server sends a short, plain-language reason; the clamp is the
+    // safety net for any longer message that ever reaches this path.
+    const longMessage = 'x'.repeat(400);
     vi.mocked(api.previewDataHealthFix).mockResolvedValue({
       check_id: 'config_default_keyed',
       group_key: 'minimax',
@@ -329,8 +332,7 @@ describe('FixDialog', () => {
       group_key: 'minimax',
       status: 'failed',
       result: null,
-      error:
-        "UPDATE usage_events SET cost_usd = ? WHERE usage_events.id IN (?) [parameters: {'x': 1}]",
+      error: longMessage,
       error_kind: 'unknown',
       retryable: false,
       started_at: '2026-09-28T00:00:00Z',
@@ -343,10 +345,43 @@ describe('FixDialog', () => {
     await userEvent.click(screen.getByRole('switch'));
     await userEvent.click(screen.getByRole('button', { name: /apply fix/i }));
 
-    await screen.findByText(/UPDATE usage_events/);
+    await screen.findByText(longMessage);
     const toastText = vi.mocked(toast.error).mock.calls.flat().join(' ');
-    expect(toastText).not.toContain('SQL:');
     expect(toastText.length).toBeLessThanOrEqual(200);
+    expect(toastText.endsWith('\u2026')).toBe(true);
+  });
+
+  it('shows a short failure reason in the toast as it is', async () => {
+    vi.mocked(api.previewDataHealthFix).mockResolvedValue({
+      check_id: 'config_default_keyed',
+      group_key: 'minimax',
+      summary: 'Rekey it',
+      counts: {},
+      samples: [],
+    });
+    vi.mocked(api.applyDataHealthFix).mockResolvedValue({ job_id: 'job-1' });
+    vi.mocked(api.fetchDataHealthJob).mockResolvedValue({
+      id: 'job-1',
+      check_id: 'config_default_keyed',
+      group_key: 'minimax',
+      status: 'failed',
+      result: null,
+      error: 'Confirm that the source and target are the same provider account',
+      error_kind: 'unknown',
+      retryable: false,
+      started_at: '2026-09-28T00:00:00Z',
+      finished_at: '2026-09-28T00:00:01Z',
+    });
+
+    renderDialog();
+    await userEvent.click(screen.getByRole('button', { name: /preview/i }));
+    await screen.findByText('Rekey it');
+    await userEvent.click(screen.getByRole('switch'));
+    await userEvent.click(screen.getByRole('button', { name: /apply fix/i }));
+
+    await screen.findByText(/same provider account/);
+    const toastText = vi.mocked(toast.error).mock.calls.flat().join(' ');
+    expect(toastText).toBe('Confirm that the source and target are the same provider account');
   });
 
   it('keeps a job open with unknown status and offers a retry if polling fails', async () => {
