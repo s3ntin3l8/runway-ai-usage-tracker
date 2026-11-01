@@ -638,7 +638,7 @@ def _card(session: Session, provider_id: str, account_id: str) -> None:
 
 
 def test_identities_only_for_single_account_providers(session: Session):
-    from app.api.endpoints.fleet_sidecars import _get_active_identities
+    from app.api.endpoints.fleet_ingest import _get_active_identities
     from app.models.db import SidecarRegistry
 
     session.add(SidecarRegistry(sidecar_id="laptop", hostname="laptop"))
@@ -652,7 +652,7 @@ def test_identities_only_for_single_account_providers(session: Session):
 
 
 def test_identities_withheld_in_multi_sidecar_deployments(session: Session):
-    from app.api.endpoints.fleet_sidecars import _get_active_identities
+    from app.api.endpoints.fleet_ingest import _get_active_identities
     from app.models.db import SidecarRegistry
 
     session.add(SidecarRegistry(sidecar_id="laptop", hostname="laptop"))

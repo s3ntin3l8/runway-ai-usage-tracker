@@ -1,4 +1,10 @@
 # Backward-compatibility shim: implementation moved to domain modules.
+#
+# Only the symbols the modules own are re-exported. The service and
+# third-party names the old module happened to import (``token_cache``,
+# ``Depends``, ``Session``, …) are deliberately left out: a stale
+# ``patch("app.api.endpoints.fleet.token_cache")`` then fails loudly with an
+# AttributeError instead of silently patching a binding nothing reads.
 import logging
 
 from app.api.endpoints.fleet_credentials import *  # noqa: F401,F403

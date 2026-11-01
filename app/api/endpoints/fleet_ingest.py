@@ -1,13 +1,14 @@
 """Sidecar ingest: the HMAC-authenticated push endpoint and its helpers."""
 
+import json
 import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from app.api.endpoints.fleet_shared import _validation_summary
-from app.api.endpoints.fleet_sidecars import _get_active_identities, _reset_anchors_for_sidecar
+from app.core.date_utils import parse_iso8601_utc
 from app.core.db import get_session
 from app.core.login_dirs import stored_login_dirs
 from app.core.rate_limit import limiter
@@ -130,6 +131,78 @@ def _is_cookie_key(key: str) -> bool:
 
 
 _VOLATILE_TOKEN_KEYS = {"expiry_date", "expires_at", "expires_in", "access_token"}
+
+
+def _get_active_identities(_session: Session) -> dict[str, str]:
+    """Deprecated compatibility field: never infer a host identity from usage."""
+    return {}
+
+
+def _reset_anchors_for_sidecar(session: Session) -> dict[str, dict[str, str]]:
+    """Per-provider authoritative reset_at by window_type, for sidecar use.
+
+    Reads all LatestUsage rows with future reset_at and builds a dict of
+    the latest reset_at per (provider_id, window_type) pair. Filters to
+    only default variants (model_id="" and variant in ("", "default")).
+
+    Returns:
+        {
+          "anthropic": {
+            "session": "2026-05-08T18:00:00+00:00",
+            "weekly":  "2026-05-12T18:00:00+00:00"
+          },
+          ...
+        }
+    """
+    from datetime import UTC, datetime
+
+    from app.models.db import LatestUsage
+
+    # Push the default-variant / no-model-id filters into SQL so we don't
+    # materialise per-model rows that we'd immediately discard.
+    rows = session.exec(
+        select(LatestUsage).where(
+            LatestUsage.model_id == "",
+            col(LatestUsage.variant).in_(["", "default"]),
+        )
+    ).all()
+    now = datetime.now(UTC)
+    anchors: dict[str, dict[str, str]] = {}
+
+    for r in rows:
+        # Defense-in-depth: filters above are already SQL-enforced.
+        if r.model_id and r.model_id != "":
+            continue
+        if r.variant not in ("", "default"):
+            continue
+
+        # Parse card_json
+        try:
+            card = json.loads(r.card_json) if r.card_json else {}
+        except json.JSONDecodeError:
+            continue
+
+        # Extract reset_at
+        reset_at = card.get("reset_at")
+        if not reset_at:
+            continue
+
+        # Parse datetime and check if it's in the future
+        try:
+            reset_dt = parse_iso8601_utc(reset_at)
+        except ValueError:
+            continue
+
+        if reset_dt <= now:
+            continue
+
+        # Track the latest reset_at per (provider_id, window_type)
+        prov_anchors = anchors.setdefault(r.provider_id, {})
+        existing = prov_anchors.get(r.window_type)
+        if existing is None or reset_at > existing:
+            prov_anchors[r.window_type] = reset_at
+
+    return anchors
 
 
 async def _bundle_holds(
@@ -949,6 +1022,8 @@ __all__ = [
     "_VOLATILE_TOKEN_KEYS",
     "_bundle_holds",
     "_can_reconcile_row",
+    "_get_active_identities",
     "_is_cookie_key",
+    "_reset_anchors_for_sidecar",
     "ingest_metrics",
 ]

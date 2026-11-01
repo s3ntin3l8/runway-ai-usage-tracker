@@ -29,7 +29,7 @@ def session():
 
 def test_empty_db_returns_empty_dict(session: Session):
     """No LatestUsage rows → returns empty dict."""
-    from app.api.endpoints.fleet_sidecars import _reset_anchors_for_sidecar
+    from app.api.endpoints.fleet_ingest import _reset_anchors_for_sidecar
 
     result = _reset_anchors_for_sidecar(session)
     assert result == {}
@@ -37,7 +37,7 @@ def test_empty_db_returns_empty_dict(session: Session):
 
 def test_single_anthropic_weekly_card(session: Session):
     """One LatestUsage row with reset_at in future → included in output."""
-    from app.api.endpoints.fleet_sidecars import _reset_anchors_for_sidecar
+    from app.api.endpoints.fleet_ingest import _reset_anchors_for_sidecar
 
     future_reset = datetime.now(UTC) + timedelta(days=7)
     card_json = json.dumps(
@@ -65,7 +65,7 @@ def test_single_anthropic_weekly_card(session: Session):
 
 def test_multiple_window_types_same_provider(session: Session):
     """Multiple window types for same provider (session, weekly, variant) → only defaults."""
-    from app.api.endpoints.fleet_sidecars import _reset_anchors_for_sidecar
+    from app.api.endpoints.fleet_ingest import _reset_anchors_for_sidecar
 
     now = datetime.now(UTC)
     session_reset = now + timedelta(hours=5)
@@ -118,7 +118,7 @@ def test_multiple_window_types_same_provider(session: Session):
 
 def test_multiple_providers(session: Session):
     """Cards from multiple providers → both top-level keys present."""
-    from app.api.endpoints.fleet_sidecars import _reset_anchors_for_sidecar
+    from app.api.endpoints.fleet_ingest import _reset_anchors_for_sidecar
 
     now = datetime.now(UTC)
     anthropic_reset = now + timedelta(days=7)
@@ -155,7 +155,7 @@ def test_multiple_providers(session: Session):
 
 def test_past_reset_at_excluded(session: Session):
     """Rows with reset_at in past → not included in output."""
-    from app.api.endpoints.fleet_sidecars import _reset_anchors_for_sidecar
+    from app.api.endpoints.fleet_ingest import _reset_anchors_for_sidecar
 
     now = datetime.now(UTC)
     past_reset = now - timedelta(days=1)
@@ -177,7 +177,7 @@ def test_past_reset_at_excluded(session: Session):
 
 def test_null_reset_at_excluded(session: Session):
     """Rows with missing/null reset_at → not included in output."""
-    from app.api.endpoints.fleet_sidecars import _reset_anchors_for_sidecar
+    from app.api.endpoints.fleet_ingest import _reset_anchors_for_sidecar
 
     row = LatestUsage(
         provider_id="anthropic",
@@ -196,7 +196,7 @@ def test_null_reset_at_excluded(session: Session):
 
 def test_malformed_json_excluded(session: Session):
     """Rows with malformed card_json → skipped silently."""
-    from app.api.endpoints.fleet_sidecars import _reset_anchors_for_sidecar
+    from app.api.endpoints.fleet_ingest import _reset_anchors_for_sidecar
 
     now = datetime.now(UTC)
     future_reset = now + timedelta(days=7)
@@ -233,7 +233,7 @@ def test_malformed_json_excluded(session: Session):
 
 def test_invalid_datetime_format_excluded(session: Session):
     """Rows with malformed datetime in reset_at → skipped silently."""
-    from app.api.endpoints.fleet_sidecars import _reset_anchors_for_sidecar
+    from app.api.endpoints.fleet_ingest import _reset_anchors_for_sidecar
 
     now = datetime.now(UTC)
     future_reset = now + timedelta(days=7)
@@ -270,7 +270,7 @@ def test_invalid_datetime_format_excluded(session: Session):
 
 def test_multiple_rows_same_window_picks_max(session: Session):
     """Multiple rows for same (provider, window_type) with different reset_at → pick max."""
-    from app.api.endpoints.fleet_sidecars import _reset_anchors_for_sidecar
+    from app.api.endpoints.fleet_ingest import _reset_anchors_for_sidecar
 
     now = datetime.now(UTC)
     early_reset = now + timedelta(days=6)

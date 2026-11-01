@@ -10,7 +10,6 @@ from pydantic import BaseModel, field_validator
 from sqlmodel import Session, col, select
 
 from app.api.endpoints.fleet_shared import _account_tag_hints_for_providers
-from app.core.date_utils import parse_iso8601_utc
 from app.core.db import get_session
 from app.core.login_dirs import LOGIN_DIR_KEYS, stored_login_dirs, validate_directories
 from app.core.rate_limit import limiter
@@ -50,78 +49,6 @@ router = APIRouter()
 class SidecarUpdateRequest(BaseModel):
     custom_name: str | None = None
     tags: list[str] | None = None
-
-
-def _get_active_identities(_session: Session) -> dict[str, str]:
-    """Deprecated compatibility field: never infer a host identity from usage."""
-    return {}
-
-
-def _reset_anchors_for_sidecar(session: Session) -> dict[str, dict[str, str]]:
-    """Per-provider authoritative reset_at by window_type, for sidecar use.
-
-    Reads all LatestUsage rows with future reset_at and builds a dict of
-    the latest reset_at per (provider_id, window_type) pair. Filters to
-    only default variants (model_id="" and variant in ("", "default")).
-
-    Returns:
-        {
-          "anthropic": {
-            "session": "2026-05-08T18:00:00+00:00",
-            "weekly":  "2026-05-12T18:00:00+00:00"
-          },
-          ...
-        }
-    """
-    from datetime import UTC, datetime
-
-    from app.models.db import LatestUsage
-
-    # Push the default-variant / no-model-id filters into SQL so we don't
-    # materialise per-model rows that we'd immediately discard.
-    rows = session.exec(
-        select(LatestUsage).where(
-            LatestUsage.model_id == "",
-            col(LatestUsage.variant).in_(["", "default"]),
-        )
-    ).all()
-    now = datetime.now(UTC)
-    anchors: dict[str, dict[str, str]] = {}
-
-    for r in rows:
-        # Defense-in-depth: filters above are already SQL-enforced.
-        if r.model_id and r.model_id != "":
-            continue
-        if r.variant not in ("", "default"):
-            continue
-
-        # Parse card_json
-        try:
-            card = json.loads(r.card_json) if r.card_json else {}
-        except json.JSONDecodeError:
-            continue
-
-        # Extract reset_at
-        reset_at = card.get("reset_at")
-        if not reset_at:
-            continue
-
-        # Parse datetime and check if it's in the future
-        try:
-            reset_dt = parse_iso8601_utc(reset_at)
-        except ValueError:
-            continue
-
-        if reset_dt <= now:
-            continue
-
-        # Track the latest reset_at per (provider_id, window_type)
-        prov_anchors = anchors.setdefault(r.provider_id, {})
-        existing = prov_anchors.get(r.window_type)
-        if existing is None or reset_at > existing:
-            prov_anchors[r.window_type] = reset_at
-
-    return anchors
 
 
 def _fleet_update_defaults(session: Session) -> tuple[str, bool]:
@@ -684,8 +611,6 @@ __all__ = [
     "SidecarUpdateRequest",
     "_adopt_summary",
     "_fleet_update_defaults",
-    "_get_active_identities",
-    "_reset_anchors_for_sidecar",
     "_set_sidecar_collection_enabled",
     "_source_sync_fields",
     "adopt_legacy_sidecar",
