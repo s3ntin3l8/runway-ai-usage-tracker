@@ -166,7 +166,7 @@ make lint && make test && make web-lint && make web-test
 - **Branch off `origin/main`**, never your local `main`. A stale local `main`
   means your checks validate against an old base, and `main` does not require
   branches to be up to date, so they will not re-run before merge — though a
-  PR that is merely behind still merges without a rebase (see the workflow rules in [AGENTS.md](AGENTS.md)
+  PR that is merely behind still merges without a rebase (see the Workflow Conventions in [AGENTS.md](AGENTS.md)
   and [docs/ci-cd.md](docs/ci-cd.md)).
 - **PR title must use a
   [Conventional Commits](https://www.conventionalcommits.org/) prefix**
@@ -185,7 +185,9 @@ make lint && make test && make web-lint && make web-test
 ## Review process
 
 Hermes reviews each PR once automatically when it opens; after pushing fixes,
-request another look with a `@s3ntin3l8-hermes Review` comment. Addressing
+request another look through the review relay (`mullion review`, or the
+`request_review` tool) as AGENTS.md's Workflow Conventions describe — do not
+`@mention` the bot, which queues a second round behind the running one. Addressing
 review feedback (reply + resolve each inline thread via the GitHub API) and
 post-merge cleanup (delete local and remote branch, remove the worktree) are
 documented in [AGENTS.md](AGENTS.md) — follow them rather than improvising.

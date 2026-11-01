@@ -1,6 +1,6 @@
 # AGENTS.md — Runway (AI Usage Tracker)
 
-This file is the single source of truth for this repo's workflow rules and
+This file is the single source of truth for this repo's workflow conventions and
 load-bearing invariants — the ones every agent needs before touching
 anything, regardless of which CLI you are. `CLAUDE.md` is a one-line
 `@AGENTS.md` import, so Claude Code reads this file through it; Codex,
@@ -46,10 +46,10 @@ Before pushing, run the full lint/typecheck/test/format gate.
 
 ## Repo specifics
 
-- `main` does
-  *not* require branches to be up to date (`required_status_checks.strict =
-  false`, deliberately — see [`docs/ci-cd.md`](docs/ci-cd.md)), so a PR that
-  is merely behind still merges without a rebase.
+- `main` does *not* require branches to be up to date
+  (`required_status_checks.strict = false`, deliberately — see
+  [`docs/ci-cd.md`](docs/ci-cd.md)), so a PR that is merely behind still merges
+  without a rebase.
 - This repo squash-merges, so the PR title becomes the commit message on
   `main` — Release Please parses it to cut versions/changelogs, and an
   unprefixed title silently drops out of the changelog.
