@@ -207,21 +207,25 @@ def init_db() -> None:
         inserted_pairs = seed_pricing_table(session)
         if inserted_pairs:
             logger.info(f"Seeded provider_pricing with {len(inserted_pairs)} new rows")
+            # Aggregate models per provider so we issue one apply_recost per
+            # provider (one window rebuild) instead of one per seed row.
+            by_provider: dict[str, list[str]] = {}
             for provider_id, model_id in inserted_pairs:
+                by_provider.setdefault(provider_id, []).append(model_id)
+            for provider_id, models in by_provider.items():
                 try:
                     result = apply_recost(
                         session,
                         providers=[provider_id],
                         only_zero_cost=True,
-                        models=[model_id],
+                        models=models,
                     )
                     logger.info(
-                        f"Repriced zero-cost events for {provider_id}/{model_id}: "
-                        f"{result.updated} event(s)"
+                        f"Repriced zero-cost events for {provider_id}: {result.updated} event(s)"
                     )
                 except Exception as e:  # noqa: BLE001
                     logger.warning(
-                        f"Recost for {provider_id}/{model_id} failed; Data Health Fix still covers it: {e}"
+                        f"Recost for {provider_id} failed; Data Health Fix still covers it: {e}"
                     )
 
     # Rewrite legacy non-canonical account_ids (e.g. mixed-case emails that
