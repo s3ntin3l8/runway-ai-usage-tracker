@@ -219,6 +219,7 @@ def init_db() -> None:
                         providers=[provider_id],
                         only_zero_cost=True,
                         models=models,
+                        skip_windows=True,
                     )
                     logger.info(
                         f"Repriced zero-cost events for {provider_id}: {result.updated} event(s)"
