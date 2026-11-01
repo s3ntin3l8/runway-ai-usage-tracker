@@ -263,6 +263,13 @@ def is_worktree_container_cwd(cwd: str | None, extra_patterns: Sequence[str] = (
     return _first_worktree_segment(cwd, extra_patterns) is not None
 
 
+def _split_drive(segments: list[str]) -> tuple[str, list[str]]:
+    """The path's drive spec (lower-cased) and its segments without it."""
+    if segments and _is_drive_spec(segments[0]):
+        return segments[0].lower(), segments[1:]
+    return "", segments
+
+
 def is_inside_path(path: str | None, parent: str | None) -> bool:
     """True when `path` is `parent` itself or lies inside it.
 
@@ -270,15 +277,19 @@ def is_inside_path(path: str | None, parent: str | None) -> bool:
     `/home/u/repo-two` is not, and a Windows drive spec does not count as a
     level. Both paths are compared as they are given — normalize them first
     when a worktree directory is involved.
+
+    The drive spec must match: `C:` and `c:` are the same drive, `C:` and `D:`
+    are not. The rest is compared **case-sensitively** — the paths come from
+    one client, so their case style is consistent, and a case mismatch is
+    treated as a different directory. That is the direction that leaves a
+    session's label alone rather than relabelling it wrongly.
     """
     if not path or not parent:
         return False
-    path_segments = _segments(path)
-    parent_segments = _segments(parent)
-    if path_segments and _is_drive_spec(path_segments[0]):
-        path_segments = path_segments[1:]
-    if parent_segments and _is_drive_spec(parent_segments[0]):
-        parent_segments = parent_segments[1:]
+    path_drive, path_segments = _split_drive(_segments(path))
+    parent_drive, parent_segments = _split_drive(_segments(parent))
+    if path_drive != parent_drive:
+        return False
     return len(parent_segments) <= len(path_segments) and (
         path_segments[: len(parent_segments)] == parent_segments
     )

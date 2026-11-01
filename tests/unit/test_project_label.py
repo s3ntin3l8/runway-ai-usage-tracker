@@ -282,6 +282,23 @@ class TestIsInsidePath:
     def test_a_drive_spec_is_not_a_level(self):
         assert is_inside_path(r"C:\repo", "C:\\")
 
+    def test_a_different_drive_is_not_inside(self):
+        # The same segments on another drive are another machine's directory.
+        assert not is_inside_path(r"C:\Projects\repo", r"D:\Projects\repo")
+        assert not is_inside_path(r"D:\Projects\repo", r"C:\Projects\repo")
+
+    def test_the_same_drive_in_another_case_is_inside(self):
+        # `C:` and `c:` are the same drive; the drive letter is not compared
+        # case-sensitively.
+        assert is_inside_path(r"C:\Projects\repo", r"c:\Projects\repo")
+
+    def test_the_segments_are_compared_case_sensitively(self):
+        # The paths come from one client, so their case style is consistent;
+        # a mismatch is treated as a different directory, which leaves a
+        # session's label alone rather than relabelling it wrongly.
+        assert not is_inside_path(r"D:\Projects\Repo", r"d:\projects\repo")
+        assert not is_inside_path("/home/u/Repo", "/home/u/repo")
+
     def test_none_and_empty(self):
         assert not is_inside_path(None, "/home/u")
         assert not is_inside_path("/home/u", None)
