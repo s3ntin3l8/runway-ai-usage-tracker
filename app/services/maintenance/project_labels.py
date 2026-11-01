@@ -37,6 +37,17 @@ NULL. That is what makes one session one project — with one exception: a row
 that carries a *different* `project_ref` of its own keeps it, because the
 ingestor labelled it with that name and nothing could repair a rewrite.
 
+Rule 2 has one refinement: when a session ran inside a worktree, the
+canonical cwd is picked from that worktree's cwds — but only when the
+repository the worktree holds lies *inside* the session's shallowest working
+directory. A session that started in a parent folder and then moved into a
+worktree would otherwise be labelled with the parent folder's name, because
+the parent is shallower than the repository the worktree belongs to. The
+refinement keeps a session that worked in one repository and merely changed
+into another repository's worktree on the repository it worked in, and
+narrowing the candidates can only make the shallowest of them deeper or
+equal, so a session without such a worktree keeps exactly the label it had.
+
 The relabel is an **update**: no row is inserted, no token count changes and no
 rollup moves — the rollups are keyed by provider, account and period, never by
 project — so only the attribution changes.
@@ -59,7 +70,14 @@ from sqlmodel import Session, col, select
 
 from app.models.db import UsageEvent
 from app.services.maintenance._chunked_sql import chunked_update
-from app.services.project_label import WORKTREE_CONTAINERS, derive_project, pick_canonical_cwd
+from app.services.project_label import (
+    WORKTREE_CONTAINERS,
+    derive_project,
+    is_inside_path,
+    is_worktree_container_cwd,
+    normalize_cwd,
+    pick_canonical_cwd,
+)
 from app.services.worktree_patterns import get_worktree_patterns
 
 #: How many rows one UPDATE statement carries. SQLite's parameter limit is
@@ -215,6 +233,43 @@ class RepoRelabelResult:
     directories: int = 0
 
 
+def _canonical_label(cwds: list[str | None], patterns: Sequence[str]) -> str | None:
+    """The label for a session that reported no repository.
+
+    A session that ran inside a worktree belongs to the repository that
+    worktree holds — not to the parent folder it may also have started in,
+    which is shallower and would win the shallowest-cwd rule.
+
+    The worktree only decides the session when the repository it holds lies
+    **inside** the session's shallowest working directory. That is what makes
+    the shallower directory a parent folder rather than a different repository
+    the session merely touched: a session that worked in `repoA` and once
+    changed into `repoB/.wt/feat-x` keeps `repoA`, because `repoB` does not
+    live inside it.
+
+    Narrowing the candidates can only make the shallowest of them deeper or
+    equal, so a session without such a worktree keeps exactly today's label.
+    """
+    usable = [cwd for cwd in cwds if cwd]
+    if not usable:
+        return None
+    shallowest = pick_canonical_cwd(usable, patterns)
+    if shallowest is None:
+        return None
+    # The worktrees whose repository lives inside the shallowest directory.
+    inside = [
+        cwd
+        for cwd in usable
+        if is_worktree_container_cwd(cwd, patterns)
+        and is_inside_path(normalize_cwd(cwd, patterns), shallowest)
+    ]
+    if inside:
+        narrowed = derive_project(pick_canonical_cwd(inside, patterns), patterns)
+        if narrowed is not None:
+            return narrowed
+    return derive_project(shallowest, patterns)
+
+
 def _plan(
     session: Session,
     *,
@@ -284,13 +339,11 @@ def _plan(
         # keeps it. Deriving from the cwd alone would overwrite those labels and
         # undo `inconsistent_project_labels`, which moves rows onto them.
         reported = session_refs.get(session_id)
-        canonical = (
-            reported[2]
-            if reported is not None
-            else derive_project(
-                pick_canonical_cwd((cwd for _, cwd, _ in entries), patterns), patterns
-            )
-        )
+        canonical: str | None
+        if reported is not None:
+            canonical = reported[2]
+        else:
+            canonical = _canonical_label([cwd for _, cwd, _ in entries], patterns)
         path_shaped_rows = sum(1 for _, _, project in entries if _is_path_shaped(project))
         if canonical is None:
             # No usable cwd anywhere in the session: no label can be derived, so

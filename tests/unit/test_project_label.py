@@ -7,6 +7,8 @@ from app.services.project_label import (
     WORKTREE_CONTAINERS,
     clean_worktree_patterns,
     derive_project,
+    is_inside_path,
+    is_worktree_container_cwd,
     normalize_cwd,
     pick_canonical_cwd,
     validate_worktree_pattern,
@@ -195,6 +197,113 @@ class TestWorktreeContainers:
         assert (
             pick_canonical_cwd(["/home/u/repo/.wt/a/src", "/home/u/repo/.wt/b"]) == "/home/u/repo"
         )
+
+
+class TestIsWorktreeContainerCwd:
+    """The evidence that a cwd runs through a worktree container.
+
+    Read from the RAW cwd: `normalize_cwd` cuts the container away, so the
+    normalised form no longer carries it.
+    """
+
+    @pytest.mark.parametrize("name", WORKTREE_CONTAINERS)
+    def test_every_default_container_is_detected(self, name):
+        assert is_worktree_container_cwd(f"/home/u/repo/{name}/slug/app")
+
+    @pytest.mark.parametrize("name", WORKTREE_CONTAINERS)
+    def test_windows_separators_and_drive(self, name):
+        assert is_worktree_container_cwd(rf"C:\Users\u\repo\{name}\slug\app")
+
+    @pytest.mark.parametrize("name", WORKTREE_CONTAINERS)
+    def test_case_insensitive(self, name):
+        assert is_worktree_container_cwd(f"/home/u/repo/{name.upper()}/slug")
+
+    def test_a_plain_path_is_not_a_container(self):
+        assert not is_worktree_container_cwd("/home/u/repo")
+        assert not is_worktree_container_cwd("/home/u/repo/services/api")
+
+    def test_a_relative_path_starting_with_a_container_is_not_a_container(self):
+        # No separator before the segment, so there is no root to cut back to —
+        # the same rule `normalize_cwd` applies.
+        assert not is_worktree_container_cwd(".wt/x")
+
+    def test_a_bare_worktrees_folder_is_not_a_container(self):
+        assert not is_worktree_container_cwd("/home/u/repo/worktrees/x")
+
+    def test_a_longer_segment_name_is_not_a_container(self):
+        assert not is_worktree_container_cwd("/home/u/repo/.wtx/y")
+        assert not is_worktree_container_cwd("/home/u/repo/my.wt/y")
+
+    def test_none_and_empty(self):
+        assert not is_worktree_container_cwd(None)
+        assert not is_worktree_container_cwd("")
+
+    def test_an_operator_pattern_counts_as_a_container(self):
+        assert is_worktree_container_cwd("/home/u/repo/worktrees-extra/s", ["worktrees-extra"])
+        assert is_worktree_container_cwd("/home/u/repo-wt/slug/app", ["*-wt"])
+
+    def test_a_pattern_must_match_the_whole_segment(self):
+        assert not is_worktree_container_cwd("/home/u/repo/worktrees-extra2/s", ["worktrees-extra"])
+        assert not is_worktree_container_cwd("/home/u/my-wt-notes/app", ["*-wt"])
+
+    def test_the_defaults_still_apply_when_a_pattern_is_given(self):
+        assert is_worktree_container_cwd("/home/u/repo/.wt/slug", ["*-wt"])
+
+    def test_a_sibling_pattern_is_a_worktree_directory_too(self):
+        """The two functions read the same segments: `normalize_cwd` cuts the
+        sibling pattern's suffix off, `is_worktree_container_cwd` only reports
+        that the segment is worktree-related."""
+        path = "/home/u/repo-wt/slug/app"
+        assert is_worktree_container_cwd(path, ["*-wt"])
+        assert normalize_cwd(path, ["*-wt"]) == "/home/u/repo"
+
+
+class TestIsInsidePath:
+    """Whether a path lies inside another one — segment-wise, so a sibling
+    directory that merely shares a name prefix is not inside."""
+
+    def test_a_path_is_inside_its_parent(self):
+        assert is_inside_path("/home/u/repo", "/home/u")
+        assert is_inside_path("/home/u/repo/services/api", "/home/u")
+
+    def test_a_path_is_inside_itself(self):
+        assert is_inside_path("/home/u/repo", "/home/u/repo")
+
+    def test_a_sibling_is_not_inside(self):
+        assert not is_inside_path("/home/u/repo-two", "/home/u/repo")
+        assert not is_inside_path("/home/u/repo", "/home/u/repo-two")
+
+    def test_a_parent_is_not_inside_its_child(self):
+        assert not is_inside_path("/home/u", "/home/u/repo")
+
+    def test_both_separator_forms(self):
+        assert is_inside_path(r"D:\Projects\repo\src", r"D:\Projects\repo")
+
+    def test_a_drive_spec_is_not_a_level(self):
+        assert is_inside_path(r"C:\repo", "C:\\")
+
+    def test_a_different_drive_is_not_inside(self):
+        # The same segments on another drive are another machine's directory.
+        assert not is_inside_path(r"C:\Projects\repo", r"D:\Projects\repo")
+        assert not is_inside_path(r"D:\Projects\repo", r"C:\Projects\repo")
+
+    def test_the_same_drive_in_another_case_is_inside(self):
+        # `C:` and `c:` are the same drive; the drive letter is not compared
+        # case-sensitively.
+        assert is_inside_path(r"C:\Projects\repo", r"c:\Projects\repo")
+
+    def test_the_segments_are_compared_case_sensitively(self):
+        # The paths come from one client, so their case style is consistent;
+        # a mismatch is treated as a different directory, which leaves a
+        # session's label alone rather than relabelling it wrongly.
+        assert not is_inside_path(r"D:\Projects\Repo", r"d:\projects\repo")
+        assert not is_inside_path("/home/u/Repo", "/home/u/repo")
+
+    def test_none_and_empty(self):
+        assert not is_inside_path(None, "/home/u")
+        assert not is_inside_path("/home/u", None)
+        assert not is_inside_path(None, None)
+        assert not is_inside_path("", "")
 
 
 class TestWorktreePatterns:
