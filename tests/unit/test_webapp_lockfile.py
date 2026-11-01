@@ -386,6 +386,37 @@ class TestWebappDeepmergeOverride:
             "webapp/package.json is what removes them."
         )
 
+    def test_the_recorded_baseline_matches_the_lockfile(self):
+        """docs/ci-cd.md records the fork's integrity hash; it must not drift.
+
+        The record is the durable copy of the check that justifies accepting a
+        third-party fork - what was diffed against upstream, and the hash of
+        what was diffed. A bump that changes the lockfile without updating the
+        document leaves the record pointing at a tarball nobody reviewed, and
+        the drift is invisible: the hash is a line of prose, and nothing reads
+        it back.
+        """
+        packages = _read_json(WEBAPP_LOCKFILE)["packages"]
+        document = (ROOT / "docs" / "ci-cd.md").read_text(encoding="utf-8")
+
+        recorded = sorted(
+            meta["integrity"]
+            for meta in packages.values()
+            if meta.get("name") == "@afeisite/deepmerge-clone" and meta.get("integrity")
+        )
+        assert recorded, (
+            "the lockfile no longer installs @afeisite/deepmerge-clone, so the "
+            "baseline recorded in docs/ci-cd.md is stale. Either the override "
+            "went away or the fork was renamed; update the document to match."
+        )
+        for integrity in recorded:
+            assert integrity in document, (
+                f"docs/ci-cd.md does not record the integrity hash {integrity} of "
+                "the deepmerge override the lockfile installs. The document is the "
+                "durable copy of what was checked against upstream, so it has to "
+                "carry the hash of the tarball that was checked."
+            )
+
 
 class TestFrontendToolchainPin:
     def test_the_webapp_declares_the_pinned_toolchain(self):

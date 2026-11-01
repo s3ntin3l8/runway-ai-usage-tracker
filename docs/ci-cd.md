@@ -122,18 +122,19 @@ Workflows live in `.github/workflows/`.
     | Override | `deepmerge` → `npm:@afeisite/deepmerge-clone@4.3.2` |
     | Tarball | `https://registry.npmjs.org/@afeisite/deepmerge-clone/-/deepmerge-clone-4.3.2.tgz` |
     | Integrity | `sha512-qu46OwxL9O2JrCoKOwdUVYX7GGaCDXLh1PPPmw0o4Zn+NqyJFEfR5xmonC92qVEOygBdEqzpY1ozGMiRAePcOQ==` |
-    | Diffed against | upstream `deepmerge` 4.3.1's `dist/cjs.js` |
-    | The diff | one `getKeys()` filter dropping `__proto__`, `constructor` and `prototype` — the key-name deny-list the advisory's remediation section recommends |
-    | Contents | three files, no dependencies, no install script |
+    | Diffed against | upstream `deepmerge` 4.3.1 — all three shipped builds: `index.js`, `dist/cjs.js` and `dist/umd.js` |
+    | The diff | in each of the three, one `getKeys()` filter dropping `__proto__`, `constructor` and `prototype` — the key-name deny-list the advisory's remediation section recommends |
+    | Contents | eight files: `package.json`, `index.js`, `index.d.ts`, `dist/cjs.js`, `dist/umd.js`, `changelog.md`, `readme.md`, `license.txt`. No dependencies, no install script |
     | Advisory read | [GHSA-gcqx-w48m-w2h4](https://github.com/advisories/GHSA-gcqx-w48m-w2h4) (CVE-2026-93753), 2026-11-01: `>= 4.2.0, <= 4.3.1`, no patched version |
     | Licence | MIT |
     | Provenance | no SLSA attestation; single maintainer (`w530385371`); repository `MrMoveon/deepmerge-clone` |
 
     The fork is trusted on the strength of that diff and the pinned integrity
     hash, not on the publisher's track record. A bump has to repeat the diff
-    against the same upstream baseline, and it has to keep the integrity hash in
-    step with `webapp/package-lock.json`. Removing the override is tracked in
-    #1144.
+    against the same upstream baseline, in all three shipped builds, and it has
+    to keep the integrity hash in step with `webapp/package-lock.json` — the
+    lockfile test asserts that the two agree. Removing the override is tracked
+    in #1144.
 
     Moving the repositories to an organization would enable the queue, but
     that is not only a settings change: the workflows that produce the
