@@ -102,7 +102,7 @@ def _published_cards(
 
     - a card the collector marked ``stale`` / ``collection_failing`` describes
       a credential that stopped working, so it says nothing about how the
-      account bills (``app/api/endpoints/usage.py`` drops those cards too);
+      account bills (``app/api/endpoints/usage_overview.py`` drops those cards too);
     - a card that has not been refreshed within ``EVIDENCE_MAX_AGE_DAYS``
       describes an account the collector has not reached since, so it may
       describe a state the account has since left;

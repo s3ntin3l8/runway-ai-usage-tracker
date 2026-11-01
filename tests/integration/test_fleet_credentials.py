@@ -1251,7 +1251,7 @@ def test_auto_hint_ships_when_provider_has_single_labeled_account(
     silent-listener block guard. The sidecar consumes it on the next
     cycle and stamps events under the operator's account_id, so the
     synthetic-default card is suppressed (the existing
-    ``app/api/endpoints/usage.py:264`` short-circuit).
+    ``app/api/endpoints/usage_overview.py:264`` short-circuit).
     """
     row = ProviderConfig(
         provider_id="minimax",

@@ -1390,7 +1390,7 @@ def test_delete_provider_config_archives_row(client: TestClient, session: Sessio
     PR #317 round-2 review note: we soft-archive (``row.archived=True``,
     ``row.enabled=False``) rather than hard-delete because ``usage_events``
     for the pair survives the operation, and the synthetic loop in
-    ``_fetch_fleet_view_sync`` (``app/api/endpoints/usage.py:240``) would
+    ``_fetch_fleet_view_sync`` (``app/api/endpoints/usage_overview.py:240``) would
     re-create the card from those events if the row weren't in the
     ``archived_pairs`` skip-set. Soft-archive keeps the pair in the
     skip-set and the dashboard filters it out cleanly.
@@ -1477,7 +1477,7 @@ def test_delete_provider_config_archives_row(client: TestClient, session: Sessio
     # than hard-delete — the repo convention keeps archived rows visible
     # in this listing so the operator can un-archive if they change
     # their mind. The synthetic loop in /usage/fleet filters via the
-    # ``archived_pairs`` skip-set (app/api/endpoints/usage.py:236,260).
+    # ``archived_pairs`` skip-set (app/api/endpoints/usage_overview.py:236,260).
     assert "alice@example.com" in by_id
     assert by_id["alice@example.com"]["archived"] is True
     assert by_id["alice@example.com"]["enabled"] is False
