@@ -364,9 +364,12 @@ class TestWebappDeepmergeOverride:
         # edit.
         assert found == [f"{name}@{version}"], (
             f"webapp/package-lock.json resolves deepmerge to {found}, but "
-            f"webapp/package.json overrides it to {name}@{version}. Either the "
-            "lockfile drifted from the manifest, or the override no longer covers "
-            "the copy the tree installs."
+            f"webapp/package.json overrides it to {name}@{version}. Three routes "
+            "get here: the lockfile drifted from the manifest and wants "
+            "regenerating; the override no longer covers the copy the tree "
+            "installs; or the dependency left the tree entirely, in which case "
+            "this test and the baseline in docs/ci-cd.md have to be edited "
+            "together."
         )
 
     def test_no_package_in_the_tree_carries_the_vulnerable_identity(self):
