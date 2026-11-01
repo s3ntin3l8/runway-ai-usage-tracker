@@ -245,6 +245,7 @@ _DEFERRED_COLUMNS: list[tuple[str, str, str]] = [
     ("sidecar_registry", "login_dirs_report", "TEXT"),
     ("usage_events", "credential_origin", "VARCHAR"),
     ("usage_events", "source_app", "VARCHAR"),
+    ("usage_events", "raw_provider_id", "VARCHAR"),
     # What a merge moved, so the move can be reversed (#919).
     ("provider_account_merges", "moved", "TEXT"),
     ("credential_sources", "credential_expires_at", "DATETIME"),

@@ -321,6 +321,7 @@ class EventIngestor:
                         # store the error tag in stop_reason
                         stop_reason=push.error_reason,
                         raw_json=push.raw_json,
+                        raw_provider_id=push.raw_provider_id,
                     )
                     if self._try_insert_event(ev):
                         result.events_inserted += 1
@@ -414,6 +415,7 @@ class EventIngestor:
                     tool_calls=push.tool_calls,
                     latency_ms=push.latency_ms,
                     raw_json=push.raw_json,
+                    raw_provider_id=push.raw_provider_id,
                     effort=push.effort,
                     speed=push.speed,
                     service_tier=push.service_tier,

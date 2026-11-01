@@ -190,6 +190,11 @@ class UsageEventPush(BaseModel):
     tool_calls: int = 0
     latency_ms: int | None = None
     raw_json: str | None = None
+    # OpenCode's raw providerID (gateway/billing tier tag), forwarded by the
+    # sidecar so the server can stop guessing OpenRouter traffic from the
+    # model id. Optional: older sidecars send none and the server falls back
+    # to the model-id shape test.
+    raw_provider_id: str | None = None
     # Claude Code per-message dimensions (from JSONL, otherwise None/0 for
     # providers/older sidecars that don't emit them).
     effort: str | None = None  # "low" | "medium" | "high" | "xhigh" | "max"

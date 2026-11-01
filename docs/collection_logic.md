@@ -77,6 +77,8 @@ They also carry **the client app that made the call** (`source_app`: `opencode`,
 
 Rows written **before** the column existed are backfilled with `provider_id`, which is exactly what the ingestor falls back to when an older sidecar reports no app. Those rows therefore show the provider id (`minimax`, `opencode`, ...) under the app label until enough new events arrive to separate them — the split is only as precise as the data behind it, not a bug in the chart.
 
+OpenCode events additionally carry a raw `providerID` (the OpenCode gateway tag) in `raw_provider_id` when the sidecar forwards it. Older sidecars and older rows leave it `NULL`, and the OpenRouter data-health check falls back to the model-id shape test in that case.
+
 ## Per-Collector Strategy Mapping
 
 The "Runs in" column shows where the strategy executes. The server-side collectors only do `api` / `web`; everything that needs filesystem, CLI, or LSP access lives in the sidecar and reaches the server through `/api/v1/fleet/ingest`.
