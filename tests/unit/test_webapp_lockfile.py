@@ -356,9 +356,13 @@ class TestWebappDeepmergeOverride:
                 if _bare_package_name(path) == self.VULNERABLE_NAME
             }
         )
-        # An empty tree is allowed: if a future @rollup/plugin-node-resolve drops
-        # the dependency, the override is inert and there is nothing to resolve.
-        assert found in ([], [f"{name}@{version}"]), (
+        # An empty tree is not allowed here. If a future @rollup/plugin-node-resolve
+        # drops the dependency, the override is inert and the tree audits clean -
+        # but the baseline recorded in docs/ci-cd.md would still describe a fork
+        # nothing installs. The record and this test have to be updated together,
+        # rather than one of the two passing quietly while the other demands an
+        # edit.
+        assert found == [f"{name}@{version}"], (
             f"webapp/package-lock.json resolves deepmerge to {found}, but "
             f"webapp/package.json overrides it to {name}@{version}. Either the "
             "lockfile drifted from the manifest, or the override no longer covers "
@@ -396,18 +400,21 @@ class TestWebappDeepmergeOverride:
         the drift is invisible: the hash is a line of prose, and nothing reads
         it back.
         """
+        name, version = self._override_target()
         packages = _read_json(WEBAPP_LOCKFILE)["packages"]
         document = (ROOT / "docs" / "ci-cd.md").read_text(encoding="utf-8")
 
+        # The fork's name comes from the override rather than from a literal
+        # here, so it is written down once.
         recorded = sorted(
             meta["integrity"]
             for meta in packages.values()
-            if meta.get("name") == "@afeisite/deepmerge-clone" and meta.get("integrity")
+            if meta.get("name") == name and meta.get("version") == version and meta.get("integrity")
         )
         assert recorded, (
-            "the lockfile no longer installs @afeisite/deepmerge-clone, so the "
-            "baseline recorded in docs/ci-cd.md is stale. Either the override "
-            "went away or the fork was renamed; update the document to match."
+            f"the lockfile installs no {name}@{version}, so the baseline recorded "
+            "in docs/ci-cd.md is stale. Either the override went away or the fork "
+            "was renamed; update the document and this test to match."
         )
         for integrity in recorded:
             assert integrity in document, (
