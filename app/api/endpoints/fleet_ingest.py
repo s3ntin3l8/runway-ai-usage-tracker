@@ -2,6 +2,7 @@
 
 import json
 import logging
+from dataclasses import dataclass
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
@@ -21,7 +22,7 @@ from app.models.db import (
     SidecarRegistry,
     SystemConfig,
 )
-from app.models.schemas import IngestRequest
+from app.models.schemas import IngestRequest, LimitCard
 from app.services.account_identity import (
     canonical_account_id,
     normalize_sidecar_id,
@@ -236,40 +237,53 @@ async def _bundle_holds(
     return False
 
 
-@router.post("/ingest")
-@limiter.limit("600/minute")
-async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest entrypoint, refactor tracked separately
-    request: Request,
-    x_signature: str = Header(None, alias="X-Signature"),
-    x_timestamp: str = Header(None, alias="X-Timestamp"),
-    session: Session = Depends(get_session),
-) -> dict[str, Any]:
+@dataclass(frozen=True)
+class _IngestContext:
+    """The per-request state the ingest helpers share.
+
+    Bundled into one object rather than passed as six positional arguments:
+    the parked mapping and the enrolled device are read on both sides of the
+    biggest seam, and ruff caps a signature at ten arguments.
     """
-    Ingest metrics from sidecar with HMAC-SHA256 signature verification.
 
-    Headers required:
-    - X-Signature: HMAC-SHA256(secret, timestamp + body)
-    - X-Timestamp: Unix timestamp (within 5 minutes)
+    session: Session
+    request: Request
+    payload: IngestRequest
+    parked: ParkedMapping
+    enrolled_device: Any
+    source_proofs: dict[tuple[str, str], dict[str, Any] | None]
 
-    Rate limit: 600 requests / minute per source IP. Sidecars batch up to
-    1000 events per push at a 15-min cadence (spec §7.3), so even a fleet
-    of 100 sidecars stays well under 5 req/min. The limit's there to keep
-    a flooding attacker from saturating the HMAC + Pydantic parse path,
-    not to throttle legitimate operators.
+
+@dataclass(frozen=True)
+class _PollInstructions:
+    """What this sidecar should poll on this heartbeat, plus its update settings."""
+
+    poll_providers: list[str]
+    trigger: bool
+    collection_enabled: bool
+    keep_alive_desired: bool | None
+    keep_alive_desired_providers: dict[str, bool]
+    update_channel: str
+    auto_update: bool
+    log_level_desired: str | None
+    login_dirs: dict[str, list[str]]
+    keep_alive_fleet_default: bool
+
+
+# A credential bundle on its way into the token cache: provider id, the tokens
+# themselves, the resolved account id and label, the credential origin and
+# whether the identity is still pending.
+_TokenBundle = tuple[str, dict[str, Any], str | None, str | None, str | None, bool]
+
+
+def _normalize_ingest_context(
+    request: Request, payload: IngestRequest, session: Session
+) -> tuple[Any, dict[tuple[str, str], dict[str, Any] | None], ParkedMapping]:
+    """Normalize the sidecar id and resolve the per-request identity context.
+
+    Returns the enrolled device (None for an unenrolled sidecar), the
+    contribution proofs collected for it, and the parked-account mapping.
     """
-    # Validate HMAC + window + body cap via the shared ingest-auth helper
-    # (any change to the scheme is one place). #288+ deduplicates against
-    # the same helper used by /fleet/credentials/manifest.
-    body_bytes = await validate_ingest_auth(request, x_signature, x_timestamp, session=session)
-
-    # 4. Parse request
-    try:
-        payload = IngestRequest.model_validate_json(body_bytes)
-    except Exception as e:
-        detail = _validation_summary(e)
-        logger.error("Failed to parse ingest payload: %s", detail)
-        raise HTTPException(status_code=400, detail=f"Invalid payload: {detail}") from None
-
     # Normalize the originating sidecar id once, here at the chokepoint, so the
     # registry upsert, the per-card propagation, and every ingested event all key
     # off the same stable id. Collapses a host that flips between its FQDN and
@@ -283,7 +297,6 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
     payload.sidecar_id = sidecar_devices.authenticated_registry_id(request, payload.sidecar_id)
     enrolled_device = getattr(request.state, "sidecar_device_id", None)
     source_proofs: dict[tuple[str, str], dict[str, Any] | None] = {}
-    original_card_count = len(payload.metrics)
     accepted_cards = []
     for card in payload.metrics:
         if enrolled_device is not None:
@@ -304,7 +317,6 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
             sidecar_devices.authenticated_registry_id(request, card.sidecar_id)
         accepted_cards.append(card)
     payload.metrics = accepted_cards
-
     # A mapping onto an archived account is *parked*: it resolves the credential
     # but must never stamp the archived account with new usage. The predicate is
     # tag-aware — a redirect tag names an account of its *target* provider, so
@@ -320,7 +332,19 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
             if isinstance(pid, str) and pid
         ],
     )
+    return enrolled_device, source_proofs, parked
 
+
+async def _classify_cards(ctx: _IngestContext) -> tuple[list[_TokenBundle], list[LimitCard]]:
+    """Split the pushed cards into credential bundles and real data cards.
+
+    A token-only card resolves its provider, account and origin here and
+    becomes a bundle to store in the token cache; anything else is a data card
+    that goes into the latest-usage rollup.
+    """
+    session = ctx.session
+    payload = ctx.payload
+    parked = ctx.parked
     tokens_to_store = []
     local_cards = []
 
@@ -521,30 +545,22 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
 
         # Keep actual data cards
         local_cards.append(card)
+    return tokens_to_store, local_cards
 
-    # Register/update sidecar in persistent fleet registry (non-fatal)
-    if payload.sidecar_id:
-        source_ip = request.client.host if request.client else "unknown"
-        try:
-            fleet_registry.upsert_sidecar(
-                payload.sidecar_id,
-                source_ip,
-                session,
-                sidecar_version=payload.sidecar_version,
-                os_platform=payload.os_platform,
-                self_update_capable=payload.self_update_capable,
-                keep_alive=payload.keep_alive,
-                keep_alive_providers=payload.keep_alive_providers,
-                auto_update=payload.auto_update,
-                update_channel=payload.update_channel,
-                log_level=payload.log_level,
-                collection_errors=payload.collection_errors,
-                last_log_lines=payload.last_log_lines or [],
-                identity_sources=payload.identity_sources,
-                login_dirs_report=payload.login_dirs_report,
-            )
-        except Exception as _e:
-            logger.warning(f"Fleet registry upsert failed for '{payload.sidecar_id}': {_e}")
+
+async def _store_credentials(ctx: _IngestContext, tokens_to_store: list[_TokenBundle]) -> int:
+    """Store the resolved credential bundles in the token cache.
+
+    Mutates the session (credential source rows) and the token cache; the
+    caller commits once every bundle has been written.
+    """
+    session = ctx.session
+    payload = ctx.payload
+    parked = ctx.parked
+    enrolled_device = ctx.enrolled_device
+    source_proofs = ctx.source_proofs
+
+    from app.services import source_controls
 
     # Store tokens in cache for each identified account
     tokens_received_count = 0
@@ -567,8 +583,6 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
             describe_origin,
             pending_cache_slot,
             reset_source_retry,
-            retire_superseded_keyed_origins,
-            retire_unkeyed_origin,
             sidecar_source_id,
             touch_source,
         )
@@ -726,58 +740,90 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
                 p_id, old_account, source_id, retire_matching_oauth=True
             )
         if origin:
-            # A key-scoped origin supersedes the plain one the same credential used to
-            # be reported under; drop that stale row (and its cached bundle).
-            retired_rows = retire_unkeyed_origin(
-                session, provider_id=p_id, sidecar_id=sidecar_id, origin=origin
+            await _retire_superseded_origins(
+                session,
+                p_id,
+                source_id,
+                sidecar_id,
+                origin,
+                actual_acc_id,
+                prior_sources,
             )
-            # xAI re-keys on every refresh: earlier ``base#<old fp>`` rows are dead too (#523).
-            retired_rows += retire_superseded_keyed_origins(
-                session, provider_id=p_id, sidecar_id=sidecar_id, origin=origin
+    return tokens_received_count
+
+
+async def _retire_superseded_origins(
+    session: Session,
+    p_id: str,
+    source_id: str,
+    sidecar_id: str,
+    origin: str,
+    actual_acc_id: str,
+    prior_sources: list[CredentialSource],
+) -> None:
+    """Retire the source rows this credential supersedes.
+
+    A key-scoped origin supersedes the plain one the same credential used to
+    be reported under, and xAI re-keys on every refresh, so earlier rows are
+    dead too. The newest retired row carries the operator's current choices,
+    so it is the one the successor inherits from.
+    """
+    from app.services.credential_sources import (
+        retire_superseded_keyed_origins,
+        retire_unkeyed_origin,
+    )
+
+    # A key-scoped origin supersedes the plain one the same credential used to
+    # be reported under; drop that stale row (and its cached bundle).
+    retired_rows = retire_unkeyed_origin(
+        session, provider_id=p_id, sidecar_id=sidecar_id, origin=origin
+    )
+    # xAI re-keys on every refresh: earlier ``base#<old fp>`` rows are dead too (#523).
+    retired_rows += retire_superseded_keyed_origins(
+        session, provider_id=p_id, sidecar_id=sidecar_id, origin=origin
+    )
+    # Several stale rows can pile up there; the newest one carries the operator's
+    # current choices, so it is the one the successor inherits from.
+    retired_rows.sort(key=lambda row: row.last_seen, reverse=True)
+    if retired_rows:
+        from app.services.collector_manager import manager
+
+        if not prior_sources:
+            # The keyed row is new this cycle: it inherits the operator's choices
+            # (enabled, failover priority) from the row it replaces instead of
+            # silently re-enabling a source they turned off. A machine reports one
+            # key per plain origin, so there is normally a single retired row; xAI can
+            # leave many (one per rotation), newest first. Prefer the one filed under
+            # the resolved account.
+            inherited = next(
+                (row for row in retired_rows if row.account_id == actual_acc_id),
+                retired_rows[0],
             )
-            # Several stale rows can pile up there; the newest one carries the operator's
-            # current choices, so it is the one the successor inherits from.
-            retired_rows.sort(key=lambda row: row.last_seen, reverse=True)
-            if retired_rows:
-                from app.services.collector_manager import manager
+            successor = session.exec(
+                select(CredentialSource).where(
+                    CredentialSource.provider_id == p_id,
+                    CredentialSource.source_id == source_id,
+                    CredentialSource.account_id == actual_acc_id,
+                )
+            ).first()
+            if successor is not None:
+                successor.enabled = inherited.enabled
+                successor.priority = inherited.priority
+                session.add(successor)
+                manager.set_credential_source_preference(
+                    p_id, actual_acc_id, source_id, inherited.enabled, inherited.priority
+                )
+        for retired in retired_rows:
+            await token_cache.remove_source(p_id, retired.account_id, retired.source_id)
+            manager.drop_credential_source_preference(p_id, retired.account_id, retired.source_id)
 
-                if not prior_sources:
-                    # The keyed row is new this cycle: it inherits the operator's choices
-                    # (enabled, failover priority) from the row it replaces instead of
-                    # silently re-enabling a source they turned off. A machine reports one
-                    # key per plain origin, so there is normally a single retired row; xAI can
-                    # leave many (one per rotation), newest first. Prefer the one filed under
-                    # the resolved account.
-                    inherited = next(
-                        (row for row in retired_rows if row.account_id == actual_acc_id),
-                        retired_rows[0],
-                    )
-                    successor = session.exec(
-                        select(CredentialSource).where(
-                            CredentialSource.provider_id == p_id,
-                            CredentialSource.source_id == source_id,
-                            CredentialSource.account_id == actual_acc_id,
-                        )
-                    ).first()
-                    if successor is not None:
-                        successor.enabled = inherited.enabled
-                        successor.priority = inherited.priority
-                        session.add(successor)
-                        manager.set_credential_source_preference(
-                            p_id, actual_acc_id, source_id, inherited.enabled, inherited.priority
-                        )
-                for retired in retired_rows:
-                    await token_cache.remove_source(p_id, retired.account_id, retired.source_id)
-                    manager.drop_credential_source_preference(
-                        p_id, retired.account_id, retired.source_id
-                    )
-        tokens_received_count += len(p_tokens)
-        logger.info(
-            f"Received {len(p_tokens)} tokens for {p_id} account {actual_acc_id} from {payload.provider}"
-        )
-    if tokens_to_store:
-        session.commit()
 
+async def _write_local_cards(
+    ctx: _IngestContext, local_cards: list[LimitCard], tokens_to_store: list[_TokenBundle]
+) -> None:
+    """Write the data cards into the latest-usage rollup and wake the poller."""
+    session = ctx.session
+    payload = ctx.payload
     # Store local data cards directly into LatestUsage (unified with server-scraped cards)
     if local_cards or payload.completed_providers:
         # Track (provider_id, canonical_account_id) → set of
@@ -831,7 +877,6 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
             f"Stored {len(local_cards)} local cards into LatestUsage from {payload.provider}"
             + (f" (pruned {pruned} ghost row(s))" if pruned else "")
         )
-
     # Wake the poller whenever the sidecar pushes anything actionable —
     # tokens or local cards. Without this, token-only payloads (the common
     # case) leave the poller asleep until its 15-min interval, so the
@@ -850,6 +895,15 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
         manager._last_sync_time = 0.0
         poller.wake()
 
+
+def _ingest_events(ctx: _IngestContext) -> tuple[Any, bool, int, bool]:
+    """Ingest the pushed events, then the session names.
+
+    The names upsert is best-effort and sits in its own try/except, so a name
+    failure can never fail the events above it.
+    """
+    session = ctx.session
+    payload = ctx.payload
     # Process events for atomic usage tracking
     ingest_result = None
     events_error = False
@@ -869,7 +923,6 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
             logger.error(f"Event ingestion failed: {e}", exc_info=True)
             ingest_result = None
             events_error = True
-
     # Session names: best-effort, in their own try/except so a name failure can
     # never fail the events above. A name is free text: log counts, never text.
     names_upserted = 0
@@ -887,7 +940,13 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
                 len(payload.session_names),
                 type(e).__name__,
             )
+    return ingest_result, events_error, names_upserted, names_error
 
+
+def _poll_instructions(ctx: _IngestContext) -> _PollInstructions:
+    """Decide which providers this sidecar should poll right now."""
+    session = ctx.session
+    payload = ctx.payload
     # Determine which providers this sidecar should poll right now.
     # The server is the cadence authority — sidecars heartbeat frequently and
     # collect only what we tell them via poll_providers (per-provider intervals
@@ -956,6 +1015,102 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
             )
             if poll_providers:
                 logger.info(f"Instructing sidecar '{payload.sidecar_id}' to poll: {poll_providers}")
+    return _PollInstructions(
+        poll_providers=poll_providers,
+        trigger=trigger,
+        collection_enabled=collection_enabled,
+        keep_alive_desired=keep_alive_desired,
+        keep_alive_desired_providers=keep_alive_desired_providers,
+        update_channel=update_channel,
+        auto_update=auto_update,
+        log_level_desired=log_level_desired,
+        login_dirs=login_dirs,
+        keep_alive_fleet_default=(sys_cfg.sidecar_keep_alive_default if sys_cfg else None) or False,
+    )
+
+
+@router.post("/ingest")
+@limiter.limit("600/minute")
+async def ingest_metrics(
+    request: Request,
+    x_signature: str = Header(None, alias="X-Signature"),
+    x_timestamp: str = Header(None, alias="X-Timestamp"),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    """
+    Ingest metrics from sidecar with HMAC-SHA256 signature verification.
+
+    Headers required:
+    - X-Signature: HMAC-SHA256(secret, timestamp + body)
+    - X-Timestamp: Unix timestamp (within 5 minutes)
+
+    Rate limit: 600 requests / minute per source IP. Sidecars batch up to
+    1000 events per push at a 15-min cadence (spec §7.3), so even a fleet
+    of 100 sidecars stays well under 5 req/min. The limit's there to keep
+    a flooding attacker from saturating the HMAC + Pydantic parse path,
+    not to throttle legitimate operators.
+    """
+    # Validate HMAC + window + body cap via the shared ingest-auth helper
+    # (any change to the scheme is one place). #288+ deduplicates against
+    # the same helper used by /fleet/credentials/manifest.
+    body_bytes = await validate_ingest_auth(request, x_signature, x_timestamp, session=session)
+
+    # 4. Parse request
+    try:
+        payload = IngestRequest.model_validate_json(body_bytes)
+    except Exception as e:
+        detail = _validation_summary(e)
+        logger.error("Failed to parse ingest payload: %s", detail)
+        raise HTTPException(status_code=400, detail=f"Invalid payload: {detail}") from None
+
+    # Counted before the accepted-card filter rewrites ``payload.metrics``.
+    original_card_count = len(payload.metrics)
+
+    enrolled_device, source_proofs, parked = _normalize_ingest_context(request, payload, session)
+    ctx = _IngestContext(
+        session=session,
+        request=request,
+        payload=payload,
+        parked=parked,
+        enrolled_device=enrolled_device,
+        source_proofs=source_proofs,
+    )
+
+    tokens_to_store, local_cards = await _classify_cards(ctx)
+
+    # Register/update sidecar in persistent fleet registry (non-fatal)
+    if payload.sidecar_id:
+        source_ip = request.client.host if request.client else "unknown"
+        try:
+            fleet_registry.upsert_sidecar(
+                payload.sidecar_id,
+                source_ip,
+                session,
+                sidecar_version=payload.sidecar_version,
+                os_platform=payload.os_platform,
+                self_update_capable=payload.self_update_capable,
+                keep_alive=payload.keep_alive,
+                keep_alive_providers=payload.keep_alive_providers,
+                auto_update=payload.auto_update,
+                update_channel=payload.update_channel,
+                log_level=payload.log_level,
+                collection_errors=payload.collection_errors,
+                last_log_lines=payload.last_log_lines or [],
+                identity_sources=payload.identity_sources,
+                login_dirs_report=payload.login_dirs_report,
+            )
+        except Exception as _e:
+            logger.warning(f"Fleet registry upsert failed for '{payload.sidecar_id}': {_e}")
+
+    tokens_received_count = await _store_credentials(ctx, tokens_to_store)
+    if tokens_to_store:
+        session.commit()
+
+    await _write_local_cards(ctx, local_cards, tokens_to_store)
+
+    ingest_result, events_error, names_upserted, names_error = _ingest_events(ctx)
+
+    poll = _poll_instructions(ctx)
 
     # One-shot admin "Update now" push: consumed once so the sidecar self-updates
     # on this heartbeat (independent of the auto-update toggle / pause state).
@@ -984,13 +1139,13 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
         # unsent and retries them next cycle (0 upserted alone cannot tell).
         "names_error": names_error,
         "windows_closed": ingest_result.windows_closed if ingest_result else 0,
-        "poll_providers": poll_providers,
-        "trigger": trigger,
-        "collection_enabled": collection_enabled,
+        "poll_providers": poll.poll_providers,
+        "trigger": poll.trigger,
+        "collection_enabled": poll.collection_enabled,
         # Operator's remote keep-alive setting; null leaves the sidecar's own flag in charge.
-        "keep_alive_desired": keep_alive_desired,
+        "keep_alive_desired": poll.keep_alive_desired,
         # Per-login overrides on top of it ({provider_id: bool}); only overridden logins appear.
-        "keep_alive_desired_providers": keep_alive_desired_providers,
+        "keep_alive_desired_providers": poll.keep_alive_desired_providers,
         "identities": _get_active_identities(
             session
         ),  # For sidecar identity propagation (legacy single-value)
@@ -998,18 +1153,17 @@ async def ingest_metrics(  # noqa: PLR0915 — known-debt: end-to-end ingest ent
         # Update channel the sidecar should track for its "update available"
         # check ("stable" | "beta" | "edge"). The dashboard owns this setting.
         # The sidecar's own override, else the fleet's.
-        "sidecar_update_channel": update_channel,
+        "sidecar_update_channel": poll.update_channel,
         # Opt-in auto-update flag (this sidecar's override, else the fleet's); a sidecar's
         # explicit local config wins.
-        "sidecar_auto_update": auto_update,
+        "sidecar_auto_update": poll.auto_update,
         # Operator's log-level override (raised from the dashboard while debugging); null leaves
         # the sidecar at its own configured level.
-        "log_level": log_level_desired,
-        "login_dirs": login_dirs,
+        "log_level": poll.log_level_desired,
+        "login_dirs": poll.login_dirs,
         # Fleet-wide keep-alive default: on for sidecars without their own override. It only
         # ever turns keep-alive on (the sidecar ORs it with its local flag).
-        "keep_alive_fleet_default": (sys_cfg.sidecar_keep_alive_default if sys_cfg else None)
-        or False,
+        "keep_alive_fleet_default": poll.keep_alive_fleet_default,
         # One-shot: self-update immediately on this heartbeat (admin pushed it).
         "update_now": update_now,
     }
