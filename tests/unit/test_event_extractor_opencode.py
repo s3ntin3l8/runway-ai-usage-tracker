@@ -7,8 +7,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from pydantic import BaseModel
 
+from app.models.schemas import UsageEventPush
 from scripts.sidecar_pkg.event_extractors.opencode import (
+    _OC_CANONICAL_MAP,
+    _OC_PROVIDER_MAP,
     _classify_opencode_error,
     map_opencode_canonical,
     map_opencode_provider_id,
@@ -365,6 +369,255 @@ def test_map_opencode_provider_id(oc_provider_id, expected):
 def test_unrecognized_provider_never_collapses_into_go():
     """An unrecognized providerID must never resolve to the Go tier's 'opencode'."""
     assert map_opencode_provider_id("some-new-backend") != "opencode"
+
+
+# ---------------------------------------------------------------------------
+# raw providerID forwarding (issue #1157)
+#
+# The server's `openrouter_model_events` check prefers the stored raw
+# providerID over guessing from the model id, so the extractor has to
+# forward OpenCode's own tag on every event it pushes. These tests pin the
+# producer half of that contract; the consumer half is pinned in
+# tests/unit/data_health/test_openrouter_model_events.py.
+# ---------------------------------------------------------------------------
+
+
+def _raw_provider_message(
+    msg_id: str, provider_id: str | None, model_id: str = "some-model"
+) -> dict:
+    """A v1 assistant message carrying `providerID` (omitted when None)."""
+    data = _base_data(modelID=model_id)
+    if provider_id is None:
+        data.pop("providerID")
+    else:
+        data["providerID"] = provider_id
+    return {
+        "id": msg_id,
+        "session_id": "ses_raw",
+        "time_created": 1778248860000,
+        "data": data,
+    }
+
+
+class _OlderServerPush(BaseModel):
+    """A push schema as it looked before `raw_provider_id` existed."""
+
+    provider_id: str
+    account_id: str
+    event_id: str
+    ts: str
+    kind: str = "message"
+
+
+def _expected_provider_id(provider_id: str) -> str:
+    """The `provider_id` an event with this tag is filed under.
+
+    A canonical provider wins over the plain map entry — `openrouter` files
+    under `openrouter`, not under the map's `opencode-openrouter` — because
+    `_canonical_for` consults the canonical map first.
+
+    This mirrors the *map* half of that precedence only. `_canonical_for`
+    also folds a gateway tag onto `openrouter` when the model id is one only
+    OpenRouter serves, so the expectation here holds only for a model id that
+    is not OpenRouter-shaped — which is what `_raw_provider_message` uses by
+    default. Change that default and this expectation flips (`opencode` ->
+    `openrouter`) without any map change; the fold itself is tracked in #1160.
+    """
+    canonical = _OC_CANONICAL_MAP.get(provider_id)
+    return canonical[0] if canonical else _OC_PROVIDER_MAP[provider_id]
+
+
+#: Every entry of the extractor's provider map, so a backend added to the map
+#: later is covered here without touching this list.
+@pytest.mark.parametrize(
+    ("provider_id", "expected_raw", "expected_provider"),
+    [
+        *(
+            # Every entry of the map is forwarded as OpenCode wrote it, while
+            # the event itself is filed under the mapped id. The two are
+            # independent facts: the raw tag is what the check reads, the
+            # mapped id is what the event is filed under.
+            (provider_id, provider_id, _expected_provider_id(provider_id))
+            for provider_id in _OC_PROVIDER_MAP
+        ),
+        # An unknown tag is still forwarded, so the server can tell it apart
+        # from a model-id guess.
+        ("some-future-backend", "some-future-backend", "opencode-some-future-backend"),
+    ],
+)
+def test_raw_provider_id_is_forwarded_verbatim(provider_id, expected_raw, expected_provider):
+    """The raw providerID reaches the event exactly as OpenCode wrote it."""
+    db_path = _build_db([_raw_provider_message("msg_raw", provider_id)])
+    try:
+        evts = parse_opencode_events(
+            db_path, account_id="default", since=datetime(2020, 1, 1, tzinfo=UTC)
+        )
+        assert len(evts) == 1
+        assert evts[0].raw_provider_id == expected_raw
+        assert evts[0].provider_id == expected_provider
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+@pytest.mark.parametrize(
+    "provider_id",
+    ["OpenRouter", " OpenRouter ", "OPENROUTER"],
+)
+def test_raw_provider_id_is_not_normalized_by_the_extractor(provider_id):
+    """The extractor forwards the tag verbatim; the server normalizes it.
+
+    The server's check compares `lower(trim(raw_provider_id))`, so a
+    differently cased or padded tag still matches there. Normalizing here as
+    well would be a second normalization layer with its own idea of what
+    "the same" tag means — so the raw value stays exactly as OpenCode wrote
+    it, and the tests pin that.
+
+    Note this holds for the raw value only. The extractor's *own* gateway
+    fold compares the raw tag against `_OC_GATEWAY_PROVIDER_IDS` without
+    normalizing it, so a cased gateway tag does not fold onto `openrouter`
+    the way the lowercase one does — a separate defect tracked in #1160.
+    """
+    db_path = _build_db([_raw_provider_message("msg_raw", provider_id)])
+    try:
+        evts = parse_opencode_events(
+            db_path, account_id="default", since=datetime(2020, 1, 1, tzinfo=UTC)
+        )
+        assert len(evts) == 1
+        assert evts[0].raw_provider_id == provider_id
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+@pytest.mark.parametrize(
+    ("provider_id", "expected_raw"),
+    [
+        # An empty tag means OpenCode said nothing, so there is no report to
+        # forward — `None`, not "".
+        ("", None),
+        # A whitespace-only tag is still a tag: it is forwarded as-is. The
+        # server trims it to blank and falls back to the model-id test, so
+        # the two are equivalent there but not here.
+        ("   ", "   "),
+        # No providerID key at all: also no report.
+        (None, None),
+    ],
+)
+def test_raw_provider_id_distinguishes_an_absent_tag_from_a_blank_one(provider_id, expected_raw):
+    """An absent tag and an empty one both yield None; a blank one does not.
+
+    The `or None` on the push is what turns an empty tag into "no report".
+    Pinning the difference documents that the extractor is not the layer
+    that decides what counts as blank.
+
+    With no report to read, the check falls back to the model-id shape test
+    for the event, so "no report" has to stay distinguishable from a report
+    of $0.
+    """
+    db_path = _build_db([_raw_provider_message("msg_raw", provider_id)])
+    try:
+        evts = parse_opencode_events(
+            db_path, account_id="default", since=datetime(2020, 1, 1, tzinfo=UTC)
+        )
+        assert len(evts) == 1
+        assert evts[0].raw_provider_id == expected_raw
+        assert evts[0].provider_id == "opencode"
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_raw_provider_id_survives_the_canonical_retag():
+    """A canonical retag changes where the event is filed, not what it reports.
+
+    `xai` fronts a provider Runway collects directly, so the event is retagged
+    onto it and priced by the server; the raw tag still names the gateway
+    OpenCode used.
+    """
+    db = _build_db([_raw_provider_message("msg_raw", "xai", model_id="grok-4.3")])
+    try:
+        (e,) = parse_opencode_events(
+            db, account_id="default", since=datetime(2020, 1, 1, tzinfo=UTC)
+        )
+        assert e.provider_id == "xai"
+        assert e.raw_provider_id == "xai"
+        assert e.cost_usd is None  # priced by the server, not from the log
+    finally:
+        db.unlink(missing_ok=True)
+
+
+def test_raw_provider_id_records_the_gateway_even_when_the_event_folds_onto_openrouter():
+    """The raw tag records which gateway OpenCode named.
+
+    A gateway tag on an OpenRouter-served model id folds the event onto
+    `openrouter`, but the raw tag keeps naming the gateway — the one fact the
+    model-id test cannot recover.
+    """
+    db_path = _build_db([_raw_provider_message("msg_raw", "opencode", model_id="vendor/x:free")])
+    try:
+        evts = parse_opencode_events(
+            db_path, account_id="default", since=datetime(2020, 1, 1, tzinfo=UTC)
+        )
+        assert len(evts) == 1
+        assert evts[0].provider_id == "openrouter"
+        assert evts[0].raw_provider_id == "opencode"
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_error_rows_also_forward_the_raw_provider_id():
+    """A failed request is pushed on its own branch, so it needs its own pin.
+
+    An error row never incurred usage, but it still names the gateway that
+    refused it, and the check must not mistake it for OpenRouter traffic.
+    """
+    data = _base_data(providerID="openrouter")
+    data["error"] = {"name": "AuthError", "data": {"message": "bad key"}}
+    db_path = _build_db(
+        [
+            {
+                "id": "msg_err",
+                "session_id": "ses_raw",
+                "time_created": 1778248860000,
+                "data": data,
+            }
+        ]
+    )
+    try:
+        evts = parse_opencode_events(
+            db_path, account_id="default", since=datetime(2020, 1, 1, tzinfo=UTC)
+        )
+        assert len(evts) == 1
+        assert evts[0].kind == "error"
+        assert evts[0].raw_provider_id == "openrouter"
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_a_new_sidecar_stays_compatible_with_an_older_server():
+    """An older server that does not know the field ignores it.
+
+    `UsageEventPush` is a plain BaseModel, so pydantic's default
+    `extra="ignore"` drops an unknown field instead of rejecting the push.
+    An older server then falls back to the model-id shape test — the same
+    behaviour it had before the field existed.
+
+    The `extra` setting is the actual guard: a server that switched to
+    `extra="forbid"` would reject every push from a newer sidecar.
+    """
+    assert UsageEventPush.model_config.get("extra", "ignore") == "ignore"
+
+    push = UsageEventPush(
+        provider_id="opencode",
+        account_id="default",
+        event_id="msg_raw",
+        ts="2026-01-01T00:00:00Z",
+        kind="message",
+        raw_provider_id="openrouter",
+    )
+    assert push.raw_provider_id == "openrouter"
+
+    # A server whose schema predates the field drops it rather than failing.
+    parsed = _OlderServerPush.model_validate(push.model_dump())
+    assert not hasattr(parsed, "raw_provider_id")
 
 
 def _byok_message(msg_id: str, model_id: str = "my-local-model") -> dict:
@@ -1145,6 +1398,81 @@ def test_v2_canonical_provider_still_retagged_and_unpriced(tmp_path):
     (e,) = parse_opencode_events(db, account_id="u", since=_V2_SINCE)
     assert e.provider_id == "xai"
     assert e.cost_usd is None
+
+
+def test_v2_message_forwards_the_raw_provider_id(tmp_path):
+    """The v2 reader forwards the tag from `model.providerID` (#1157).
+
+    The v2 row nests the model, so the tag reaches the event by a different
+    route than the v1 row's flat `data.providerID` — both have to be pinned.
+    """
+    db = _v2_db(
+        tmp_path,
+        [_msg("msg_a", _V2_T0, model={"providerID": "openrouter", "id": "vendor/x:free"})],
+    )
+    (e,) = parse_opencode_events(db, account_id="u", since=_V2_SINCE)
+    assert e.raw_provider_id == "openrouter"
+
+
+def test_v2_message_inherits_the_session_provider_id_when_it_names_no_model(tmp_path):
+    """A v2 row that names no model falls back to the session's model (#1157).
+
+    The session model carries its own providerID, and the fallback is
+    wholesale — so the tag comes along with it.
+    """
+    msg = _msg("msg_a", _V2_T0)
+    msg["data"].pop("model")
+    db = _v2_db(
+        tmp_path,
+        [msg],
+        [{"id": "ses_1", "directory": "/w", "model": {"id": "m1", "providerID": "openrouter"}}],
+    )
+    (e,) = parse_opencode_events(db, account_id="u", since=_V2_SINCE)
+    assert e.raw_provider_id == "openrouter"
+
+
+def test_v2_message_does_not_inherit_the_session_provider_id_when_it_names_a_model(tmp_path):
+    """A v2 row that names its own model does not borrow the session's tag (#1157).
+
+    The model's own entry wins wholesale, so a message model without a
+    providerID reports none — even when the session model has one. This is
+    the surprising boundary, so it is pinned explicitly.
+
+    The consequential half is where the event then lands: with no tag to
+    read and no session tag to fall back to, it is filed under `opencode`
+    (the Go tier) even though the session named `openrouter`. Pinning that
+    documents the cost of the wholesale fallback, not just its raw half.
+    """
+    db = _v2_db(
+        tmp_path,
+        [_msg("msg_a", _V2_T0, model={"id": "some-model", "variant": "default"})],
+        [{"id": "ses_1", "directory": "/w", "model": {"id": "m1", "providerID": "openrouter"}}],
+    )
+    (e,) = parse_opencode_events(db, account_id="u", since=_V2_SINCE)
+    assert e.raw_provider_id is None
+    assert e.provider_id == "opencode"
+
+
+def test_v2_error_rows_also_forward_the_raw_provider_id(tmp_path):
+    """The v2 error branch forwards the tag too (#1157).
+
+    The error push is its own site in the shared loop, so it needs its own
+    pin on the v2 shape as well as the v1 one.
+    """
+    db = _v2_db(
+        tmp_path,
+        [
+            _msg(
+                "msg_a",
+                _V2_T0,
+                model={"providerID": "openrouter", "id": "m", "variant": "default"},
+                error={"name": "AuthError", "data": {"message": "bad key"}},
+            )
+        ],
+    )
+    (e,) = parse_opencode_events(db, account_id="u", since=_V2_SINCE)
+    assert e.kind == "error"
+    assert e.raw_provider_id == "openrouter"
 
 
 def test_v2_includes_completed_compaction_with_session_model_fallback(tmp_path):
