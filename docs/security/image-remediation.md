@@ -400,6 +400,15 @@ Scanned at `2026-11-02T16:12:36Z` against the database built
 `2026-11-02T06:26:52Z`, with the same scanners as above. The six new entries
 carry the document's single expiry horizon, `2026-11-21T12:00:00Z`, and track
 [issue #1164](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1164).
+This re-record also changes the recorded fix state of CVE-2026-84243 (`libc6`,
+`libc-bin`, both architectures) from `not-fixed` to `wont-fix`: Debian now marks
+it as one it will not fix, where the 2026-10-31 subsection above still calls it
+unfixed. Exception matching ignores fix state, so nothing changes for the
+document, but a `wont-fix` finding never clears on its own. Its four entries
+(tracked in [issue #1130](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1130))
+therefore need a re-review at every horizon renewal until the base image
+carries a glibc without the flaw.
+
 Building SQLite `3.54.x` from source in the image would remove the findings
 outright; it was not done here because the image would then own SQLite patching.
 
