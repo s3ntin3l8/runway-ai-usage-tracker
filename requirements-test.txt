@@ -8,8 +8,8 @@
 # This is the set the *test suite* needs. The lint gate's set is
 # `requirements-lint.txt`, and the union of the two is
 # `requirements-dev.txt`.
-pytest==9.1.1
-pytest-asyncio==1.4.0
+pytest==9.2.0
+pytest-asyncio==1.4.1
 pytest-cov==7.1.0
 pytest-timeout==2.4.0
 # Run the suite in parallel workers locally and in CI. `--dist loadfile`
