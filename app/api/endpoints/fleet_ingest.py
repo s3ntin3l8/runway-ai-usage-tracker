@@ -241,13 +241,12 @@ async def _bundle_holds(
 class _IngestContext:
     """The per-request state the ingest helpers share.
 
-    Bundled into one object rather than passed as six positional arguments:
+    Bundled into one object rather than passed as five positional arguments:
     the parked mapping and the enrolled device are read on both sides of the
     biggest seam, and ruff caps a signature at ten arguments.
     """
 
     session: Session
-    request: Request
     payload: IngestRequest
     parked: ParkedMapping
     enrolled_device: Any
@@ -749,6 +748,10 @@ async def _store_credentials(ctx: _IngestContext, tokens_to_store: list[_TokenBu
                 actual_acc_id,
                 prior_sources,
             )
+        tokens_received_count += len(p_tokens)
+        logger.info(
+            f"Received {len(p_tokens)} tokens for {p_id} account {actual_acc_id} from {payload.provider}"
+        )
     return tokens_received_count
 
 
@@ -1069,7 +1072,6 @@ async def ingest_metrics(
     enrolled_device, source_proofs, parked = _normalize_ingest_context(request, payload, session)
     ctx = _IngestContext(
         session=session,
-        request=request,
         payload=payload,
         parked=parked,
         enrolled_device=enrolled_device,

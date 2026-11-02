@@ -158,6 +158,45 @@ def test_local_credential_ingest_registers_source_without_sidecar_id(session):
     assert mock_touch.call_args.kwargs["sidecar_id"] is None
 
 
+def test_ingest_response_counts_the_tokens_it_stored(session):
+    """``tokens_received`` must count the credential bundles ingest stored.
+
+    Regression guard: the counter increment lived at the end of the
+    credential loop, and the refactor that moved that loop into a helper
+    dropped it — the field then read 0 for every push.
+    """
+    payload = {
+        "provider": "local-sidecar",
+        "metrics": [
+            {
+                "provider_id": "anthropic",
+                "service_name": "Claude",
+                "account_id": "alice@example.com",
+                "remaining": "Token",
+                "unit": "oauth",
+                "metadata": {
+                    "oauth_token": "local-token",  # pragma: allowlist secret
+                    "credential_origin": "claude_code",
+                },
+            }
+        ],
+        "events": [],
+    }
+    with (
+        patch("app.core.config.settings") as mock_settings,
+        patch("app.api.endpoints.fleet_ingest.token_cache") as mock_tc,
+    ):
+        mock_settings.INGEST_API_KEY = TEST_KEY
+        mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
+        mock_tc.store = AsyncMock(return_value="alice@example.com")
+        mock_tc.remove_source = AsyncMock(return_value=False)
+        mock_tc.get_source_candidates = AsyncMock(return_value=[])
+        mock_tc.get_account_source_candidates = AsyncMock(return_value=[])
+        body = _ingest(TestClient(app), payload)
+
+    assert body["tokens_received"] == 1
+
+
 def test_ingest_keeps_bundled_cookie_credentials(session):
     """kimi's ``session_cookie`` and opencode's ``console_session`` must reach the
     token cache — the ingest whitelist used to drop both, silently disabling the
