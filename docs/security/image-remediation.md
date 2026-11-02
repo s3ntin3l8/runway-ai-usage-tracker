@@ -366,6 +366,52 @@ The published `v3.0.0-beta.15` release keeps failing the daily release scan on
 the Python Critical until the next release is cut from this base
 ([issue #1131](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1131)).
 
+#### Re-recorded 2026-11-02 for CVE-2026-119373, CVE-2026-119374 and CVE-2026-119379
+
+Three new advisories against `libsqlite3-0` `3.46.1-7+deb13u2` (SQLite before
+`3.54.0`, High, unfixed in Debian trixie and sid) needed six new entries, so the
+fixture moved to a newer immutable `edge` index digest. The same applicability
+argument covers all three, and none of them is reachable from the server:
+
+- CVE-2026-119373 and CVE-2026-119374 need an FTS5 table. The server defines no
+  FTS5 tables, runs no `MATCH` query and opens no SQLite file but its own.
+- CVE-2026-119379 needs `sqlite3changeset_apply()` from the session extension,
+  which Python's `sqlite3` module does not expose and the server never calls.
+
+| Reference | Digest |
+| --- | --- |
+| Published index (`edge`) | `sha256:8f228ae4f4286316f916b34fef663e95adb1c42e96420da0a9e9c5c73fb58c4f` |
+| linux/amd64 manifest | `sha256:70e27a1a60cedf0de8b145a1105a989ad6057865ec5c692022d8af72bd45eaaa` |
+| linux/arm64 manifest | `sha256:7a090729a7c07f3add1dfc0bed859cb8f8ee721caf8f10b7b3cb2ab569e7da0f` |
+
+| | amd64 | arm64 |
+| --- | --- | --- |
+| passed | true | true |
+| blocked | 0 | 0 |
+| accepted exceptions | 60 | 60 |
+| expired exceptions | 0 | 0 |
+| Critical | 0 | 0 |
+| High | 60 | 60 |
+| Medium | 68 | 68 |
+| Low | 12 | 12 |
+| Negligible | 47 | 47 |
+
+Scanned at `2026-11-02T16:12:36Z` against the database built
+`2026-11-02T06:26:52Z`, with the same scanners as above. The six new entries
+carry the document's single expiry horizon, `2026-11-21T12:00:00Z`, and track
+[issue #1164](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1164).
+This re-record also changes the recorded fix state of CVE-2026-84243 (`libc6`,
+`libc-bin`, both architectures) from `not-fixed` to `wont-fix`: Debian now marks
+it as one it will not fix, where the 2026-10-31 subsection above still calls it
+unfixed. Exception matching ignores fix state, so nothing changes for the
+document, but a `wont-fix` finding never clears on its own. Its four entries
+(tracked in [issue #1130](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1130))
+therefore need a re-review at every horizon renewal until the base image
+carries a glibc without the flaw.
+
+Building SQLite `3.54.x` from source in the image would remove the findings
+outright; it was not done here because the image would then own SQLite patching.
+
 ### Advisories Debian lists as fixed in trixie
 
 These nine advisories no longer apply to the runtime. Their exceptions are removed rather than renewed: an exception for a fixed advisory is not a decision, it is a false record.

@@ -1482,6 +1482,84 @@
       "issue": "https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1130",
       "reviewed_at": "2026-10-31T12:00:00Z",
       "expires_at": "2026-11-21T12:00:00Z"
+    },
+    {
+      "id": "CVE-2026-119373",
+      "namespace": "debian:distro:debian:13",
+      "package": "libsqlite3-0",
+      "version": "3.46.1-7+deb13u2",
+      "architecture": "amd64",
+      "reason": "Requires an FTS5 virtual table (detail=none with negative rowids and a prefix MATCH query). Runway defines no FTS5 tables and runs no MATCH query, and the only SQLite database the server opens is its own, so the affected FTS5 code is not reachable.",
+      "evidence": "https://security-tracker.debian.org/tracker/CVE-2026-119373",
+      "owner": "s3ntin3l8",
+      "issue": "https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1164",
+      "reviewed_at": "2026-11-02T12:00:00Z",
+      "expires_at": "2026-11-21T12:00:00Z"
+    },
+    {
+      "id": "CVE-2026-119373",
+      "namespace": "debian:distro:debian:13",
+      "package": "libsqlite3-0",
+      "version": "3.46.1-7+deb13u2",
+      "architecture": "arm64",
+      "reason": "Requires an FTS5 virtual table (detail=none with negative rowids and a prefix MATCH query). Runway defines no FTS5 tables and runs no MATCH query, and the only SQLite database the server opens is its own, so the affected FTS5 code is not reachable.",
+      "evidence": "https://security-tracker.debian.org/tracker/CVE-2026-119373",
+      "owner": "s3ntin3l8",
+      "issue": "https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1164",
+      "reviewed_at": "2026-11-02T12:00:00Z",
+      "expires_at": "2026-11-21T12:00:00Z"
+    },
+    {
+      "id": "CVE-2026-119374",
+      "namespace": "debian:distro:debian:13",
+      "package": "libsqlite3-0",
+      "version": "3.46.1-7+deb13u2",
+      "architecture": "amd64",
+      "reason": "Requires an FTS5 virtual table (a corrupted FTS5 index plus a secure-delete). Runway defines no FTS5 tables and runs no MATCH query, and the only SQLite database the server opens is its own, so the affected FTS5 code is not reachable.",
+      "evidence": "https://security-tracker.debian.org/tracker/CVE-2026-119374",
+      "owner": "s3ntin3l8",
+      "issue": "https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1164",
+      "reviewed_at": "2026-11-02T12:00:00Z",
+      "expires_at": "2026-11-21T12:00:00Z"
+    },
+    {
+      "id": "CVE-2026-119374",
+      "namespace": "debian:distro:debian:13",
+      "package": "libsqlite3-0",
+      "version": "3.46.1-7+deb13u2",
+      "architecture": "arm64",
+      "reason": "Requires an FTS5 virtual table (a corrupted FTS5 index plus a secure-delete). Runway defines no FTS5 tables and runs no MATCH query, and the only SQLite database the server opens is its own, so the affected FTS5 code is not reachable.",
+      "evidence": "https://security-tracker.debian.org/tracker/CVE-2026-119374",
+      "owner": "s3ntin3l8",
+      "issue": "https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1164",
+      "reviewed_at": "2026-11-02T12:00:00Z",
+      "expires_at": "2026-11-21T12:00:00Z"
+    },
+    {
+      "id": "CVE-2026-119379",
+      "namespace": "debian:distro:debian:13",
+      "package": "libsqlite3-0",
+      "version": "3.46.1-7+deb13u2",
+      "architecture": "amd64",
+      "reason": "Requires sqlite3changeset_apply() from the session extension on a crafted changeset. Python's sqlite3 module does not expose changeset apply and the Runway server never calls it, so the affected path is not reachable.",
+      "evidence": "https://security-tracker.debian.org/tracker/CVE-2026-119379",
+      "owner": "s3ntin3l8",
+      "issue": "https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1164",
+      "reviewed_at": "2026-11-02T12:00:00Z",
+      "expires_at": "2026-11-21T12:00:00Z"
+    },
+    {
+      "id": "CVE-2026-119379",
+      "namespace": "debian:distro:debian:13",
+      "package": "libsqlite3-0",
+      "version": "3.46.1-7+deb13u2",
+      "architecture": "arm64",
+      "reason": "Requires sqlite3changeset_apply() from the session extension on a crafted changeset. Python's sqlite3 module does not expose changeset apply and the Runway server never calls it, so the affected path is not reachable.",
+      "evidence": "https://security-tracker.debian.org/tracker/CVE-2026-119379",
+      "owner": "s3ntin3l8",
+      "issue": "https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1164",
+      "reviewed_at": "2026-11-02T12:00:00Z",
+      "expires_at": "2026-11-21T12:00:00Z"
     }
   ]
 }
