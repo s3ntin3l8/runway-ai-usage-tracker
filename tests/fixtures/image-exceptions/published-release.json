@@ -2,12 +2,12 @@
   "architectures": {
     "amd64": {
       "counts": {
-        "High": 57,
-        "Low": 11,
-        "Medium": 53,
+        "High": 60,
+        "Low": 12,
+        "Medium": 68,
         "Negligible": 47
       },
-      "image": "ghcr.io/s3ntin3l8/runway@sha256:4cd69b47bb4d9f25cf43de5a3533a7bed814f9780144923e4518c58214a6d947",
+      "image": "ghcr.io/s3ntin3l8/runway@sha256:70e27a1a60cedf0de8b145a1105a989ad6057865ec5c692022d8af72bd45eaaa",
       "matches": [
         {
           "artifact": {
@@ -244,6 +244,36 @@
             "fix": {
               "state": "wont-fix"
             },
+            "id": "CVE-2026-84243",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "libc6",
+            "type": "deb",
+            "version": "2.41-12+deb13u4"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-84243",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "libc-bin",
+            "type": "deb",
+            "version": "2.41-12+deb13u4"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
             "id": "CVE-2026-5435",
             "namespace": "debian:distro:debian:13",
             "severity": "High"
@@ -530,6 +560,36 @@
               "state": "wont-fix"
             },
             "id": "CVE-2026-78408",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "libsqlite3-0",
+            "type": "deb",
+            "version": "3.46.1-7+deb13u2"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "not-fixed"
+            },
+            "id": "CVE-2026-119374",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "libsqlite3-0",
+            "type": "deb",
+            "version": "3.46.1-7+deb13u2"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "not-fixed"
+            },
+            "id": "CVE-2026-119379",
             "namespace": "debian:distro:debian:13",
             "severity": "High"
           }
@@ -821,6 +881,21 @@
         },
         {
           "artifact": {
+            "name": "libsqlite3-0",
+            "type": "deb",
+            "version": "3.46.1-7+deb13u2"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "not-fixed"
+            },
+            "id": "CVE-2026-119373",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
             "name": "libacl1",
             "type": "deb",
             "version": "2.3.2-2+b1"
@@ -830,36 +905,6 @@
               "state": "wont-fix"
             },
             "id": "CVE-2026-54370",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "libc-bin",
-            "type": "deb",
-            "version": "2.41-12+deb13u4"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "not-fixed"
-            },
-            "id": "CVE-2026-84243",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "libc6",
-            "type": "deb",
-            "version": "2.41-12+deb13u4"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "not-fixed"
-            },
-            "id": "CVE-2026-84243",
             "namespace": "debian:distro:debian:13",
             "severity": "High"
           }
@@ -868,12 +913,12 @@
     },
     "arm64": {
       "counts": {
-        "High": 57,
-        "Low": 11,
-        "Medium": 53,
+        "High": 60,
+        "Low": 12,
+        "Medium": 68,
         "Negligible": 47
       },
-      "image": "ghcr.io/s3ntin3l8/runway@sha256:36ebf0d134fbde265be8047a79df4c62e624038a20c2a9373bc91c1e40a305e8",
+      "image": "ghcr.io/s3ntin3l8/runway@sha256:7a090729a7c07f3add1dfc0bed859cb8f8ee721caf8f10b7b3cb2ab569e7da0f",
       "matches": [
         {
           "artifact": {
@@ -1110,6 +1155,36 @@
             "fix": {
               "state": "wont-fix"
             },
+            "id": "CVE-2026-84243",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "libc6",
+            "type": "deb",
+            "version": "2.41-12+deb13u4"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-84243",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "libc-bin",
+            "type": "deb",
+            "version": "2.41-12+deb13u4"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
             "id": "CVE-2026-5435",
             "namespace": "debian:distro:debian:13",
             "severity": "High"
@@ -1396,6 +1471,36 @@
               "state": "wont-fix"
             },
             "id": "CVE-2026-78408",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "libsqlite3-0",
+            "type": "deb",
+            "version": "3.46.1-7+deb13u2"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "not-fixed"
+            },
+            "id": "CVE-2026-119374",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "libsqlite3-0",
+            "type": "deb",
+            "version": "3.46.1-7+deb13u2"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "not-fixed"
+            },
+            "id": "CVE-2026-119379",
             "namespace": "debian:distro:debian:13",
             "severity": "High"
           }
@@ -1687,6 +1792,21 @@
         },
         {
           "artifact": {
+            "name": "libsqlite3-0",
+            "type": "deb",
+            "version": "3.46.1-7+deb13u2"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "not-fixed"
+            },
+            "id": "CVE-2026-119373",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
             "name": "libacl1",
             "type": "deb",
             "version": "2.3.2-2+b1"
@@ -1699,45 +1819,15 @@
             "namespace": "debian:distro:debian:13",
             "severity": "High"
           }
-        },
-        {
-          "artifact": {
-            "name": "libc-bin",
-            "type": "deb",
-            "version": "2.41-12+deb13u4"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "not-fixed"
-            },
-            "id": "CVE-2026-84243",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "libc6",
-            "type": "deb",
-            "version": "2.41-12+deb13u4"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "not-fixed"
-            },
-            "id": "CVE-2026-84243",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
         }
       ]
     }
   },
   "database": {
-    "built": "2026-10-31T06:18:17Z",
-    "checksum": "sha256:d574583126b3b0eb72bf49ea72ee382bbfb3adff4358105540a303e9f41b874c"
+    "built": "2026-11-02T06:26:52Z",
+    "checksum": "sha256:68063965a3a023acd330a65a0740976c81f8e13902824134b447deee97a0d838"
   },
-  "image": "ghcr.io/s3ntin3l8/runway@sha256:567f8c081adeaa83bafa63d20780e6dcd123b2b5e1ef7a75c7a6bff0cd325eff",
-  "scanned_at": "2026-10-31T12:13:15.713828+00:00",
+  "image": "ghcr.io/s3ntin3l8/runway@sha256:8f228ae4f4286316f916b34fef663e95adb1c42e96420da0a9e9c5c73fb58c4f",
+  "scanned_at": "2026-11-02T16:12:36.322425+00:00",
   "schema_version": 1
 }
