@@ -15,25 +15,25 @@ requires-python = ">=3.12"
 # so a floating range here would reach the user's binary with no pull
 # request and no commit.
 dependencies = [
-    "fastapi==0.161.1",
+    "fastapi==0.162.0",
     "uvicorn[standard]==0.54.0",
     "httpx==0.28.1",
     # `httpx` pulls `certifi` in, but only with a floor -- so the CI set and
     # the shipped set would agree by luck rather than by pin. It is declared
     # here, at the version the shipped sidecar is built with, so both sets
     # resolve to the same one.
-    "certifi==2026.10.19",
+    "certifi==2026.10.23",
     "python-dotenv==1.2.4",
     "aiosqlite==0.22.1",
-    "pydantic==2.14.1",
-    "pydantic-settings==2.16.1",
+    "pydantic==2.14.2",
+    "pydantic-settings==2.16.2",
     "keyring==25.7.0",
     "cryptography==50.0.2",
     "secretstorage==3.5.0",
     "PyYAML==6.0.3",
     "slowapi==0.1.10",
     "sqlmodel==0.0.48",
-    "tzdata==2026.5; sys_platform == 'win32'",
+    "tzdata==2026.6; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]

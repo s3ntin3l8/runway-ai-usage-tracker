@@ -11,21 +11,21 @@
 #
 # These are the versions a fresh install resolves to today. To move one, let
 # Dependabot propose it, or edit the pin and run `make install`.
-fastapi==0.161.1
+fastapi==0.162.0
 uvicorn[standard]==0.54.0
 httpx==0.28.1
 # `httpx` requires `certifi`, but only with a floor -- so without this the
 # CI set would resolve a different `certifi` than the shipped set gets from
 # `pyproject.toml`, and the two would agree by luck rather than by pin.
-certifi==2026.10.19
+certifi==2026.10.23
 python-dotenv==1.2.4
 aiosqlite==0.22.1
-pydantic==2.14.1
-pydantic-settings==2.16.1
+pydantic==2.14.2
+pydantic-settings==2.16.2
 keyring==25.7.0
 cryptography==50.0.2
 secretstorage==3.5.0
 PyYAML==6.0.3
 slowapi==0.1.10
 sqlmodel==0.0.48
-tzdata==2026.5; sys_platform == "win32"
+tzdata==2026.6; sys_platform == "win32"
