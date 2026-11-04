@@ -4,8 +4,7 @@ See app/services/queries/__init__.py for the public surface.
 
 import logging
 from dataclasses import dataclass
-from datetime import UTC, datetime, time, timedelta
-from typing import Any, cast
+from datetime import UTC, datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +14,6 @@ from sqlmodel import Session, select
 from app.core.date_utils import parse_iso8601_utc
 from app.models._datetime import iso_utc
 from app.models.db import UsageEvent, UsagePeriodRollup, UsageWindow
-from app.services.queries._shared import _parse_period_key, sqlite_utc_timestamp
 from app.services.queries.windows import query_window_aggregation
 from app.services.window_closer import WINDOW_DURATION
 
@@ -525,27 +523,6 @@ _SNAPSHOTS_COUNT_SQL = text(
     """
 ).bindparams(bindparam("provider_ids", expanding=True))
 
-_CHART_PERCENT_SQL = text(
-    # Bucket aggregate is MAX(pct_used), not the latest sample in the bucket.
-    # A daily-resetting quota whose reset falls near the end of the UTC bucket
-    # (e.g. Gemini Pro at ~21:08 UTC) would otherwise read 0 for the whole day —
-    # peak captures the actual usage the user is asking the chart about.
-    """
-    SELECT
-        MIN(ts)       AS ts,
-        MAX(pct_used) AS pct_used,
-        provider_id, account_id, window_type, model_id
-    FROM quota_snapshots
-    WHERE ts >= :since
-      AND pct_used IS NOT NULL
-      AND (:provider_id IS NULL OR provider_id = :provider_id)
-      AND (:account_id  IS NULL OR account_id  = :account_id)
-    GROUP BY provider_id, account_id, window_type, model_id,
-             (CAST(strftime('%s', ts) AS INTEGER) / :bucket_seconds)
-    ORDER BY provider_id, window_type, model_id, ts ASC
-    """
-)
-
 
 _SNAPSHOTS_PAGE_SQL = text(
     """
@@ -692,7 +669,7 @@ def query_snapshots(
     return {"total": total, "page": page, "limit": limit, "rows": rows}
 
 
-def query_chart(  # noqa: PLR0915 — known-debt: multi-metric chart aggregator, splits poorly
+def query_chart(
     session: Session,
     *,
     provider_id: str | None = None,
@@ -719,303 +696,33 @@ def query_chart(  # noqa: PLR0915 — known-debt: multi-metric chart aggregator,
     bar (summing across accounts and models) — the cross-provider "overall"
     view. With no group, each bar keeps one segment per (provider, model).
     """
-    import json as _json
+    from app.services.queries.chart_bars import query_chart_bars
+    from app.services.queries.chart_percent import query_chart_percent
 
     explicit_range = since is not None
     if since is None:
         since = datetime.now(UTC) - timedelta(days=days)
 
     if metric == "percent":
-        # Bucket snapshots by time at the SQL layer to keep chart resolution
-        # matched to the timeframe (see `_BUCKET_TIERS`). The `pct_used IS NOT
-        # NULL` filter lives inside the bucketed CTE so a null row can never
-        # be selected as the bucket representative.
-        bucket_seconds = _bucket_seconds_for(days)
-        chart_params = {
-            "since": since.replace(tzinfo=None),
-            "provider_id": provider_id,
-            "account_id": account_id,
-            "bucket_seconds": bucket_seconds,
-        }
-        snaps = session.exec(_CHART_PERCENT_SQL, params=chart_params).all()  # type: ignore[call-overload]
-
-        series_map: dict[str, dict] = {}
-        for s in snaps:
-            use_model = s.model_id or ""
-            key = f"{s.provider_id}::{s.window_type}::{use_model}"
-            if key not in series_map:
-                label = f"{s.provider_id.capitalize()} · {s.window_type.capitalize()}"
-                if use_model:
-                    label += f" · {use_model}"
-                series_map[key] = {
-                    "key": key,
-                    "provider_id": s.provider_id,
-                    "window_type": s.window_type,
-                    "model_id": use_model,
-                    "label": label,
-                    "color_hint": s.provider_id,
-                    "points": [],
-                }
-            ts_dt = _parse_sqlite_dt(s.ts)
-            ts_iso = iso_utc(ts_dt) if ts_dt is not None else str(s.ts)
-            series_map[key]["points"].append({"ts": ts_iso, "pct_used": s.pct_used})
-
-        # Seed any provider/window_type that has current pct_used data in latest_usage
-        # but no snapshots yet (e.g. first run after schema migration).
-        from app.models.db import LatestUsage
-
-        lu_all = session.exec(select(LatestUsage).where(LatestUsage.model_id == "")).all()
-        now_iso = datetime.now(UTC).isoformat()
-        for lu in lu_all:
-            if provider_id and lu.provider_id != provider_id:
-                continue
-            if account_id and lu.account_id != account_id:
-                continue
-            try:
-                card = _json.loads(lu.card_json)
-            except Exception:
-                continue
-            # Derive pct_used (same logic as accumulator)
-            pct: float | None = card.get("pct_used")
-            if pct is None:
-                used = card.get("used_value")
-                if used is not None:
-                    if card.get("unit_type") == "percent":
-                        pct = float(used)
-                    else:
-                        lim = card.get("limit_value")
-                        if lim and lim > 0:
-                            pct = (used / lim) * 100.0
-            if pct is None:
-                continue
-            wt = lu.window_type
-            use_model = lu.model_id or ""
-            key = f"{lu.provider_id}::{wt}::{use_model}"
-            if key not in series_map:
-                label = f"{lu.provider_id.capitalize()} · {wt.capitalize()}"
-                series_map[key] = {
-                    "key": key,
-                    "provider_id": lu.provider_id,
-                    "window_type": wt,
-                    "model_id": use_model,
-                    "label": label,
-                    "color_hint": lu.provider_id,
-                    "points": [],
-                }
-            # Only add seed point if this series has no snapshot yet (avoid duplicating last value)
-            if not series_map[key]["points"]:
-                series_map[key]["points"].append({"ts": now_iso, "pct_used": pct})
-
-        return {"series": list(series_map.values())}
-
-    # tokens or cost — hourly bars for short rolling windows, daily bars
-    # otherwise. A scoped range (explicit since/until, e.g. a whole month) always
-    # renders as daily bars.
-    period_type = "day" if (explicit_range or days > 7) else "hour"
-    since_key = (
-        since.strftime("%Y-%m-%dT%H") if period_type == "hour" else since.strftime("%Y-%m-%d")
+        return query_chart_percent(
+            session,
+            provider_id=provider_id,
+            account_id=account_id,
+            days=days,
+            since=since,
+        )
+    return query_chart_bars(
+        session,
+        provider_id=provider_id,
+        account_id=account_id,
+        days=days,
+        metric=metric,
+        since=since,
+        until=until,
+        group=group,
+        sidecar_id=sidecar_id,
+        explicit_range=explicit_range,
     )
-    bar_stmt = select(UsagePeriodRollup).where(
-        UsagePeriodRollup.period_type == period_type,
-        UsagePeriodRollup.sidecar_id == (sidecar_id or ""),
-    )
-    boundary_ranges: list[tuple[datetime, datetime]] = []
-    bar_until: datetime | None = until
-    if period_type == "day" and explicit_range:
-        since_utc = since.astimezone(UTC) if since.tzinfo else since.replace(tzinfo=UTC)
-        until_utc = (
-            (until.astimezone(UTC) if until.tzinfo else until.replace(tzinfo=UTC))
-            if until
-            else datetime.now(UTC)
-        )
-        bar_until = until_utc
-        since_day = datetime.combine(since_utc.date(), time.min, tzinfo=UTC)
-        until_day = datetime.combine(until_utc.date(), time.min, tzinfo=UTC)
-        full_start = since_day if since_utc == since_day else since_day + timedelta(days=1)
-        since_key = full_start.strftime("%Y-%m-%d")
-        # A partial UTC day cannot use its whole-day rollup: that would include
-        # usage outside [since, until). Use exact raw events for that day instead.
-        if since_utc < full_start:
-            boundary_ranges.append((since_utc, min(full_start, until_utc)))
-        # Include the end day when it is partial, including when it is also the
-        # first day (until_day == full_start for a midnight start).
-        if until_utc > until_day >= full_start:
-            boundary_ranges.append((max(until_day, since_utc), until_utc))
-    else:
-        since_key = (
-            since.strftime("%Y-%m-%dT%H") if period_type == "hour" else since.strftime("%Y-%m-%d")
-        )
-    bar_stmt = bar_stmt.where(UsagePeriodRollup.period_key >= since_key)
-    if bar_until is not None:
-        # Complete daily rollups stop at the UTC midnight containing `until`;
-        # the partial end day is aggregated from raw events below.
-        until_key = (
-            bar_until.strftime("%Y-%m-%dT%H")
-            if period_type == "hour"
-            else bar_until.strftime("%Y-%m-%d")
-        )
-        bar_stmt = bar_stmt.where(UsagePeriodRollup.period_key < until_key)
-    if provider_id:
-        bar_stmt = bar_stmt.where(UsagePeriodRollup.provider_id == provider_id)
-    if account_id:
-        bar_stmt = bar_stmt.where(UsagePeriodRollup.account_id == account_id)
-
-    all_bar_rows = list(session.exec(bar_stmt.order_by(UsagePeriodRollup.period_key)).all())
-    boundary_rows: list[dict[str, Any]] = []
-    if boundary_ranges:
-        event_ranges = [
-            f"(ts >= :boundary_since_{i} AND ts < :boundary_until_{i})"
-            for i in range(len(boundary_ranges))
-        ]
-        params: dict[str, Any] = {
-            f"boundary_since_{i}": sqlite_utc_timestamp(start)
-            for i, (start, _) in enumerate(boundary_ranges)
-        }
-        params.update(
-            {
-                f"boundary_until_{i}": sqlite_utc_timestamp(end)
-                for i, (_, end) in enumerate(boundary_ranges)
-            }
-        )
-        params["provider_id"] = provider_id
-        params["account_id"] = account_id
-        if sidecar_id:
-            params["sidecar_id"] = sidecar_id
-        provider_clause = "AND provider_id = :provider_id" if provider_id else ""
-        account_clause = "AND account_id = :account_id" if account_id else ""
-        sidecar_clause = "AND sidecar_id = :sidecar_id" if sidecar_id else ""
-        # These f-strings interpolate only server-built SQL clauses above;
-        # provider, account, and timestamp values remain bound parameters.
-        # Like the rollup's empty sidecar_id, this event query covers all sidecars.
-        sql = text(
-            f"""
-            SELECT provider_id, account_id, model_id,
-                   strftime('%Y-%m-%d', ts) AS period_key,
-                   SUM(tokens_input) AS tokens_input,
-                   SUM(tokens_output) AS tokens_output,
-                   SUM(tokens_cache_read) AS tokens_cache_read,
-                   SUM(tokens_cache_create) AS tokens_cache_create,
-                   SUM(tokens_reasoning) AS tokens_reasoning,
-                   SUM(cost_usd) AS cost_usd,
-                   SUM(cost_cache_read) AS cost_cache_read,
-                   SUM(cost_cache_create) AS cost_cache_create,
-                   COUNT(*) AS msgs
-            FROM usage_events
-            WHERE kind = 'message'
-              {provider_clause}
-              {account_clause}
-              {sidecar_clause}
-              AND ({" OR ".join(event_ranges)})
-            GROUP BY provider_id, account_id, model_id, period_key
-            """
-        )
-        boundary_rows = [
-            dict(row._mapping)
-            for row in session.exec(sql, params=params).all()  # type: ignore[call-overload]
-        ]
-    # (provider, account, period) tuples that have per-model rows — used to skip
-    # their aggregate (model_id="") row so it isn't double-counted. Keyed by
-    # account too: an account's aggregate row must survive even when a *sibling*
-    # account of the same provider has per-model rows (matters cross-provider /
-    # unfiltered, where rows from multiple accounts share a bar).
-    has_per_model: set[tuple[str, str, str]] = {
-        (r.provider_id, r.account_id, r.period_key) for r in all_bar_rows if r.model_id != ""
-    }
-    has_per_model.update(
-        (r["provider_id"], r["account_id"], r["period_key"]) for r in boundary_rows if r["model_id"]
-    )
-
-    by_provider = group == "provider"
-    bars_map: dict[str, list] = {}
-    # When grouping by provider, segments accumulate per (period, provider) so
-    # multiple accounts/models of one provider sum into a single bar segment.
-    provider_seg: dict[tuple[str, str], dict[str, object]] = {}
-    normalized_rows = [
-        {
-            "provider_id": r.provider_id,
-            "account_id": r.account_id,
-            "period_key": r.period_key,
-            "model_id": r.model_id,
-            "tokens_input": r.tokens_input,
-            "tokens_output": r.tokens_output,
-            "tokens_cache_read": r.tokens_cache_read,
-            "tokens_cache_create": r.tokens_cache_create,
-            "tokens_reasoning": r.tokens_reasoning,
-            "cost_usd": r.cost_usd,
-            "cost_cache_read": r.cost_cache_read,
-            "cost_cache_create": r.cost_cache_create,
-        }
-        for r in all_bar_rows
-    ] + boundary_rows
-    for r in normalized_rows:
-        if (
-            not r["model_id"]
-            and (r["provider_id"], r["account_id"], r["period_key"]) in has_per_model
-        ):
-            continue
-
-        use_model = r["model_id"] or ""
-        key = r["period_key"]
-        if key not in bars_map:
-            bars_map[key] = []
-        value = (
-            (r["cost_usd"] or 0)
-            if metric == "cost"
-            else (r["tokens_input"] or 0)
-            + (r["tokens_output"] or 0)
-            + (r["tokens_cache_read"] or 0)
-            + (r["tokens_cache_create"] or 0)
-            + (r["tokens_reasoning"] or 0)
-        )
-        # value_cache = the cache portion of `value`, so the client can subtract it
-        # under the exclude-cache toggle. Its unit follows the metric: cache *tokens*
-        # for the tokens bars, cache *cost* (USD) for the cost bars.
-        value_cache = (
-            (r["cost_cache_read"] or 0) + (r["cost_cache_create"] or 0)
-            if metric == "cost"
-            else (r["tokens_cache_read"] or 0) + (r["tokens_cache_create"] or 0)
-        )
-
-        if by_provider:
-            seg_key = (key, r["provider_id"])
-            seg = provider_seg.get(seg_key)
-            if seg is None:
-                seg = {
-                    "provider_id": r["provider_id"],
-                    "model_id": "",
-                    "label": r["provider_id"].capitalize(),
-                    "value": 0.0,
-                    "value_cache": 0.0,
-                }
-                provider_seg[seg_key] = seg
-                bars_map[key].append(seg)
-            seg["value"] = cast(float, seg["value"]) + value
-            seg["value_cache"] = cast(float, seg["value_cache"]) + value_cache
-            continue
-
-        label = r["provider_id"].capitalize()
-        if use_model:
-            label += f" · {use_model}"
-        segment: dict[str, object] = {
-            "provider_id": r["provider_id"],
-            "model_id": use_model,
-            "label": label,
-            "value": value,
-            "value_cache": value_cache,
-        }
-        bars_map[key].append(segment)
-
-    bars = []
-    for key in sorted(bars_map.keys()):
-        ts = _parse_period_key(key, period_type)
-        bars.append(
-            {
-                "date": ts.strftime("%Y-%m-%d") if ts else key[:10],
-                "ts": iso_utc(ts) if ts else key + ":00:00+00:00",
-                "segments": bars_map[key],
-            }
-        )
-    return {"bars": bars}
 
 
 def query_window_detail(
