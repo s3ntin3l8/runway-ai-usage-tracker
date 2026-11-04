@@ -25,7 +25,24 @@ logger = logging.getLogger(__name__)
 
 
 class TokenCacheStore:
-    """Store, remove, expire, and relocate credential bundles."""
+    """Store, remove, expire, and relocate credential bundles.
+
+    Instance state is created in ``TokenCache.__init__``. The annotations
+    exist so type-checking the mixin sees the attributes it already uses.
+    """
+
+    _cache: dict[str, Any]
+    _token_timestamps: dict[str, Any]
+    _source_cache: dict[str, Any]
+    _durable_revision: int
+    _durable_source_ids: set[str]
+    _durable_bundles: dict[str, Any]
+    _ttl: int
+    _lock: Any
+
+    def __getattr__(self, name: str) -> Any:
+        """Read-side methods stay on ``TokenCache`` and are found there first."""
+        raise AttributeError(name)
 
     async def store(
         self,
