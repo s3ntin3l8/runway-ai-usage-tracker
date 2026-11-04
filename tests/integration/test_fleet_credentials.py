@@ -5158,7 +5158,7 @@ def inventory_session_fixture(session: Session, monkeypatch):
     The inventory opens its own session on the app engine, so a test that
     reads it needs the test engine instead.
     """
-    from app.services import credential_inventory
+    from app.services.credentials import inventory as credential_inventory
 
     monkeypatch.setattr(credential_inventory, "engine", session.get_bind())
     monkeypatch.setattr(credential_inventory, "_scan_server_credentials", lambda: ({}, set()))

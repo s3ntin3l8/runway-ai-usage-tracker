@@ -343,7 +343,7 @@ def github_file(tmp_path, monkeypatch):
 def encryption(monkeypatch):
     service = EncryptionService(key=Fernet.generate_key().decode())
     monkeypatch.setattr("app.api.endpoints.github_oauth.encryption_service", service)
-    monkeypatch.setattr("app.services.credential_provider.encryption_service", service)
+    monkeypatch.setattr("app.services.credentials.provider.encryption_service", service)
     return service
 
 
@@ -419,10 +419,11 @@ def test_server_credential_scan_finds_the_decrypted_github_token(
 
     asyncio.run(github_oauth.save_token({"access_token": "gho_scan_me_token"}))
     monkeypatch.setattr(
-        "app.services.credential_provider.get_platform_config_dir", lambda _name: github_file.parent
+        "app.services.credentials.provider.get_platform_config_dir",
+        lambda _name: github_file.parent,
     )
     monkeypatch.setattr(
-        "app.services.credential_provider._expand_rule_paths", lambda paths: [str(github_file)]
+        "app.services.credentials.provider._expand_rule_paths", lambda paths: [str(github_file)]
     )
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
 
@@ -440,12 +441,13 @@ def test_an_undecryptable_github_token_is_skipped_not_returned_as_ciphertext(
 
     asyncio.run(github_oauth.save_token({"access_token": "gho_scan_me_token"}))
     other = EncryptionService(key=Fernet.generate_key().decode())
-    monkeypatch.setattr("app.services.credential_provider.encryption_service", other)
+    monkeypatch.setattr("app.services.credentials.provider.encryption_service", other)
     monkeypatch.setattr(
-        "app.services.credential_provider.get_platform_config_dir", lambda _name: github_file.parent
+        "app.services.credentials.provider.get_platform_config_dir",
+        lambda _name: github_file.parent,
     )
     monkeypatch.setattr(
-        "app.services.credential_provider._expand_rule_paths", lambda paths: [str(github_file)]
+        "app.services.credentials.provider._expand_rule_paths", lambda paths: [str(github_file)]
     )
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
 
@@ -463,12 +465,13 @@ def test_ciphertext_is_never_used_as_a_token_once_the_key_is_gone(
     asyncio.run(github_oauth.save_token({"access_token": "gho_scan_me_token"}))
     keyless = EncryptionService(key=None)
     monkeypatch.setattr("app.api.endpoints.github_oauth.encryption_service", keyless)
-    monkeypatch.setattr("app.services.credential_provider.encryption_service", keyless)
+    monkeypatch.setattr("app.services.credentials.provider.encryption_service", keyless)
     monkeypatch.setattr(
-        "app.services.credential_provider.get_platform_config_dir", lambda _name: github_file.parent
+        "app.services.credentials.provider.get_platform_config_dir",
+        lambda _name: github_file.parent,
     )
     monkeypatch.setattr(
-        "app.services.credential_provider._expand_rule_paths", lambda paths: [str(github_file)]
+        "app.services.credentials.provider._expand_rule_paths", lambda paths: [str(github_file)]
     )
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
 

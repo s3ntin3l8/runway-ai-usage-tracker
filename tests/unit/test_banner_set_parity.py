@@ -17,9 +17,9 @@ import pytest
 from sqlmodel.orm.session import Session
 
 from app.models.db import CredentialSource
-from app.services import credential_inventory
 from app.services import token_health as th
 from app.services.account_identity import canonical_account_id
+from app.services.credentials import inventory as credential_inventory
 from app.services.token_health import TokenHealthService
 from tests.unit.token_health_world import build_world
 

@@ -12,7 +12,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 from app.core.db import get_session
 from app.main import app
 from app.models.db import AuditLog, CredentialSource
-from app.services import credential_inventory
+from app.services.credentials import inventory as credential_inventory
 from app.services.token_cache import TokenCache
 from tests.fixtures.test_client import TestClient
 

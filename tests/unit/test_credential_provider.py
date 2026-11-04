@@ -129,7 +129,7 @@ async def test_active_source_for_other_account_does_not_block_legacy_discovery(m
     monkeypatch.setattr(token_cache_module, "token_cache", cache)
     monkeypatch.setenv("RUNWAY_TEST_BOB_KEY", "bob-env-key")
     monkeypatch.setattr(
-        "app.services.credential_provider.registry.get_provider",
+        "app.services.credentials.provider.registry.get_provider",
         lambda _provider: {
             "rules": [
                 {
@@ -470,7 +470,7 @@ def test_opencode_auth_json_env_rule_still_works(
 
 def test_a_file_rule_outside_runways_config_dir_is_never_evaluated(monkeypatch):
     """``_server_may_read`` gates the RAW paths, before any ``~`` expansion or glob."""
-    from app.services import credential_provider as cp
+    from app.services.credentials import provider as cp
 
     assert cp._server_may_read({"paths": ["{{CONFIG_DIR:runway}}/github_oauth.json"]})
     assert not cp._server_may_read({"paths": ["~/.gemini/oauth_creds.json"]})
@@ -516,7 +516,7 @@ def test_server_credential_origins_classify_a_credential_without_returning_it(mo
     exp = time.time() - 600
     token = f"{b64({'alg': 'none'})}.{b64({'exp': exp})}.sig"
     monkeypatch.setattr(
-        "app.services.credential_provider.registry.get_provider",
+        "app.services.credentials.provider.registry.get_provider",
         lambda _pid: {
             "rules": [
                 {"type": "env", "variable": "SOME_OAUTH_TOKEN", "mapping": {"value": "oauth_token"}}

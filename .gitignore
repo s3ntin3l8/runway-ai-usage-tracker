@@ -75,6 +75,8 @@ secrets/
 credentials/
 # ...but the webapp's Settings → Credentials UI is source code, not secrets.
 !webapp/src/**/credentials/
+# The credential service package is source code, not host secrets.
+!app/services/credentials/
 gha-creds-*.json
 # .secrets.baseline is intentionally tracked — CI needs it for detect-secrets
 

@@ -19,8 +19,9 @@ from app.models.db import (
     ProviderConfig,
     SidecarRegistry,
 )
-from app.services import auth_failures, credential_inventory
+from app.services import auth_failures
 from app.services.credential_inventory import build_inventory
+from app.services.credentials import inventory as credential_inventory
 from app.services.token_cache import TokenCache
 from app.services.token_health import credential_status
 
@@ -609,7 +610,7 @@ async def test_a_failed_scan_never_hides_registered_server_rows(engine, cache, m
 @pytest.mark.asyncio
 async def test_scan_server_credentials_reads_env_and_flags_shadowing(monkeypatch):
     monkeypatch.setenv("GITHUB_TOKEN", "ghp_test")  # pragma: allowlist secret
-    monkeypatch.setattr("app.services.credential_provider._expand_rule_paths", lambda _p: [])
+    monkeypatch.setattr("app.services.credentials.provider._expand_rule_paths", lambda _p: [])
 
     found, scanned = credential_inventory._scan_server_credentials()
 

@@ -1,0 +1,815 @@
+"""Server-side store of operator-resolved credential-origin → account_id mappings.
+
+The silent-listener model: sidecars report ``credential_origin`` values for
+credentials they found locally; the operator resolves the unmapped ones in
+the fleet UI by selecting a configured ``provider_configs`` row. This repo
+owns that resolution table (the ``credential_tags`` SQLModel in
+``app/models/db.py``).
+
+It is deliberately a thin object around the SQLModel — no caching layer,
+no LRU, no async — because the read path is the ``/fleet/config`` round
+trip on the heartbeat cadence (10-min default) and the write path is the
+operator's tag dialog, never on a hot path. Any future per-request access
+goes through this surface so the lookup key stays in one place.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Iterable, Sequence
+from datetime import UTC, datetime
+from typing import Any
+
+from sqlmodel import Session, and_, col, or_, select
+
+from app.models.db import CredentialTag, PendingCredentialTag, ProviderConfig
+from app.services.account_identity import canonical_account_id
+
+_QUOTA_PREVIEW_FIELDS = frozenset(
+    {
+        "service_name",
+        "remaining",
+        "unit",
+        "unit_type",
+        "pct_used",
+        "window_type",
+        "reset",
+        "reset_at",
+    }
+)
+
+
+def safe_quota_preview(preview: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep only the quota fields safe to persist and return to the UI."""
+    return [{key: item[key] for key in _QUOTA_PREVIEW_FIELDS if key in item} for item in preview]
+
+
+def live_sidecar_ids(session: Session) -> list[str]:
+    """Sidecar ids whose ``last_seen`` is within the last 7 days.
+
+    ``sidecar_registry`` rows are never pruned automatically, so a raw
+    row count would let one retired machine distort multi-host
+    detection forever. Window: comfortably beyond the ~60s heartbeat
+    cadence and the 60-min staleness threshold, short enough that
+    retired machines age out (PR #318 round-2 re-review S).
+    """
+    from datetime import timedelta
+
+    from app.models.db import SidecarRegistry
+
+    cutoff = datetime.now(UTC) - timedelta(days=7)
+    return list(
+        session.exec(
+            select(SidecarRegistry.sidecar_id).where(  # type: ignore[arg-type]
+                SidecarRegistry.last_seen >= cutoff
+            )
+        ).all()
+    )
+
+
+def origin_candidates(credential_origin: str) -> list[str]:
+    """The origins whose tags apply to *credential_origin*, most specific first.
+
+    A key-scoped origin (``env:ZAI_API_KEY#<fp>``) is also covered by a tag written
+    against its plain origin (``env:ZAI_API_KEY``): tags made before the origin was
+    fingerprinted must keep applying, exactly as the sidecar's own hint lookup does.
+    """
+    from app.services.account_identity import split_keyed_origin
+
+    if credential_origin.startswith(("cookie:anthropic/", "cookie:anthropic_console/")):
+        return [credential_origin]
+    base, fingerprint = split_keyed_origin(credential_origin)
+    return [credential_origin, base] if fingerprint else [credential_origin]
+
+
+def pick_effective_tag(
+    candidates: list[CredentialTag], sidecar_id: str | None
+) -> CredentialTag | None:
+    """The tag that applies on *sidecar_id* among rows for one origin: the machine-scoped
+    one if present, else the deployment-wide one. In-memory twin of the ordering
+    :meth:`CredentialTagRepo.get` asks the database for, kept next to it so the two stay
+    in step."""
+    for tag in candidates:
+        if tag.sidecar_id and tag.sidecar_id == sidecar_id:
+            return tag
+    return next((tag for tag in candidates if tag.sidecar_id is None), None)
+
+
+def archived_account_pairs_from_configs(
+    configs: Iterable[ProviderConfig],
+) -> set[tuple[str, str]]:
+    """The ``(provider_id, account_id)`` pairs of the archived config rows.
+
+    The account id is canonicalised: every write path stores an account in
+    the canonical form (see :func:`canonical_account_id`), while a config row
+    carries whatever the operator typed — so the two only match once the same
+    rule has been applied to both.
+    """
+    return {
+        (cfg.provider_id, canonical_account_id(cfg.account_id))
+        for cfg in configs
+        if cfg.archived and cfg.provider_id
+    }
+
+
+def archived_account_pairs(session: Session, providers: Sequence[str]) -> set[tuple[str, str]]:
+    """``(provider_id, account_id)`` pairs whose ``provider_configs`` row is archived.
+
+    A mapping onto one of these pairs is *parked*: it resolves the credential —
+    the origin stops being pending and the operator is not nagged any more — but
+    it is never acted on. The sidecar receives no hint for it, the server never
+    stamps the archived account with new usage, and a provider whose accounts
+    are all archived runs no collector at all.
+
+    Parked-ness is *derived* from ``ProviderConfig.archived`` rather than stored
+    on the tag, so archiving an account parks the mappings that point at it and
+    restoring it revives them — no backfill, no new column, and both archive
+    paths (the destructive *Remove* and the reversible *Archive*) end up
+    behaving the same way for the credential.
+    """
+    if not providers:
+        return set()
+    rows = session.exec(
+        select(ProviderConfig).where(
+            col(ProviderConfig.provider_id).in_(list(providers)),
+            ProviderConfig.archived == True,  # noqa: E712 — SQLModel needs the ==
+        )
+    ).all()
+    return archived_account_pairs_from_configs(rows)
+
+
+class ParkedMapping:
+    """Which stored mappings point at an archived account.
+
+    A mapping onto an archived account is *parked*: it resolves the credential
+    but must never be acted on — no hint ships to a sidecar, no usage is
+    stamped on the retired account, no collector runs for the provider. The
+    state is derived from ``ProviderConfig.archived``, never stored on the tag,
+    so archiving an account parks the mappings that point at it and restoring
+    it revives them.
+
+    One instance per request or batch: the archived rows are queried once per
+    provider — seeded in a single query when the caller knows its providers —
+    and every reader asks this object instead of re-deriving the rule for
+    itself.
+    """
+
+    def __init__(self, session: Session, providers: Iterable[str] | None = None) -> None:
+        self._session = session
+        self._archived: dict[str, set[str]] = {}
+        self._pending: list[str] = []
+        if providers:
+            self.seed(providers)
+
+    def seed(self, providers: Iterable[str]) -> None:
+        """Remember these providers, so the next lookup resolves them together.
+
+        The callers that know their provider set up front name it here: the
+        whole set is then resolved in a single query, instead of one query per
+        provider. The resolution stays lazy — a reader that never asks pays no
+        query at all.
+        """
+        for provider_id in providers:
+            if (
+                isinstance(provider_id, str)
+                and provider_id
+                and provider_id not in self._archived
+                and provider_id not in self._pending
+            ):
+                self._pending.append(provider_id)
+
+    def _resolve_pending(self) -> None:
+        if not self._pending:
+            return
+        pending = self._pending
+        self._pending = []
+        for provider_id, account_id in archived_account_pairs(self._session, pending):
+            self._archived.setdefault(provider_id, set()).add(account_id)
+        for provider_id in pending:
+            self._archived.setdefault(provider_id, set())
+
+    def _archived_accounts(self, provider_id: str) -> set[str]:
+        cached = self._archived.get(provider_id)
+        if cached is None:
+            self._resolve_pending()
+            cached = self._archived.get(provider_id)
+            if cached is None:
+                cached = {
+                    account_id
+                    for _, account_id in archived_account_pairs(self._session, [provider_id])
+                }
+                self._archived[provider_id] = cached
+        return cached
+
+    def is_parked(self, tag: CredentialTag | None) -> bool:
+        """Whether ``tag`` names an account that is archived.
+
+        A tag names an account of its own provider, except a *redirect* tag:
+        ``target_provider_id`` says the account belongs to another provider
+        (Gemini usage assigned to an Antigravity account), so the archived row
+        is looked up under the target provider. Keying the check by the tag's
+        own provider would miss exactly that case.
+        """
+        if tag is None:
+            return False
+        owner = tag.target_provider_id or tag.provider_id
+        return canonical_account_id(tag.account_id) in self._archived_accounts(owner)
+
+    def is_parked_account(self, provider_id: str, account_id: str) -> bool:
+        """Whether ``(provider_id, account_id)`` is an archived account."""
+        return canonical_account_id(account_id) in self._archived_accounts(provider_id)
+
+
+class CredentialTagRepo:
+    """Lookup / write / list operations on the ``credential_tags`` table."""
+
+    @staticmethod
+    def provider_origin(provider_id: str) -> str:
+        """Return the origin key used when a provider has no event identity."""
+        return f"provider:{provider_id}"
+
+    @staticmethod
+    def get(
+        session: Session,
+        *,
+        provider_id: str,
+        credential_origin: str,
+        sidecar_id: str | None = None,
+    ) -> CredentialTag | None:
+        """Return the effective tag for the (provider, origin) pair, or ``None``.
+
+        With ``sidecar_id`` given: the sidecar-scoped row wins over a
+        deployment-wide (NULL) row for the same origin. With
+        ``sidecar_id=None``: only deployment-wide rows match (the view
+        an unidentified requester gets).
+        """
+        for origin in origin_candidates(credential_origin):
+            stmt = select(CredentialTag).where(
+                CredentialTag.provider_id == provider_id,
+                CredentialTag.credential_origin == origin,
+            )
+            if sidecar_id is None:
+                stmt = stmt.where(col(CredentialTag.sidecar_id).is_(None))
+            else:
+                stmt = (
+                    stmt.where(
+                        or_(
+                            CredentialTag.sidecar_id == sidecar_id,
+                            col(CredentialTag.sidecar_id).is_(None),
+                        )
+                    )
+                    # Scoped rows (False) sort before deployment-wide (True).
+                    .order_by(col(CredentialTag.sidecar_id).is_(None))
+                )
+            found = session.exec(stmt).first()
+            if found is not None:
+                return found
+        return None
+
+    @staticmethod
+    def get_redirect(
+        session: Session, *, provider_id: str, sidecar_id: str | None = None
+    ) -> CredentialTag | None:
+        """Return the provider-level tag when it redirects to another provider.
+
+        ``target_provider_id`` is written only by :meth:`set_tag` (NULL = the tag's
+        own provider, and any re-tag resets it).
+        """
+        tag = CredentialTagRepo.get(
+            session,
+            provider_id=provider_id,
+            credential_origin=CredentialTagRepo.provider_origin(provider_id),
+            sidecar_id=sidecar_id,
+        )
+        if tag is not None and tag.target_provider_id and tag.target_provider_id != provider_id:
+            return tag
+        return None
+
+    @staticmethod
+    def get_account_id(
+        session: Session,
+        *,
+        provider_id: str,
+        credential_origin: str,
+        sidecar_id: str | None = None,
+    ) -> str | None:
+        """Return the effective ``account_id`` for a (provider, origin) pair.
+
+        Convenience over :meth:`get` for the hot path on the heartbeat
+        cadence — endpoints don't need to materialize the full row.
+        Scoped-first precedence matches :meth:`get`.
+        """
+        tag = CredentialTagRepo.get(
+            session,
+            provider_id=provider_id,
+            credential_origin=credential_origin,
+            sidecar_id=sidecar_id,
+        )
+        return tag.account_id if tag else None
+
+    @staticmethod
+    def set_tag(
+        session: Session,
+        *,
+        provider_id: str,
+        credential_origin: str,
+        account_id: str,
+        sidecar_id: str | None = None,
+        set_by: str = "operator",
+        target_provider_id: str | None = None,
+    ) -> CredentialTag:
+        """Set (idempotently) the operator's tag for the (provider, origin) pair.
+
+        ``sidecar_id=None`` writes a deployment-wide (NULL) row — the
+        dialog's "All machines" scope and every pre-#319 legacy row. A
+        concrete id writes that sidecar's own row (the dialog default,
+        "This machine"). If a row already exists for the same scope,
+        ``account_id`` and ``set_at`` are refreshed in-place; otherwise a
+        new row is inserted. Always returns the resulting row so callers
+        can echo it back to the UI.
+
+        ``target_provider_id`` is always written (including ``None``), so any
+        re-tag clears a previous cross-provider redirect.
+        """
+        stmt = select(CredentialTag).where(
+            CredentialTag.provider_id == provider_id,
+            CredentialTag.credential_origin == credential_origin,
+        )
+        if sidecar_id is None:
+            stmt = stmt.where(col(CredentialTag.sidecar_id).is_(None))
+        else:
+            stmt = stmt.where(CredentialTag.sidecar_id == sidecar_id)
+        row = session.exec(stmt).first()
+        if row is None:
+            row = CredentialTag(
+                provider_id=provider_id,
+                credential_origin=credential_origin,
+                account_id=account_id,
+                sidecar_id=sidecar_id,
+                set_by=set_by,
+                set_at=datetime.now(UTC),
+                target_provider_id=target_provider_id,
+            )
+            session.add(row)
+        else:
+            row.account_id = account_id
+            row.target_provider_id = target_provider_id
+            row.set_by = set_by
+            row.set_at = datetime.now(UTC)
+        session.flush()
+        return row
+
+    @staticmethod
+    def inherited_account_for_rotation(
+        session: Session,
+        *,
+        provider_id: str,
+        credential_origin: str,
+        sidecar_id: str | None,
+        claimed_account_id: str | None = None,
+    ) -> str | None:
+        """The account a freshly rotated origin should be carried over to, if any.
+
+        A CLI re-login rewrites the credential, which re-fingerprints the
+        origin (#349): the operator's tag is keyed to the old fingerprint, so
+        the source drops back to Untagged and its token is withheld until
+        someone re-tags it — a silent quota outage (#474). When the *base*
+        origin (everything before ``#<fingerprint>``) is unchanged and every
+        in-scope tag written against that base agrees on one account, the
+        binding is unambiguous and this returns that account for the new
+        origin to inherit.
+
+        Conservative by construction:
+
+        * only fingerprinted origins — ``split_keyed_origin`` yields
+          ``fingerprint=None`` for a plain origin, so a path-only tag can never
+          hop to a different machine's credential;
+        * only tags scoped to ``sidecar_id`` or deployment-wide (NULL): another
+          machine's tag is not evidence about this one (same precedence as
+          :meth:`get`);
+        * exactly one distinct account across those rows — two accounts ever
+          tagged at this location is an operator decision, not an inheritance;
+        * a contradicting ``claimed_account_id`` (the credential's own reported
+          identity) vetoes inheritance: the account changed under the path.
+
+        Identity-claim rows count as evidence (they are a binding someone
+        allowed), so a stale claim that disagrees with an operator tag makes
+        this refuse rather than guess.
+
+        Provenance is one-shot: the row written here reads ``set_by=rotation``
+        only until the operator re-saves it in the tag dialog, which replaces
+        it with their own actor — after that it is indistinguishable from a
+        mapping they made by hand (only ``set_at`` is history).
+        """
+        from app.services.account_identity import canonical_account_id, split_keyed_origin
+
+        if credential_origin.startswith(("cookie:anthropic/", "cookie:anthropic_console/")):
+            return None
+        base, fingerprint = split_keyed_origin(credential_origin)
+        if fingerprint is None:
+            return None
+        prefix = f"{base}#"
+        stmt = select(CredentialTag.credential_origin, CredentialTag.account_id).where(
+            CredentialTag.provider_id == provider_id,
+        )
+        if sidecar_id is None:
+            stmt = stmt.where(col(CredentialTag.sidecar_id).is_(None))
+        else:
+            stmt = stmt.where(
+                or_(
+                    CredentialTag.sidecar_id == sidecar_id,
+                    col(CredentialTag.sidecar_id).is_(None),
+                )
+            )
+        # Python prefix match, not SQL LIKE: a path may contain "_" or "%",
+        # and LIKE would let one location's tag answer for a look-alike one.
+        accounts = {
+            account
+            for origin, account in session.exec(stmt).all()
+            if isinstance(origin, str)
+            and isinstance(account, str)
+            and account
+            and origin.startswith(prefix)
+        }
+        if len(accounts) != 1:
+            return None
+        account = next(iter(accounts))
+        if isinstance(claimed_account_id, str) and claimed_account_id.strip():
+            if canonical_account_id(claimed_account_id) != canonical_account_id(account):
+                return None
+        return account
+
+    @staticmethod
+    def delete_tag(
+        session: Session,
+        *,
+        provider_id: str,
+        credential_origin: str,
+        sidecar_id: str | None = None,
+    ) -> bool:
+        """Delete tag(s) for the (provider, origin) pair.
+
+        ``sidecar_id=None`` removes every row for the pair (any scope) —
+        the "forget this origin entirely" cleanup. A concrete id removes
+        only that sidecar's row. Returns ``True`` when at least one row
+        was removed.
+        """
+        stmt = select(CredentialTag).where(
+            CredentialTag.provider_id == provider_id,
+            CredentialTag.credential_origin == credential_origin,
+        )
+        if sidecar_id is not None:
+            stmt = stmt.where(CredentialTag.sidecar_id == sidecar_id)
+        rows = list(session.exec(stmt).all())
+        for row in rows:
+            session.delete(row)
+        if rows:
+            session.flush()
+        return bool(rows)
+
+    @staticmethod
+    def delete_tag_in_scope(
+        session: Session,
+        *,
+        provider_id: str,
+        credential_origin: str,
+        sidecar_id: str | None,
+    ) -> bool:
+        """Delete exactly one scope's tag for the (provider, origin) pair.
+
+        Unlike :meth:`delete_tag` (where ``sidecar_id=None`` means "every
+        scope"), ``None`` here targets only the deployment-wide row — the
+        operator removes the one mapping they are looking at.
+        """
+        stmt = select(CredentialTag).where(
+            CredentialTag.provider_id == provider_id,
+            CredentialTag.credential_origin == credential_origin,
+        )
+        if sidecar_id is None:
+            stmt = stmt.where(col(CredentialTag.sidecar_id).is_(None))
+        else:
+            stmt = stmt.where(CredentialTag.sidecar_id == sidecar_id)
+        rows = list(session.exec(stmt).all())
+        for row in rows:
+            session.delete(row)
+        if rows:
+            session.flush()
+        return bool(rows)
+
+    @staticmethod
+    def delete_scoped_for_origin(
+        session: Session,
+        *,
+        provider_id: str,
+        credential_origin: str,
+    ) -> int:
+        """Drop every machine-scoped tag for the (provider, origin) pair.
+
+        Used when the operator tags the origin for "All machines": scoped
+        rows resolve before the deployment-wide one, so leaving them would
+        keep those machines on the old mapping with no way to see why.
+        """
+        rows = list(
+            session.exec(
+                select(CredentialTag).where(
+                    CredentialTag.provider_id == provider_id,
+                    CredentialTag.credential_origin == credential_origin,
+                    col(CredentialTag.sidecar_id).is_not(None),
+                )
+            ).all()
+        )
+        for row in rows:
+            session.delete(row)
+        if rows:
+            session.flush()
+        return len(rows)
+
+    @staticmethod
+    def delete_for_sidecar(session: Session, *, sidecar_id: str) -> int:
+        """Drop every tag scoped to ``sidecar_id`` (sidecar removed from the fleet)."""
+        rows = list(
+            session.exec(select(CredentialTag).where(CredentialTag.sidecar_id == sidecar_id)).all()
+        )
+        for row in rows:
+            session.delete(row)
+        if rows:
+            session.flush()
+        return len(rows)
+
+    @staticmethod
+    def delete_by_account(session: Session, *, provider_id: str, account_id: str) -> int:
+        """Drop every tag whose ``(provider_id, account_id)`` matches.
+
+        Called when the operator removes a ``provider_configs`` row so the
+        sidecar stops receiving ``origin -> account_id`` hints for the
+        just-deleted account (otherwise the next heartbeat re-asserts
+        the identity via ``list_pending_payload`` and keeps stamping
+        cards with it — see PR #317 review warning). Unique key on the
+        table is ``(provider_id, credential_origin)`` so multiple rows
+        can share the same ``account_id``; this removes all of them.
+
+        ``provider_id`` is the *effective* provider: a redirect tag whose
+        ``target_provider_id`` matches is removed, while one that merely
+        shares the account id under its own provider is kept.
+
+        Returns the number of rows actually removed (0 if none matched).
+        """
+        rows = list(
+            session.exec(
+                select(CredentialTag).where(
+                    CredentialTag.account_id == account_id,
+                    or_(
+                        CredentialTag.target_provider_id == provider_id,
+                        and_(
+                            CredentialTag.provider_id == provider_id,
+                            col(CredentialTag.target_provider_id).is_(None),
+                        ),
+                    ),
+                )
+            ).all()
+        )
+        for row in rows:
+            session.delete(row)
+        if rows:
+            session.flush()
+        return len(rows)
+
+    @staticmethod
+    def list_for_account_provider(session: Session, *, provider_id: str) -> list[CredentialTag]:
+        """Tags whose account belongs to ``provider_id`` (effective provider)."""
+        return list(
+            session.exec(
+                select(CredentialTag)
+                .where(
+                    or_(
+                        CredentialTag.target_provider_id == provider_id,
+                        and_(
+                            CredentialTag.provider_id == provider_id,
+                            col(CredentialTag.target_provider_id).is_(None),
+                        ),
+                    )
+                )
+                .order_by(CredentialTag.credential_origin)
+            ).all()
+        )
+
+    @staticmethod
+    def list_by_provider(session: Session, *, provider_id: str) -> list[CredentialTag]:
+        """All tags for one provider, ordered by origin for deterministic UI."""
+        return list(
+            session.exec(
+                select(CredentialTag)
+                .where(CredentialTag.provider_id == provider_id)
+                .order_by(CredentialTag.credential_origin)
+            ).all()
+        )
+
+    @staticmethod
+    def list_all(session: Session) -> list[CredentialTag]:
+        """All tags across providers, ordered for stable serialization."""
+        return list(
+            session.exec(
+                select(CredentialTag).order_by(
+                    CredentialTag.provider_id, CredentialTag.credential_origin
+                )
+            ).all()
+        )
+
+    @staticmethod
+    def list_effective_tags(
+        session: Session,
+        *,
+        providers: list[str],
+        sidecar_id: str | None = None,
+    ) -> dict[tuple[str, str], CredentialTag]:
+        """The stored tag that applies to each ``(provider_id, credential_origin)``.
+
+        Same selection and scoping as :meth:`list_pending_payload` — a
+        sidecar-scoped row wins over a deployment-wide one for the same origin
+        — but it keeps the whole row, so a caller can see
+        ``target_provider_id``: a *redirect* tag names an account of another
+        provider, and only the row knows that.
+
+        ``identity_claim`` rows are excluded — they are the sidecar's own
+        claim, not an operator mapping.
+        """
+        if not providers:
+            return {}
+
+        predicates = [CredentialTag.provider_id == pid for pid in providers]
+        stmt = (
+            select(CredentialTag)
+            .where(or_(*predicates), CredentialTag.set_by != "identity_claim")
+            .order_by(col(CredentialTag.sidecar_id).is_(None))
+        )
+        if sidecar_id is None:
+            stmt = stmt.where(col(CredentialTag.sidecar_id).is_(None))
+        else:
+            stmt = stmt.where(
+                or_(
+                    CredentialTag.sidecar_id == sidecar_id,
+                    col(CredentialTag.sidecar_id).is_(None),
+                )
+            )
+        rows = list(session.exec(stmt).all())
+        effective: dict[tuple[str, str], CredentialTag] = {}
+        for row in rows:
+            key = (row.provider_id, row.credential_origin)
+            if not row.provider_id or not row.credential_origin or not row.account_id:
+                continue
+            if row.sidecar_id is None:
+                # Deployment-wide row — never clobbers a scoped one.
+                effective.setdefault(key, row)
+            else:
+                # Sidecar-scoped row wins over deployment-wide.
+                effective[key] = row
+        return effective
+
+    @staticmethod
+    def list_pending_payload(
+        session: Session,
+        *,
+        providers: list[str],
+        sidecar_id: str | None = None,
+    ) -> dict[str, dict[str, str]]:
+        """Return ``{provider_id: {credential_origin: account_id, ...}}`` for
+        every stored tag whose provider is in ``providers``.
+
+        The single source of truth for the ``/fleet/config`` /
+        ``/fleet/ingest`` ``account_tag_hints`` shape (PR #288 / #290).
+        Production callers — ``_account_tag_hints_for_providers`` in
+        ``app/api/endpoints/fleet_shared.py`` — invoke this method so the
+        lookup key lives in one place (the repo). Origins without a
+        stored tag are silently omitted — the sidecar's silent-listener
+        block guard treats missing hints the same way as no hints at
+        all (the card stays blocked until the operator resolves it).
+
+        Scoping (#319): with ``sidecar_id`` given, both that sidecar's
+        own tags and deployment-wide (NULL) rows are returned, scoped
+        winning on conflict; with ``sidecar_id=None`` (an unidentified
+        requester), only deployment-wide rows ship.
+
+        Empty ``providers`` returns an empty map. Empty ``account_id``
+        values are filtered out defensively.
+        """
+        out: dict[str, dict[str, str]] = {}
+        for (pid, origin), tag in CredentialTagRepo.list_effective_tags(
+            session, providers=providers, sidecar_id=sidecar_id
+        ).items():
+            out.setdefault(pid, {})[origin] = tag.account_id
+        return out
+
+    @staticmethod
+    def auto_hints_for_single_account_providers(
+        session: Session,
+        *,
+        providers: list[str],
+        sidecar_id: str | None = None,
+    ) -> dict[str, dict[str, str]]:
+        """Pre-ship tag-hints for providers with exactly one enabled
+        non-default ``provider_configs`` row.
+
+        Closes the MiniMax card-split: when the operator has a single
+        labeled MiniMax account (e.g. ``s3ntin318@gmail.com``), the
+        sidecar's event stream has nothing to discover upstream and
+        would otherwise ship events under the synthetic ``"default"``
+        sentinel. Without an auto-hint the events land on a
+        standalone synthetic-default card and the quota gauge stays
+        orphaned on the labeled row.
+
+        The hint key is ``"provider:<provider_id>"`` (matches
+        ``scripts/sidecar.py:credential_origin_for_provider``), and the
+        value is the operator's chosen ``account_id``. The hint is
+        non-persistent — it lives in the ``/fleet/config`` payload only
+        and the operator can still override it via the Untagged
+        Credentials dialog if their multi-account setup requires it.
+
+        Skips providers with 0 rows (nothing to retarget), 2+ rows
+        (multi-account ambiguity — operator should tag explicitly),
+        or where the single row is the ``"default"`` sentinel (the
+        sidecar's ``"default"``-tagged events already land on it).
+
+        **Per-sidecar scoping (#319, replaces the PR #318 suppression
+        gate):** ``provider_configs`` is deployment-wide, so the
+        candidate hint would cross-contaminate hosts in a multi-host
+        deployment (the Hermes warning #2 case — a second host whose
+        local discovery returns ``default``/``None`` adopting the
+        single account's identity). Delivery is now scoped to the
+        requesting sidecar:
+
+        - ≤1 live sidecar (7-day ``last_seen`` window — retired
+          machines age out): ship unconditionally. Preserves the
+          first-cycle MiniMax fix for single-host deployments and
+          keeps working for config fetches from old sidecar binaries
+          that don't identify themselves.
+        - 2+ live sidecars + identified requester: ship only when the
+          requester has a ``pending_credential_tags`` row for
+          ``provider:<pid>`` — i.e. that host actually reported the
+          credential. A host that never reported it never receives the
+          hint (the cross-host attribution block).
+        - 2+ live sidecars + unidentified requester (old binary): ship
+          nothing — the safe pre-#319 behavior for multi-host.
+
+        Empty ``providers`` returns an empty map. Defensively filters
+        empty / non-string ``account_id`` values.
+        """
+        if not providers:
+            return {}
+
+        live_ids = live_sidecar_ids(session)
+        multi_host = len(live_ids) > 1
+        if multi_host and sidecar_id is None:
+            import logging
+
+            logging.debug(
+                "auto-hint withheld: %d live sidecar(s) and requester "
+                "did not identify itself on /fleet/config (pre-#319 "
+                "sidecar binary?)",
+                len(live_ids),
+            )
+            return {}
+
+        # Group by provider_id, keeping only providers with exactly
+        # one enabled non-default row. A GROUP BY + HAVING COUNT(*) = 1
+        # would also work, but two queries is clearer here — and the
+        # row set is tiny (one entry per configured account).
+        from app.models.db import ProviderConfig
+
+        rows = list(
+            session.exec(
+                select(ProviderConfig).where(
+                    or_(*(ProviderConfig.provider_id == pid for pid in providers)),
+                    ProviderConfig.enabled == True,  # noqa: E712 — SQLModel needs the ==
+                    col(ProviderConfig.account_id) != "default",
+                )
+            ).all()
+        )
+        # Bucket by provider_id, skip ambiguous multi-row buckets.
+        by_pid: dict[str, list[str]] = {}
+        for r in rows:
+            by_pid.setdefault(r.provider_id, []).append(r.account_id)
+        out: dict[str, dict[str, str]] = {}
+        for pid, account_ids in by_pid.items():
+            if len(account_ids) != 1:
+                continue  # multi-account ambiguity — defer to the operator dialog
+            aid = account_ids[0]
+            if not isinstance(aid, str) or not aid:
+                continue
+            if multi_host:
+                # The requester must have reported this provider's
+                # synthetic origin (blocked card / untagged events)
+                # before the deployment-wide single-account identity
+                # is allowed to reach it.
+                reported = session.exec(
+                    select(PendingCredentialTag.id).where(
+                        PendingCredentialTag.sidecar_id == sidecar_id,  # type: ignore[arg-type]
+                        PendingCredentialTag.provider_id == pid,
+                        PendingCredentialTag.credential_origin == f"provider:{pid}",
+                    )
+                ).first()
+                if reported is None:
+                    continue
+            # The hint key matches ``scripts/sidecar.py:credential_origin_for_provider``,
+            # which is the same descriptor the sidecar reports to
+            # /fleet/credentials/manifest when an origin is untagged.
+            out.setdefault(pid, {})[f"provider:{pid}"] = aid
+        return out

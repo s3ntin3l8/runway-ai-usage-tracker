@@ -334,7 +334,7 @@ def test_the_provider_configs_list_names_where_a_merged_account_went(client, ses
 def test_the_credential_inventory_lists_the_merged_accounts(client, session, monkeypatch):
     """The inventory holds no credential for a merged-away account, so the
     merges are a list of their own."""
-    from app.services import credential_inventory
+    from app.services.credentials import inventory as credential_inventory
 
     monkeypatch.setattr(credential_inventory, "engine", session.get_bind())
     monkeypatch.setattr(credential_inventory, "_scan_server_credentials", lambda: ({}, set()))
@@ -359,7 +359,7 @@ def test_building_the_inventory_gives_its_connection_back(client, session, monke
     nothing ever returns to the pool — one leaked connection per build, and a
     file handle that stays open, which is what breaks the Windows suite.
     """
-    from app.services import credential_inventory
+    from app.services.credentials import inventory as credential_inventory
 
     engine = session.get_bind().engine
     monkeypatch.setattr(credential_inventory, "engine", engine)
