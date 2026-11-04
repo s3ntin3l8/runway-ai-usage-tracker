@@ -1,16 +1,36 @@
 # app/services/accumulator.py
 import json
 import logging
-from collections.abc import Iterable
 from datetime import UTC, datetime
-from typing import Any
 
 from sqlalchemy.exc import IntegrityError
-from sqlmodel import Session, col, delete, or_, select
+from sqlmodel import Session, col, delete, select
 
 from app.core.date_utils import parse_iso8601_utc
-from app.core.utils import is_error_card_dict, with_failing_prefix
-from app.services.account_merges import resolve_merged_account
+from app.core.utils import is_error_card_dict
+from app.services import accumulator_upsert
+from app.services.latest_usage_contributions import (
+    _upsert_contribution,
+    backfill_latest_usage_contributions,
+    mark_latest_usage_source_stale,
+    prune_orphan_latest_usage_contributions,
+    reconcile_latest_usage_snapshot,
+)
+
+# Re-exported so existing imports and patches of app.services.accumulator
+# keep resolving the moved contribution helpers.
+__all__ = [
+    "_upsert_contribution",
+    "backfill_latest_usage_contributions",
+    "evict_orphan_error_rows",
+    "mark_latest_usage_source_stale",
+    "merge_card_json",
+    "prune_orphan_latest_usage_contributions",
+    "prune_stale_latest_usage",
+    "reconcile_latest_usage_snapshot",
+    "record_quota_snapshot",
+    "upsert_latest_usage",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -168,304 +188,7 @@ def _is_error_card(card_json: str | None) -> bool:
     return is_error_card_dict(data)
 
 
-def _latest_usage_sidecar_id(contributions: Iterable[Any], *, provider_id: str) -> str:
-    """Select the materialized owner from contributions ordered oldest first."""
-    latest_owner = "local"
-    latest_fresh_sidecar_id: str | None = None
-    has_fresh_server_source = False
-
-    for contribution in contributions:
-        source_kind, source_scope, source_provider = _parse_source_id(contribution.source_id)
-        if source_provider != provider_id:
-            continue
-        latest_owner = source_scope if source_kind == "sidecar" else "local"
-        if json.loads(contribution.card_json or "{}").get("stale") is True:
-            continue
-        if source_kind == "server":
-            has_fresh_server_source = True
-        elif source_kind == "sidecar":
-            latest_fresh_sidecar_id = source_scope
-
-    if has_fresh_server_source:
-        return "local"
-    return latest_fresh_sidecar_id or latest_owner
-
-
-def _rebuild_latest_usage_slot(
-    session: Session,
-    *,
-    provider_id: str,
-    account_id: str,
-    window_type: str,
-    variant: str,
-    model_id: str,
-) -> None:
-    """Materialize one logical card from the sources that still report it."""
-    from app.models.db import LatestUsage, LatestUsageContribution
-
-    contributions = session.exec(
-        select(LatestUsageContribution)
-        .where(
-            LatestUsageContribution.provider_id == provider_id,
-            LatestUsageContribution.account_id == account_id,
-            LatestUsageContribution.window_type == window_type,
-            LatestUsageContribution.variant == variant,
-            LatestUsageContribution.model_id == model_id,
-        )
-        .order_by(
-            col(LatestUsageContribution.updated_at),
-            col(LatestUsageContribution.source_id),
-        )
-    ).all()
-    row = session.exec(
-        select(LatestUsage).where(
-            LatestUsage.provider_id == provider_id,
-            LatestUsage.account_id == account_id,
-            LatestUsage.window_type == window_type,
-            LatestUsage.variant == variant,
-            LatestUsage.model_id == model_id,
-        )
-    ).first()
-    if not contributions:
-        if row:
-            session.delete(row)
-        return
-
-    merged: str | None = None
-    stale = True
-    latest_at = None
-    for contribution in contributions:
-        payload = json.loads(contribution.card_json or "{}")
-        merged = merge_card_json(merged, payload)
-        stale = stale and payload.get("stale") is True
-        latest_at = contribution.updated_at
-    sidecar_id = _latest_usage_sidecar_id(contributions, provider_id=provider_id)
-    data = json.loads(merged or "{}")
-    if stale:
-        data["stale"] = True
-        data["collection_failing"] = True
-    else:
-        data.pop("stale", None)
-        data.pop("collection_failing", None)
-    materialized = json.dumps(data)
-    if row:
-        row.card_json = materialized
-        row.sidecar_id = sidecar_id
-        row.updated_at = latest_at or datetime.now(UTC)
-    else:
-        session.add(
-            LatestUsage(
-                provider_id=provider_id,
-                account_id=account_id,
-                sidecar_id=sidecar_id,
-                window_type=window_type,
-                variant=variant,
-                model_id=model_id,
-                card_json=materialized,
-                updated_at=latest_at or datetime.now(UTC),
-            )
-        )
-
-
-def _upsert_contribution(
-    session: Session, *, source_id: str, card: Any, account_id: str, card_json: dict
-) -> None:
-    from app.models.db import LatestUsageContribution
-
-    row = session.exec(
-        select(LatestUsageContribution).where(
-            LatestUsageContribution.provider_id == card.provider_id,
-            LatestUsageContribution.account_id == account_id,
-            LatestUsageContribution.source_id == source_id,
-            LatestUsageContribution.window_type == card.window_type,
-            LatestUsageContribution.variant == (card.variant or "default"),
-            LatestUsageContribution.model_id == (card.model_id or ""),
-        )
-    ).first()
-    encoded = json.dumps(card_json)
-    now = datetime.now(UTC)
-    if row:
-        previous = json.loads(row.card_json or "{}")
-        # A fresh successful card can recover from a stale source even when
-        # that card has no quota fields (for example, a token-count card).
-        previous.pop("stale", None)
-        previous.pop("collection_failing", None)
-        row.card_json = merge_card_json(json.dumps(previous), card_json)
-        row.updated_at = now
-    else:
-        session.add(
-            LatestUsageContribution(
-                provider_id=card.provider_id,
-                account_id=account_id,
-                source_id=source_id,
-                window_type=card.window_type,
-                variant=card.variant or "default",
-                model_id=card.model_id or "",
-                card_json=encoded,
-                updated_at=now,
-            )
-        )
-
-
-def backfill_latest_usage_contributions(session: Session) -> int:
-    """Seed producer ownership from existing current cards on upgrade."""
-    from app.models.db import LatestUsage, LatestUsageContribution
-
-    rows = session.exec(select(LatestUsage)).all()
-    inserted = 0
-    for row in rows:
-        try:
-            data = json.loads(row.card_json or "{}")
-        except (ValueError, TypeError):
-            continue
-        if _is_error_card(row.card_json):
-            continue
-        # Existing rows predate source ownership and may contain merged
-        # provenance. Prefer the API collector when it was one of the sources;
-        # otherwise retain the sidecar that last wrote the row.
-        data_sources = set(str(data.get("data_source") or "").split(","))
-        if row.sidecar_id == "local" or "api" in data_sources:
-            source_id = f"server:{row.provider_id}"
-        else:
-            source_id = _source_id(row.provider_id, row.sidecar_id or "local")
-        existing = session.exec(
-            select(LatestUsageContribution).where(
-                LatestUsageContribution.provider_id == row.provider_id,
-                LatestUsageContribution.account_id == row.account_id,
-                LatestUsageContribution.source_id == source_id,
-                LatestUsageContribution.window_type == row.window_type,
-                LatestUsageContribution.variant == row.variant,
-                LatestUsageContribution.model_id == row.model_id,
-            )
-        ).first()
-        if existing:
-            continue
-        session.add(
-            LatestUsageContribution(
-                provider_id=row.provider_id,
-                account_id=row.account_id,
-                source_id=source_id,
-                window_type=row.window_type,
-                variant=row.variant,
-                model_id=row.model_id,
-                card_json=row.card_json,
-                updated_at=row.updated_at,
-            )
-        )
-        inserted += 1
-    return inserted
-
-
-def prune_orphan_latest_usage_contributions(session: Session) -> int:
-    """Drop source rows whose materialized LatestUsage slot was deleted."""
-    from app.models.db import LatestUsage, LatestUsageContribution
-
-    live_slots = {
-        (row.provider_id, row.account_id, row.window_type, row.variant, row.model_id)
-        for row in session.exec(select(LatestUsage)).all()
-    }
-    contributions = session.exec(select(LatestUsageContribution)).all()
-    removed = 0
-    for row in contributions:
-        key = (row.provider_id, row.account_id, row.window_type, row.variant, row.model_id)
-        if key not in live_slots:
-            session.delete(row)
-            removed += 1
-    return removed
-
-
-def reconcile_latest_usage_snapshot(
-    session: Session,
-    *,
-    provider_id: str,
-    account_id: str,
-    source_id: str,
-    reported_keys: set[tuple[str, str, str]],
-) -> int:
-    """Remove this source's cards absent from a complete provider/account report."""
-    from app.models.db import LatestUsageContribution
-
-    current = session.exec(
-        select(LatestUsageContribution).where(
-            LatestUsageContribution.provider_id == provider_id,
-            LatestUsageContribution.account_id == account_id,
-            LatestUsageContribution.source_id == source_id,
-        )
-    ).all()
-    removed = 0
-    touched: set[tuple[str, str, str]] = set()
-    for row in current:
-        key = (row.window_type, row.variant, row.model_id)
-        if key in reported_keys:
-            continue
-        session.delete(row)
-        touched.add(key)
-        removed += 1
-    for window_type, variant, model_id in touched:
-        _rebuild_latest_usage_slot(
-            session,
-            provider_id=provider_id,
-            account_id=account_id,
-            window_type=window_type,
-            variant=variant,
-            model_id=model_id,
-        )
-    return removed
-
-
-def mark_latest_usage_source_stale(
-    session: Session,
-    *,
-    provider_id: str,
-    source_id: str,
-    account_id: str | None = None,
-    stale_after_seconds: int = 3600,
-    reason: str | None = None,
-) -> int:
-    """Mark last-good source cards stale after sustained collection failure.
-
-    ``reason`` says why collection is failing; it is shown in the card's detail
-    prefix and replaced (never stacked) when a later failure has a new reason.
-
-    ``account_id`` scopes the operation when a server account is no longer
-    active, while ``None`` preserves the provider-wide failure behavior.
-    """
-    from app.models.db import LatestUsageContribution
-
-    statement = select(LatestUsageContribution).where(
-        LatestUsageContribution.provider_id == provider_id,
-        LatestUsageContribution.source_id == source_id,
-    )
-    if account_id is not None:
-        statement = statement.where(LatestUsageContribution.account_id == account_id)
-    rows = session.exec(statement).all()
-    touched = set()
-    now = datetime.now(UTC)
-    for row in rows:
-        updated_at = row.updated_at
-        if updated_at.tzinfo is None:
-            updated_at = updated_at.replace(tzinfo=UTC)
-        if (now - updated_at).total_seconds() <= stale_after_seconds:
-            continue
-        data = json.loads(row.card_json or "{}")
-        data["stale"] = True
-        data["collection_failing"] = True
-        data["detail"] = with_failing_prefix(data.get("detail") or "", reason)
-        row.card_json = json.dumps(data)
-        touched.add((row.account_id, row.window_type, row.variant, row.model_id))
-    for touched_account_id, window_type, variant, model_id in touched:
-        _rebuild_latest_usage_slot(
-            session,
-            provider_id=provider_id,
-            account_id=touched_account_id,
-            window_type=window_type,
-            variant=variant,
-            model_id=model_id,
-        )
-    return len(touched)
-
-
-def upsert_latest_usage(  # noqa: PLR0915
+def upsert_latest_usage(
     session: Session,
     card_dict: dict,
     *,
@@ -491,317 +214,24 @@ def upsert_latest_usage(  # noqa: PLR0915
         sidecar_id_override: Override for sidecar_id column; falls back to
                             card_dict["sidecar_id"] then "local".
     """
-    from app.models.db import LatestUsage
-    from app.models.schemas import LimitCard
-    from app.services.account_identity import resolve_account_id
-    from app.services.window_closer import _maybe_close_previous_window
-
-    try:
-        card = LimitCard(**card_dict)
-    except Exception as e:
-        logger.warning(f"upsert_latest_usage: invalid card shape — {e}")
+    card = accumulator_upsert.validate_card(card_dict)
+    if card is None:
         return
-
-    if not card.provider_id or not card.account_id:
-        return
-    if card.data_source == "cache":
-        return
-
-    canonical_account_id = resolve_account_id(card.provider_id, card.account_id, card.account_label)
-    # A card may claim an account that was merged away: the account — and the
-    # usage it reports — now belongs to the merge's destination, so the card
-    # must not bring the retired account back.
-    canonical_account_id = resolve_merged_account(session, card.provider_id, canonical_account_id)
-    sidecar_id = sidecar_id_override or card.sidecar_id or "local"
-    contribution_source_id = source_id or _source_id(card.provider_id, sidecar_id)
-    variant = card.variant or "default"
-    model_id = card.model_id or ""
-    incoming_partial = card.model_dump(exclude_none=True)
-    # Always embed the canonical account_id so the card_json grouping key
-    # matches the column (fleet API groups by card_json, not by the column).
-    incoming_partial["account_id"] = canonical_account_id
-
-    is_error = (
-        bool(incoming_partial.get("error_type"))
-        or incoming_partial.get("data_source") == "error"
-        or incoming_partial.get("remaining") == "ERR"
+    prepared = accumulator_upsert.canonicalize_account(
+        session,
+        card,
+        sidecar_id_override=sidecar_id_override,
+        source_id=source_id,
     )
-
-    # Suppress error cards when a healthy row already covers this account slot.
-    # A failed poll cycle must not write a permanent orphan row that shows up
-    # as an extra fleet-strip light next to the healthy row it can't evict.
-    if is_error:
-        try:
-            same_account_rows = session.exec(
-                select(LatestUsage).where(
-                    LatestUsage.provider_id == card.provider_id,
-                    LatestUsage.account_id == canonical_account_id,
-                )
-            ).all()
-            if any(not _is_error_card(r.card_json) for r in same_account_rows):
-                logger.debug(
-                    "Skipping error card for %s/%s — healthy row exists",
-                    card.provider_id,
-                    canonical_account_id,
-                )
-                return
-            if canonical_account_id == "default":
-                # Multi-account hardening: only suppress when a real-account
-                # row already exists for the SAME (provider_id, window_type,
-                # variant, model_id) slot. Pre-fix logic checked provider-level
-                # only, which would silently kill a legitimate default-account
-                # error card for a slot that no real-account row covers.
-                slot_real_row = session.exec(
-                    select(LatestUsage).where(
-                        LatestUsage.provider_id == card.provider_id,
-                        LatestUsage.account_id != "default",
-                        LatestUsage.window_type == card.window_type,
-                        LatestUsage.variant == variant,
-                        LatestUsage.model_id == model_id,
-                    )
-                ).first()
-                if slot_real_row:
-                    logger.debug(
-                        "Skipping default-account error card for %s/%s/%s/%s — "
-                        "same-slot real account row exists",
-                        card.provider_id,
-                        card.window_type,
-                        variant,
-                        model_id,
-                    )
-                    return
-        except Exception as e:
-            logger.debug("Error-suppression check failed for %s: %s", card.provider_id, e)
-
-    try:
-        with session.begin_nested():
-            # When a model-specific card's window_type changes (e.g. Antigravity
-            # switching from "session" to "weekly" on cooldown), delete any stale rows
-            # for the same (provider, account, variant, model) that carry a different
-            # window_type. Because window_type is part of the unique key, an upsert
-            # would otherwise create a second row alongside the old one indefinitely.
-            #
-            # Guard: only fire for model-specific cards (model_id != ""). Aggregate
-            # cards (model_id == "") can legitimately have multiple window_types for
-            # the same provider — e.g. Anthropic emits both a "session" card (five_hour)
-            # and a "weekly" card (seven_day) at the aggregate level. Deleting across
-            # window_types for those would silently destroy valid data.
-            if model_id:
-                # `col()` is needed here (vs the bare `Model.field == x` style
-                # used elsewhere) because SQLModel's `delete().where()` stubs
-                # don't track the column-comparison return type the way
-                # `select().where()` does — mypy sees a `bool` otherwise.
-                session.exec(
-                    delete(LatestUsage).where(
-                        col(LatestUsage.provider_id) == card.provider_id,
-                        col(LatestUsage.account_id) == canonical_account_id,
-                        col(LatestUsage.variant) == variant,
-                        col(LatestUsage.model_id) == model_id,
-                        col(LatestUsage.window_type) != card.window_type,
-                    )
-                )
-
-            existing = session.exec(
-                select(LatestUsage).where(
-                    LatestUsage.provider_id == card.provider_id,
-                    LatestUsage.account_id == canonical_account_id,
-                    LatestUsage.window_type == card.window_type,
-                    LatestUsage.variant == variant,
-                    LatestUsage.model_id == model_id,
-                )
-            ).first()
-
-            # Window-close detection: if reset_at has advanced, archive the
-            # just-closed window before overwriting.
-            if existing and card.reset_at:
-                try:
-                    new_reset_dt = parse_iso8601_utc(card.reset_at)
-                    _maybe_close_previous_window(
-                        session,
-                        existing=existing,
-                        provider_id=card.provider_id,
-                        account_id=canonical_account_id,
-                        window_type=card.window_type,
-                        new_reset_at=new_reset_dt,
-                    )
-                except Exception as exc:
-                    logger.debug(
-                        f"Window-close detection skipped for "
-                        f"{card.provider_id}/{canonical_account_id}: {exc}"
-                    )
-
-            if existing:
-                existing.card_json = merge_card_json(existing.card_json, incoming_partial)
-                existing.sidecar_id = sidecar_id
-                existing.updated_at = datetime.now(UTC)
-            else:
-                session.add(
-                    LatestUsage(
-                        provider_id=card.provider_id,
-                        account_id=canonical_account_id,
-                        sidecar_id=sidecar_id,
-                        window_type=card.window_type,
-                        variant=variant,
-                        model_id=model_id,
-                        card_json=merge_card_json(None, incoming_partial),
-                    )
-                )
-    except Exception as e:
-        logger.warning(
-            f"LatestUsage upsert failed for "
-            f"{card.provider_id}/{canonical_account_id}/{card.window_type}: {e}"
-        )
+    if accumulator_upsert.error_card_is_suppressed(session, prepared):
         return
-
-    if not is_error:
-        try:
-            _upsert_contribution(
-                session,
-                source_id=contribution_source_id,
-                card=card,
-                account_id=canonical_account_id,
-                card_json=incoming_partial,
-            )
-            _rebuild_latest_usage_slot(
-                session,
-                provider_id=card.provider_id,
-                account_id=canonical_account_id,
-                window_type=card.window_type,
-                variant=variant,
-                model_id=model_id,
-            )
-        except Exception as exc:
-            logger.warning(
-                "LatestUsage contribution write failed for %s/%s/%s: %s",
-                card.provider_id,
-                canonical_account_id,
-                card.window_type,
-                exc,
-            )
-
-    # Evict any pre-canonicalization row stored under the raw account_id
-    # (typically "default") when resolve_account_id mapped it to a different
-    # canonical identity (e.g. an email). Avoids duplicate fleet entries.
-    raw_account_id = card.account_id or "default"
-    if raw_account_id != canonical_account_id:
-        try:
-            with session.begin_nested():
-                stale = session.exec(
-                    select(LatestUsage).where(
-                        LatestUsage.provider_id == card.provider_id,
-                        LatestUsage.account_id == raw_account_id,
-                        LatestUsage.window_type == card.window_type,
-                        LatestUsage.variant == variant,
-                        LatestUsage.model_id == model_id,
-                    )
-                ).first()
-                if stale:
-                    session.delete(stale)
-        except Exception as e:
-            logger.warning(
-                f"Stale row eviction failed for "
-                f"{card.provider_id}/{raw_account_id}/{card.window_type}: {e}"
-            )
-
-    # When any healthy card lands, evict stale orphaned error rows:
-    # - error rows for this exact (provider_id, canonical_account_id) outside
-    #   the slot just written (different window_type, variant, or model_id)
-    # - default-account error rows in the same slot when this is a real account
-    if not is_error:
-        try:
-            with session.begin_nested():
-                same_account_errors = session.exec(
-                    select(LatestUsage).where(
-                        LatestUsage.provider_id == card.provider_id,
-                        LatestUsage.account_id == canonical_account_id,
-                        or_(
-                            LatestUsage.window_type != card.window_type,
-                            LatestUsage.variant != variant,
-                            LatestUsage.model_id != model_id,
-                        ),
-                    )
-                ).all()
-                for row in same_account_errors:
-                    if _is_error_card(row.card_json):
-                        session.delete(row)
-
-                if canonical_account_id != "default":
-                    slot_default_errors = session.exec(
-                        select(LatestUsage).where(
-                            LatestUsage.provider_id == card.provider_id,
-                            LatestUsage.account_id == "default",
-                            LatestUsage.window_type == card.window_type,
-                            LatestUsage.variant == variant,
-                            LatestUsage.model_id == model_id,
-                        )
-                    ).all()
-                    for row in slot_default_errors:
-                        if _is_error_card(row.card_json):
-                            session.delete(row)
-        except Exception as e:
-            logger.warning(
-                "Orphan error row eviction failed for %s/%s: %s",
-                card.provider_id,
-                canonical_account_id,
-                e,
-            )
-
-    # Evict a stale aggregate error card (model_id="") when a fresh per-model
-    # card arrives for the same (provider, account, window_type, variant).
-    # Transient collection failures write an error placeholder with model_id=""
-    # that would otherwise persist alongside healthy per-model cards indefinitely.
-    if not is_error and model_id != "":
-        try:
-            with session.begin_nested():
-                stale_error = session.exec(
-                    select(LatestUsage).where(
-                        LatestUsage.provider_id == card.provider_id,
-                        LatestUsage.account_id == canonical_account_id,
-                        LatestUsage.window_type == card.window_type,
-                        LatestUsage.variant == variant,
-                        LatestUsage.model_id == "",
-                    )
-                ).first()
-                if stale_error:
-                    stale_json = json.loads(stale_error.card_json or "{}")
-                    if (
-                        stale_json.get("data_source") == "error"
-                        or stale_json.get("remaining") == "ERR"
-                    ):
-                        session.delete(stale_error)
-        except Exception as e:
-            logger.warning(
-                f"Stale error card eviction failed for "
-                f"{card.provider_id}/{canonical_account_id}/{card.window_type}: {e}"
-            )
-
-    # Append quota snapshot for % used history (only when quota data is present).
-    # Derive pct_used from used_value when unit_type=percent (e.g. Claude web scraper)
-    # or from used_value/limit_value ratio when both are present.
-    effective_pct = card.pct_used
-    if effective_pct is None and card.used_value is not None:
-        if card.unit_type == "percent":
-            effective_pct = card.used_value
-        elif card.limit_value and card.limit_value > 0:
-            effective_pct = (card.used_value / card.limit_value) * 100.0
-
-    if effective_pct is not None:
-        reset_at_dt = None
-        if card.reset_at:
-            try:
-                reset_at_dt = parse_iso8601_utc(card.reset_at)
-            except Exception:
-                logger.debug("Failed to parse reset_at for snapshot", exc_info=True)
-        record_quota_snapshot(
-            session,
-            provider_id=card.provider_id,
-            account_id=canonical_account_id,
-            window_type=card.window_type,
-            variant=variant,
-            model_id=model_id,
-            pct_used=effective_pct,
-            reset_at=reset_at_dt,
-        )
+    if not accumulator_upsert.savepoint_upsert(session, prepared):
+        return
+    accumulator_upsert.write_contribution(session, prepared)
+    accumulator_upsert.evict_stale_raw_account(session, prepared)
+    accumulator_upsert.evict_superseded_error_rows(session, prepared)
+    accumulator_upsert.evict_stale_aggregate_error(session, prepared)
+    accumulator_upsert.append_quota_snapshot(session, prepared)
 
 
 def prune_stale_latest_usage(
