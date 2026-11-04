@@ -1,5 +1,10 @@
-"""Backward-compatibility shim: table classes live in domain modules."""
+"""Backward-compatibility shim: table classes live in domain modules.
 
+Import this module, not a domain module, before ``SQLModel.metadata.create_all``.
+A domain module registers only its own tables.
+"""
+
+from app.core.encryption import encryption_service
 from app.models.db_claude_cloud import (
     ClaudeCloudCollectorState,
     ClaudeCloudSessionCheckpoint,
@@ -52,6 +57,7 @@ __all__ = [
     "ClaudeCloudVerificationArchive",
     "CredentialSource",
     "CredentialTag",
+    "encryption_service",
     "LatestUsage",
     "LatestUsageContribution",
     "PendingCredentialTag",
