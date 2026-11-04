@@ -16,6 +16,8 @@ from app.core.expiry import expiry_seconds
 from app.core.registry import registry
 from app.models.db import ProviderConfig
 
+# Hardcoded name keeps the pre-move log channel. Filters still match
+# app.services.credential_provider; do not switch this to __name__.
 logger = logging.getLogger("app.services.credential_provider")
 
 try:
