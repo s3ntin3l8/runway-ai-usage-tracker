@@ -600,8 +600,6 @@ class TokenCache(TokenCacheStore):
             return results
 
 
-_get_source_credentials = TokenCache._get_source_credentials
-
 __all__ = [
     "AUTH_VALUE_KEYS",
     "OAUTH_TOKEN_VALUE_KEYS",
@@ -610,7 +608,6 @@ __all__ = [
     "TokenCacheStore",
     "_OAUTH_CREDENTIAL_KEYS",
     "_active_source",
-    "_get_source_credentials",
     "_merge_cli_family",
     "_resolve_source",
     "borrowable_entries",
