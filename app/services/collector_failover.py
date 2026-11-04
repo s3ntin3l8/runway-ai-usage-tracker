@@ -33,6 +33,14 @@ class CollectorFailover:
     and the Claude publication/identity cluster this loop calls back into.
     """
 
+    def __getattr__(self, name: str) -> Any:
+        """Methods that stay on CollectorManager are reached through the subclass.
+
+        Declaring ``__getattr__`` tells the type checker those callbacks exist
+        without shadowing them: instance and subclass lookup still wins.
+        """
+        raise AttributeError(name)
+
     @staticmethod
     async def _source_candidates(
         provider_id: object, account_id: object, identity_verification: bool
