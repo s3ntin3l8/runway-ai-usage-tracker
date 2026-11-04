@@ -1,914 +1,124 @@
-import html
-import re
-import unicodedata
-from typing import Any, Literal
-
-from pydantic import BaseModel, ConfigDict, Field, field_validator
-
-#: How long a reported git repository name may be. The name becomes a project
-#: label, so it is bounded like every other label the server stores.
-_PROJECT_REF_MAX_LENGTH = 128
-
-
-class CreditBalanceComponent(BaseModel):
-    """One purchased or promotional tranche explaining an upstream balance."""
-
-    kind: Literal["purchased", "subscription", "promotion"]
-    label: str
-    currency: str
-    remaining_value: float
-    granted_value: float | None = None
-    expires_at: str | None = None
-    products: list[str] = Field(default_factory=list)
-
-
-class LimitCard(BaseModel):
-    service_name: str
-    icon: str = "❓"
-    remaining: str = "—"
-    unit: str = "units"
-    reset: str = "—"
-    health: str = "unknown"
-    pace: str = "unknown"
-    detail: str = ""
-    # Raw values for consistent percentage calculations
-    used_value: float | None = None
-    limit_value: float | None = None
-    is_unlimited: bool = False
-    unit_type: str = "generic"  # "currency", "tokens", "requests", "minutes", "percent", "generic"
-    currency: str | None = None  # "USD", "EUR", "CNY", etc.
-    credit_breakdown: list[CreditBalanceComponent] | None = None
-    # ISO 8601 timestamp for hover tooltip with absolute time
-    reset_at: str | None = None
-    # Data collection mechanism (how)
-    data_source: str = "unknown"  # "api", "web", "local", "unknown", "error"
-    # Credential/Token origin (where)
-    input_source: str = "unknown"  # "sidecar", "config", "server"
-    # Error categorization
-    error_type: str | None = None
-    # Tier classification (None = no badge shown)
-    tier: str | None = None  # "Free", "Pro", "Premium", "Team", "Enterprise"
-    # What kind of evidence this card is (None = it can decide the billing model)
-    billing_evidence: str | None = None  # "placeholder" | "prepaid_credit"
-    # URL to provider's usage/settings page
-    usage_url: str | None = None
-    # ISO 8601 timestamp when data was last collected/updated
-    updated_at: str | None = None
-    # Arbitrary metadata for internal transport (e.g. token extraction)
-    metadata: dict[str, Any] | None = Field(default_factory=dict)
-
-    # Phase 0B: Promoted schema fields
-    provider_id: str | None = None  # e.g. "anthropic", "openai"
-    account_id: str | None = None  # Unique account hash/ID
-    account_label: str | None = None  # Human-readable: email, org name
-    model_id: str | None = None  # None=aggregate snapshot; specific=per-model
-    sidecar_id: str | None = None  # Originating host FQDN/tag; None=local
-    window_type: str = "unknown"  # "session","daily","weekly","monthly","rolling","unknown"
-    variant: str | None = (
-        None  # per-card disambiguator under same (provider, account, model_id, window_type)
-    )
-    # Explicit signal that this card shares a physical quota with other cards
-    # carrying the same non-null value. Set by collectors that know multiple
-    # model rows draw from one bucket (e.g. Antigravity's per-model session
-    # cards all reference the same session limit). Cards with `None` stand
-    # alone — the dashboard never clusters them by behavioral similarity.
-    # Convention: f"{provider_id}:{window_type}:{reset_at_iso}".
-    quota_pool_id: str | None = None
-    # Token usage breakdown from usage page scraping
-    token_usage: dict[str, Any] | None = (
-        None  # {"input": 0, "output": 0, "reasoning": 0, "cache_read": 0, "total": 0}
-    )
-    by_model: dict[str, Any] | None = (
-        None  # {"model-name": {"cost": float, "msgs": int, "tokens": dict}}
-    )
-    msgs: int | None = None  # Total message count
-    pct_used: float | None = None  # Percentage used (based on cost vs limit)
-    # Set by SmartCollector when cache age exceeds STALE_CEILING_SECONDS.
-    # Signals collection failure — the card data is real but old. The frontend
-    # uses this to skip the health→critical override so stale cards don't
-    # appear in the at-risk rail unless quota is genuinely near the limit.
-    stale: bool = False
-    # Set alongside `stale` when SmartCollector serves past-STALE_CEILING
-    # cache because collection is failing, and by the startup residual scrub
-    # for pre-#293 rows. Every current writer sets it together with `stale`
-    # (and the merge recovery pops both) — cardStale() still ORs them so the
-    # structured field alone is sufficient once the detail-regex fallback is
-    # removed (#312). The frontend prefers this field over parsing the detail
-    # display string.
-    collection_failing: bool = False
-
-    @field_validator(
-        "service_name", "remaining", "unit", "reset", "pace", "detail", "tier", "variant"
-    )
-    @classmethod
-    def escape_html_fields(cls, v: str) -> str:
-        if v:
-            return html.escape(v)
-        return v
-
-    model_config = ConfigDict(
-        # Include None values in serialized output so frontend can check for tier field
-        serialize_default_excluded=False,  # type: ignore
-        # Allow extra fields so transport metadata like _enrichment_detail aren't stripped
-        extra="allow",
-    )
-
-
-class LimitsResponse(BaseModel):
-    limits: list[LimitCard]
-
-
-class UsageEventPush(BaseModel):
-    """One usage event pushed by a sidecar."""
-
-    provider_id: str
-    account_id: str
-    event_id: str  # dedup key
-    ts: str  # ISO-8601 (UTC) of the actual event
-    model_id: str | None = None
-    # The client app that produced the event ("opencode", "claude_code",
-    # "minimax_code", ...). provider_id names the upstream provider billed,
-    # which several client apps share — a canonical-provider retag would
-    # otherwise erase where the traffic came from. Optional so an older
-    # sidecar still pushes valid events; the server then falls back to
-    # provider_id.
-    source_app: str | None = None
-    session_id: str | None = None
-    subagent_type: str | None = None  # "Explore" | "Plan" | None for main thread
-    # The provider's own turn identifier, when it has one. A provider that
-    # emits one event per *request* (MiniMax Code) uses it to count turns
-    # instead of requests; a provider that emits one event per message leaves
-    # it unset, and the turn count falls back to the event count.
-    turn_id: str | None = None
-    # Working-directory / project context (enrichment). cwd = raw per-message
-    # path; the server derives `project` (root basename) in EventIngestor via
-    # app/services/project_label.py. tool_names = the tool_use block names in the
-    # message (Anthropic), stored as a JSON array.
-    cwd: str | None = None
-    # The git repository the working directory belongs to, as the *name* only
-    # ("runway-ai-usage-tracker") — never the remote URL, which can carry
-    # credentials. The client resolves it on its own host, because the server
-    # never reads the client's filesystem. Optional: an older sidecar sends
-    # none, and the server then labels the row with the folder's name.
-    #
-    # The bound and the character filter live here as well as in the client:
-    # this value ends up in the indexed, UI-facing project label, so the
-    # invariant has to hold for any client, not only the one we ship.
-    project_ref: str | None = Field(default=None, max_length=_PROJECT_REF_MAX_LENGTH)
-
-    @field_validator("project_ref", mode="before")
-    @classmethod
-    def clean_project_ref(cls, value: Any) -> str | None:
-        """A reported repository name: printable characters, bounded, not empty.
-
-        A name never holds a path separator — a basename cannot — so a value
-        that does is not a name and is dropped: it would pin a path-shaped
-        label, which the `path_shaped_projects` repair then relabels back to
-        the folder's name, and the two fixes would fight over the same rows.
-        """
-        if value is None:
-            return None
-        cleaned = "".join(char for char in str(value) if char.isprintable()).strip()
-        if not cleaned or "/" in cleaned or "\\" in cleaned:
-            return None
-        return cleaned[:_PROJECT_REF_MAX_LENGTH] or None
-
-    git_branch: str | None = None
-    tool_names: list[str] | None = None
-    tokens_input: int = 0
-    tokens_output: int = 0
-    tokens_cache_read: int = 0
-    tokens_cache_create: int = 0
-    # Anthropic splits cache writes by TTL (1h writes cost 2x base input, 5m cost
-    # 1.25x); tokens_cache_create stays the sum of these two so back-compat
-    # readers/rollups need no change. Both 0 (old sidecars, other providers)
-    # means "split unknown" and cost_calculator treats the total as all-5m.
-    tokens_cache_create_1h: int = 0
-    tokens_cache_create_5m: int = 0
-    tokens_reasoning: int = 0
-    stop_reason: str | None = None
-    tool_calls: int = 0
-    latency_ms: int | None = None
-    raw_json: str | None = None
-    # OpenCode's raw providerID (gateway/billing tier tag), forwarded by the
-    # sidecar so the server can stop guessing OpenRouter traffic from the
-    # model id. Optional: older sidecars send none and the server falls back
-    # to the model-id shape test.
-    raw_provider_id: str | None = None
-    # Claude Code per-message dimensions (from JSONL, otherwise None/0 for
-    # providers/older sidecars that don't emit them).
-    effort: str | None = None  # "low" | "medium" | "high" | "xhigh" | "max"
-    speed: str | None = None  # "fast" when fast mode was active, else "standard"
-    service_tier: str | None = None  # "standard" | "priority" | "batch"
-    entrypoint: str | None = None  # "cli" | "sdk-ts" | "claude-vscode" | ...
-    app_version: str | None = None  # Claude Code version that logged the message
-    web_search_requests: int = 0
-    web_fetch_requests: int = 0
-    # cost_usd: set by providers that log it directly (e.g. OpenCode); None = server computes
-    # sidecar_id intentionally NOT here — comes from IngestRequest.sidecar_id
-    cost_usd: float | None = None
-    # Attribution decision made while reading the source logs. Missing legacy
-    # values are treated as unresolved when account_id is the default sentinel.
-    account_source: str | None = None  # local | tag | default
-    credential_origin: str | None = Field(
-        default=None, max_length=4096
-    )  # directory-scoped event origin
-    kind: str = "message"  # "message" | "error"; reserved: "reset", "anomaly"
-    error_reason: str | None = (
-        None  # short tag: "rate_limit", "auth_failed", "quota_exceeded", "timeout"
-    )
-
-
-class LoginDirectorySettings(BaseModel):
-    claude_config_dirs: list[str] = Field(default_factory=list)
-    codex_home: list[str] = Field(default_factory=list)
-
-    @field_validator("claude_config_dirs", "codex_home", mode="before")
-    @classmethod
-    def directories_only(cls, value: Any) -> list[str]:
-        from app.core.login_dirs import validate_directories
-
-        return validate_directories(value)
-
-
-class LoginDirectoryReport(BaseModel):
-    applied: LoginDirectorySettings = Field(default_factory=LoginDirectorySettings)
-    searched: dict[str, list[str]] = Field(default_factory=dict)
-
-    @field_validator("searched")
-    @classmethod
-    def bounded_search_paths(cls, value: dict[str, list[str]]) -> dict[str, list[str]]:
-        if set(value) - {"anthropic", "chatgpt"} or any(
-            len(paths) > 128
-            or any(len(path) > 4096 or any(ord(c) < 32 for c in path) for path in paths)
-            for paths in value.values()
-        ):
-            raise ValueError("Invalid searched directories")
-        return value
-
-
-def read_login_directory_report(value: str | None) -> LoginDirectoryReport | None:
-    if not value:
-        return None
-    try:
-        return LoginDirectoryReport.model_validate_json(value)
-    except ValueError:
-        return None
-
-
-SESSION_NAME_MAX_LENGTH = 200
-SESSION_NAMES_MAX_PER_REQUEST = 2000
-
-_WHITESPACE_RUN = re.compile(r"\s+")
-_JOINERS = frozenset("\u200c\u200d")
-
-
-class SessionNameIn(BaseModel):
-    """One session name reported by a sidecar (or a collector).
-
-    ``provider_id`` is the provider the sidecar stamps on that session's events
-    (the id the Sessions view filters by). ``kind`` is ``agent`` (set by the user
-    or a launcher) or ``generated`` (produced by the tool). The name is free
-    text that may hold sensitive wording: it is cleaned here and never logged.
-    """
-
-    provider_id: str
-    session_id: str
-    source_app: str | None = None
-    name: str
-    kind: Literal["agent", "generated"]
-
-    @field_validator("name", mode="before")
-    @classmethod
-    def clean_name(cls, value: Any) -> str:
-        """Control characters out, whitespace collapsed, bounded. May end up empty."""
-        if value is None:
-            return ""
-        # Control (Cc), surrogate (Cs) and invisible format (Cf: bidi overrides,
-        # ZWSP, LRM/RLM, BOM, soft hyphen) characters go. ZWJ/ZWNJ stay so emoji
-        # sequences and Persian/Arabic/Indic shaping survive, but a name made of
-        # nothing visible is dropped.
-        text = "".join(" " if char.isspace() else char for char in str(value))
-        text = "".join(
-            char
-            for char in text
-            if (cat := unicodedata.category(char)) not in ("Cc", "Cs")
-            and (cat != "Cf" or char in _JOINERS)
-        )
-        cleaned = _WHITESPACE_RUN.sub(" ", text).strip()[:SESSION_NAME_MAX_LENGTH]
-        cleaned = cleaned.rstrip("\u200c\u200d").strip()
-        return cleaned if any(char not in _JOINERS for char in cleaned) else ""
-
-
-class IngestRequest(BaseModel):
-    """Updated body for /api/v1/fleet/ingest."""
-
-    provider: str
-    metrics: list[LimitCard] = Field(default_factory=list)
-    events: list[UsageEventPush] = Field(default_factory=list)  # NEW
-    sidecar_id: str | None = None  # Originating host identifier (Phase 4B fleet mgmt)
-    sidecar_version: str | None = None  # App version from package.json
-    os_platform: str | None = None  # platform.system() + "/" + platform.release()
-    # Whether this build can self-update in place (frozen, non-Docker). None for
-    # sidecars that don't report it yet → server stays permissive.
-    self_update_capable: bool | None = None
-    # Whether the sidecar runs with --keep-alive. None from older sidecars → "unknown".
-    keep_alive: bool | None = None
-    # Per sidecar-run login (provider_id -> running); None from sidecars that predate it.
-    keep_alive_providers: dict[str, bool] | None = None
-    # Effective auto-update setting and update channel (local config beats the dashboard);
-    # None from sidecars that predate them.
-    auto_update: bool | None = None
-    update_channel: str | None = None
-    # Level the sidecar logs at now (config.json, or the dashboard's override); None from older ones.
-    log_level: str | None = None
-    login_dirs_report: LoginDirectoryReport | None = None
-    collection_errors: int = 0  # Number of provider collection failures in this cycle
-    # Providers with a complete local-card snapshot in this payload. None from
-    # older sidecars means upsert-only; [] is a complete empty report.
-    completed_providers: list[str] | None = None
-    last_log_lines: list[str] = Field(default_factory=list)
-    # provider_id → {"account_id", "source"}: which account this sidecar
-    # stamped each event provider's data with this cycle, and why
-    # ("local" | "tag" | "default"). None from sidecars that don't report it.
-    identity_sources: dict[str, dict[str, str]] | None = None
-    # Session names (display titles). Optional: an older sidecar sends none, and
-    # an older server ignores the field. Empty names are dropped by the server.
-    session_names: list[SessionNameIn] | None = None
-    # api_key is now passed via X-Signature header for security
-    # NOTE: deltas field removed — replaced by events[]
-
-    @field_validator("session_names", mode="before")
-    @classmethod
-    def lenient_session_names(cls, value: Any) -> list[SessionNameIn] | None:
-        """Names are best-effort: a malformed or surplus entry is dropped, never
-        a reason to reject the payload (its events must still be ingested)."""
-        if value is None:
-            return None
-        if not isinstance(value, list):
-            return None
-        kept: list[SessionNameIn] = []
-        for item in value[:SESSION_NAMES_MAX_PER_REQUEST]:
-            try:
-                entry = (
-                    item if isinstance(item, SessionNameIn) else SessionNameIn.model_validate(item)
-                )
-            except ValueError:
-                continue
-            if entry.name and entry.session_id and entry.provider_id:
-                kept.append(entry)
-        return kept
-
-
-class ForecastEntry(BaseModel):
-    provider_id: str
-    account_id: str | None
-    account_label: str | None
-    model_id: str | None
-    service_name: str
-    window_type: str
-    variant: str | None = None
-    unit_type: str
-    now_used: float | None
-    now_pct: float | None
-    projected_used: float | None
-    projected_pct: float | None
-    projected_limit_hit_at: str | None = None
-    limit_value: float
-    reset_at: str  # ISO-8601 UTC (copied from card)
-    window_start: str  # ISO-8601 UTC
-    samples_used: int
-    confidence: float  # 0.0–1.0
-    # "ok" | "warn" | "risk" | "insufficient_data" | "stable" | "exhausted"
-    # | "decelerating" | "low_resolution" | "near_limit"
-    status: str
-    method: str  # "linear" | "theil_sen"
-    # Pct per second from the trend fit; null when no fit. Lets the UI render
-    # trend arrows without re-inferring from projected vs current.
-    slope: float | None = None
-    # Glide-path target: where the card SHOULD be if usage were paced evenly
-    # across the window. = clamp(elapsed/total_window, 0, 1) × 100. Same numeric
-    # value as `confidence × 100`, but exposed separately because the metrics
-    # carry different semantics — confidence = "trust in the fit", glide_pct =
-    # "expected pace position". Matches dashboard fleet-commander.js formula.
-    glide_pct: float | None = None
-    # Optional drill-down payload populated only when the endpoint is called
-    # with ?include_series=true. Each item is {"ts": iso, "pct": float}.
-    series: list[dict[str, float | str]] | None = None
-
-
-class ForecastResponse(BaseModel):
-    forecasts: list[ForecastEntry]
-    # Keyed by status: risk, warn, ok, insufficient_data, stable, exhausted,
-    # decelerating, low_resolution, near_limit
-    summary: dict[str, int]
-    generated_at: str  # ISO-8601 UTC
-
-
-class TopModelEntry(BaseModel):
-    """One model's totals in the cross-provider Top Models ranking."""
-
-    model_id: str
-    msgs: int
-    tokens_total: int
-    tokens_input: int
-    tokens_output: int
-    tokens_cache_read: int
-    tokens_cache_create: int
-    tokens_reasoning: int
-    cost_usd: float
-    cost_cache: float  # cache_read + cache_create cost, for exclude-cache
-    cost_input: float = 0.0
-    cost_output: float = 0.0
-    cost_cache_read: float = 0.0
-    cost_cache_create: float = 0.0
-    providers: list[str]  # distinct providers that contributed this model
-
-
-class TopModelsResponse(BaseModel):
-    models: list[TopModelEntry]
-    metric: str  # "tokens" | "cost" — the sort key used
-    total: int  # the untruncated number of ranked groups
-    limit: int  # the cap that was applied
-    generated_at: str  # ISO-8601 UTC
-
-
-class SourceAppEntry(BaseModel):
-    """One client app's totals in the per-app usage breakdown."""
-
-    source_app: str
-    msgs: int
-    tokens_total: int
-    tokens_input: int
-    tokens_output: int
-    tokens_cache_read: int
-    tokens_cache_create: int
-    tokens_reasoning: int
-    cost_usd: float
-    cost_cache: float  # cache_read + cache_create cost, for exclude-cache
-    cost_input: float = 0.0
-    cost_output: float = 0.0
-    cost_cache_read: float = 0.0
-    cost_cache_create: float = 0.0
-    providers: list[str]  # distinct providers this app's usage was billed to
-
-
-class SourceAppsResponse(BaseModel):
-    apps: list[SourceAppEntry]
-    metric: str  # "tokens" | "cost" — the sort key used
-    generated_at: str  # ISO-8601 UTC
-
-
-class GlobalLifetimeTotals(BaseModel):
-    tokens_total: int
-    tokens_input: int
-    tokens_output: int
-    tokens_cache_read: int
-    tokens_cache_create: int
-    tokens_reasoning: int
-    tokens_cache: int  # cache_read + cache_create
-    cost_usd: float
-    cost_cache: float
-    msgs: int
-
-
-class GlobalSessionStats(BaseModel):
-    count: int
-    avg_cost: float
-    avg_tokens: float
-
-
-class GlobalBusiestDay(BaseModel):
-    period_key: str  # "YYYY-MM-DD" (UTC calendar date)
-    tokens: int
-
-
-class GlobalBusiestHour(BaseModel):
-    hour: int  # 0–23 in the user's local timezone
-    tokens: int
-
-
-class GlobalStatsResponse(BaseModel):
-    lifetime: GlobalLifetimeTotals
-    sessions: GlobalSessionStats
-    cache_hit_ratio: float  # cache_read / all tokens, 0..1
-    distinct_models: int
-    distinct_providers: int
-    busiest_day: GlobalBusiestDay | None
-    busiest_hour: GlobalBusiestHour | None
-    generated_at: str  # ISO-8601 UTC
-
-
-class TopProjectEntry(BaseModel):
-    """One project's totals in the Top Projects ranking."""
-
-    project: str
-    msgs: int
-    sessions: int
-    tokens_total: int
-    tokens_input: int
-    tokens_output: int
-    tokens_cache_read: int
-    tokens_cache_create: int
-    tokens_reasoning: int
-    cost_usd: float
-    cost_cache: float
-    cost_input: float = 0.0
-    cost_output: float = 0.0
-    cost_cache_read: float = 0.0
-    cost_cache_create: float = 0.0
-    providers: list[str]  # distinct providers that touched this project
-
-
-class TopProjectsResponse(BaseModel):
-    projects: list[TopProjectEntry]
-    metric: str  # "tokens" | "cost" | "sessions"
-    total: int  # the untruncated number of ranked groups
-    limit: int  # the cap that was applied
-    generated_at: str
-
-
-class TopSessionEntry(BaseModel):
-    """One session's totals in the cross-provider Top Sessions ranking."""
-
-    session_id: str
-    project: str | None = None
-    cwd: str | None = None
-    sidecar_id: str | None = None  # the host that pushed the session's latest event
-    ts_start: str | None = None  # ISO-8601 UTC
-    ts_end: str | None = None  # ISO-8601 UTC
-    hosts: int = 0  # distinct hosts the session ran on
-    msgs: int
-    tokens_total: int
-    tokens_input: int
-    tokens_output: int
-    tokens_cache_read: int
-    tokens_cache_create: int
-    tokens_reasoning: int
-    cost_usd: float
-    cost_cache: float
-    cost_input: float = 0.0
-    cost_output: float = 0.0
-    cost_cache_read: float = 0.0
-    cost_cache_create: float = 0.0
-    providers: list[str]  # distinct providers that contributed to this session
-    models: list[str]  # distinct models used in this session
-
-
-class TopSessionsResponse(BaseModel):
-    sessions: list[TopSessionEntry]
-    metric: str  # "tokens" | "cost"
-    total: int  # the untruncated number of ranked groups
-    limit: int  # the cap that was applied
-    generated_at: str
-
-
-class TopHostEntry(BaseModel):
-    """One host's totals in the cross-provider Top Hosts ranking."""
-
-    sidecar_id: str  # the hostname that pushed these events
-    ts_start: str | None = None  # ISO-8601 UTC
-    ts_end: str | None = None  # ISO-8601 UTC
-    msgs: int
-    sessions: int  # distinct sessions that ran on this host
-    tokens_total: int
-    tokens_input: int
-    tokens_output: int
-    tokens_cache_read: int
-    tokens_cache_create: int
-    tokens_reasoning: int
-    cost_usd: float
-    cost_cache: float
-    cost_input: float = 0.0
-    cost_output: float = 0.0
-    cost_cache_read: float = 0.0
-    cost_cache_create: float = 0.0
-    providers: list[str]  # distinct providers that pushed to this host
-
-
-class TopHostsResponse(BaseModel):
-    hosts: list[TopHostEntry]
-    metric: str  # "tokens" | "cost"
-    total: int  # the untruncated number of ranked groups
-    limit: int  # the cap that was applied
-    generated_at: str
-
-
-class TopToolEntry(BaseModel):
-    tool: str
-    calls: int  # total invocations
-    msgs: int  # distinct messages that used it
-
-
-class TopToolsResponse(BaseModel):
-    tools: list[TopToolEntry]
-    total: int  # the untruncated number of ranked groups
-    limit: int  # the cap that was applied
-    generated_at: str
-
-
-class SidecarDownloadAsset(BaseModel):
-    """One downloadable sidecar build on a GitHub release."""
-
-    platform: str  # macOS | Windows | Linux | Linux-CLI
-    kind: str  # "installer" (.dmg / -setup.exe) | "payload" (portable .zip / .tar.gz)
-    name: str
-    url: str
-    size: int | None = None
-    sha256_url: str | None = None
-
-
-class SidecarDownloadsResponse(BaseModel):
-    """Sidecar builds for one release channel, for the Fleet page's download card."""
-
-    channel: str  # "stable" | "beta" | "edge"
-    version: str | None = None  # versioned release tag or "edge"
-    published_at: str | None = None
-    release_url: str
-    checksums_url: str | None = None  # SHA256SUMS.txt
-    assets: list[SidecarDownloadAsset] = Field(default_factory=list)
-    error: str | None = None  # set (with empty assets) when GitHub was unreachable
-
-
-class DataHealthFinding(BaseModel):
-    """One secret-safe sample row within a finding group."""
-
-    label: str
-    detail: dict[str, Any] = Field(default_factory=dict)
-
-
-class DataHealthParamSpec(BaseModel):
-    """One parameter a group's preview/apply call needs."""
-
-    name: str
-    label: str
-    required: bool = True
-    options: list[str] | None = None
-
-
-class DataHealthFindingGroup(BaseModel):
-    """One independently-fixable slice of a check's findings."""
-
-    key: str
-    label: str
-    count: int
-    fixable: bool
-    not_fixable_reason: str | None = None
-    params: list[DataHealthParamSpec] = Field(default_factory=list)
-    samples: list[DataHealthFinding] = Field(default_factory=list)
-    detail: dict[str, Any] = Field(default_factory=dict)
-
-
-class DataHealthCheckReport(BaseModel):
-    """One check's live findings, as of the last scan."""
-
-    check_id: str
-    title: str
-    description: str
-    impact: str
-    recommended_action: str
-    severity: str  # "error" | "warn" | "info"
-    total_count: int
-    fixable_count: int
-    groups: list[DataHealthFindingGroup] = Field(default_factory=list)
-    blocked_by: list[str] = Field(default_factory=list)
-    blocked_by_titles: list[str] = Field(default_factory=list)
-    blocked: bool
-
-
-class DataHealthReportResponse(BaseModel):
-    """`GET /system/data-health` — the full report, or a pending-scan marker."""
-
-    scanning: bool
-    checks: list[DataHealthCheckReport] = Field(default_factory=list)
-    scan_error: str | None = None
-    last_scanned_at: str | None = None
-
-
-class DataHealthFixRequest(BaseModel):
-    """Body for both `/preview` and `/apply` — `apply` additionally requires
-    `confirm: true`."""
-
-    group_key: str
-    params: dict[str, Any] = Field(default_factory=dict)
-    confirm: bool = False
-
-
-class DataHealthFixPlanResponse(BaseModel):
-    """`POST /system/data-health/{check_id}/preview` — read-only."""
-
-    check_id: str
-    group_key: str
-    summary: str
-    counts: dict[str, Any] = Field(default_factory=dict)
-    samples: list[DataHealthFinding] = Field(default_factory=list)
-    confirmation_text: str | None = None
-
-
-class DataHealthJobStartedResponse(BaseModel):
-    """`POST /system/data-health/{check_id}/apply` — 202, poll `job_id`."""
-
-    job_id: str
-
-
-class DataHealthFixResultSchema(BaseModel):
-    check_id: str
-    group_key: str
-    summary: str
-    counts: dict[str, Any] = Field(default_factory=dict)
-
-
-class DataHealthJobStatusResponse(BaseModel):
-    """`GET /system/data-health/jobs/{job_id}`."""
-
-    id: str
-    check_id: str
-    group_key: str
-    status: str  # "running" | "succeeded" | "failed"
-    result: DataHealthFixResultSchema | None = None
-    #: The plain-language reason the fix failed — never the raw exception.
-    error: str | None = None
-    #: What kind of failure it was: "db_busy" or "unknown".
-    error_kind: str | None = None
-    #: Whether running the same fix again could succeed.
-    retryable: bool = False
-    started_at: str
-    finished_at: str | None = None
-
-
-# --- Credential inventory (`GET /system/credentials`) ---------------------------------
-# One row per credential *source* (a secret found in one place), grouped
-# provider → account. Never carries secret values — only types, origin and health.
-
-
-class CredentialSourceView(BaseModel):
-    source_id: str
-    provider_id: str
-    account_id: str  # the storage key; may be a placeholder while identity is pending
-    # "machine" = a sidecar found it, "config" = pasted in Settings → Providers,
-    # "server" = env var / file on the server host.
-    origin_kind: str
-    origin_type: str  # file | env | cookie | keychain | sidecar (unrecognised origin) | config ...
-    label: str  # file name, env var, "Browser cookie", "Manual configuration"
-    origin_app: str | None = None  # tool that owns the file: "Codex CLI", "OpenCode", ...
-    origin_path: str | None = None  # file path with the home directory collapsed to "~"
-    # Extra context for the origin: the browser and profile a cookie came from
-    # ("Chrome · Profile 1"), the keychain service, ... None when there is none.
-    origin_detail: str | None = None
-    login_hint: str | None = None  # how to re-authenticate the owning tool
-    machine_id: str | None = None
-    machine_name: str | None = None
-    machine_stale: bool = False  # the machine has stopped checking in (Fleet's rule)
-    # Other machines holding the same secret (matched by fingerprint; never returned itself).
-    shared_with: list[str] = Field(default_factory=list)
-    # The subset of ``shared_with`` whose machine has stopped checking in: it can't renew
-    # anything, so it is no reason to warn about the login being copied.
-    shared_with_stale: list[str] = Field(default_factory=list)
-    # Why this credential belongs to its account: local (identity read on the machine),
-    # verified (server resolved it), claim (sidecar claimed it), operator (tag),
-    # config, server, or pending.
-    mapping: str
-    mapping_scope: str | None = None  # "machine" | "all_machines" for tags
-    fingerprinted: bool = False  # origin carries a credential fingerprint
-    identity_pending: bool = False
-    # valid | expiring | expired | invalid | stale | unknown
-    status: str
-    expires_at: str | None = None
-    expires_in_seconds: int | None = None
-    token_types: list[str] = Field(default_factory=list)
-    can_refresh: bool = False  # the server can refresh it on demand (the Refresh action)
-    rollable: bool = False  # carries a refresh token that something renews before it lapses
-    # Who renews it: "server", or "machine" (a rotating provider's login owned by a
-    # machine's CLI, which the server must not refresh); None when nothing does.
-    refreshed_by: str | None = None
-    # Sidecar keep-alive on the machine that owns this login: "on" / "off" / "unknown"
-    # (older sidecar). None when it doesn't apply (not a machine-sourced login of a KEEP_ALIVE_PROVIDERS provider
-    # that carries a refresh credential).
-    keep_alive: str | None = None
-    # The operator's server-side override for that sidecar's keep-alive (``keep_alive`` above
-    # is what it actually runs): True/False = requested on/off, None = no override. Present on
-    # the same rows as ``keep_alive``; the UI compares the two to show a pending request.
-    keep_alive_desired: bool | None = None
-    # The provider rejected this credential (HTTP 401/403 at the last collection, or an
-    # in-memory rejection flag matches its identity).
-    rejected: bool = False
-    # Expired and unrefreshable, but another healthy credential for the same account can stand
-    # in for it: not blocking collection, so it should not raise a hard dashboard alert.
-    redundant: bool = False
-    removable: bool = False
-    enabled: bool = True
-    priority: int = 0
-    live: bool = False  # a secret bundle is currently held in the server cache
-    is_active: bool = False  # produced this account's most recent successful collection
-    health: str = "untried"  # untried | healthy | degraded | auth_failed | unavailable
-    last_seen: str | None = None
-    last_attempt_at: str | None = None
-    last_success_at: str | None = None
-    last_error: str | None = None
-    # Why a server env/file credential that is *present* is not feeding any collection:
-    # provider_disabled | default_disabled | account_keyed_config | shadowed_by_config_key.
-    unused_reason: str | None = None
-
-
-class CredentialAccountView(BaseModel):
-    provider_id: str
-    account_id: str
-    account_label: str | None = None
-    status: str  # the best status among enabled sources
-    identity_pending: bool = False
-    active_source_id: str | None = None
-    data_source: str | None = None  # from the account's latest quota card
-    input_source: str | None = None
-    sources: list[CredentialSourceView] = Field(default_factory=list)
-    # The account is retired: its ``provider_configs`` row is archived, so
-    # nothing is collected for it. A credential mapped onto it is *parked*
-    # (see docs/api-reference.md#parked-mappings).
-    archived: bool = False
-
-
-class CredentialProviderView(BaseModel):
-    provider_id: str
-    name: str
-    accounts: list[CredentialAccountView] = Field(default_factory=list)
-
-
-class CredentialMachineView(BaseModel):
-    login_dirs_report: LoginDirectoryReport | None = None
-    machine_id: str
-    name: str
-    last_seen: str | None = None
-    credential_count: int = 0
-    unmapped_count: int = 0
-    stale: bool = False  # not seen within the Fleet stale threshold
-
-
-class BlockedCollectionView(BaseModel):
-    """A credential a machine found but could not map to an account, whose provider is not
-    collecting: the quota behind it stays dark until someone assigns an account."""
-
-    sidecar_id: str
-    provider_id: str
-    credential_origin: str
-    first_seen: str | None = None
-
-
-class BlockedSourceView(BaseModel):
-    """A credential source a machine found but could not read.
-
-    The provider is not "not signed in" - its credential exists, the sidecar just cannot
-    read it (a browser holds the cookie store open, or the values are app-bound
-    encrypted). ``collecting`` says whether another source covers the provider anyway.
-    """
-
-    sidecar_id: str
-    provider_id: str
-    credential_origin: str
-    source_store: str | None = None
-    reason: str
-    detail: str | None = None
-    remedy: str | None = None
-    collecting: bool = False
-    first_seen: str | None = None
-    last_seen: str | None = None
-
-
-class AffectedCredentialProvider(BaseModel):
-    provider_id: str
-    name: str
-
-
-class CredentialFileMigrationNotice(BaseModel):
-    providers: list[AffectedCredentialProvider]
-    removed_count: int
-    recorded_at: str
-
-
-class MergedAccountView(BaseModel):
-    """An account that was merged away, and the account it became.
-
-    The merged-away account holds no credential any more (the merge moved it),
-    so it cannot appear among the inventory's accounts. This is what tells a
-    client "this account no longer exists" from "this account never existed".
-    """
-
-    provider_id: str
-    account_id: str  # the account that was merged away
-    destination_account_id: str  # where it ended up (a chain is followed)
-    merged_at: str
-
-
-class CredentialInventory(BaseModel):
-    credential_file_migration_notice: CredentialFileMigrationNotice | None = None
-    providers: list[CredentialProviderView] = Field(default_factory=list)
-    machines: list[CredentialMachineView] = Field(default_factory=list)
-    unmapped_count: int = 0  # credentials awaiting an account (Fleet "untagged")
-    rule_count: int = 0  # operator mapping rules
-    pending_usage_events: int = 0  # collected events with no account yet
-    # Unmapped credentials whose provider has no fresh collection anywhere (Home banner).
-    blocked_collection: list[BlockedCollectionView] = Field(default_factory=list)
-    # Credential sources a machine found but could not read (a locked or app-bound
-    # browser cookie store). Kept out of `unmapped_count`: there is no credential to
-    # map, the source simply cannot be read.
-    blocked_sources: list[BlockedSourceView] = Field(default_factory=list)
-    # The accounts that were merged away, and where each of them went.
-    merged_accounts: list[MergedAccountView] = Field(default_factory=list)
+"""Pydantic request and response models.
+
+Domain models live in the ``schemas_*`` modules. This shim re-exports every
+public name so ``from app.models.schemas import X`` keeps working, including
+``read_login_directory_report`` and the session-name constants.
+"""
+
+from app.models.schemas_cards import (
+    CreditBalanceComponent,
+    LimitCard,
+    LimitsResponse,
+)
+from app.models.schemas_credentials import (
+    AffectedCredentialProvider,
+    BlockedCollectionView,
+    BlockedSourceView,
+    CredentialAccountView,
+    CredentialFileMigrationNotice,
+    CredentialInventory,
+    CredentialMachineView,
+    CredentialProviderView,
+    CredentialSourceView,
+    MergedAccountView,
+)
+from app.models.schemas_ingest import (
+    SESSION_NAME_MAX_LENGTH,
+    SESSION_NAMES_MAX_PER_REQUEST,
+    IngestRequest,
+    LoginDirectoryReport,
+    LoginDirectorySettings,
+    SessionNameIn,
+    UsageEventPush,
+    read_login_directory_report,
+)
+from app.models.schemas_system import (
+    DataHealthCheckReport,
+    DataHealthFinding,
+    DataHealthFindingGroup,
+    DataHealthFixPlanResponse,
+    DataHealthFixRequest,
+    DataHealthFixResultSchema,
+    DataHealthJobStartedResponse,
+    DataHealthJobStatusResponse,
+    DataHealthParamSpec,
+    DataHealthReportResponse,
+    SidecarDownloadAsset,
+    SidecarDownloadsResponse,
+)
+from app.models.schemas_usage import (
+    ForecastEntry,
+    ForecastResponse,
+    GlobalBusiestDay,
+    GlobalBusiestHour,
+    GlobalLifetimeTotals,
+    GlobalSessionStats,
+    GlobalStatsResponse,
+    SourceAppEntry,
+    SourceAppsResponse,
+    TopHostEntry,
+    TopHostsResponse,
+    TopModelEntry,
+    TopModelsResponse,
+    TopProjectEntry,
+    TopProjectsResponse,
+    TopSessionEntry,
+    TopSessionsResponse,
+    TopToolEntry,
+    TopToolsResponse,
+)
+
+__all__ = [
+    "AffectedCredentialProvider",
+    "BlockedCollectionView",
+    "BlockedSourceView",
+    "CredentialAccountView",
+    "CredentialFileMigrationNotice",
+    "CredentialInventory",
+    "CredentialMachineView",
+    "CredentialProviderView",
+    "CredentialSourceView",
+    "CreditBalanceComponent",
+    "DataHealthCheckReport",
+    "DataHealthFinding",
+    "DataHealthFindingGroup",
+    "DataHealthFixPlanResponse",
+    "DataHealthFixRequest",
+    "DataHealthFixResultSchema",
+    "DataHealthJobStartedResponse",
+    "DataHealthJobStatusResponse",
+    "DataHealthParamSpec",
+    "DataHealthReportResponse",
+    "ForecastEntry",
+    "ForecastResponse",
+    "GlobalBusiestDay",
+    "GlobalBusiestHour",
+    "GlobalLifetimeTotals",
+    "GlobalSessionStats",
+    "GlobalStatsResponse",
+    "IngestRequest",
+    "LimitCard",
+    "LimitsResponse",
+    "LoginDirectoryReport",
+    "LoginDirectorySettings",
+    "MergedAccountView",
+    "SESSION_NAMES_MAX_PER_REQUEST",
+    "SESSION_NAME_MAX_LENGTH",
+    "SessionNameIn",
+    "SidecarDownloadAsset",
+    "SidecarDownloadsResponse",
+    "SourceAppEntry",
+    "SourceAppsResponse",
+    "TopHostEntry",
+    "TopHostsResponse",
+    "TopModelEntry",
+    "TopModelsResponse",
+    "TopProjectEntry",
+    "TopProjectsResponse",
+    "TopSessionEntry",
+    "TopSessionsResponse",
+    "TopToolEntry",
+    "TopToolsResponse",
+    "UsageEventPush",
+    "read_login_directory_report",
+]
