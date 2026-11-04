@@ -8,7 +8,7 @@ boundaries, early returns, and log messages match the previous inline body.
 import json
 import logging
 from dataclasses import dataclass
-from datetime import UTC
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlmodel import Session, col, delete, or_, select
@@ -191,7 +191,7 @@ def merge_latest_usage_row(
 ) -> None:
     """Merge the card into the current slot, or insert the slot."""
     from app.models.db import LatestUsage
-    from app.services.accumulator import datetime, merge_card_json
+    from app.services.accumulator import merge_card_json
 
     card = prepared.card
     if existing:

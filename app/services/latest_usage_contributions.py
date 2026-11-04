@@ -7,7 +7,7 @@ existing imports keep working.
 
 import json
 from collections.abc import Iterable
-from datetime import UTC
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlmodel import Session, col, select
@@ -51,7 +51,7 @@ def _rebuild_latest_usage_slot(
 ) -> None:
     """Materialize one logical card from the sources that still report it."""
     from app.models.db import LatestUsage, LatestUsageContribution
-    from app.services.accumulator import datetime, merge_card_json
+    from app.services.accumulator import merge_card_json
 
     contributions = session.exec(
         select(LatestUsageContribution)
@@ -121,7 +121,7 @@ def _upsert_contribution(
     session: Session, *, source_id: str, card: Any, account_id: str, card_json: dict
 ) -> None:
     from app.models.db import LatestUsageContribution
-    from app.services.accumulator import datetime, merge_card_json
+    from app.services.accumulator import merge_card_json
 
     row = session.exec(
         select(LatestUsageContribution).where(
@@ -283,7 +283,6 @@ def mark_latest_usage_source_stale(
     active, while ``None`` preserves the provider-wide failure behavior.
     """
     from app.models.db import LatestUsageContribution
-    from app.services.accumulator import datetime
 
     statement = select(LatestUsageContribution).where(
         LatestUsageContribution.provider_id == provider_id,
