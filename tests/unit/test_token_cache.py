@@ -154,7 +154,7 @@ async def test_move_source_refreshes_timestamp_when_merging_into_existing_accoun
     cache, monkeypatch
 ):
     now = 1_800_000_000.0
-    monkeypatch.setattr("app.services.token_cache.time.time", lambda: now)
+    monkeypatch.setattr("app.services.token_cache_store.time.time", lambda: now)
     await cache.store(
         "antigravity",
         {"oauth_token": "pending-token"},  # pragma: allowlist secret
@@ -863,7 +863,7 @@ async def test_sibling_credential_push_does_not_keep_removed_family_alive(monkey
     """A live CLI push must not extend the TTL of a browser credential no longer reported."""
     short_cache = TokenCache(ttl_seconds=10)
     now = [100.0]
-    monkeypatch.setattr("app.services.token_cache.time.time", lambda: now[0])
+    monkeypatch.setattr("app.services.token_cache_store.time.time", lambda: now[0])
 
     await short_cache.store(
         "chatgpt",
@@ -896,7 +896,7 @@ async def test_repeated_stale_oauth_push_refreshes_protected_fields_ttl(monkeypa
     """A reported expired local OAuth token keeps protected fresh fields available."""
     short_cache = TokenCache(ttl_seconds=10)
     now = [1_700_000_000.0]
-    monkeypatch.setattr("app.services.token_cache.time.time", lambda: now[0])
+    monkeypatch.setattr("app.services.token_cache_store.time.time", lambda: now[0])
     fresh_expiry = str(int((now[0] + 3600) * 1000))
 
     await short_cache.store(
