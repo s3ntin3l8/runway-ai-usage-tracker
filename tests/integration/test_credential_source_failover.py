@@ -141,6 +141,7 @@ async def test_collector_retries_next_enabled_source_after_401(monkeypatch):
     collector = _CredentialProbeCollector(cache)
     manager = CollectorManager()
     monkeypatch.setattr("app.services.collector_manager.token_cache", cache)
+    monkeypatch.setattr("app.services.collector_failover.token_cache", cache)
     smart = SmartCollector(collector, "OpenRouter", ttl=0)
     original_reset = smart.reset
 
@@ -173,6 +174,7 @@ async def test_collector_returns_empty_when_all_sources_fail_auth(monkeypatch):
     collector = _CredentialProbeCollector(cache)
     manager = CollectorManager()
     monkeypatch.setattr("app.services.collector_manager.token_cache", cache)
+    monkeypatch.setattr("app.services.collector_failover.token_cache", cache)
     monkeypatch.setattr(manager, "_record_source_health", lambda *_args: None)
     manager.smart_collectors["openrouter:alice@example.com"] = SmartCollector(
         collector, "OpenRouter", ttl=0
@@ -200,6 +202,7 @@ async def test_usable_result_survives_other_401_in_same_source(monkeypatch):
     manager = CollectorManager()
     health_writes: list[dict[str, str]] = []
     monkeypatch.setattr("app.services.collector_manager.token_cache", cache)
+    monkeypatch.setattr("app.services.collector_failover.token_cache", cache)
     monkeypatch.setattr(
         manager,
         "_record_source_health",
@@ -231,6 +234,7 @@ async def test_usable_result_survives_other_403_in_same_source(monkeypatch):
     manager = CollectorManager()
     health_writes: list[dict[str, str]] = []
     monkeypatch.setattr("app.services.collector_manager.token_cache", cache)
+    monkeypatch.setattr("app.services.collector_failover.token_cache", cache)
     monkeypatch.setattr(
         manager,
         "_record_source_health",
@@ -273,6 +277,7 @@ async def test_empty_auth_failure_preserves_previous_failure_card(monkeypatch):
 
     manager = CollectorManager()
     monkeypatch.setattr("app.services.collector_manager.token_cache", cache)
+    monkeypatch.setattr("app.services.collector_failover.token_cache", cache)
     monkeypatch.setattr(
         manager,
         "_record_source_health",
@@ -305,6 +310,7 @@ async def test_failed_collection_state_preserves_usable_partial_result(monkeypat
         )
     manager = CollectorManager()
     monkeypatch.setattr("app.services.collector_manager.token_cache", cache)
+    monkeypatch.setattr("app.services.collector_failover.token_cache", cache)
     monkeypatch.setattr(manager, "_record_source_health", lambda *_args: None)
     smart = SmartCollector(_CredentialProbeCollector(cache), "OpenRouter", ttl=0)
     calls = 0
@@ -342,6 +348,7 @@ async def test_collector_continues_after_non_auth_source_error(monkeypatch):
     health_writes: list[tuple[str, str, dict[str, str]]] = []
     available_slots = manager._semaphore._value
     monkeypatch.setattr("app.services.collector_manager.token_cache", cache)
+    monkeypatch.setattr("app.services.collector_failover.token_cache", cache)
 
     def record_health(provider_id, account_id, updates):
         assert manager._semaphore._value == available_slots
@@ -386,6 +393,7 @@ async def test_collector_returns_empty_when_every_source_is_disabled(monkeypatch
         "disabled-source": (False, 0)
     }
     monkeypatch.setattr("app.services.collector_manager.token_cache", cache)
+    monkeypatch.setattr("app.services.collector_failover.token_cache", cache)
     manager.smart_collectors["openrouter:alice@example.com"] = SmartCollector(
         collector, "OpenRouter", ttl=0
     )
@@ -842,6 +850,7 @@ async def test_collector_retries_next_enabled_source_after_403(monkeypatch):
     manager = CollectorManager()
     health_writes: list[tuple[str, str, dict[str, str]]] = []
     monkeypatch.setattr("app.services.collector_manager.token_cache", cache)
+    monkeypatch.setattr("app.services.collector_failover.token_cache", cache)
     monkeypatch.setattr(
         manager,
         "_record_source_health",
@@ -880,6 +889,7 @@ async def test_collector_retries_next_enabled_source_on_missing_config_or_empty(
     manager = CollectorManager()
     health_writes: list[tuple[str, str, dict[str, str]]] = []
     monkeypatch.setattr("app.services.collector_manager.token_cache", cache)
+    monkeypatch.setattr("app.services.collector_failover.token_cache", cache)
     monkeypatch.setattr(
         manager,
         "_record_source_health",

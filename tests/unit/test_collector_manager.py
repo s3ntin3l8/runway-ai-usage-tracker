@@ -2276,6 +2276,7 @@ async def test_non_claude_promotion_failure_keeps_legacy_collected_cards(
     monkeypatch.setattr("app.core.db.engine", engine)
     monkeypatch.setattr("sqlmodel.Session", Session)
     monkeypatch.setattr("app.services.collector_manager.token_cache", cache)
+    monkeypatch.setattr("app.services.collector_failover.token_cache", cache)
     await cache.store(
         "antigravity",
         {"oauth_token": "fake"},
