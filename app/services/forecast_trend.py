@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from statistics import median
 
-from app.services.forecast import LIMIT_PCT, MIN_BUCKETS_FOR_TREND, _NowState, _Projection
+from app.services.forecast_shared import LIMIT_PCT, MIN_BUCKETS_FOR_TREND, _NowState, _Projection
 
 # Snapshots quantized to coarse steps (e.g. Antigravity reports pct_used in
 # ~20% increments) make trend fitting unreliable: Theil-Sen sees long plateaus

@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING
 from sqlmodel import Session
 
 from app.models.schemas import ForecastEntry, ForecastResponse, LimitCard
+from app.services.forecast_shared import LIMIT_PCT, MIN_BUCKETS_FOR_TREND, _NowState, _Projection
 
 if TYPE_CHECKING:
     from app.services.forecast_trend import TrendFit
@@ -69,37 +70,12 @@ def _forecast_bucket_seconds(window_type: str) -> int:
     return _FORECAST_BUCKET_SECONDS.get(window_type, _DEFAULT_BUCKET_SECONDS)
 
 
-# Minimum number of distinct buckets before we trust a slope. Below this we
-# return insufficient_data; otherwise a single recent spike skews the fit.
-MIN_BUCKETS_FOR_TREND = 4
-
-# Status thresholds in pct_used terms.
-LIMIT_PCT = 100.0
-
-
-@dataclass(frozen=True)
-class _NowState:
-    """Card's current position."""
-
-    used: float | None
-    pct: float | None
-
-
 @dataclass(frozen=True)
 class _SeriesData:
     """Per-bucket cumulative-pct trajectory used to fit a trend."""
 
     xs: list[float]
     ys: list[float]
-
-
-@dataclass(frozen=True)
-class _Projection:
-    """Projected position at the end of the window."""
-
-    used: float | None = None
-    pct: float | None = None
-    hit_at: str | None = None
 
 
 def _make_entry(  # noqa: PLR0913
@@ -605,9 +581,9 @@ def compute_all_forecasts(cards: list[LimitCard], session: Session) -> ForecastR
     )
 
 
-# Names moved to forecast_trend. Bound lazily so this module can define the
-# shared constants (LIMIT_PCT, MIN_BUCKETS_FOR_TREND) that forecast_trend
-# imports, without a cycle at import time.
+# Names moved to forecast_trend. Bound lazily so this module does not import
+# forecast_trend at module scope (callers that only need compute_forecast stay
+# light). Shared thresholds live in forecast_shared, which both modules import.
 _TREND_EXPORTS = frozenset(
     {
         "COARSE_STEP_PCT_THRESHOLD",
