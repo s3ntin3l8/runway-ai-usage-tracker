@@ -4,17 +4,16 @@ from __future__ import annotations
 
 import copy
 import json
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import delete, event, func, text
+from sqlalchemy import event
 from sqlmodel import Session, col, select
 
 from app.core.encryption import DecryptionError, encryption_service
 from app.models.db import (
     CredentialSource,
     SidecarDevice,
-    SidecarSourceCommand,
     SidecarSourceContribution,
     SidecarSourceRevision,
     SidecarSourceState,
@@ -23,6 +22,7 @@ from app.models.source_controls import ScraperReport
 from app.services import sidecar_devices
 from app.services.account_identity import canonical_account_id
 from app.services.credential_sources import sidecar_source_id
+from app.services.source_controls_rev import bump, reserve_source_writes, state
 from scripts.sidecar_pkg.source_catalog import (
     control_catalog as catalog,
 )
@@ -33,32 +33,6 @@ from scripts.sidecar_pkg.source_catalog import (
 
 _ENABLED = False
 SnapshotCache = dict[str, tuple[str, dict[str, Any]]]
-
-
-def reserve_source_writes(session: Session) -> None:
-    """Reserve SQLite's writer as the transaction's first statement, before reads.
-
-    Repeated calls are safe once the transaction holds the writer reservation.
-    A no-op UPDATE acquires the same writer reservation as BEGIN IMMEDIATE
-    after deferred BEGIN, without nesting or restarting the caller's transaction.
-    A prior WAL read snapshot may not upgrade: callers must reserve at entry.
-    """
-    session.execute(text("UPDATE sidecar_source_revision SET revision = revision WHERE id = 1"))
-
-
-def state(session: Session, device_id: str, source_id: str) -> SidecarSourceState | None:
-    return session.exec(
-        select(SidecarSourceState)
-        .where(SidecarSourceState.device_id == device_id, SidecarSourceState.source_id == source_id)
-        .execution_options(populate_existing=True)
-    ).first()
-
-
-def bump(session: Session) -> None:
-    session.execute(
-        text("INSERT OR IGNORE INTO sidecar_source_revision (id, revision) VALUES (1, 0)")
-    )
-    session.execute(text("UPDATE sidecar_source_revision SET revision = revision + 1 WHERE id = 1"))
 
 
 def _withdraw(session: Session, device_id: str, source_id: str) -> None:
@@ -312,119 +286,6 @@ def retire_contributions_for_account(session: Session, provider_id: str, account
         # happened to bump the revision.
         bump(session)
     return len(retired)
-
-
-def queue_command(
-    session: Session, device_id: str, source_id: str, action: str
-) -> SidecarSourceCommand:
-    reserve_source_writes(session)
-    row = state(session, device_id, source_id)
-    if row is None or action not in {"pause", "resume", "revoke", "request_setup", "dismiss"}:
-        raise ValueError("Unknown scraper or action")
-    descriptor = catalog().get(source_id)
-    if descriptor and descriptor.platforms == ("win32",) and action in {"request_setup", "dismiss"}:
-        raise ValueError("Source has no Keychain setup or announcement")
-    if action == "resume" and (not row.local_read or row.generation <= row.revoked_through):
-        raise ValueError("Resume requires local consent")
-    command = SidecarSourceCommand(
-        device_id=device_id, source_id=source_id, generation=row.generation, action=action
-    )
-    if action == "pause":
-        row.remote_paused = True
-        bump(session)
-    elif action == "revoke":
-        row.revoked_through = max(row.revoked_through, row.generation)
-        _withdraw(session, device_id, source_id)
-    elif action == "dismiss":
-        descriptor = catalog().get(source_id)
-        row.dismissed_revision = descriptor.revision if descriptor else row.revision
-    session.add(row)
-    session.add(command)
-    session.flush()
-    return command
-
-
-def pending_commands(session: Session, device_id: str) -> list[dict[str, Any]]:
-    rows = session.exec(
-        select(SidecarSourceCommand)
-        .where(
-            SidecarSourceCommand.device_id == device_id,
-            col(SidecarSourceCommand.acknowledged).is_(None),
-        )
-        .order_by(col(SidecarSourceCommand.id))
-        .limit(256)
-    ).all()  # noqa: E711
-    return [
-        {
-            "id": row.id,
-            "source_id": row.source_id,
-            "generation": row.generation,
-            "action": row.action,
-        }
-        for row in rows
-    ]
-
-
-def acknowledge(session: Session, device_id: str, command_id: int, status: str) -> None:
-    reserve_source_writes(session)
-    command = session.get(SidecarSourceCommand, command_id)
-    if command is None and status in {"applied", "denied", "superseded"}:
-        # A repeated ack may outlive retention. Missing commands have no effect.
-        return
-    if (
-        command is None
-        or command.device_id != device_id
-        or status not in {"applied", "denied", "superseded"}
-    ):
-        raise ValueError("Unknown command")
-    if command.acknowledged is not None:
-        return
-    # A later administrative action always wins over a delayed older resume.
-    newer = session.exec(
-        select(SidecarSourceCommand).where(
-            SidecarSourceCommand.device_id == device_id,
-            SidecarSourceCommand.source_id == command.source_id,
-            col(SidecarSourceCommand.id) > command_id,
-        )
-    ).first()
-    row = state(session, device_id, command.source_id)
-    if (
-        command.action == "resume"
-        and status == "applied"
-        and newer is None
-        and row is not None
-        and row.local_read
-        and row.generation == command.generation
-        and row.generation > row.revoked_through
-    ):
-        row.remote_paused = False
-        session.add(row)
-        bump(session)
-    command.acknowledged = status
-    session.add(command)
-    session.flush()
-
-
-def prune_commands(session: Session, device_id: str) -> None:
-    """Retain pending commands and each source's latest ordering barrier.
-
-    Older acknowledged commands are useful for diagnostics for 30 days. Keeping
-    the highest ID also prevents SQLite from reusing a command ID after cleanup.
-    """
-    reserve_source_writes(session)
-    latest = (
-        select(func.max(SidecarSourceCommand.id))
-        .where(SidecarSourceCommand.device_id == device_id)
-        .group_by(SidecarSourceCommand.source_id)
-    )
-    session.execute(
-        delete(SidecarSourceCommand).where(
-            col(SidecarSourceCommand.device_id) == device_id,
-            col(SidecarSourceCommand.acknowledged).is_not(None),
-            col(SidecarSourceCommand.issued_at) < datetime.now(UTC) - timedelta(days=30),
-            col(SidecarSourceCommand.id).not_in(latest),
-        )
-    )
 
 
 def snapshot(
@@ -720,3 +581,11 @@ def _retire_removed_origins(session: Session, _context: Any) -> None:
                 changed = True
     if changed:
         bump(session)
+
+
+from app.services import source_commands as _source_commands
+
+acknowledge = _source_commands.acknowledge
+pending_commands = _source_commands.pending_commands
+prune_commands = _source_commands.prune_commands
+queue_command = _source_commands.queue_command
