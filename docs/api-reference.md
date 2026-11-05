@@ -537,7 +537,7 @@ breakdown:
 ```
 
 See `../app/models/schemas.py` for the authoritative Pydantic definition and
-`../webapp/src/api/types.ts` for the TypeScript mirror. Token breakdown semantics, the `data_source`/`input_source` taxonomy, and the event-sourced data model are
+`../webapp/src/api/types/usage.ts` for the TypeScript mirror. Token breakdown semantics, the `data_source`/`input_source` taxonomy, and the event-sourced data model are
 documented in [architecture.md](architecture.md) and [statistics.md](statistics.md).
 
 ## Account lifecycle

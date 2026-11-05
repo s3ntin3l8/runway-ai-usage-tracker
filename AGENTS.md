@@ -132,7 +132,7 @@ procedure (`scripts/action_pins.json`) are in [`CONTRIBUTING.md`](CONTRIBUTING.m
   `init_db`'s idempotent `ALTER TABLE` list in `app/core/db.py`; an image
   bump must never break an existing DB.
 - **Adding a card field** means updating `LimitCard` in
-  `app/models/schemas.py`, the mirror in `webapp/src/api/types.ts`, and the
+  `app/models/schemas.py`, the mirror in `webapp/src/api/types/usage.ts`, and the
   interface example in [`docs/api-reference.md`](docs/api-reference.md).
 - **Collector code declares its taxonomy** — `data_source` (api / web / local)
   and `input_source` (config / server / sidecar) — and anything `local` runs

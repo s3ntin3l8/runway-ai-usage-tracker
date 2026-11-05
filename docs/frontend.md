@@ -82,11 +82,11 @@ without a DOM.
 happen together.**
 
 The server's `LimitCard` Pydantic model (`app/models/schemas.py`) is mirrored
-as a TypeScript interface in `webapp/src/api/types.ts`. When a card field
+as a TypeScript interface in `webapp/src/api/types/usage.ts`. When a card field
 changes:
 
 1. add or change it in `app/models/schemas.py` (`LimitCard`);
-2. mirror it in `webapp/src/api/types.ts` (`LimitCard`);
+2. mirror it in `webapp/src/api/types/usage.ts` (`LimitCard`);
 3. update the interface example in `docs/api-reference.md`.
 
 The model allows extra fields (`extra="allow"`) because `/usage/fleet` injects
