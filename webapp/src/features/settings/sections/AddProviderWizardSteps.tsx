@@ -1,8 +1,9 @@
+// Step UI for AddProviderWizard. Bodies are unchanged from the parent module;
+// the wizard keeps its hooks and imports these back.
+
 import { BILLING_TYPE_LABELS, BILLING_TYPE_SHORT_LABELS } from '@/lib/billingType';
 import { providerFamilyId } from '@/lib/providerFamilies';
 import { ConsoleOrganizationPicker } from './ConsoleOrganizationPicker';
-// Step UI for AddProviderWizard. Bodies are unchanged from the parent module;
-// the wizard keeps its hooks and imports these back.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
@@ -283,7 +284,6 @@ export function Step2({
     setDetectedBillingType(undefined);
     setDetectError(null);
     detectBilling.reset();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [apiKey, cookie]);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inflightRef = useRef<AbortController | null>(null);
