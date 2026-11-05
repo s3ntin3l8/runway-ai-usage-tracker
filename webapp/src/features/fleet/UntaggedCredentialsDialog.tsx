@@ -45,28 +45,24 @@ import { maskAccountId } from '@/lib/accountDisplay';
 import { buildSidecarNameMap, sidecarLabel, useSidecars } from './queries';
 import { UntaggedRow } from './UntaggedRow';
 import {
-  accountPickNotice,
-  archivedAccountNotice,
-  displayOrigin,
-  isMachineBoundOrigin,
-  sourceDescription,
   sourceLabel,
   stageToBody,
-  type AccountPickNotice,
   type DialogState,
 } from './untaggedCredentialModel';
 
-// Tests and NeedsMappingView import these from this module.
-export type { AccountPickNotice };
+// Tests and NeedsMappingView import these from this module. Re-export the
+// names this file does not call so they stay on the public path without a
+// local binding.
+export type { AccountPickNotice } from './untaggedCredentialModel';
 export {
-  isMachineBoundOrigin,
   accountPickNotice,
   archivedAccountNotice,
-  stageToBody,
   displayOrigin,
+  isMachineBoundOrigin,
   sourceDescription,
   sourceLabel,
-};
+  stageToBody,
+} from './untaggedCredentialModel';
 
 interface UntaggedCredentialsDialogProps {
   /** When set, scope the dialog to one sidecar's pending set (per-card entry point). */
