@@ -22,6 +22,10 @@ Safety model:
     ``<install>.previous`` with its version in ``<install>.previous.version``;
     ``rollback()`` (tray "Roll back to …", CLI ``--rollback``) swaps it back.
 
+Fetching a payload lives in ``self_update_fetch``, the Windows helper script in
+``self_update_windows``, and the systemd-vs-exec choice in ``self_update_supervisor``.
+Applying the swap stays here: that is the layer tests patch.
+
 The OS-mutating ``apply_update`` is a thin per-platform shell, mostly verified
 manually during release QA; the pure parts (asset-name resolution, checksum,
 frozen/target detection) are unit tested, plus a targeted test for the macOS
@@ -48,7 +52,10 @@ import zipfile
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from typing import Any
-from urllib import error, request
+from urllib import (
+    error,
+    request,  # noqa: F401 — tests patch self_update.request.urlopen
+)
 
 from scripts.sidecar_pkg import asset_names, runtime_cleanup
 from scripts.sidecar_pkg.keychain_client import close_keychain_client, reopen_keychain_client
@@ -63,70 +70,64 @@ from scripts.sidecar_pkg.update_check import (
 from scripts.sidecar_pkg.update_limits import (
     MAX_ARCHIVE_BYTES,
     MAX_BUNDLE_BYTES,
-    MAX_CHECKSUM_BYTES,
-    MAX_METADATA_BYTES,
     UpdateSizeError,
-    bounded_chunks,
-    bounded_read,
 )
 
 logger = logging.getLogger(__name__)
+
+from scripts.sidecar_pkg.self_update_fetch import (
+    _MAX_ATTEMPTS,
+    SelfUpdateError,
+    SelfUpdateUnsupportedError,
+    _download,
+    _extract,
+    _fetch_expected_sha,
+    _get_json,
+    _github_ssl_context,
+    _with_retries,
+    verify_sha256,
+)
+from scripts.sidecar_pkg.self_update_supervisor import (
+    _SYSTEMCTL_TIMEOUT_S,
+    _fresh_runtime_env,
+    _systemd_restart_exit_code,
+)
+from scripts.sidecar_pkg.self_update_windows import _windows_swap_script
+
+# The security probe and the unit tests read these off this module.
+__all__ = [
+    "MAX_ARCHIVE_BYTES",
+    "SelfUpdateError",
+    "SelfUpdateUnsupportedError",
+    "_MAX_ATTEMPTS",
+    "_SYSTEMCTL_TIMEOUT_S",
+    "_download",
+    "_extract",
+    "_fresh_runtime_env",
+    "_get_json",
+    "_github_ssl_context",
+    "_windows_swap_script",
+    "_with_retries",
+    "apply_update",
+    "find_asset_urls",
+    "reclaim_stale_state",
+    "register_pre_exec_hook",
+    "resolve_asset_name",
+    "rollback",
+    "rollback_available",
+    "running_from_disk_image",
+    "self_update",
+    "self_update_supported",
+    "verify_sha256",
+    "verify_update",
+]
 
 # The `edge` rolling prerelease object (carries assets[]); distinct from
 # update_check._EDGE_REFS_URL, which only returns the git ref sha.
 _EDGE_RELEASE_URL = (
     "https://api.github.com/repos/s3ntin3l8/runway-ai-usage-tracker/releases/tags/edge"
 )
-_TIMEOUT_SECONDS = 60
 _LOCK_NAME = "self-update.lock"
-
-# Bounded retry for transient GitHub failures (5xx / rate-limit / timeouts). A
-# single flaky response used to abort the whole update with no second attempt
-# until the next manual push, so we soak up blips here. Other 4xx (e.g. 404 =
-# asset genuinely absent) are NOT retried — they re-raise immediately.
-_MAX_ATTEMPTS = 3  # 1 try + 2 retries
-_BACKOFF_BASE_SECONDS = 2  # 2s, 4s → worst-case ~6s added latency
-_RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
-
-
-def _with_retries[T](fn: Callable[[], T], *, what: str) -> T:
-    """Call *fn* with bounded exponential backoff on transient network errors.
-
-    Retries on 5xx / 429 and connection/timeout errors; never on other 4xx
-    (e.g. 404 = asset genuinely absent). Re-raises the last error once attempts
-    are exhausted so the caller's existing ``except`` handling still applies.
-    """
-    last: BaseException | None = None
-    for attempt in range(_MAX_ATTEMPTS):
-        try:
-            return fn()
-        except error.HTTPError as exc:
-            if exc.code not in _RETRYABLE_STATUS:
-                raise
-            last = exc
-        except (error.URLError, TimeoutError, OSError) as exc:
-            last = exc
-        if attempt < _MAX_ATTEMPTS - 1:
-            wait = _BACKOFF_BASE_SECONDS * (2**attempt)
-            logger.warning(
-                "Self-update: %s failed (%s); retry %d/%d in %ds",
-                what,
-                last,
-                attempt + 1,
-                _MAX_ATTEMPTS - 1,
-                wait,
-            )
-            time.sleep(wait)
-    assert last is not None  # loop always sets last before exhausting
-    raise last
-
-
-class SelfUpdateError(Exception):
-    """A recoverable self-update failure (network, missing asset, bad checksum)."""
-
-
-class SelfUpdateUnsupportedError(SelfUpdateError):
-    """Self-update is not available for this platform/channel combination."""
 
 
 # ---------------------------------------------------------------------------
@@ -239,25 +240,6 @@ def _asset_name_candidates(target: str, channel: str, version: str | None) -> li
 # ---------------------------------------------------------------------------
 
 
-def _github_ssl_context(url: str):  # type: ignore[no-untyped-def]
-    """certifi-backed TLS context so the frozen binary trusts GitHub's cert.
-
-    GitHub always presents a valid public cert, so verification is never
-    disabled here even if the user set ``RUNWAY_INSECURE`` for their own server.
-    """
-    from scripts.sidecar_pkg.tls import build_context
-
-    return build_context(url, insecure=False)
-
-
-def _get_json(url: str) -> Any:
-    req = request.Request(  # noqa: S310 — fixed https GitHub API URL
-        url, headers={"User-Agent": "Runway-Sidecar-SelfUpdate"}
-    )
-    with request.urlopen(req, timeout=_TIMEOUT_SECONDS, context=_github_ssl_context(url)) as resp:  # noqa: S310
-        return json.loads(bounded_read(resp, MAX_METADATA_BYTES).decode())
-
-
 def _get_release_json(channel: str) -> dict:
     """Fetch the release object (with ``assets[]``) for the active channel."""
     if channel == "edge":
@@ -288,95 +270,6 @@ def find_asset_urls(release: dict, asset_name: str | list[str]) -> tuple[str, st
     if not sha_url:
         raise SelfUpdateError(f"checksum asset not found: {asset_name}.sha256")
     return asset_url, sha_url
-
-
-# ---------------------------------------------------------------------------
-# Download + verify
-# ---------------------------------------------------------------------------
-
-
-def _download(url: str, dest: pathlib.Path, *, max_bytes: int = MAX_ARCHIVE_BYTES) -> None:
-    req = request.Request(url, headers={"User-Agent": "Runway-Sidecar-SelfUpdate"})  # noqa: S310
-    ctx = _github_ssl_context(url)
-    try:
-        with (
-            request.urlopen(req, timeout=_TIMEOUT_SECONDS, context=ctx) as resp,
-            open(dest, "wb") as fh,
-        ):  # noqa: S310
-            for chunk in bounded_chunks(resp, max_bytes):
-                fh.write(chunk)
-    except BaseException:
-        # Interruptions and process-exit exceptions must also remove partial
-        # resources; cleanup never converts the original failure into success.
-        try:
-            dest.unlink(missing_ok=True)
-        except OSError:
-            logger.warning("Could not remove partial update resource", exc_info=True)
-        raise
-
-
-def _fetch_expected_sha(url: str) -> str:
-    """Download a ``.sha256`` file and return the lowercased hex digest."""
-    req = request.Request(url, headers={"User-Agent": "Runway-Sidecar-SelfUpdate"})  # noqa: S310
-    with request.urlopen(req, timeout=_TIMEOUT_SECONDS, context=_github_ssl_context(url)) as resp:  # noqa: S310
-        text = bounded_read(resp, MAX_CHECKSUM_BYTES).decode().strip()
-    # shasum format: "<hex>  <filename>" — take the first token.
-    return text.split()[0].lower() if text else ""
-
-
-def verify_sha256(path: pathlib.Path, expected_hex: str) -> bool:
-    """True when the SHA-256 of *path* matches *expected_hex* (case-insensitive)."""
-    if path.stat().st_size > MAX_ARCHIVE_BYTES:
-        raise UpdateSizeError("Update archive exceeds size limit")
-    if not expected_hex:
-        return False
-    h = hashlib.sha256()
-    with open(path, "rb") as fh:
-        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
-            h.update(chunk)
-    return h.hexdigest().lower() == expected_hex.lower()
-
-
-def _is_within(base: pathlib.Path, target: pathlib.Path) -> bool:
-    """True when *target* resolves to a path inside *base* (no traversal/escape)."""
-    try:
-        target.resolve().relative_to(base.resolve())
-        return True
-    except ValueError:
-        return False
-
-
-def _extract(archive: pathlib.Path, dest: pathlib.Path) -> None:
-    """Extract *archive* into *dest*, rejecting any member that would escape it.
-
-    Defence-in-depth: the archive is already checksum-verified, but we still
-    guard against path traversal (zip-slip / tar-slip).
-    """
-    if archive.name.endswith(".zip"):
-        with zipfile.ZipFile(archive) as zf:
-            for name in zf.namelist():
-                if not _is_within(dest, dest / name):
-                    raise SelfUpdateError(f"unsafe path in archive: {name!r}")
-            zf.extractall(dest)
-            # zipfile.extractall drops Unix permission bits (it only writes
-            # file *contents*), even though `zip -r` recorded the original
-            # mode in each member's external_attr. Restore it so bundled
-            # Mach-O/ELF executables (e.g. Contents/MacOS/RunwaySidecar in a
-            # macOS .app) stay launchable after extraction. Directories are
-            # intentionally left alone: extractall's own directory-creation
-            # default (currently 0o755, traversable) is what keeps `.app`
-            # dirs walkable, and the apply_update() safety net below covers
-            # files regardless of what that default does.
-            for zinfo in zf.infolist():
-                mode = (zinfo.external_attr >> 16) & 0o777
-                if mode:  # 0 on archives written without Unix attrs — no-op
-                    member = dest / zinfo.filename
-                    if member.is_file():
-                        os.chmod(member, mode)
-    else:
-        with tarfile.open(archive) as tf:
-            # PEP 706 "data" filter blocks absolute paths, "..", and unsafe links.
-            tf.extractall(dest, filter="data")
 
 
 # ---------------------------------------------------------------------------
@@ -757,142 +650,6 @@ def _swap_posix(
     return True
 
 
-def _windows_swap_script(
-    pid: int,
-    install: pathlib.Path,
-    incoming: pathlib.Path,
-    backup: pathlib.Path,
-    *,
-    restart: bool,
-    display_version: str | None,
-) -> str:
-    """Batch helper: wait for *pid* and the onefile bootloader to exit, move *install* → *backup* and
-    *incoming* → *install* (restoring on failure), refresh the installer's
-    DisplayVersion, relaunch, and delete itself. Its log is kept beside the
-    helper because the parent process exits before the swap finishes."""
-    saved_backup = backup.with_name(backup.name + "_old")
-    version = _previous_version_path(install)
-    saved_version = saved_backup.with_name(saved_backup.name + _VERSION_SUFFIX)
-    pending_version = install.with_name(install.name + ".previous.pending.version")
-    transaction = _windows_transaction_path(install)
-    relaunch = f'start "" "{install}"' if restart else "rem no relaunch"
-    reg = (
-        f'reg query "{_WIN_UNINSTALL_KEY}" >NUL 2>&1 && '
-        f'reg add "{_WIN_UNINSTALL_KEY}" /v DisplayVersion /t REG_SZ /d "{display_version}" /f >NUL\r\n'
-        if display_version
-        else ""
-    )
-    restart_log = "" if restart else 'echo [%date% %time%] Relaunch disabled.>>"%LOG%"\r\n'
-    return (
-        "@echo off\r\n"
-        'set "LOG=%~dp0runway-self-update.log"\r\n'
-        # A new onefile instance must unpack its own runtime. The helper
-        # inherits the old frozen process's _PYI_* environment variables.
-        'set "PYINSTALLER_RESET_ENVIRONMENT=1"\r\n'
-        'echo [%date% %time%] Self-update helper started.>"%LOG%"\r\n'
-        f'echo [%date% %time%] Waiting for sidecar PID {pid} to exit.>>"%LOG%"\r\n'
-        ":waitloop\r\n"
-        f'tasklist /FI "PID eq {pid}" 2>NUL | find "{pid}" >NUL\r\n'
-        "if not errorlevel 1 (\r\n"
-        "  ping -n 2 127.0.0.1 >NUL\r\n"
-        "  goto waitloop\r\n"
-        ")\r\n"
-        # Retain the pre-existing rollback slot until both incoming bytes and
-        # their backup label are committed. Never overwrite interrupted state.
-        'set "BACKUP_SAVED=0"\r\n'
-        'set "VERSION_SAVED=0"\r\n'
-        'set "ORIGINAL_MOVED=0"\r\n'
-        'set "ORIGINAL_RESTORED=0"\r\n'
-        f'if exist "{saved_backup}" goto backup_conflict\r\n'
-        f'if exist "{saved_version}" goto backup_conflict\r\n'
-        f'if not exist "{pending_version}" goto metadata_missing\r\n'
-        f'if exist "{backup}" (\r\n'
-        f'  move /Y "{backup}" "{saved_backup}" >>"%LOG%" 2>&1\r\n'
-        "  if errorlevel 1 goto swap_failed\r\n"
-        '  set "BACKUP_SAVED=1"\r\n'
-        ")\r\n"
-        f'if exist "{version}" (\r\n'
-        f'  copy /B /Y "{version}" "{saved_version}" >>"%LOG%" 2>&1\r\n'
-        "  if errorlevel 1 goto swap_failed\r\n"
-        '  set "VERSION_SAVED=1"\r\n'
-        ")\r\n"
-        # PyInstaller's onefile parent remains alive briefly after its Python
-        # child exits to clean up the extraction directory. Retry the rename
-        # until Windows releases the image, with a bound so failures are logged.
-        "set /a wait_attempts=0 >NUL\r\n"
-        ":move_original\r\n"
-        f'move /Y "{install}" "{backup}" >NUL 2>&1\r\n'
-        "if not errorlevel 1 goto install_new\r\n"
-        "set /a wait_attempts+=1 >NUL\r\n"
-        "if %wait_attempts% GEQ 120 goto move_failed\r\n"
-        "ping -n 2 127.0.0.1 >NUL\r\n"
-        "goto move_original\r\n"
-        ":install_new\r\n"
-        'set "ORIGINAL_MOVED=1"\r\n'
-        f'move /Y "{incoming}" "{install}" >>"%LOG%" 2>&1\r\n'
-        "if errorlevel 1 goto restore_previous\r\n"
-        f'move /Y "{pending_version}" "{version}" >>"%LOG%" 2>&1\r\n'
-        "if errorlevel 1 goto restore_new\r\n"
-        f'del "{saved_backup}" "{saved_version}" "{transaction}" >NUL 2>&1\r\n'
-        'echo [%date% %time%] Installed updated sidecar.>>"%LOG%"\r\n'
-        f"{reg}"
-        f"{relaunch}\r\n"
-        f"{restart_log}"
-        'del "%~f0"\r\n'
-        "exit /b 0\r\n"
-        ":restore_new\r\n"
-        'echo [%date% %time%] Backup version commit failed; undoing replacement.>>"%LOG%"\r\n'
-        f'move /Y "{install}" "{incoming}" >>"%LOG%" 2>&1\r\n'
-        "if errorlevel 1 goto restore_failed\r\n"
-        ":restore_previous\r\n"
-        'echo [%date% %time%] New executable move failed; restoring previous sidecar.>>"%LOG%"\r\n'
-        f'if not exist "{backup}" goto restore_failed\r\n'
-        f'move /Y "{backup}" "{install}" >>"%LOG%" 2>&1\r\n'
-        "if errorlevel 1 goto restore_failed\r\n"
-        'set "ORIGINAL_RESTORED=1"\r\n'
-        "goto swap_failed\r\n"
-        ":restore_failed\r\n"
-        'echo [%date% %time%] Failed to restore previous sidecar from backup.>>"%LOG%"\r\n'
-        "goto swap_failed\r\n"
-        ":move_failed\r\n"
-        f'echo [%date% %time%] Original sidecar PID {pid} exited, but the executable stayed locked after %wait_attempts% move attempts.>>"%LOG%"\r\n'
-        'tasklist /FI "IMAGENAME eq RunwaySidecar.exe" >>"%LOG%" 2>&1\r\n'
-        "goto swap_failed\r\n"
-        ":backup_conflict\r\n"
-        'echo [%date% %time%] Existing saved rollback state requires recovery; refusing overwrite.>>"%LOG%"\r\n'
-        "goto swap_failed\r\n"
-        ":metadata_missing\r\n"
-        'echo [%date% %time%] Missing staged backup version; refusing swap.>>"%LOG%"\r\n'
-        "goto swap_failed\r\n"
-        ":swap_failed\r\n"
-        'set "RESTORE_SAVED=0"\r\n'
-        'if "%ORIGINAL_MOVED%"=="0" set "RESTORE_SAVED=1"\r\n'
-        'if "%ORIGINAL_RESTORED%"=="1" set "RESTORE_SAVED=1"\r\n'
-        'if "%RESTORE_SAVED%"=="1" (\r\n'
-        '  if "%BACKUP_SAVED%"=="1" (\r\n'
-        f'    move /Y "{saved_backup}" "{backup}" >>"%LOG%" 2>&1\r\n'
-        "    if errorlevel 1 goto saved_restore_failed\r\n"
-        "  )\r\n"
-        '  if "%VERSION_SAVED%"=="1" (\r\n'
-        f'    move /Y "{saved_version}" "{version}" >>"%LOG%" 2>&1\r\n'
-        "    if errorlevel 1 goto saved_restore_failed\r\n"
-        "  )\r\n"
-        ")\r\n"
-        'if "%RESTORE_SAVED%"=="0" goto failure_done\r\n'
-        f'del "{pending_version}" "{transaction}" >NUL 2>&1\r\n'
-        "goto failure_done\r\n"
-        ":saved_restore_failed\r\n"
-        'echo [%date% %time%] Saved rollback restoration failed; preserving recovery files.>>"%LOG%"\r\n'
-        ":failure_done\r\n"
-        'echo [%date% %time%] Sidecar swap failed; check file permissions and running RunwaySidecar processes.>>"%LOG%"\r\n'
-        # The first move may have failed before the original was renamed;
-        # relaunch it when it is still present.
-        f'if exist "{install}" {relaunch}\r\n'
-        'del "%~f0"\r\n'
-        "exit /b 1\r\n"
-    )
-
-
 def _apply_windows(
     install: pathlib.Path,
     incoming: pathlib.Path,
@@ -916,6 +673,10 @@ def _apply_windows(
         _previous_path(install),
         restart=restart,
         display_version=display_version,
+        previous_version_path=_previous_version_path,
+        version_suffix=_VERSION_SUFFIX,
+        windows_transaction_path=_windows_transaction_path,
+        uninstall_key=_WIN_UNINSTALL_KEY,
     )
     try:
         # Record identities before any detached moves. Readers can label a
@@ -1075,116 +836,6 @@ def rollback(current_version: str, *, restart: bool = True) -> bool:
                 # stays at `<install>.rollback` for manual recovery.
                 pass
         return ok
-
-
-def _fresh_runtime_env(*, hand_off_runtime: bool = False) -> dict[str, str]:
-    """Environment for a relaunched onefile build.
-
-    The running PyInstaller child carries ``_PYI_*`` variables pointing at its own
-    extracted ``_MEI`` dir. Inherited by the new binary, they make its bootloader
-    run the OLD unpacked code, so the update installs but never takes effect.
-    ``PYINSTALLER_RESET_ENVIRONMENT`` forces a fresh unpack (mirrors the Windows
-    helper script); the ``_PYI_*`` keys are dropped as well for good measure.
-
-    With *hand_off_runtime* (an in-place ``execve``) the old ``_MEI`` dir is named in
-    ``RUNWAY_RETIRED_MEIPASS``: the old parent bootloader keeps waiting on the re-exec'd
-    image, so nothing else would ever delete it.
-    """
-    # A copy, so os.environ is untouched if execve fails and this image keeps running.
-    env = {k: v for k, v in os.environ.items() if not k.startswith("_PYI_")}
-    env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
-    if hand_off_runtime:
-        runtime = runtime_cleanup.own_runtime_dir()
-        if runtime is not None:
-            env[runtime_cleanup.RETIRED_ENV] = str(runtime)
-    return env
-
-
-# systemd exit codes that make ``Restart=`` respawn the unit (``always`` restarts on any exit).
-_EX_TEMPFAIL = 75
-_SYSTEMCTL_TIMEOUT_S = 5
-
-
-def _systemd_unit_from_cgroup(cgroup: str) -> tuple[str, bool] | None:
-    """``(unit name, is_user_manager)`` for the service a ``/proc/<pid>/cgroup`` dump is in."""
-    parts = [p for line in cgroup.splitlines() for p in line.rpartition(":")[2].split("/")]
-    services = [p for p in parts if p.endswith(".service")]
-    if not services:
-        return None
-    user_manager = any(p.startswith("user@") and p.endswith(".service") for p in parts)
-    return services[-1], user_manager
-
-
-# Far above any realistic nesting (one level per update). Its real job is to bound a cyclic or
-# runaway ppid walk, so don't raise it to "support" deeper chains.
-_MAX_BOOTLOADER_DEPTH = 64
-
-
-def _bootloader_chain_reaches(main_pid: int) -> bool:
-    """True if ``main_pid`` is our parent, or an ancestor reached only through our own copies.
-
-    An in-place ``execve`` update leaves the old onefile bootloader waiting on the new one, so a
-    host that updated that way runs ``MainPID -> stale bootloader -> ... -> python``. Every stale
-    level was re-exec'd with our exact argv, so those levels share ``/proc/self/cmdline``. Walking
-    through anything else (a shell, a wrapper) could mean exiting does not end the unit, so that
-    stops the walk. Any doubt returns False.
-    """
-    if main_pid <= 1:
-        return False
-    try:
-        own_cmdline = pathlib.Path("/proc/self/cmdline").read_bytes()
-        pid = os.getppid()
-        for _ in range(_MAX_BOOTLOADER_DEPTH):
-            if pid == main_pid:
-                return True
-            if pid <= 1 or pathlib.Path(f"/proc/{pid}/cmdline").read_bytes() != own_cmdline:
-                return False
-            # ``/proc/<pid>/stat`` is ``pid (comm) state ppid ...``; comm may hold spaces/parens.
-            pid = int(pathlib.Path(f"/proc/{pid}/stat").read_text().rpartition(")")[2].split()[1])
-    except (OSError, ValueError, IndexError):
-        return False
-    return False
-
-
-def _systemd_restart_exit_code() -> int | None:
-    """Exit code that makes systemd restart us, or None if it is not our direct supervisor.
-
-    ``INVOCATION_ID`` alone proves nothing: every process inside any systemd service has it,
-    including one started from a shell in an unrelated service. The unit must have our onefile
-    parent bootloader as its MainPID (or an ancestor of it that only stale copies of that
-    bootloader separate us from, see ``_bootloader_chain_reaches``), so that this process exiting
-    really ends the unit, and a ``Restart=`` policy that respawns it. Any doubt returns None and
-    the caller falls back to ``execve``.
-    """
-    if sys.platform != "linux" or not os.environ.get("INVOCATION_ID"):
-        return None
-    try:
-        found = _systemd_unit_from_cgroup(pathlib.Path("/proc/self/cgroup").read_text())
-        if found is None:
-            return None
-        unit, user_manager = found
-        proc = subprocess.run(  # noqa: S603
-            [
-                "systemctl",
-                *(["--user"] if user_manager else []),
-                "show",
-                "-p",
-                "MainPID",
-                "-p",
-                "Restart",
-                unit,
-            ],  # noqa: S607
-            capture_output=True,
-            text=True,
-            timeout=_SYSTEMCTL_TIMEOUT_S,
-            check=False,
-        )
-        props = dict(line.partition("=")[::2] for line in proc.stdout.splitlines())
-        if proc.returncode != 0 or not _bootloader_chain_reaches(int(props.get("MainPID", "0"))):
-            return None
-    except (OSError, ValueError, subprocess.SubprocessError):
-        return None
-    return {"always": 0, "on-failure": _EX_TEMPFAIL}.get(props.get("Restart", ""))
 
 
 def _relaunch_posix(

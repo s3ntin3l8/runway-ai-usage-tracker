@@ -694,6 +694,10 @@ class TestWindowsSwapScript:
             base / "RunwaySidecar.exe",
             base / "RunwaySidecar.new.exe",
             base / "RunwaySidecar.exe.previous",
+            previous_version_path=self_update._previous_version_path,
+            version_suffix=self_update._VERSION_SUFFIX,
+            windows_transaction_path=self_update._windows_transaction_path,
+            uninstall_key=self_update._WIN_UNINSTALL_KEY,
             **kw,
         )
 
