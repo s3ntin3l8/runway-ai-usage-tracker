@@ -1262,7 +1262,7 @@ def test_prune_reclaims_a_pipe_path_database_that_is_gone(monkeypatch, tmp_path)
             raise FileNotFoundError(path)
         return real_stat(path, *args, **kwargs)
 
-    monkeypatch.setattr(hermes_extractor.os, "stat", stat)
+    monkeypatch.setattr(os, "stat", stat)
     state = {
         gone: {
             "default": {

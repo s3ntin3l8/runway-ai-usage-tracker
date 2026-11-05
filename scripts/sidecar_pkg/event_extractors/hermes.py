@@ -16,6 +16,14 @@ Provider resolution lives in ``hermes_providers`` and the watermark log in
 ``hermes_watermark``. This module keeps the parser, which is what a test
 patches when it replaces a watermark helper on this module.
 
+A patch on this module intercepts the parser only for a name the parser
+calls from here (``_append_hermes_watermark``, ``_live_slice_suffixes``,
+``WATERMARK_COMPACT_MIN_LINES``, ``resolve_hermes_provider_and_canonical``).
+Calls between the helpers resolve in ``hermes_providers`` and
+``hermes_watermark``, so patching ``map_hermes_canonical`` or
+``_HERMES_CANONICAL_MAP`` here does not change
+``resolve_hermes_provider_and_canonical``.
+
 Because ``session_model_usage`` accumulates tokens over the lifetime of a task
 slice, this extractor tracks incremental deltas using a local watermark state
 file so ongoing sessions emit only fresh tokens per cycle without duplicate
@@ -25,7 +33,6 @@ drops or double-counting.
 from __future__ import annotations
 
 import logging
-import os
 import sqlite3
 import sys
 from datetime import UTC, datetime
@@ -44,9 +51,11 @@ from scripts.sidecar_pkg.sqlite_cursor import CursorReadError, iter_cursor  # no
 
 logger = logging.getLogger("runway.sidecar.hermes")
 
-# Re-exported for sidecar.py, repair scripts and tests. The parser calls the
-# watermark helpers through this module, so a patch of those names here still
-# wins; the names below are the ones the parser itself does not reference.
+# Re-exported for sidecar.py, repair scripts and tests. The parser calls
+# resolve_hermes_provider_and_canonical and the watermark helpers through
+# this module, so a patch of those names here still wins. The other names
+# are the public surface; the helpers call them in their own modules, so a
+# patch of them here does not.
 __all__ = [
     "_HERMES_CANONICAL_MAP",
     "_discover_hermes_db_paths",
@@ -84,15 +93,6 @@ from scripts.sidecar_pkg.hermes_watermark import (
     _prune_stale_watermark_slices,
     _split_legacy_watermark_key,
 )
-
-
-def _stat_db_path(db_path: str) -> os.stat_result:
-    """Stat a watermark database path.
-
-    ``_prune_stale_watermark_slices`` calls this rather than ``os.stat`` so a
-    test that replaces ``hermes.os.stat`` still decides which slices are gone.
-    """
-    return os.stat(db_path)
 
 
 def parse_hermes_events(

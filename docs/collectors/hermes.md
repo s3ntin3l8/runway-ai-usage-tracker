@@ -1,6 +1,6 @@
 # Hermes Collector
 
-**File:** `scripts/sidecar_pkg/event_extractors/hermes.py` (sidecar only — not a server provider)
+**File:** `scripts/sidecar_pkg/event_extractors/hermes.py` (parser). Provider resolution lives in `scripts/sidecar_pkg/hermes_providers.py` and the watermark log in `scripts/sidecar_pkg/hermes_watermark.py`. Sidecar only — not a server provider.
 
 Runway extracts session token usage and estimated/actual costs sidecar-side from local Hermes Agent SQLite databases across default and named profiles.
 
@@ -17,7 +17,9 @@ Runway extracts session token usage and estimated/actual costs sidecar-side from
 
 | Component | Where it runs | What it does |
 |---|---|---|
-| Event extractor (sidecar) | `scripts/sidecar_pkg/event_extractors/hermes.py` | Queries `state.db` instances, calculates incremental deltas, and maps canonical providers |
+| Event extractor (sidecar) | `scripts/sidecar_pkg/event_extractors/hermes.py` | Queries `state.db` instances and calculates incremental deltas |
+| Provider resolution | `scripts/sidecar_pkg/hermes_providers.py` | Maps Hermes `billing_provider` values onto canonical Runway provider IDs |
+| Watermark log | `scripts/sidecar_pkg/hermes_watermark.py` | Discovers databases, and compacts, migrates, and prunes the watermark log |
 | Sidecar runner | `scripts/sidecar.py` | Discovers Hermes DB paths, builds canonical hints, and dispatches extraction cycles |
 | Detection rules | `scripts/sidecar.py` `__REGISTRY__["hermes"]` | Discovers Hermes installations via `~/.hermes/state.db` and `~/.hermes/config.yaml` |
 | Watermark state | `~/.config/runway/sidecar/hermes_watermark.jsonl` | Persists per-slice high-water marks for ongoing sessions |
@@ -115,7 +117,7 @@ That reclaim only fires when Hermes deletes the `session_model_usage` row along 
 
 ## Canonical Provider Mapping
 
-Hermes routes requests to multiple upstream LLM providers. The extractor maps Hermes `billing_provider` values onto canonical Runway provider IDs:
+Hermes routes requests to multiple upstream LLM providers. `hermes_providers.py` maps Hermes `billing_provider` values onto canonical Runway provider IDs:
 
 | Hermes `billing_provider` | Canonical Runway `provider_id` |
 |---|---|
@@ -213,7 +215,9 @@ To prevent unmapped events from corrupting labeled quota gauges or leaking acros
 
 | File | Purpose |
 |---|---|
-| `scripts/sidecar_pkg/event_extractors/hermes.py` | The Hermes event extractor |
+| `scripts/sidecar_pkg/event_extractors/hermes.py` | The Hermes event extractor (parser) |
+| `scripts/sidecar_pkg/hermes_providers.py` | Canonical-provider map for Hermes billing providers |
+| `scripts/sidecar_pkg/hermes_watermark.py` | Watermark log: discovery, compaction, legacy migration, pruning |
 | `scripts/sidecar_pkg/canonical_providers.py` | Maps Hermes provider names onto Runway's canonical ids |
 | `scripts/sidecar_pkg/event_watermark.py` | Per-store read watermark |
 | `scripts/sidecar_pkg/event_extractors/opencode.py` | The extractor it is modelled on |

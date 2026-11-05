@@ -415,12 +415,7 @@ def _database_path_is_gone(db_path: str) -> bool:
     mark of a database we merely fail to read has to stay.
     """
     try:
-        # hermes.os.stat is what the prune test replaces. Don't import hermes
-        # here: it imports this module.
-        import sys
-
-        facade = sys.modules["scripts.sidecar_pkg.event_extractors.hermes"]
-        facade._stat_db_path(db_path)
+        os.stat(db_path)
     except FileNotFoundError:
         return True
     except OSError:
