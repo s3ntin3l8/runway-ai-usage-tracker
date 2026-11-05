@@ -4,6 +4,10 @@ Split out of ``minimax_code.py``. Nothing here advances the cursor. The parser
 stays next to the pending-cursor registry and calls these helpers through the
 ``minimax_code`` module, so a patch of ``minimax_code._MAX_ROWS_PER_CYCLE``
 still changes what the parser scans.
+
+This is not an extractor, so it stays out of ``event_extractors``: that
+package is one module per provider, and each of those modules stamps a
+``source_app``.
 """
 
 from __future__ import annotations
@@ -14,7 +18,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from scripts.sidecar_pkg.event_extractors.minimax_code_schema import (
+from scripts.sidecar_pkg.minimax_code_schema import (
     _MESSAGE_ROWS_TABLE,
     _OPTIONAL_SESSION_COLUMNS,
     _PROVIDER_MODEL_PREFIX,

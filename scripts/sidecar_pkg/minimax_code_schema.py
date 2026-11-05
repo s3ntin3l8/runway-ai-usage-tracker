@@ -2,6 +2,10 @@
 
 Split out of ``minimax_code.py`` so the ledger readers and the parser share
 one definition of the runtime's tables. ``minimax_code`` re-exports every name.
+
+This is not an extractor, so it stays out of ``event_extractors``: that
+package is one module per provider, and each of those modules stamps a
+``source_app``.
 """
 
 from __future__ import annotations

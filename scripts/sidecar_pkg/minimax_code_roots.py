@@ -3,6 +3,10 @@
 Split out of ``minimax_code.py``. Discovery is pure path logic: the parser
 re-exports it and calls ``_default_state_path`` through the ``minimax_code``
 module, which is also what tests import.
+
+This is not an extractor, so it stays out of ``event_extractors``: that
+package is one module per provider, and each of those modules stamps a
+``source_app``.
 """
 
 from __future__ import annotations

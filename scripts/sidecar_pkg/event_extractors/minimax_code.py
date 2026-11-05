@@ -169,7 +169,7 @@ __all__ = [
     "parse_minimax_code_session_names",
 ]
 
-from scripts.sidecar_pkg.event_extractors.minimax_code_ledger import (
+from scripts.sidecar_pkg.minimax_code_ledger import (
     _agent_label,
     _bootstrap_last_id,
     _child_attribution,
@@ -186,13 +186,13 @@ from scripts.sidecar_pkg.event_extractors.minimax_code_ledger import (
     background_session_links,
     build_event_id,
 )
-from scripts.sidecar_pkg.event_extractors.minimax_code_roots import (
+from scripts.sidecar_pkg.minimax_code_roots import (
     _DATA_DIR_ENV_VARS,
     _data_roots,
     _default_state_path,
     discover_runtime_stores,
 )
-from scripts.sidecar_pkg.event_extractors.minimax_code_schema import (
+from scripts.sidecar_pkg.minimax_code_schema import (
     _MAX_ABANDONED_RECORDS,
     _MAX_ROWS_PER_CYCLE,
     _MAX_SKIP_ATTEMPTS,
