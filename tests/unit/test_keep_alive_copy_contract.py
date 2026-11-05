@@ -37,7 +37,11 @@ def test_the_sidecar_help_text_names_every_covered_login():
         assert label.split(" (")[0] in help_text, f"--keep-alive help does not mention {label}"
 
 
-def test_the_sidecar_settings_dialog_uses_the_shared_list_not_hardcoded_names():
+def test_the_keep_alive_section_uses_the_shared_list_not_hardcoded_names():
+    """The login list lives in KeepAliveSection. The dialog is only a tab host,
+    so also reject a hardcoded provider list there — otherwise the shell can
+    grow its own copy without this test noticing.
+    """
     section = (ROOT / "webapp" / "src" / "features" / "fleet" / "KeepAliveSection.tsx").read_text(
         encoding="utf-8"
     )
