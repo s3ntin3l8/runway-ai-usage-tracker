@@ -1,4 +1,3 @@
-import { claudeConnectionLabel } from '@/lib/providerFamilies';
 // Per-provider detail dialog. Shows the master enabled toggle + a vertical
 // list of account rows for one ProviderConfig. Each row exposes a "⋮" menu
 // with Edit / Remove actions. The "Add account" footer button is wired in
@@ -8,22 +7,15 @@ import { claudeConnectionLabel } from '@/lib/providerFamilies';
 
 import { useId, useMemo, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Archive, Ellipsis, Pencil, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { deleteProviderConfig, putDiscoveredAccountLabel, putProviderConfig } from '@/api/endpoints';
 import type { ProviderAccount, ProviderConfig } from '@/api/types';
-import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
-import { EmptyState } from '@/components/ui/EmptyState';
-import { ProviderGlyph } from '@/components/ui/ProviderGlyph';
 import { ResponsiveDialog } from '@/components/ui/ResponsiveDialog';
-import { Switch } from '@/components/ui/Switch';
-import { displayAccountName, accountSubtitle, maskAccountId } from '@/lib/accountDisplay';
+import { displayAccountName, maskAccountId } from '@/lib/accountDisplay';
 import { ProviderAccountDialog } from './ProviderAccountDialog';
-
-function credentialProblemTitle(status: string | undefined): string | undefined {
-  return status ? `A credential is ${status} — see Credentials` : undefined;
-}
+import { ProviderDetailAccountList } from './ProviderDetailAccountList';
+import { ProviderDetailHeader } from './ProviderDetailHeader';
 
 interface ProviderDetailDialogProps {
   provider: ProviderConfig | null;
@@ -246,223 +238,30 @@ export function ProviderDetailDialog({
       >
         {provider ? (
           <div className="flex flex-col gap-3">
-            {connections && connections.length > 1 ? (
-              <label className="flex flex-col gap-1.5 text-sm">
-                Claude connection
-                <select aria-label="Claude connection" value={provider.provider_id}
-                  className="rounded-md border border-edge bg-surface-1 p-2 text-fg"
-                  onChange={(e) => onSelectConnection?.(e.target.value)}>
-                  {connections.map((p) => <option key={p.provider_id} value={p.provider_id}>{claudeConnectionLabel(p.provider_id)}</option>)}
-                </select>
-              </label>
-            ) : null}
-            <div className="flex items-center justify-between rounded-sm border border-edge bg-surface-2 px-3 py-2">
-              <div className="flex items-center gap-2">
-                <ProviderGlyph providerId={provider.provider_id} name={provider.name} />
-                <div>
-                  <p className="text-[13px] font-medium">All accounts enabled</p>
-                  {/* The scope of the switch lives here. It is wired to the
-                      switch with aria-describedby so a screen reader gets the
-                      qualifier with the name, not only on screen. */}
-                  <p id={masterToggleScopeId} className="text-[11px] text-fg-subtle">
-                    Turning this off hides the provider from collection for every account this
-                    card can address. An account whose provider is unavailable is left as it is.
-                  </p>
-                </div>
-              </div>
-              <Switch
-                checked={masterEnabled}
-                disabled={addressableConfigAccounts.length === 0 || setMasterEnabled.isPending}
-                onCheckedChange={(v) => setMasterEnabled.mutate(v)}
-                aria-label="All accounts enabled"
-                aria-describedby={masterToggleScopeId}
-              />
-            </div>
-
-            {listedAccounts.length === 0 ? (
-              <EmptyState
-                title="No accounts configured"
-                description="Add a credential to start collecting usage for this provider."
-                action={
-                  onAddAccount ? (
-                    <Button variant="primary" size="sm" onClick={() => onAddAccount(provider)}>
-                      Add account
-                    </Button>
-                  ) : (
-                    <Button variant="primary" size="sm" disabled title="Wizard disabled">
-                      Add account
-                    </Button>
-                  )
-                }
-              />
-            ) : (
-              <ul className="flex flex-col gap-1.5" aria-label="Provider accounts">
-                {listedAccounts.map((account) => {
-                  const isMenuOpen = menuFor === account.account_id;
-                  return (
-                    <li
-                      key={`${account.provider_id ?? provider.provider_id}/${account.account_id}`}
-                      className="flex items-center gap-3 rounded-sm border border-edge bg-surface-1 px-3 py-2.5"
-                    >
-                      <AccountInitial account={account} />
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-[13px] font-medium">
-                          {displayAccountName(account)}
-                        </p>
-                        {accountSubtitle(account) ? (
-                          <p className="truncate text-[11px] text-fg-subtle">
-                            {accountSubtitle(account)}
-                          </p>
-                        ) : null}
-                        {connections && connections.length > 1 ? (
-                          <p className="mt-0.5 truncate text-[11px] text-fg-subtle">
-                            {claudeConnectionLabel(account.provider_id ?? provider.provider_id)}
-                          </p>
-                        ) : null}
-                        {account.credential_source_labels?.length ? (
-                          <p className="mt-0.5 truncate text-[11px] text-fg-subtle">
-                            Discovered: {account.credential_source_labels.join(', ')}
-                          </p>
-                        ) : null}
-                        {account.is_orphaned ? (
-                          <p className="mt-0.5 text-[11px] text-warning">
-                            No usage data — safe to remove
-                          </p>
-                        ) : null}
-                      </div>
-                      <div className="flex shrink-0 items-center gap-1.5">
-                        {account.api_key_set ? (
-                          <Badge
-                            variant={credentialProblems?.[account.account_id] ? 'critical' : 'ok'}
-                            title={credentialProblemTitle(credentialProblems?.[account.account_id])}
-                          >
-                            key
-                          </Badge>
-                        ) : null}
-                        {account.session_cookie_set ? (
-                          <Badge
-                            variant={credentialProblems?.[account.account_id] ? 'critical' : 'ok'}
-                            title={credentialProblemTitle(credentialProblems?.[account.account_id])}
-                          >
-                            cookie
-                          </Badge>
-                        ) : null}
-                        {account.source === 'discovered' ? (
-                          <Badge variant="ok">auto</Badge>
-                        ) : (
-                          <Badge variant={account.enabled ? 'accent' : 'neutral'}>
-                            {account.enabled ? 'enabled' : 'disabled'}
-                          </Badge>
-                        )}
-                      </div>
-                      <div className="relative">
-                          <Button
-                            size="icon-sm"
-                            variant="ghost"
-                            aria-label={`Actions for ${displayAccountName(account)}`}
-                            aria-haspopup="menu"
-                            aria-expanded={isMenuOpen}
-                            onClick={() =>
-                              setMenuFor((current) =>
-                                current === account.account_id ? null : account.account_id,
-                              )
-                            }
-                          >
-                            <Ellipsis className="size-4" />
-                          </Button>
-                          {isMenuOpen ? (
-                            <div
-                              role="menu"
-                              className="absolute top-full right-0 z-10 mt-1 min-w-[10rem] rounded-md border border-edge bg-overlay p-1 shadow-lg"
-                              onMouseLeave={() => setMenuFor(null)}
-                            >
-                              <button
-                                type="button"
-                                role="menuitem"
-                                // An account the dialog cannot address has no
-                                // provider to open. Marked disabled for
-                                // assistive tech and dimmed, but still
-                                // clickable: a `disabled` button swallows the
-                                // click and says nothing, and the operator is
-                                // better served by being told why.
-                                aria-disabled={account.source !== 'discovered' && !providerOf(account)}
-                                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-[13px] hover:bg-surface-2 aria-disabled:opacity-50"
-                                onClick={() => {
-                                  setMenuFor(null);
-                                  if (account.source === 'discovered') {
-                                    setEditingDiscovered(account);
-                                    setDiscoveredLabel(account.account_label ?? '');
-                                  } else if (providerOf(account)) {
-                                    setEditingAccount(account);
-                                  } else {
-                                    // The account names a provider the dialog does
-                                    // not know, so there is no provider to open
-                                    // its settings against. Say so, rather than
-                                    // closing the menu and leaving the operator
-                                    // wondering whether the click landed.
-                                    toast.error(
-                                      `Cannot edit ${displayAccountName(account)} — its provider is not available`,
-                                    );
-                                  }
-                                }}
-                              >
-                                <Pencil className="size-3.5 text-fg-muted" />
-                                Edit
-                              </button>
-                              {account.source !== 'discovered' ? (
-                                <>
-                                  <button
-                                    type="button"
-                                    role="menuitem"
-                                    disabled={archiveAccount.isPending}
-                                    className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-[13px] hover:bg-surface-2 disabled:opacity-50"
-                                    onClick={() => {
-                                      setMenuFor(null);
-                                      archiveAccount.mutate(account);
-                                    }}
-                                  >
-                                    <Archive className="size-3.5 text-fg-muted" />
-                                    Archive
-                                  </button>
-                                  <button
-                                    type="button"
-                                    role="menuitem"
-                                    className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-[13px] text-critical hover:bg-critical/10"
-                                    onClick={() => {
-                                      setMenuFor(null);
-                                      setPendingDelete(account);
-                                    }}
-                                  >
-                                    <Trash2 className="size-3.5" />
-                                    Remove
-                                  </button>
-                                </>
-                              ) : null}
-                            </div>
-                          ) : null}
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-
-            {listedAccounts.length > 0 ? (
-              onAddAccount ? (
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  className="self-start"
-                  onClick={() => onAddAccount(provider)}
-                >
-                  Add account
-                </Button>
-              ) : (
-                <Button variant="secondary" size="sm" className="self-start" disabled title="Wizard disabled">
-                  Add account
-                </Button>
-              )
-            ) : null}
+            <ProviderDetailHeader
+              provider={provider}
+              connections={connections}
+              onSelectConnection={onSelectConnection}
+              masterToggleScopeId={masterToggleScopeId}
+              masterEnabled={masterEnabled}
+              addressableConfigAccounts={addressableConfigAccounts}
+              setMasterEnabled={setMasterEnabled}
+            />
+            <ProviderDetailAccountList
+              provider={provider}
+              connections={connections}
+              listedAccounts={listedAccounts}
+              credentialProblems={credentialProblems}
+              menuFor={menuFor}
+              setMenuFor={setMenuFor}
+              setEditingDiscovered={setEditingDiscovered}
+              setDiscoveredLabel={setDiscoveredLabel}
+              providerOf={providerOf}
+              setEditingAccount={setEditingAccount}
+              archiveAccount={archiveAccount}
+              setPendingDelete={setPendingDelete}
+              onAddAccount={onAddAccount}
+            />
 
             {pendingDelete ? (
               <div className="rounded-md border border-critical/30 bg-critical/5 p-3">
@@ -519,20 +318,5 @@ export function ProviderDetailDialog({
         </form>
       </ResponsiveDialog>
     </>
-  );
-}
-
-function AccountInitial({ account }: { account: ProviderAccount }) {
-  // Simple visual initial derived from the account_label / account_id. Keeps
-  // the row scannable without dragging in the full ProviderGlyph.
-  const source = account.account_label?.trim() || account.account_id;
-  const ch = (source[0] ?? '?').toUpperCase();
-  return (
-    <div
-      aria-hidden
-      className="flex size-7 shrink-0 items-center justify-center rounded-sm bg-accent-muted text-[11px] font-semibold text-accent-text"
-    >
-      {ch}
-    </div>
   );
 }
