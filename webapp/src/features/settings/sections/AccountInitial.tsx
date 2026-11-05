@@ -1,12 +1,4 @@
-// Shared by the provider detail account row. A component and a plain helper
-// live together so both move as one sibling of ProviderDetailDialog.
-/* eslint-disable react-refresh/only-export-components */
-
 import type { ProviderAccount } from '@/api/types';
-
-export function credentialProblemTitle(status: string | undefined): string | undefined {
-  return status ? `A credential is ${status} — see Credentials` : undefined;
-}
 
 export function AccountInitial({ account }: { account: ProviderAccount }) {
   // Simple visual initial derived from the account_label / account_id. Keeps

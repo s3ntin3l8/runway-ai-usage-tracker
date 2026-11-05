@@ -9,7 +9,8 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { accountSubtitle, displayAccountName } from '@/lib/accountDisplay';
 import { claudeConnectionLabel } from '@/lib/providerFamilies';
-import { AccountInitial, credentialProblemTitle } from './providerDetailParts';
+import { AccountInitial } from './AccountInitial';
+import { credentialProblemTitle } from './credentialProblemTitle';
 
 export interface ProviderDetailAccountDetailProps {
   account: ProviderAccount;
