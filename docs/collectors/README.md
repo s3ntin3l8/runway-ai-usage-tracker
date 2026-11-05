@@ -41,7 +41,7 @@ not list them as providers:
 | Source | Sidecar module | Document |
 |---|---|---|
 | `hermes` | `scripts/sidecar_pkg/event_extractors/hermes.py` | [hermes.md](hermes.md) |
-| `minimax_code` | `scripts/sidecar_pkg/event_extractors/minimax_code.py` | [minimax.md](minimax.md) |
+| `minimax_code` | `scripts/sidecar_pkg/event_extractors/minimax_code.py` (helpers in `minimax_code_schema.py`, `minimax_code_roots.py`, `minimax_code_ledger.py`) | [minimax.md](minimax.md) |
 
 They produce **usage events**, never quota cards. The server receives their
 events and files them under the canonical provider they map to.
