@@ -471,6 +471,7 @@ async def test_verified_sidecar_identity_promotes_only_its_source(monkeypatch):
     # this test exercises the persistence boundary against its isolated DB.
     monkeypatch.setattr("sqlmodel.Session", Session)
     monkeypatch.setattr("app.services.collector_manager.token_cache", cache)
+    monkeypatch.setattr("app.services.collector_claude_identity.token_cache", cache)
     manager = CollectorManager()
     move_source = cache.move_source
 
@@ -577,7 +578,9 @@ async def test_promotion_corrects_a_carried_rotation_binding(monkeypatch):
 
     monkeypatch.setattr("app.core.db.engine", engine)
     monkeypatch.setattr("sqlmodel.Session", Session)
-    monkeypatch.setattr("app.services.collector_manager.token_cache", TokenCache())
+    cache = TokenCache()
+    monkeypatch.setattr("app.services.collector_manager.token_cache", cache)
+    monkeypatch.setattr("app.services.collector_claude_identity.token_cache", cache)
     manager = CollectorManager()
 
     await manager._promote_source_identity("antigravity", "default", source_id, "bob@example.com")
@@ -646,7 +649,9 @@ async def test_promotion_respects_the_operators_own_mapping(monkeypatch):
 
     monkeypatch.setattr("app.core.db.engine", engine)
     monkeypatch.setattr("sqlmodel.Session", Session)
-    monkeypatch.setattr("app.services.collector_manager.token_cache", TokenCache())
+    empty_cache = TokenCache()
+    monkeypatch.setattr("app.services.collector_manager.token_cache", empty_cache)
+    monkeypatch.setattr("app.services.collector_claude_identity.token_cache", empty_cache)
     manager = CollectorManager()
 
     await manager._promote_source_identity("antigravity", "default", source_id, "bob@example.com")
@@ -957,6 +962,7 @@ async def test_promotion_names_a_discovered_claude_account(monkeypatch):
     monkeypatch.setattr("app.core.db.engine", engine)
     monkeypatch.setattr("sqlmodel.Session", Session)
     monkeypatch.setattr("app.services.collector_manager.token_cache", cache)
+    monkeypatch.setattr("app.services.collector_claude_identity.token_cache", cache)
     manager = CollectorManager()
 
     await manager._promote_source_identity(
@@ -1036,6 +1042,7 @@ async def test_promotion_never_overwrites_the_operators_own_account_details(monk
     monkeypatch.setattr("app.core.db.engine", engine)
     monkeypatch.setattr("sqlmodel.Session", Session)
     monkeypatch.setattr("app.services.collector_manager.token_cache", cache)
+    monkeypatch.setattr("app.services.collector_claude_identity.token_cache", cache)
     manager = CollectorManager()
 
     await manager._promote_source_identity(
@@ -1111,6 +1118,7 @@ async def test_promotion_names_an_existing_account_nobody_named(monkeypatch):
     monkeypatch.setattr("app.core.db.engine", engine)
     monkeypatch.setattr("sqlmodel.Session", Session)
     monkeypatch.setattr("app.services.collector_manager.token_cache", cache)
+    monkeypatch.setattr("app.services.collector_claude_identity.token_cache", cache)
     manager = CollectorManager()
 
     await manager._promote_source_identity(
@@ -1204,6 +1212,7 @@ async def test_promotion_keeps_the_name_the_operator_gave_a_discovered_account(
     monkeypatch.setattr("app.core.db.engine", engine)
     monkeypatch.setattr("sqlmodel.Session", Session)
     monkeypatch.setattr("app.services.collector_manager.token_cache", cache)
+    monkeypatch.setattr("app.services.collector_claude_identity.token_cache", cache)
     manager = CollectorManager()
 
     await manager._promote_source_identity(
