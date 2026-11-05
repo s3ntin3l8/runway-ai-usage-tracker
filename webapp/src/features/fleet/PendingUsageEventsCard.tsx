@@ -30,12 +30,10 @@ import {
   type AssignOptionKind,
 } from './pendingUsageSession';
 import { PendingUsageBatchAssign } from './PendingUsageBatchAssign';
-import {
-  PendingUsageFilters,
-  PendingUsagePagination,
-  PendingUsageSummary,
-} from './PendingUsageEventsChrome';
+import { PendingUsageFilters } from './PendingUsageFilters';
+import { PendingUsagePagination } from './PendingUsagePagination';
 import { PendingUsageSessionsTable } from './PendingUsageSessionsTable';
+import { PendingUsageSummary } from './PendingUsageSummary';
 
 export function PendingUsageEventsCard() {
   const queryClient = useQueryClient();
