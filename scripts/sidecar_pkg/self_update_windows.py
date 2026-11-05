@@ -18,28 +18,29 @@ def _windows_swap_script(
     *,
     restart: bool,
     display_version: str | None,
+    previous_version_path,
+    version_suffix: str,
+    windows_transaction_path,
+    uninstall_key: str,
 ) -> str:
     """Batch helper: wait for *pid* and the onefile bootloader to exit, move *install* → *backup* and
     *incoming* → *install* (restoring on failure), refresh the installer's
     DisplayVersion, relaunch, and delete itself. Its log is kept beside the
-    helper because the parent process exits before the swap finishes."""
+    helper because the parent process exits before the swap finishes.
+
+    The four names that used to be read off ``self_update`` are arguments.
+    ``_apply_windows`` looks them up in its own globals, so a patch there
+    still applies, and this module does not import ``self_update``.
+    """
     saved_backup = backup.with_name(backup.name + "_old")
-    # Looked up on the apply module at call time. Importing it here would cycle
-    # (self_update imports this helper), and a patch of these names on
-    # self_update still applies. The apply module is already loaded: it is
-    # the caller.
-    import sys
-
-    apply = sys.modules["scripts.sidecar_pkg.self_update"]
-
-    version = apply._previous_version_path(install)
-    saved_version = saved_backup.with_name(saved_backup.name + apply._VERSION_SUFFIX)
+    version = previous_version_path(install)
+    saved_version = saved_backup.with_name(saved_backup.name + version_suffix)
     pending_version = install.with_name(install.name + ".previous.pending.version")
-    transaction = apply._windows_transaction_path(install)
+    transaction = windows_transaction_path(install)
     relaunch = f'start "" "{install}"' if restart else "rem no relaunch"
     reg = (
-        f'reg query "{apply._WIN_UNINSTALL_KEY}" >NUL 2>&1 && '
-        f'reg add "{apply._WIN_UNINSTALL_KEY}" /v DisplayVersion /t REG_SZ /d "{display_version}" /f >NUL\r\n'
+        f'reg query "{uninstall_key}" >NUL 2>&1 && '
+        f'reg add "{uninstall_key}" /v DisplayVersion /t REG_SZ /d "{display_version}" /f >NUL\r\n'
         if display_version
         else ""
     )

@@ -101,7 +101,13 @@ __all__ = [
     "SelfUpdateUnsupportedError",
     "_MAX_ATTEMPTS",
     "_SYSTEMCTL_TIMEOUT_S",
+    "_download",
+    "_extract",
+    "_fresh_runtime_env",
+    "_get_json",
     "_github_ssl_context",
+    "_windows_swap_script",
+    "_with_retries",
     "apply_update",
     "find_asset_urls",
     "reclaim_stale_state",
@@ -667,6 +673,10 @@ def _apply_windows(
         _previous_path(install),
         restart=restart,
         display_version=display_version,
+        previous_version_path=_previous_version_path,
+        version_suffix=_VERSION_SUFFIX,
+        windows_transaction_path=_windows_transaction_path,
+        uninstall_key=_WIN_UNINSTALL_KEY,
     )
     try:
         # Record identities before any detached moves. Readers can label a

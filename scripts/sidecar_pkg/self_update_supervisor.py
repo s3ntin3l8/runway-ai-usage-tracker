@@ -15,6 +15,7 @@ import subprocess
 import sys
 
 from scripts.sidecar_pkg import runtime_cleanup
+from scripts.sidecar_pkg.self_update_fetch import _patched
 
 logger = logging.getLogger("scripts.sidecar_pkg.self_update")
 
@@ -118,7 +119,7 @@ def _systemd_restart_exit_code() -> int | None:
             ],  # noqa: S607
             capture_output=True,
             text=True,
-            timeout=_SYSTEMCTL_TIMEOUT_S,
+            timeout=_patched("_SYSTEMCTL_TIMEOUT_S"),
             check=False,
         )
         props = dict(line.partition("=")[::2] for line in proc.stdout.splitlines())

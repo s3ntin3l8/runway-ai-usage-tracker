@@ -19,7 +19,6 @@ from typing import Any
 from urllib import error, request
 
 from scripts.sidecar_pkg.update_limits import (
-    MAX_ARCHIVE_BYTES,
     MAX_CHECKSUM_BYTES,
     MAX_METADATA_BYTES,
     UpdateSizeError,
@@ -30,19 +29,33 @@ from scripts.sidecar_pkg.update_limits import (
 logger = logging.getLogger("scripts.sidecar_pkg.self_update")
 
 
+def _apply_module():
+    """The ``self_update`` module that tests patch, already imported by the caller.
+
+    Accept either import spelling. ``scripts/`` is on ``sys.path`` in some
+    tests, which registers the module as ``sidecar_pkg.self_update`` rather
+    than ``scripts.sidecar_pkg.self_update``.
+    """
+    import sys
+
+    for name in ("scripts.sidecar_pkg.self_update", "sidecar_pkg.self_update"):
+        module = sys.modules.get(name)
+        if module is not None:
+            return module
+    raise RuntimeError(
+        "self-update helpers must be called through self_update; "
+        "it is not loaded under scripts.sidecar_pkg.self_update or sidecar_pkg.self_update"
+    )
+
+
 def _patched(name: str):
     """Read *name* from ``self_update`` at call time.
 
     Tests replace helpers and limits on that module (``_github_ssl_context``,
     ``MAX_ARCHIVE_BYTES``, ``hashlib``). A direct global here would keep the
-    value this module was imported with. Looking the module up in
-    ``sys.modules`` avoids an import cycle: ``self_update`` imports this
-    module, and it is already loaded by the time a helper runs.
+    value this module was imported with.
     """
-    import sys
-
-    apply = sys.modules["scripts.sidecar_pkg.self_update"]
-    return getattr(apply, name)
+    return getattr(_apply_module(), name)
 
 
 _TIMEOUT_SECONDS = 60
@@ -64,7 +77,8 @@ def _with_retries[T](fn: Callable[[], T], *, what: str) -> T:
     are exhausted so the caller's existing ``except`` handling still applies.
     """
     last: BaseException | None = None
-    for attempt in range(_MAX_ATTEMPTS):
+    attempts = _patched("_MAX_ATTEMPTS")
+    for attempt in range(attempts):
         try:
             return fn()
         except error.HTTPError as exc:
@@ -73,14 +87,14 @@ def _with_retries[T](fn: Callable[[], T], *, what: str) -> T:
             last = exc
         except (error.URLError, TimeoutError, OSError) as exc:
             last = exc
-        if attempt < _MAX_ATTEMPTS - 1:
+        if attempt < attempts - 1:
             wait = _BACKOFF_BASE_SECONDS * (2**attempt)
             logger.warning(
                 "Self-update: %s failed (%s); retry %d/%d in %ds",
                 what,
                 last,
                 attempt + 1,
-                _MAX_ATTEMPTS - 1,
+                attempts - 1,
                 wait,
             )
             time.sleep(wait)
@@ -122,7 +136,9 @@ def _get_json(url: str) -> Any:
 # ---------------------------------------------------------------------------
 
 
-def _download(url: str, dest: pathlib.Path, *, max_bytes: int = MAX_ARCHIVE_BYTES) -> None:
+def _download(url: str, dest: pathlib.Path, *, max_bytes: int | None = None) -> None:
+    if max_bytes is None:
+        max_bytes = _patched("MAX_ARCHIVE_BYTES")
     req = request.Request(url, headers={"User-Agent": "Runway-Sidecar-SelfUpdate"})  # noqa: S310
     ctx = _patched("_github_ssl_context")(url)
     try:
