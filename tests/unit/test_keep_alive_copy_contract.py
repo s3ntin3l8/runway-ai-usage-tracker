@@ -38,8 +38,12 @@ def test_the_sidecar_help_text_names_every_covered_login():
 
 
 def test_the_sidecar_settings_dialog_uses_the_shared_list_not_hardcoded_names():
-    page = (ROOT / "webapp" / "src" / "features" / "fleet" / "SidecarSettingsDialog.tsx").read_text(
-        encoding="utf-8"
-    )
-    assert "keepAliveLoginsText()" in page
-    assert "agy and xAI" not in page
+    section = (
+        ROOT / "webapp" / "src" / "features" / "fleet" / "KeepAliveSection.tsx"
+    ).read_text(encoding="utf-8")
+    dialog = (
+        ROOT / "webapp" / "src" / "features" / "fleet" / "SidecarSettingsDialog.tsx"
+    ).read_text(encoding="utf-8")
+    assert "keepAliveLoginsText()" in section
+    assert "agy and xAI" not in section
+    assert "agy and xAI" not in dialog
