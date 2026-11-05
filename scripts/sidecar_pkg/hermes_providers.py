@@ -3,6 +3,10 @@
 Split out of ``hermes.py`` so the provider map can change without the
 watermark log or the event parser. ``hermes`` re-exports every name here;
 callers keep importing ``scripts.sidecar_pkg.event_extractors.hermes``.
+
+This is not an extractor, so it stays out of ``event_extractors``: that
+package is one module per provider, and each of those modules stamps a
+``source_app``.
 """
 
 from __future__ import annotations

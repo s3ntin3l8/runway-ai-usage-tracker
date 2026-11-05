@@ -59,7 +59,7 @@ __all__ = [
     "resolve_hermes_provider_and_canonical",
 ]
 
-from scripts.sidecar_pkg.event_extractors.hermes_providers import (
+from scripts.sidecar_pkg.hermes_providers import (
     _HERMES_CANONICAL_MAP,
     _is_free_model,
     _url_host_matches,
@@ -67,7 +67,7 @@ from scripts.sidecar_pkg.event_extractors.hermes_providers import (
     map_hermes_provider_id,
     resolve_hermes_provider_and_canonical,
 )
-from scripts.sidecar_pkg.event_extractors.hermes_watermark import (
+from scripts.sidecar_pkg.hermes_watermark import (
     WATERMARK_COMPACT_MIN_LINES,
     WATERMARK_PRUNE_IDLE_DAYS,
     WatermarkChanges,

@@ -4,6 +4,10 @@ Split out of ``hermes.py``. The parser stays in ``hermes`` and calls these
 names through that module, so a test patch of ``hermes._append_hermes_watermark``,
 ``hermes._live_slice_suffixes`` or ``hermes.WATERMARK_COMPACT_MIN_LINES`` still
 intercepts ``parse_hermes_events``.
+
+This is not an extractor, so it stays out of ``event_extractors``: that
+package is one module per provider, and each of those modules stamps a
+``source_app``.
 """
 
 from __future__ import annotations
