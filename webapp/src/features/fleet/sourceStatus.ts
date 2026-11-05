@@ -1,9 +1,9 @@
 // Labels, badge variants, and dots for the five device-permission states a source row shows.
 
-import { Badge } from '@/components/ui/Badge';
+import type { BadgeProps } from '@/components/ui/Badge';
 import type { MacStatus } from './sourceModel';
 
-export const STATUS: Record<MacStatus, { label: string; variant: React.ComponentProps<typeof Badge>['variant']; dot: string }> = {
+export const STATUS: Record<MacStatus, { label: string; variant: BadgeProps['variant']; dot: string }> = {
   ok: { label: 'Authorized', variant: 'ok', dot: 'bg-ok' },
   need: { label: 'Setup on Mac', variant: 'warning', dot: 'bg-warning' },
   busy: { label: 'Connecting…', variant: 'unlimited', dot: 'bg-unlimited' },
