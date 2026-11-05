@@ -285,7 +285,7 @@ export function ProvidersSectionV2({
 
       {/* Add provider CTA — sticky on mobile (above bottom nav), inline
           top-right on desktop. Gated on `hasAnyConfig` so the fresh-install
-          path (EmptyState at :307) only shows one Add button; once at least
+          path (EmptyState at :222) only shows one Add button; once at least
           one provider is configured, the sticky footer takes over. Both
           buttons open the wizard at step 1 (#287). */}
       {hasAnyConfig ? (
