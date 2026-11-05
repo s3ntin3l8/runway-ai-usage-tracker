@@ -43,7 +43,7 @@ webapp/src/
 | File | Role |
 |---|---|
 | `client.ts` | The central `fetch` wrapper. It attaches the admin key when one is set, always sends `credentials: 'include'` so the HttpOnly `runway_session` cookie rides along, and uses `redirect: 'manual'`. It also owns `ApiError`, the admin-key store and the auth-redirect guard. |
-| `endpoints.ts` | One exported function per server endpoint — 95 of them. This is the only place that knows server URLs. |
+| `endpoints/` | One exported function per server endpoint. This is the only place that knows server URLs. The `index.ts` barrel keeps `@/api/endpoints`. |
 | `types.ts` | The TypeScript mirror of the server's response models. |
 
 Query-string building lives in `client.ts` (`qs()`); feature code never
@@ -100,7 +100,7 @@ example.
 
 ## Data fetching
 
-React Query owns all server state. Feature components call the `endpoints.ts`
+React Query owns all server state. Feature components call the `endpoints` barrel
 functions inside `useQuery` / `useMutation`; nothing calls `fetch` directly.
 
 Notable patterns:
@@ -142,7 +142,7 @@ The CI browser matrix is pinned to a digest-pinned Playwright image — see
 ## Conventions
 
 - **No direct `fetch`.** All HTTP goes through `api/client.ts`.
-- **No hand-built URLs.** Use `api/endpoints.ts` and `qs()`.
+- **No hand-built URLs.** Use `api/endpoints` and `qs()`.
 - **No logic in components** that can be tested on its own — put it in `lib/`.
 - **`cn()` for class names**, never string concatenation, so Tailwind
   conflict resolution works.
