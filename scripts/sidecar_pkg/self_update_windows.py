@@ -26,8 +26,11 @@ def _windows_swap_script(
     saved_backup = backup.with_name(backup.name + "_old")
     # Looked up on the apply module at call time. Importing it here would cycle
     # (self_update imports this helper), and a patch of these names on
-    # self_update still applies.
-    from scripts.sidecar_pkg import self_update as apply
+    # self_update still applies. The apply module is already loaded: it is
+    # the caller.
+    import sys
+
+    apply = sys.modules["scripts.sidecar_pkg.self_update"]
 
     version = apply._previous_version_path(install)
     saved_version = saved_backup.with_name(saved_backup.name + apply._VERSION_SUFFIX)

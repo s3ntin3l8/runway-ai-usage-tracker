@@ -29,18 +29,19 @@ from scripts.sidecar_pkg.update_limits import (
 
 logger = logging.getLogger("scripts.sidecar_pkg.self_update")
 
-_TIMEOUT_SECONDS = 60
-
 
 def _patched(name: str):
     """Read *name* from ``self_update`` at call time.
 
     Tests replace helpers and limits on that module (``_github_ssl_context``,
     ``MAX_ARCHIVE_BYTES``, ``hashlib``). A direct global here would keep the
-    value this module was imported with.
+    value this module was imported with. Looking the module up in
+    ``sys.modules`` avoids an import cycle: ``self_update`` imports this
+    module, and it is already loaded by the time a helper runs.
     """
-    from scripts.sidecar_pkg import self_update as apply
+    import sys
 
+    apply = sys.modules["scripts.sidecar_pkg.self_update"]
     return getattr(apply, name)
 
 
