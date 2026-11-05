@@ -101,3 +101,23 @@ _MAX_ABANDONED_RECORDS = 100
 # The provider prefix the runtime writes into ``effectiveModel``. The
 # pricing seed keys on the bare model id, so the prefix is stripped.
 _PROVIDER_MODEL_PREFIX = "minimax/"
+
+# Exported. Several of these are private names; they are still this module's
+# API (the parser and the ledger import them), and a constants module does
+# not read them itself.
+__all__ = [
+    "INTERNAL_TURN_PREFIX",
+    "PROVIDER_ID",
+    "SUBAGENT_TYPE_PLAN",
+    "SUBAGENT_TYPE_TASK",
+    "_MAX_ABANDONED_RECORDS",
+    "_MAX_ROWS_PER_CYCLE",
+    "_MAX_SKIP_ATTEMPTS",
+    "_MESSAGE_ROWS_TABLE",
+    "_OPTIONAL_SESSION_COLUMNS",
+    "_OPTIONAL_USAGE_COLUMNS",
+    "_PROVIDER_MODEL_PREFIX",
+    "_REQUIRED_COLUMNS",
+    "_SESSIONS_TABLE",
+    "_TOKEN_USAGE_TABLE",
+]

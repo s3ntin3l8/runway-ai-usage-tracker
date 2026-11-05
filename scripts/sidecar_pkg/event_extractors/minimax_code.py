@@ -130,7 +130,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-import platform  # noqa: F401 — tests patch minimax_code.platform.system
+import platform
 import sqlite3
 import sys
 from datetime import UTC, datetime
@@ -204,6 +204,16 @@ from scripts.sidecar_pkg.minimax_code_schema import (
     PROVIDER_ID,
     SUBAGENT_TYPE_PLAN,
 )
+
+
+def _host_system() -> str:
+    """Platform name discovery reads.
+
+    Tests replace ``minimax_code.platform.system``. The path helpers live in
+    ``minimax_code_roots`` and call this, so that replacement still decides
+    which roots are probed.
+    """
+    return platform.system()
 
 
 def _load_state(path: Path) -> dict[str, Any]:

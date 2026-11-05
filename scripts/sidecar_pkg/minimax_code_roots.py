@@ -12,7 +12,6 @@ package is one module per provider, and each of those modules stamps a
 from __future__ import annotations
 
 import os
-import platform
 from pathlib import Path
 
 # The environment variables the runtime itself honours for its data dir.
@@ -87,6 +86,17 @@ def _macos_app_data_roots(home: Path) -> list[Path]:
     return [base / name for name in (*_APP_DATA_DIR_NAMES, "MiniMax")]
 
 
+def _host_system() -> str:
+    """Read ``minimax_code.platform.system`` at call time.
+
+    Importing the extractor here would cycle (it imports this module).
+    """
+    import sys
+
+    facade = sys.modules["scripts.sidecar_pkg.event_extractors.minimax_code"]
+    return facade._host_system()
+
+
 def _windows_app_data_root() -> Path:
     """Return the Windows roaming app-data root (``%APPDATA%``).
 
@@ -97,7 +107,7 @@ def _windows_app_data_root() -> Path:
     cannot add a root the sidecar's own state dir would never use. Falls back
     to the conventional ``%USERPROFILE%\\AppData\\Roaming`` when it is unset.
     """
-    if platform.system() == "Windows":
+    if _host_system() == "Windows":
         app_data = os.getenv("APPDATA")
         if app_data and app_data.strip():
             return Path(app_data.strip())
@@ -201,7 +211,7 @@ def _default_state_path() -> Path:
     config_dir = os.getenv("RUNWAY_CONFIG_DIR")
     if config_dir:
         base = Path(config_dir) / "sidecar"
-    elif platform.system() == "Windows":
+    elif _host_system() == "Windows":
         app_data = os.getenv("APPDATA")
         base = (
             Path(app_data) / "runway" / "sidecar"
