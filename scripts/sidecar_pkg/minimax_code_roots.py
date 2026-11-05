@@ -89,12 +89,21 @@ def _macos_app_data_roots(home: Path) -> list[Path]:
 def _host_system() -> str:
     """Read ``minimax_code.platform.system`` at call time.
 
-    Importing the extractor here would cycle (it imports this module).
+    Importing the extractor here would cycle (it imports this module). A
+    caller that imported this module on its own gets the real platform
+    instead of a KeyError.
     """
+    import platform
     import sys
 
-    facade = sys.modules["scripts.sidecar_pkg.event_extractors.minimax_code"]
-    return facade._host_system()
+    for name in (
+        "scripts.sidecar_pkg.event_extractors.minimax_code",
+        "sidecar_pkg.event_extractors.minimax_code",
+    ):
+        facade = sys.modules.get(name)
+        if facade is not None:
+            return facade._host_system()
+    return platform.system()
 
 
 def _windows_app_data_root() -> Path:

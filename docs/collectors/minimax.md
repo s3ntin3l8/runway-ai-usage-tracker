@@ -609,7 +609,10 @@ ledger is a local file the runtime writes.
 | `app/services/collectors/minimax.py` | Collector entry point |
 | `app/services/collectors/base.py` | Collector base class |
 | `scripts/sidecar.py` | Sidecar credential rules and event dispatch |
-| `scripts/sidecar_pkg/event_extractors/minimax_code.py` | MiniMax Code local runtime store reader |
+| `scripts/sidecar_pkg/event_extractors/minimax_code.py` | MiniMax Code local runtime store reader (parser and cursor) |
+| `scripts/sidecar_pkg/minimax_code_schema.py` | Table names and scan limits shared by the parser and the ledger |
+| `scripts/sidecar_pkg/minimax_code_roots.py` | Where a MiniMax Code runtime store can live on this host |
+| `scripts/sidecar_pkg/minimax_code_ledger.py` | Session, message, and attribution reads |
 | `scripts/sidecar_pkg/minimax_code_probe.py` | Read-only probe of the MiniMax Code store |
 
 ## References
