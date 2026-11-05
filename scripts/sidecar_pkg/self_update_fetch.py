@@ -69,6 +69,18 @@ _BACKOFF_BASE_SECONDS = 2  # 2s, 4s → worst-case ~6s added latency
 _RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
 
 
+def _attempt_budget() -> int:
+    """How many tries ``_with_retries`` gets.
+
+    A patch of ``self_update._MAX_ATTEMPTS`` wins. Importing this module on
+    its own uses the constant in this module.
+    """
+    try:
+        return _patched("_MAX_ATTEMPTS")
+    except (RuntimeError, AttributeError):
+        return _MAX_ATTEMPTS
+
+
 def _with_retries[T](fn: Callable[[], T], *, what: str) -> T:
     """Call *fn* with bounded exponential backoff on transient network errors.
 
@@ -77,7 +89,7 @@ def _with_retries[T](fn: Callable[[], T], *, what: str) -> T:
     are exhausted so the caller's existing ``except`` handling still applies.
     """
     last: BaseException | None = None
-    attempts = _patched("_MAX_ATTEMPTS")
+    attempts = _attempt_budget()
     for attempt in range(attempts):
         try:
             return fn()

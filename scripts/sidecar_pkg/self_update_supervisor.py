@@ -48,6 +48,18 @@ _EX_TEMPFAIL = 75
 _SYSTEMCTL_TIMEOUT_S = 5
 
 
+def _systemctl_timeout() -> float:
+    """Seconds ``systemctl show`` may take.
+
+    A patch of ``self_update._SYSTEMCTL_TIMEOUT_S`` wins. Importing this
+    module on its own uses the constant in this module.
+    """
+    try:
+        return _patched("_SYSTEMCTL_TIMEOUT_S")
+    except (RuntimeError, AttributeError):
+        return _SYSTEMCTL_TIMEOUT_S
+
+
 def _systemd_unit_from_cgroup(cgroup: str) -> tuple[str, bool] | None:
     """``(unit name, is_user_manager)`` for the service a ``/proc/<pid>/cgroup`` dump is in."""
     parts = [p for line in cgroup.splitlines() for p in line.rpartition(":")[2].split("/")]
@@ -119,7 +131,7 @@ def _systemd_restart_exit_code() -> int | None:
             ],  # noqa: S607
             capture_output=True,
             text=True,
-            timeout=_patched("_SYSTEMCTL_TIMEOUT_S"),
+            timeout=_systemctl_timeout(),
             check=False,
         )
         props = dict(line.partition("=")[::2] for line in proc.stdout.splitlines())
