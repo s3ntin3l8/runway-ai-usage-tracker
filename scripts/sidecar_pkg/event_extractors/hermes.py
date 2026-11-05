@@ -25,7 +25,7 @@ drops or double-counting.
 from __future__ import annotations
 
 import logging
-import os  # noqa: F401 — tests patch hermes.os.stat on this module
+import os
 import sqlite3
 import sys
 from datetime import UTC, datetime
@@ -84,6 +84,15 @@ from scripts.sidecar_pkg.hermes_watermark import (
     _prune_stale_watermark_slices,
     _split_legacy_watermark_key,
 )
+
+
+def _stat_db_path(db_path: str) -> os.stat_result:
+    """Stat a watermark database path.
+
+    ``_prune_stale_watermark_slices`` calls this rather than ``os.stat`` so a
+    test that replaces ``hermes.os.stat`` still decides which slices are gone.
+    """
+    return os.stat(db_path)
 
 
 def parse_hermes_events(
