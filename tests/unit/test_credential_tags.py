@@ -1706,7 +1706,7 @@ def test_parked_mapping_resolves_its_seeded_providers_in_one_query(session: Sess
     `/fleet/config` asks about every provider with a tag, so a per-provider
     lookup would turn one request into a query per provider.
     """
-    from app.services import credential_tags as credential_tags_module
+    from app.services.credentials import tags as credential_tags_module
 
     calls: list[tuple[str, ...]] = []
     original = credential_tags_module.archived_account_pairs
@@ -1731,7 +1731,7 @@ def test_parked_mapping_resolves_its_seeded_providers_in_one_query(session: Sess
 
 def test_parked_mapping_asks_no_query_when_nobody_looks(session: Session, monkeypatch):
     """A reader that never asks pays no query at all."""
-    from app.services import credential_tags as credential_tags_module
+    from app.services.credentials import tags as credential_tags_module
 
     calls: list[tuple[str, ...]] = []
     original = credential_tags_module.archived_account_pairs

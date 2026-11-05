@@ -1,0 +1,790 @@
+import json
+import logging
+import os
+import re
+import time
+from pathlib import Path
+from typing import Any
+
+from sqlmodel import Session
+from sqlmodel import select as sqlselect
+
+from app.core.config import get_platform_config_dir, settings
+from app.core.db import engine
+from app.core.encryption import encryption_service
+from app.core.expiry import expiry_seconds
+from app.core.registry import registry
+from app.models.db import ProviderConfig
+
+# Hardcoded name keeps the pre-move log channel. Filters still match
+# app.services.credential_provider; do not switch this to __name__.
+logger = logging.getLogger("app.services.credential_provider")
+
+try:
+    import yaml
+except ImportError:
+    yaml = None  # type: ignore
+
+
+class AmbiguousProviderAccountError(ValueError):
+    """Raised when multiple `(provider_id, account_id)` rows exist and the caller
+    did not disambiguate by passing an explicit `account_id`.
+
+    The exception message points the operator at the per-account endpoint so
+    they can resolve the ambiguity by saving under the right identity.
+    """
+
+    def __init__(self, provider_id: str, account_count: int) -> None:
+        super().__init__(
+            f"Provider '{provider_id}' has {account_count} configured accounts; "
+            "pass an explicit account_id or use PUT /api/v1/system/provider-config/"
+            f"{provider_id}/{{account_id}} to disambiguate."
+        )
+        self.provider_id = provider_id
+        self.account_count = account_count
+
+
+def _resolve_provider_config(
+    provider_id: str,
+    account_id: str | None = None,
+    *,
+    require_enabled: bool = True,
+) -> ProviderConfig | None:
+    """Look up a `ProviderConfig` row, scoped by `(provider_id, account_id)`.
+
+    Args:
+        provider_id: The provider to look up (e.g. ``"anthropic"``).
+        account_id: When provided, filter on the full identity tuple. When
+            ``None``, pick the only row when exactly one exists; otherwise
+            raise :class:`AmbiguousProviderAccountError` so silent
+            last-writer-wins can't pick the wrong account.
+        require_enabled: When True, exclude disabled rows from the
+            single-row "only one" check (a disabled account is invisible to
+            the legacy single-account path).
+
+    Returns:
+        The matching ``ProviderConfig`` row, or ``None`` when no row exists.
+
+    Raises:
+        AmbiguousProviderAccountError: When ``account_id`` is None and more
+            than one row matches ``provider_id`` (after the ``enabled`` filter).
+    """
+    with Session(engine) as session:
+        if account_id is not None:
+            row = session.exec(
+                sqlselect(ProviderConfig).where(
+                    ProviderConfig.provider_id == provider_id,
+                    ProviderConfig.account_id == account_id,
+                )
+            ).first()
+            return row
+
+        stmt = sqlselect(ProviderConfig).where(ProviderConfig.provider_id == provider_id)
+        if require_enabled:
+            stmt = stmt.where(ProviderConfig.enabled == True)  # noqa: E712
+        rows = session.exec(stmt).all()
+        if len(rows) > 1:
+            raise AmbiguousProviderAccountError(provider_id, len(rows))
+        return rows[0] if rows else None
+
+
+def _resolve_legacy_provider_config(
+    provider_id: str,
+    *,
+    require_enabled: bool = False,
+) -> ProviderConfig | None:
+    """Single-account-style lookup that tolerates multi-row state.
+
+    Used by the public :class:`CredentialProvider` methods to preserve
+    today's "give me the configured credential" behavior for legacy callers
+    that don't pass an explicit ``account_id``. Never raises.
+
+    Resolution rules:
+
+    - No rows for this provider → ``None``.
+    - ``require_enabled=True`` and zero enabled rows → ``None``.
+    - Exactly one enabled row at ``account_id="default"`` → that row.
+    - Multiple enabled rows but the ``"default"`` row is disabled → ``None``
+      (legacy callers should not silently fall back to a non-default
+      account's credential; that's a multi-account safety violation).
+    - Multiple rows with no ``"default"`` row in the result → ``None`` for
+      the same reason.
+    - Side effect: when the row count > 1, the drift is logged at WARNING
+      with the provider id (no credential value, no account_id hash —
+      provider_id is not credential material).
+
+    This is intentionally distinct from :func:`_resolve_provider_config`,
+    which is the strict helper that callers explicitly opt into (e.g. the
+    new per-account PUT endpoint and the multi-account wizard).
+    """
+    with Session(engine) as session:
+        rows = session.exec(
+            sqlselect(ProviderConfig).where(ProviderConfig.provider_id == provider_id)
+        ).all()
+        if not rows:
+            return None
+        if require_enabled:
+            rows = [r for r in rows if r.enabled]
+            if not rows:
+                return None
+        # Multi-account drift visibility — log when more than one row exists
+        # so operators see the state without waiting for a 500.
+        if len(rows) > 1:
+            # Strip CR/LF before logging (provider_id is operator-supplied).
+            safe = provider_id.replace("\r", "").replace("\n", "")
+            logger.warning(
+                "provider %s has %d configured accounts; legacy callers will "
+                'only see the account_id="default" row. Use the per-account '
+                "endpoint PUT /api/v1/system/provider-config/%s/{account_id} "
+                "to disambiguate.",
+                safe,
+                len(rows),
+                safe,
+            )
+        for r in rows:
+            if r.account_id == "default":
+                return r
+        # No enabled default row — refuse to leak another account's credential
+        # to legacy callers.
+        return None
+
+
+def _is_expiry_key(name: str) -> bool:
+    """Whether a key name holds an expiry timestamp."""
+    lowered = name.lower()
+    return "expires" in lowered or "expiry" in lowered
+
+
+#: The epoch reader. Every expiry the server reads goes through it — the
+#: freshness probe below and ``IdentityExtractor.exp_from_tokens``, which is
+#: the single source of truth for a *stored* bundle's expiry. The sidecar has
+#: its own copy in ``scripts/sidecar_pkg/expiry.py``; the two are pinned
+#: together by ``tests/unit/test_mapping_resolver_parity.py``.
+_expiry_seconds = expiry_seconds
+
+
+def _record_expiry(record: Any) -> float | None:
+    """The latest expiry a credential *record* carries, in epoch seconds.
+
+    A credential store that keeps several logins in one file nests the expiry
+    inside each record — the MiniMax Code app stores one record per build and
+    region. Returns None when the record carries no expiry at all.
+    """
+    if not isinstance(record, dict):
+        return None
+    best: float | None = None
+    for key, value in record.items():
+        if not _is_expiry_key(str(key)):
+            continue
+        moment = _expiry_seconds(value)
+        if moment is None:
+            continue
+        if best is None or moment > best:
+            best = moment
+    return best
+
+
+def _expiry_in_nested_records(data: dict) -> bool:
+    """Whether any record nested inside *data* still holds a live expiry.
+
+    A credential store that keeps several logins in one file nests the expiry
+    inside each record — the MiniMax Code app stores one record per build and
+    region, so the expiry sits two levels down
+    (``records.<record key>.expiresAtMs``). Epoch milliseconds are normalised
+    here, so a dead record doesn't read as fresh.
+    """
+    now = time.time()
+    for mapping in data.values():
+        if not isinstance(mapping, dict):
+            continue
+        for record in mapping.values():
+            if not isinstance(record, dict):
+                continue
+            for key, val in record.items():
+                if not _is_expiry_key(str(key)):
+                    continue
+                moment = _expiry_seconds(val)
+                if moment is not None and moment > now + 60:
+                    return True
+    return False
+
+
+def _has_unexpired_token(path: str) -> bool:
+    """Best-effort freshness probe: True when the file's JSON carries an
+    '*expires*'/'*expiry*' key with a numeric epoch value still in the future
+    (+60s skew). Unknown/absent/unparseable -> False (ordering falls back to
+    mtime).
+
+    A store that keeps several logins in one file nests the expiry inside each
+    record rather than at the top level (the MiniMax Code app does), so a
+    second pass looks one level into those records for the same shape. Both
+    passes share one expiry-key predicate and one epoch reader, so a record
+    the picker accepts is also a record the probe sees — and a millisecond
+    epoch is read as milliseconds, not as a timestamp that is always ahead.
+    """
+    try:
+        with open(path) as f:
+            data = json.load(f)
+    except Exception:
+        return False
+    if not isinstance(data, dict):
+        return False
+    now = time.time()
+    for key, val in data.items():
+        if not _is_expiry_key(str(key)):
+            continue
+        moment = _expiry_seconds(val)
+        if moment is not None and moment > now + 60:
+            return True
+    return _expiry_in_nested_records(data)
+
+
+def _expand_rule_paths(paths: list) -> list:
+    """Expand a file rule's path list to concrete existing files.
+
+    Plain entries resolve exactly (existing behavior). Entries containing glob
+    metacharacters (* ? [) are expanded against the filesystem — this applies
+    to ANY file rule, so a future rule with a literal metachar in a filename
+    would need escaping. Matches are sorted so files with an unexpired
+    '*expires*' token come first and mtime descending within each group — this
+    loop is first-match-wins per target key, so the freshest *valid*
+    credential wins. (The sidecar's scrape loop overwrites per file and sorts
+    ascending; both end with the freshest valid file's values.)
+    """
+    import glob as glob_module
+
+    out = []
+    for path_str in paths:
+        resolved = registry.resolve_path(path_str)
+        if any(c in resolved for c in "*?["):
+            try:
+                matches = sorted(
+                    (p for p in glob_module.glob(resolved) if os.path.isfile(p)),
+                    key=lambda p: (_has_unexpired_token(p), os.stat(p).st_mtime),
+                    reverse=True,
+                )
+                out.extend(matches)
+            except OSError:
+                logger.debug("File rule glob failed for %s", resolved, exc_info=True)
+        elif os.path.exists(resolved):
+            out.append(resolved)
+    return out
+
+
+_SERVER_READABLE_PREFIX = "{{CONFIG_DIR:runway}}"
+
+
+def _server_may_read(rule: dict[str, Any]) -> bool:
+    """Whether the server itself may evaluate this registry file rule.
+
+    The server reads no credential files except Runway's own (the GitHub OAuth token
+    the UI flow writes into ``{{CONFIG_DIR:runway}}``). Every other file rule
+    (``~/.gemini``, ``~/.claude``, ``~/.config/gh``, opencode, codex, ...) is a
+    sidecar concern: the server may run in Docker with no host home at all. Applied to
+    the RAW rule paths, before ``_expand_rule_paths`` expands ``~`` or globs, so no
+    ``exists``/``glob`` call ever touches the host home.
+    """
+    paths = rule.get("paths") or []
+    allowed = bool(paths) and all(
+        isinstance(p, str) and p.startswith(_SERVER_READABLE_PREFIX) for p in paths
+    )
+    if not allowed:
+        # Sidecar-only by design, or a malformed rule (no/empty ``paths``): say which, so a
+        # broken rule is not mistaken for an intentional skip.
+        logger.debug(
+            "Server skips file rule %s: %s",
+            rule.get("id") or rule.get("provider") or "<unnamed>",
+            "no paths declared" if not paths else "paths outside the Runway config dir",
+        )
+    return allowed
+
+
+# dict value-equality is intentional; the `sources` attribute is non-compared metadata.
+class CredentialMap(dict):
+    """A dictionary that tracks the source (config or server) for each key."""
+
+    def __init__(self, *args, **kwargs):
+        self.sources: dict[str, str] = kwargs.pop("sources", {})
+        super().__init__(*args, **kwargs)
+
+
+def _inside_runway_config_dir(path: str | os.PathLike[str]) -> bool:
+    """Whether *path* is inside Runway's own config dir (a plain prefix test would also
+    match a sibling such as ``runway-old``, and trips over separators on Windows)."""
+    runway_config_dir = get_platform_config_dir("runway")
+    if not runway_config_dir:
+        return False
+    try:
+        return Path(os.path.realpath(path)).is_relative_to(
+            Path(os.path.realpath(runway_config_dir))
+        )
+    except (OSError, ValueError):
+        return False
+
+
+class CredentialProvider:
+    """
+    Centralized service for discovering credentials from various sources.
+    Uses app/core/registry.json as the single source of truth via Registry service.
+    """
+
+    @staticmethod
+    def _get_nested(data: Any, key_path: list[str]) -> Any:
+        """Get nested value from dict using list of keys."""
+        if not data or not isinstance(data, dict):
+            return None
+
+        current = data
+        for k in key_path:
+            if isinstance(current, dict):
+                current = current.get(k)  # type: ignore[assignment]
+            else:
+                return None
+        return current
+
+    @staticmethod
+    def get_credentials(provider_id: str, *, account_id: str | None = None) -> "CredentialMap":
+        """Generic extraction based on registry rules for a provider.
+
+        Args:
+            provider_id: The provider to look up.
+            account_id: When provided, only the matching ``(provider_id, account_id)``
+                row's API key is consulted. When ``None``, the legacy single-account
+                path is used: the ``account_id="default"`` row is preferred (and is
+                ``enabled``-checked, matching pre-PR semantics — a disabled
+                ``default`` row does NOT silently leak another account's key).
+                Returns ``None`` from the legacy path when the default row is
+                disabled or missing — legacy callers should not see another
+                account's credential.
+
+                For callers that must disambiguate explicitly, use
+                :func:`_resolve_provider_config` directly — it raises
+                :class:`AmbiguousProviderAccountError` for the same condition.
+        """
+        from app.services.token_cache import token_cache
+
+        selected = token_cache.current_source_tokens(provider_id, account_id or "default")
+        if selected is not None:
+            results = dict(selected)
+            if "api_key" not in results:
+                for key in ("oauth_token", "xai_access", "cli_access_token"):
+                    if results.get(key):
+                        results["api_key"] = results[key]
+                        break
+            if "oauth_token" in results:
+                results.setdefault("access_token", results["oauth_token"])
+            metadata = (
+                token_cache.current_source_metadata(provider_id, account_id or "default") or {}
+            )
+            kind = metadata.get("source_type") or metadata.get("source") or "server"
+            return CredentialMap(results, sources=dict.fromkeys(results, kind))
+        # An empty map means this exact provider/account is pinned but its live
+        # bundle is missing. Other providers or accounts continue discovery.
+        if token_cache.is_source_selected(provider_id, account_id):
+            return CredentialMap({}, sources={})
+
+        discovered: dict[str, str] = {}
+        sources: dict[str, str] = {}
+
+        # DB override: user-provided API key takes precedence over env/file/keychain
+        try:
+            _cfg: ProviderConfig | None
+            if account_id is not None:
+                _cfg = _resolve_provider_config(provider_id, account_id=account_id)
+            else:
+                # Pre-PR `get_credentials` filtered by `enabled == True` so a
+                # disabled provider's stored key could not silently override
+                # env/file sources. Keep that filter on the legacy path. The
+                # helper additionally refuses to fall back to a non-default
+                # row when the default row is missing or disabled.
+                _cfg = _resolve_legacy_provider_config(provider_id, require_enabled=True)
+            if _cfg and _cfg.api_key:
+                discovered["api_key"] = _cfg.api_key
+                sources["api_key"] = "config"
+        except AmbiguousProviderAccountError:
+            # Surface strict multi-account ambiguity from the explicit-account
+            # path so the wizard can disambiguate; the legacy path never raises.
+            raise
+        except Exception:
+            # Strip CR/LF from the user-influenced provider_id before logging to
+            # prevent log-forging via injected newlines (CodeQL py/log-injection).
+            safe_provider_id = provider_id.replace("\r", "").replace("\n", "")
+            logger.debug("Failed to load API key from DB for %s", safe_provider_id, exc_info=True)
+
+        provider_config = registry.get_provider(provider_id)
+        rules = provider_config.get("rules", [])
+
+        for rule in rules:
+            rule_type = rule.get("type")
+            mapping = rule.get("mapping", {})
+
+            # 1. Environment Variables
+            if rule_type == "env":
+                target_key = mapping.get("value", "token")
+                if target_key not in discovered:
+                    val = os.getenv(rule.get("variable"))
+                    if val:
+                        discovered[target_key] = val
+                        if target_key not in sources:
+                            sources[target_key] = "server"
+
+            # 2. Local Files (JSON/YAML)
+            elif rule_type == "file" and _server_may_read(rule):
+                for path in _expand_rule_paths(rule.get("paths", [])):
+                    try:
+                        fmt = rule.get("format", "json")
+                        with open(path) as f:
+                            if fmt == "yaml" and yaml:
+                                data = yaml.safe_load(f)
+                            else:
+                                data = json.load(f)
+
+                        for key_path_str, target in mapping.items():
+                            if target not in discovered:
+                                # Strategy: Try to find the value by traversing the path.
+                                # We handle keys that might contain dots (like "github.com")
+                                # by checking if the prefix is a valid key.
+                                val = CredentialProvider._resolve_mapping_value(data, key_path_str)
+                                # If the file is in our own internal config dir, it's UI-managed -> config.
+                                # Otherwise it's discovered in the wild -> server.
+                                is_internal = (
+                                    _inside_runway_config_dir(path)
+                                    or str(path) == settings.GITHUB_OAUTH_PATH
+                                )
+                                if val and is_internal:
+                                    # Runway's own files (the GitHub OAuth token) are
+                                    # encrypted at rest when a key is configured.
+                                    val = CredentialProvider._decrypt_internal(val)
+                                if val:
+                                    discovered[target] = val
+                                    if target not in sources:
+                                        sources[target] = "config" if is_internal else "server"
+                    except Exception as e:
+                        logger.debug(f"Error reading file {path}: {e}")
+
+            # 3. macOS Keychain rules are intentionally skipped on the server.
+            # Keychain access has moved to the sidecar; rule_type == "keychain"
+            # is silently ignored here.
+
+        return CredentialMap(discovered, sources=sources)
+
+    @staticmethod
+    def _classify_values(values: dict[str, Any]) -> dict[str, Any]:
+        """Expiry and refreshability of a discovered credential, without its values."""
+        from app.core.utils import IdentityExtractor, has_refresh_credential
+
+        tokens = {k: str(v) for k, v in values.items() if v}
+        return {
+            "exp": IdentityExtractor.exp_from_tokens(tokens),
+            "rollable": has_refresh_credential(tokens),
+        }
+
+    @staticmethod
+    def server_credential_origins(provider_id: str) -> list[dict[str, Any]]:
+        """Where the *server host itself* finds credentials for ``provider_id``.
+
+        One entry per env var / Runway-owned file rule that currently yields a value (file
+        rules outside Runway's config dir are sidecar-only and never evaluated here):
+        ``{"source_type": "env"|"file", "label": <VAR|basename>, "keys": [targets],
+        "managed": <file inside Runway's own config dir>, "exp": <epoch seconds or None>,
+        "rollable": <holds a refresh credential>}``. ``exp`` and ``rollable`` are derived
+        from the values here so callers can classify the credential; the values themselves
+        are never returned. Blocking file reads; call through ``asyncio.to_thread`` from
+        async code.
+        """
+        origins: list[dict[str, Any]] = []
+        for rule in registry.get_provider(provider_id).get("rules", []):
+            rule_type = rule.get("type")
+            mapping = rule.get("mapping", {})
+            if rule_type == "env":
+                variable = rule.get("variable")
+                env_value = os.getenv(variable) if variable else None
+                if variable and env_value:
+                    target = mapping.get("value", "token")
+                    origins.append(
+                        {
+                            "source_type": "env",
+                            "label": variable,
+                            "keys": [target],
+                            "managed": False,
+                            **CredentialProvider._classify_values({target: env_value}),
+                        }
+                    )
+            elif rule_type == "file" and _server_may_read(rule):
+                for path in _expand_rule_paths(rule.get("paths", [])):
+                    try:
+                        with open(path) as f:
+                            data = (
+                                yaml.safe_load(f)
+                                if rule.get("format", "json") == "yaml" and yaml
+                                else json.load(f)
+                            )
+                    except Exception:
+                        continue
+                    resolved = {
+                        target: CredentialProvider._resolve_mapping_value(data, key_path)
+                        for key_path, target in mapping.items()
+                    }
+                    keys = [target for target, value in resolved.items() if value]
+                    if keys:
+                        origins.append(
+                            {
+                                "source_type": "file",
+                                "label": os.path.basename(str(path)),
+                                "keys": keys,
+                                "managed": _inside_runway_config_dir(path),
+                                **CredentialProvider._classify_values(
+                                    {k: v for k, v in resolved.items() if v}
+                                ),
+                            }
+                        )
+        return origins
+
+    @staticmethod
+    def _decrypt_internal(value: Any) -> Any:
+        """Decrypt a value from one of Runway's own files; ``None`` if it can't be opened."""
+        if not isinstance(value, str):
+            return value
+        if value.startswith("gAAAAA") and not encryption_service.is_enabled:
+            # Ciphertext but no key (DB_ENCRYPTION_KEY was removed): decrypt_string would
+            # hand it back unchanged, and it would be used as the credential.
+            logger.warning("A stored credential is encrypted but no encryption key is configured")
+            return None
+        try:
+            return encryption_service.decrypt_string(value)
+        except Exception:
+            logger.warning("Could not decrypt a stored credential (key changed or data corrupt)")
+            return None
+
+    @staticmethod
+    def _key_glob(pattern: str) -> "re.Pattern[str]":
+        """Compile a mapping-key glob. ``*`` is the only special character and matches zero
+        or more characters (dots and colons included) within ONE dict key. Same rule as
+        ``_key_glob`` in the sidecar; ``?`` and ``[`` stay literal."""
+        return re.compile(".*".join(re.escape(piece) for piece in pattern.split("*")))
+
+    @staticmethod
+    def _resolve_mapping_value(data: Any, key_path_str: str) -> Any:
+        """Resolve dotted paths, including ``|``-separated fallback paths.
+
+        Must stay behaviourally identical to the sidecar's ``GenericCollector.get_nested``
+        (``tests/unit/test_mapping_resolver_parity.py`` runs one table against both). A key
+        may itself contain dots, so the longest matching prefix is tried first and shorter
+        ones are retried when the rest of the path doesn't resolve. A prefix containing ``*``
+        is a glob over that level's keys (sorted, first truthy match wins).
+        """
+        if not data or not isinstance(data, dict):
+            return None
+
+        if "|" in key_path_str:
+            for fallback_path in key_path_str.split("|"):
+                value = CredentialProvider._resolve_mapping_value(data, fallback_path)
+                if value:
+                    return value
+            return None
+
+        parts = key_path_str.split(".")
+        for i in range(len(parts), 0, -1):
+            head = ".".join(parts[:i])
+            rest = ".".join(parts[i:])
+            last = i == len(parts)
+            if "*" in head:
+                pattern = CredentialProvider._key_glob(head)
+                candidates = []
+                for key in sorted(k for k in data if isinstance(k, str) and pattern.fullmatch(k)):
+                    found = (
+                        data[key]
+                        if last
+                        else CredentialProvider._resolve_mapping_value(data[key], rest)
+                    )
+                    if found:
+                        candidates.append((data[key], found))
+                if candidates:
+                    # A glob must not hand out a dead record just because its
+                    # key sorts first. When the matched records carry an
+                    # expiry, the one that is still valid wins — and because
+                    # the choice depends only on the record, every mapping key
+                    # walking the same glob picks the same record, so a token
+                    # and its expiry never come from two different records.
+                    dated = []
+                    for record, found in candidates:
+                        expiry = _record_expiry(record)
+                        if expiry is not None:
+                            dated.append((found, expiry))
+                    if dated:
+                        live = [pair for pair in dated if pair[1] > time.time() + 60]
+                        return max(live or dated, key=lambda pair: pair[1])[0]
+                    return candidates[0][1]
+            elif head in data:
+                if last:
+                    return data[head]
+                found = CredentialProvider._resolve_mapping_value(data[head], rest)
+                if found is not None:
+                    return found
+
+        # Default fallback to standard nested
+        return CredentialProvider._get_nested(data, parts)
+
+    @staticmethod
+    def get_github_data() -> "CredentialMap":
+        """Get full GitHub OAuth data using registry rules."""
+        return CredentialProvider.get_credentials("github")
+
+    @staticmethod
+    def get_chatgpt_data() -> "CredentialMap":
+        """Get full ChatGPT OAuth data using registry rules."""
+        creds = CredentialProvider.get_credentials("chatgpt")
+
+        # Map UI-entered API Key (api_key) to oauth_token if present
+        if "api_key" in creds:
+            creds["oauth_token"] = creds["api_key"]
+            if "api_key" in creds.sources:
+                creds.sources["oauth_token"] = creds.sources["api_key"]
+
+        # Ensure compatibility with existing keys
+        if "oauth_token" in creds:
+            creds["access_token"] = creds["oauth_token"]
+            if "oauth_token" in creds.sources:
+                creds.sources["access_token"] = creds.sources["oauth_token"]
+        return creds
+
+    @staticmethod
+    def get_provider_api_key(provider_id: str, *, account_id: str | None = None) -> str | None:
+        """Return the user-supplied API key stored in ProviderConfig for a provider.
+
+        Args:
+            provider_id: The provider to look up.
+            account_id: When provided, scope to that exact ``(provider_id, account_id)``
+                row. When ``None``, the legacy single-account path is used:
+                ``account_id="default"`` row when present, else first row. Never
+                raises for the legacy path; the strict path raises
+                :class:`AmbiguousProviderAccountError` only when an explicit
+                account_id is requested but does not exist.
+        """
+        from app.services.token_cache import token_cache
+
+        selected = token_cache.current_source_tokens(provider_id, account_id or "default")
+        if selected is not None:
+            for key in ("api_key", "oauth_token", "xai_access", "cli_access_token"):
+                if selected.get(key):
+                    return selected[key]
+            return None
+        if token_cache.is_source_selected(provider_id, account_id):
+            return None
+        try:
+            cfg: ProviderConfig | None
+            if account_id is not None:
+                cfg = _resolve_provider_config(
+                    provider_id, account_id=account_id, require_enabled=False
+                )
+            else:
+                # Legacy (no account_id) path: deliberately keeps
+                # ``require_enabled=False`` — pre-PR ``get_provider_api_key``
+                # had no ``enabled`` filter at all, so a disabled provider's
+                # stored key was always served. ``get_credentials`` is the
+                # odd one out: it DID filter by ``enabled`` pre-PR, which is
+                # why it threads ``require_enabled=True`` explicitly above.
+                # Do NOT "normalize" this — the asymmetry is intentional and
+                # pinned by ``test_db_read_failures_are_swallowed`` (DB-failure
+                # behavior) and the multi-account tests above.
+                cfg = _resolve_legacy_provider_config(provider_id)
+            if cfg and cfg.api_key:
+                return cfg.api_key
+        except AmbiguousProviderAccountError:
+            raise
+        except Exception:
+            logger.debug("Failed to read API key from DB for %s", provider_id, exc_info=True)
+        return None
+
+    @staticmethod
+    def get_provider_session_cookie(
+        provider_id: str, *, account_id: str | None = None
+    ) -> str | None:
+        """Return the user-supplied session cookie stored in ProviderConfig.
+
+        Used by cookie-based collectors as a manual override that bypasses browser
+        cookie extraction. See :meth:`get_provider_api_key` for ``account_id`` semantics.
+        """
+        from app.services.token_cache import token_cache
+
+        selected = token_cache.current_source_tokens(provider_id, account_id or "default")
+        if selected is not None:
+            for key in (
+                "session_cookie",
+                "cookie_session",
+                "cookie_sessionKey",
+                "cookie___Secure-next-auth.session-token",
+                "cookie_oai-sc",
+            ):
+                if selected.get(key):
+                    return selected[key]
+            return None
+        if token_cache.is_source_selected(provider_id, account_id):
+            return None
+        try:
+            cfg: ProviderConfig | None
+            if account_id is not None:
+                cfg = _resolve_provider_config(
+                    provider_id, account_id=account_id, require_enabled=False
+                )
+            else:
+                # Legacy (no account_id) path: deliberately keeps
+                # ``require_enabled=False`` to mirror pre-PR semantics (the
+                # pre-PR ``get_provider_session_cookie`` had no ``enabled``
+                # filter). ``get_credentials`` is the odd one out — see the
+                # matching comment in :meth:`get_provider_api_key` for why.
+                cfg = _resolve_legacy_provider_config(provider_id)
+            if cfg and cfg.session_cookie:
+                return cfg.session_cookie
+        except AmbiguousProviderAccountError:
+            raise
+        except Exception:
+            logger.debug("Failed to read session cookie from DB for %s", provider_id, exc_info=True)
+        return None
+
+    @staticmethod
+    def get_opencode_workspace_id(*, account_id: str | None = None) -> str | None:
+        """Return the explicitly selected OpenCode workspace for an account."""
+        try:
+            cfg = (
+                _resolve_provider_config("opencode", account_id=account_id, require_enabled=False)
+                if account_id is not None
+                else _resolve_legacy_provider_config("opencode")
+            )
+            return cfg.opencode_workspace_id if cfg else None
+        except Exception:
+            logger.debug("Failed to read OpenCode workspace config", exc_info=True)
+            return None
+
+    @staticmethod
+    def get_chatgpt_token() -> str:
+        return CredentialProvider.get_chatgpt_data().get("access_token", "")
+
+    _claude_token_cache: str | None = None
+
+    @classmethod
+    def get_claude_token(cls) -> str:
+        """Get Claude OAuth token using registry rules."""
+        if cls._claude_token_cache:
+            return cls._claude_token_cache
+
+        creds = cls.get_credentials("anthropic")
+
+        # Prioritize UI-entered token (api_key) if present
+        if "api_key" in creds:
+            token = creds["api_key"]
+            cls._claude_token_cache = token
+            return token
+
+        token = creds.get("oauth_token", "")
+        if token:
+            cls._claude_token_cache = token
+        return token
+
+    @classmethod
+    def update_claude_token(cls, token: str) -> None:
+        """Update the cached Claude token (called after a successful refresh)."""
+        cls._claude_token_cache = token
+
+
+credential_provider = CredentialProvider()

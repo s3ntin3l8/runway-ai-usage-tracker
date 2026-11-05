@@ -20,8 +20,8 @@ from pathlib import Path
 import pytest
 
 from app.core.registry import registry
-from app.services import credential_provider as cp
 from app.services.credential_provider import CredentialProvider, _server_may_read
+from app.services.credentials import provider as cp
 
 MARKER = "PLANTED-SECRET"
 COLLECTORS_DIR = Path(__file__).resolve().parents[2] / "app" / "services" / "collectors"

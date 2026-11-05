@@ -117,7 +117,7 @@ def _make_fake_session(rows_by_provider):
 def test_resolve_single_row_no_account_id_returns_it():
     row = _row("anthropic", "default")
     with patch(
-        "app.services.credential_provider.Session",
+        "app.services.credentials.provider.Session",
         _make_fake_session({"anthropic": [row]}),
     ):
         cfg = _resolve_provider_config("anthropic")
@@ -126,7 +126,7 @@ def test_resolve_single_row_no_account_id_returns_it():
 
 def test_resolve_zero_rows_returns_none():
     with patch(
-        "app.services.credential_provider.Session",
+        "app.services.credentials.provider.Session",
         _make_fake_session({"anthropic": []}),
     ):
         assert _resolve_provider_config("anthropic") is None
@@ -136,7 +136,7 @@ def test_resolve_explicit_account_id_picks_specific_row():
     a = _row("anthropic", "default", enabled=True)
     b = _row("anthropic", "alice_invalid", enabled=True)
     with patch(
-        "app.services.credential_provider.Session",
+        "app.services.credentials.provider.Session",
         _make_fake_session({"anthropic": [a, b]}),
     ):
         assert _resolve_provider_config("anthropic", account_id="alice_invalid") is b
@@ -147,7 +147,7 @@ def test_resolve_multiple_rows_no_account_id_raises():
     a = _row("anthropic", "default", enabled=True)
     b = _row("anthropic", "alice_invalid", enabled=True)
     with patch(
-        "app.services.credential_provider.Session",
+        "app.services.credentials.provider.Session",
         _make_fake_session({"anthropic": [a, b]}),
     ):
         with pytest.raises(AmbiguousProviderAccountError) as excinfo:
@@ -161,7 +161,7 @@ def test_resolve_ambiguous_skips_disabled_rows():
     a = _row("anthropic", "default", enabled=True)
     b = _row("anthropic", "alice_invalid", enabled=False)
     with patch(
-        "app.services.credential_provider.Session",
+        "app.services.credentials.provider.Session",
         _make_fake_session({"anthropic": [a, b]}),
     ):
         # `require_enabled=True` (default) — picks the only enabled row.
@@ -172,7 +172,7 @@ def test_resolve_ambiguous_includes_disabled_when_not_required():
     a = _row("anthropic", "default", enabled=True)
     b = _row("anthropic", "alice_invalid", enabled=False)
     with patch(
-        "app.services.credential_provider.Session",
+        "app.services.credentials.provider.Session",
         _make_fake_session({"anthropic": [a, b]}),
     ):
         with pytest.raises(AmbiguousProviderAccountError):
@@ -184,7 +184,7 @@ def test_get_provider_api_key_picks_only_row():
     row = _row("anthropic", "default")
     row.api_key = "ant-test"  # pragma: allowlist secret
     with patch(
-        "app.services.credential_provider.Session",
+        "app.services.credentials.provider.Session",
         _make_fake_session({"anthropic": [row]}),
     ):
         assert CredentialProvider.get_provider_api_key("anthropic") == "ant-test"
@@ -196,7 +196,7 @@ def test_get_provider_api_key_picks_explicit_account():
     b = _row("anthropic", "alice_invalid")
     b.api_key = "alice"  # pragma: allowlist secret
     with patch(
-        "app.services.credential_provider.Session",
+        "app.services.credentials.provider.Session",
         _make_fake_session({"anthropic": [a, b]}),
     ):
         assert (
@@ -218,7 +218,7 @@ def test_get_provider_api_key_ambiguous_legacy_returns_default_row():
     b = _row("anthropic", "alice_invalid")
     b.api_key = "alice-key"  # pragma: allowlist secret
     with patch(
-        "app.services.credential_provider.Session",
+        "app.services.credentials.provider.Session",
         _make_fake_session({"anthropic": [a, b]}),
     ):
         # Legacy call (no account_id) returns the "default" row's key —
@@ -234,7 +234,7 @@ def test_resolve_provider_config_strict_raises_without_account_id():
     a = _row("anthropic", "default")
     b = _row("anthropic", "alice_invalid")
     with patch(
-        "app.services.credential_provider.Session",
+        "app.services.credentials.provider.Session",
         _make_fake_session({"anthropic": [a, b]}),
     ):
         with pytest.raises(AmbiguousProviderAccountError) as excinfo:
@@ -247,7 +247,7 @@ def test_get_provider_session_cookie_picks_only_row():
     row = _row("kimi_coding", "default")
     row.session_cookie = "kimi-cookie-value"  # pragma: allowlist secret
     with patch(
-        "app.services.credential_provider.Session",
+        "app.services.credentials.provider.Session",
         _make_fake_session({"kimi_coding": [row]}),
     ):
         assert CredentialProvider.get_provider_session_cookie("kimi_coding") == "kimi-cookie-value"
@@ -259,7 +259,7 @@ def test_get_provider_session_cookie_picks_explicit_account():
     b = _row("kimi_coding", "bob_invalid")
     b.session_cookie = "kimi-bob"  # pragma: allowlist secret
     with patch(
-        "app.services.credential_provider.Session",
+        "app.services.credentials.provider.Session",
         _make_fake_session({"kimi_coding": [a, b]}),
     ):
         assert (
@@ -277,7 +277,7 @@ def test_get_provider_session_cookie_ambiguous_legacy_returns_default_row():
     b = _row("kimi_coding", "bob_invalid")
     b.session_cookie = "bob-cookie"  # pragma: allowlist secret
     with patch(
-        "app.services.credential_provider.Session",
+        "app.services.credentials.provider.Session",
         _make_fake_session({"kimi_coding": [a, b]}),
     ):
         assert CredentialProvider.get_provider_session_cookie("kimi_coding") == "default-cookie"
@@ -291,11 +291,13 @@ def test_get_credentials_with_explicit_account_id_picks_that_row():
     b.api_key = "alice"  # pragma: allowlist secret
     with (
         patch(
-            "app.services.credential_provider.Session",
+            "app.services.credentials.provider.Session",
             _make_fake_session({"anthropic": [a, b]}),
         ),
         patch.dict("os.environ", {}, clear=False),
-        patch("app.services.credential_provider.registry.get_provider", return_value={"rules": []}),
+        patch(
+            "app.services.credentials.provider.registry.get_provider", return_value={"rules": []}
+        ),
     ):
         # Legacy call (no account_id) returns the "default" row's key —
         # never raises. The strict raise lives in ``_resolve_provider_config``,
@@ -311,11 +313,13 @@ def test_get_credentials_with_explicit_account_id_picks_that_row():
 def test_get_credentials_zero_rows_returns_empty_map():
     with (
         patch(
-            "app.services.credential_provider.Session",
+            "app.services.credentials.provider.Session",
             _make_fake_session({"anthropic": []}),
         ),
         patch.dict("os.environ", {}, clear=False),
-        patch("app.services.credential_provider.registry.get_provider", return_value={"rules": []}),
+        patch(
+            "app.services.credentials.provider.registry.get_provider", return_value={"rules": []}
+        ),
     ):
         creds = CredentialProvider.get_credentials("anthropic")
         # No api_key because no row; no env/file either
@@ -332,7 +336,7 @@ def test_legacy_helper_returns_none_when_default_disabled_and_other_enabled():
     enabled_other = _row("anthropic", "alice_invalid", enabled=True)
     enabled_other.api_key = "alice-key"  # pragma: allowlist secret
     with patch(
-        "app.services.credential_provider.Session",
+        "app.services.credentials.provider.Session",
         _make_fake_session({"anthropic": [disabled_default, enabled_other]}),
     ):
         cfg = _resolve_legacy_provider_config("anthropic", require_enabled=True)
@@ -346,7 +350,7 @@ def test_legacy_helper_logs_warning_on_multi_row(caplog):
     a = _row("anthropic", "default")
     b = _row("anthropic", "alice_invalid")
     with patch(
-        "app.services.credential_provider.Session",
+        "app.services.credentials.provider.Session",
         _make_fake_session({"anthropic": [a, b]}),
     ):
         with caplog.at_level("WARNING", logger="app.services.credential_provider"):
@@ -371,12 +375,12 @@ def test_get_credentials_does_not_override_env_when_db_row_disabled(caplog):
     enabled_default.api_key = "stored-key"  # pragma: allowlist secret
     with (
         patch(
-            "app.services.credential_provider.Session",
+            "app.services.credentials.provider.Session",
             _make_fake_session({"anthropic": [enabled_default]}),
         ),
         patch.dict("os.environ", {}, clear=False),
         patch(
-            "app.services.credential_provider.registry.get_provider",
+            "app.services.credentials.provider.registry.get_provider",
             return_value={"rules": []},
         ),
     ):
@@ -391,12 +395,12 @@ def test_get_credentials_does_not_override_env_when_db_row_disabled(caplog):
     disabled_default.api_key = "leaked-key"  # pragma: allowlist secret
     with (
         patch(
-            "app.services.credential_provider.Session",
+            "app.services.credentials.provider.Session",
             _make_fake_session({"anthropic": [disabled_default]}),
         ),
         patch.dict("os.environ", {}, clear=False),
         patch(
-            "app.services.credential_provider.registry.get_provider",
+            "app.services.credentials.provider.registry.get_provider",
             return_value={"rules": []},
         ),
     ):

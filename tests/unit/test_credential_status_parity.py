@@ -12,8 +12,9 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from app.services import auth_failures, credential_inventory
+from app.services import auth_failures
 from app.services import token_health as th
+from app.services.credentials import inventory as credential_inventory
 from app.services.token_health import (
     TokenHealthService,
     apply_rejection,
