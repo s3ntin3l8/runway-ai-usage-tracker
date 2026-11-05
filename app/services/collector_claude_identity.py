@@ -24,14 +24,14 @@ class CollectorClaudeIdentity:
     reconciliation; this cluster calls back into them via ``self``.
     """
 
-    def __getattr__(self, name: str) -> Any:
-        """Callbacks that stay on CollectorManager are reached through the subclass.
-
-        ``__getattr__`` is only used when normal lookup misses, so it does not
-        shadow methods defined on CollectorManager. It exists so the type
-        checker accepts those callbacks.
-        """
-        raise AttributeError(name)
+    async def reconcile_token_cache_from_durable_tags(
+        self,
+        *,
+        provider_id: str | None = None,
+        source_id: str | None = None,
+    ) -> int:
+        """Declared for the type checker. CollectorManager's method runs instead."""
+        raise NotImplementedError
 
     @staticmethod
     def _promotion_rejection_reason(

@@ -471,6 +471,7 @@ async def test_verified_sidecar_identity_promotes_only_its_source(monkeypatch):
     # this test exercises the persistence boundary against its isolated DB.
     monkeypatch.setattr("sqlmodel.Session", Session)
     monkeypatch.setattr("app.services.collector_manager.token_cache", cache)
+    monkeypatch.setattr("app.services.collector_claude_identity.token_cache", cache)
     manager = CollectorManager()
     move_source = cache.move_source
 
@@ -648,7 +649,9 @@ async def test_promotion_respects_the_operators_own_mapping(monkeypatch):
 
     monkeypatch.setattr("app.core.db.engine", engine)
     monkeypatch.setattr("sqlmodel.Session", Session)
-    monkeypatch.setattr("app.services.collector_manager.token_cache", TokenCache())
+    empty_cache = TokenCache()
+    monkeypatch.setattr("app.services.collector_manager.token_cache", empty_cache)
+    monkeypatch.setattr("app.services.collector_claude_identity.token_cache", empty_cache)
     manager = CollectorManager()
 
     await manager._promote_source_identity("antigravity", "default", source_id, "bob@example.com")
