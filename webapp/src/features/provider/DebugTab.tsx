@@ -1,6 +1,7 @@
-// Debug: the collection-context pane (always shown, from the credential inventory) plus an
-// on-demand capture of raw upstream collector responses (admin-gated, runs
-// live HTTP calls — never auto-fetches).
+// Debug: composition root. Always shows the collection-context pane and the
+// credential-sources pane (from the credential inventory), plus an on-demand
+// capture of raw upstream collector responses (admin-gated, live HTTP calls —
+// never auto-fetches).
 
 import type { FleetEntry } from '@/api/types';
 import { CollectionContextPane } from './CollectionContextPane';
