@@ -104,6 +104,8 @@ a = Analysis(
         "scripts.sidecar_pkg.event_extractors.chatgpt",
         "scripts.sidecar_pkg.event_extractors.gemini",
         "scripts.sidecar_pkg.event_extractors.hermes",
+        "scripts.sidecar_pkg.hermes_providers",
+        "scripts.sidecar_pkg.hermes_watermark",
         "scripts.sidecar_pkg.event_extractors.minimax_code",
         "scripts.sidecar_pkg.minimax_code_schema",
         "scripts.sidecar_pkg.minimax_code_roots",

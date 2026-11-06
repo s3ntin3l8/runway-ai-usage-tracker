@@ -1262,7 +1262,7 @@ def test_prune_reclaims_a_pipe_path_database_that_is_gone(monkeypatch, tmp_path)
             raise FileNotFoundError(path)
         return real_stat(path, *args, **kwargs)
 
-    monkeypatch.setattr(hermes_extractor.os, "stat", stat)
+    monkeypatch.setattr(os, "stat", stat)
     state = {
         gone: {
             "default": {
@@ -1694,7 +1694,7 @@ def test_the_database_path_is_stored_once_per_database(tmp_path):
         # backslash, so on Windows the file reads "C:\\Users\\..." where the
         # path itself is "C:\Users\...". The writer escapes it the same way --
         # json.dumps with the default ensure_ascii=True, in
-        # _compact_hermes_watermark (event_extractors/hermes.py:528) -- so
+        # _compact_hermes_watermark (sidecar_pkg/hermes_watermark.py) -- so
         # this has to keep matching it.
         stored = json.dumps(str(db_path.resolve()))[1:-1]
         assert content.count(stored) == 1
