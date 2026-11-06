@@ -436,14 +436,21 @@ moved to the `edge` index built from `main` after the unfixed-Debian gate
 | Negligible | 47 | 47 |
 
 Scanned at `2026-11-06T22:05:14Z` against the database built
-`2026-11-06T06:21:59Z`. Against the previous document the scan adds one
-advisory and drops none.
+`2026-11-06T06:21:59Z`. Against the previous fixture the scan adds one
+advisory and drops none, and changes one fix state: CVE-2026-119373,
+CVE-2026-119374 and CVE-2026-119379 (`libsqlite3-0`) moved from `not-fixed` to
+`wont-fix`, as CVE-2026-84243 did on 2026-11-02. Exception matching ignores fix
+state, so the document is unchanged, but the gate records only `not-fixed`
+Debian findings without failing. These six entries (three advisories, two
+architectures) now block if they ever lapse, so they need a real review at every
+renewal, the same as the glibc ones below.
 
 - CVE-2026-76844 (`zlib1g` `1:1.3.dfsg+really1.3.1-1+b1`, High, `not-fixed` in
   trixie, fixed in sid) is a heap overflow in native `gz_write()`. It is the same
   `gz*` write path as CVE-2026-85091, with the same argument: the server uses
   Python's `zlib` compression and decompression and calls no native gz-file
-  write API (`app/` imports neither `gzip` nor `ctypes`). Two entries, one per
+  write API (`app/` imports neither `gzip` nor `ctypes`; its `GZipMiddleware`
+  compresses through Python's `zlib`, not the native `gz*` file API). Two entries, one per
   architecture. The gate would have recorded it as an unfixed Debian finding
   without an entry; it has one anyway, because the document and the scan are
   checked for equality and every other `zlib1g` advisory carries one.
