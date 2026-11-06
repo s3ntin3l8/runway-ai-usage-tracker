@@ -16,9 +16,10 @@ Provider resolution lives in ``hermes_providers`` and the watermark log in
 ``hermes_watermark``. This module keeps the parser, which is what a test
 patches when it replaces a watermark helper on this module.
 
-A patch on this module intercepts the parser only for a name the parser
-calls from here (``_append_hermes_watermark``, ``_live_slice_suffixes``,
-``WATERMARK_COMPACT_MIN_LINES``, ``resolve_hermes_provider_and_canonical``).
+A patch on this module intercepts the parser for a name the parser
+calls from here, for example ``_append_hermes_watermark``,
+``_live_slice_suffixes``, ``WATERMARK_COMPACT_MIN_LINES`` or
+``resolve_hermes_provider_and_canonical``.
 Calls between the helpers resolve in ``hermes_providers`` and
 ``hermes_watermark``, so patching ``map_hermes_canonical`` or
 ``_HERMES_CANONICAL_MAP`` here does not change
