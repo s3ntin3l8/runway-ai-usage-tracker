@@ -22,7 +22,7 @@ from app.models.schemas import LimitCard
 
 ROOT = Path(__file__).resolve().parents[2]
 REFERENCE = ROOT / "docs" / "api-reference.md"
-TYPES = ROOT / "webapp" / "src" / "api" / "types.ts"
+TYPES = ROOT / "webapp" / "src" / "api" / "types" / "usage.ts"
 
 API_PREFIX = "/api/v1"
 
@@ -68,7 +68,7 @@ def _documented_fields() -> set[str]:
 def _typescript_fields() -> set[str]:
     text = TYPES.read_text(encoding="utf-8")
     match = re.search(r"export interface LimitCard \{(.*?)\n\}", text, re.S)
-    assert match, "LimitCard is missing from webapp/src/api/types.ts"
+    assert match, "LimitCard is missing from webapp/src/api/types/usage.ts"
     return set(re.findall(r"^ {2}(\w+)\??:", match.group(1), re.M))
 
 
@@ -103,9 +103,9 @@ def test_limitcard_example_matches_the_typescript_mirror() -> None:
     documented = _documented_fields()
     typescript = _typescript_fields()
     assert documented == typescript, (
-        "the LimitCard example and webapp/src/api/types.ts disagree:\n"
+        "the LimitCard example and webapp/src/api/types/usage.ts disagree:\n"
         f"  only in the reference: {sorted(documented - typescript)}\n"
-        f"  only in types.ts: {sorted(typescript - documented)}"
+        f"  only in usage.ts: {sorted(typescript - documented)}"
     )
 
 

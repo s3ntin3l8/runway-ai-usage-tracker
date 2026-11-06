@@ -209,7 +209,7 @@ export default defineConfig({
         'src/test/**',
         'src/main.tsx',
         'src/**/*.d.ts',
-        'src/api/types.ts',
+        'src/api/types/**',
       ],
     },
   },
