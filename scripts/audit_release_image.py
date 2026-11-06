@@ -188,7 +188,7 @@ def _annotation(level: str, finding: dict[str, Any]) -> str:
     """One GitHub workflow command."""
     fields = " ".join(
         _command_text(finding[key])
-        for key in ("id", "package", "version", "architecture", "fix_state")
+        for key in ("id", "severity", "package", "version", "architecture", "fix_state")
     )
     return f"::{_command_text(level)}::{fields}"
 
