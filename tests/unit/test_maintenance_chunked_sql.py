@@ -356,3 +356,37 @@ def test_chunked_operations_validate_retry_knobs():
             {"account_id": "alice@example.com"},
             initial_backoff=-1.0,
         )
+
+
+def test_lock_retry_logs_measured_wait_without_sql_or_params(caplog):
+    """Each failed attempt logs op, attempt, wait and backoff; giving up logs the total. No SQL/params."""
+    import logging
+    from unittest.mock import MagicMock, patch
+
+    from app.services.maintenance._retry import _retry_on_lock
+
+    def always_locked():
+        raise OperationalError(
+            "UPDATE secret_table SET x = ?", {"x": "s3cr3t-param"}, Exception("database is locked")
+        )
+
+    with (
+        caplog.at_level(logging.WARNING, logger="app.services.maintenance._retry"),
+        patch("app.services.maintenance._retry.time.sleep"),
+        pytest.raises(OperationalError),
+    ):
+        _retry_on_lock(
+            always_locked,
+            session=MagicMock(),
+            action_desc="my repair",
+            max_retries=3,
+            initial_backoff=0.0,
+        )
+
+    messages = [r.getMessage() for r in caplog.records]
+    assert len(messages) == 3
+    assert "my repair" in messages[0] and "attempt 1/3" in messages[0]
+    assert "blocking" in messages[0] and "retrying in" in messages[0]
+    assert "blocked" in messages[2] and "in total" in messages[2]
+    for m in messages:
+        assert "secret_table" not in m and "s3cr3t-param" not in m and "UPDATE" not in m
