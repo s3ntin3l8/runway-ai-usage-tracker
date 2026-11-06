@@ -87,8 +87,11 @@ def _retry_on_lock[T](
         try:
             return fn()
         except OperationalError as exc:
-            # Time spent inside the failed attempt: dominated by the
-            # connection's `busy_timeout` wait for the writer lock.
+            # Wall time of the whole failed attempt: any `busy_timeout` wait
+            # plus the statements run around it. A lock error that SQLite
+            # raises without invoking the busy handler (a deferred-BEGIN
+            # read->write escalation) reads as ~0s here, which is the
+            # momentary-vs-stuck signal.
             waited = time.monotonic() - started
             if not _is_sqlite_locked_or_busy(exc):
                 raise
@@ -99,7 +102,7 @@ def _retry_on_lock[T](
                 session.rollback()
                 delay = initial_backoff * (2**attempt) + random.uniform(0.01, 0.05)
                 logger.warning(
-                    "Database locked during %s (attempt %d/%d) after blocking %.2fs; retrying in %.2fs",
+                    "Database locked during %s (attempt %d/%d) after %.2fs in the attempt; retrying in %.2fs",
                     action_desc,
                     attempt + 1,
                     max_retries,
@@ -109,9 +112,10 @@ def _retry_on_lock[T](
                 time.sleep(delay)
                 continue
             logger.error(
-                "Database still locked during %s after %d attempts; blocked %.2fs in total",
+                "Database still locked during %s after %d attempt%s; %.2fs spent in failed attempts in total",
                 action_desc,
                 max_retries,
+                "" if max_retries == 1 else "s",
                 blocked_total,
             )
             raise
