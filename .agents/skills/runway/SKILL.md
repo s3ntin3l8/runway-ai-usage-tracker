@@ -90,6 +90,6 @@ Evidence: `app/services/event_ingestor.py`, `app/services/project_label.py`, `sc
 
 `SQLModel.metadata.create_all` does not add columns to existing SQLite tables. Schema additions also need the idempotent startup migrations in `app/core/db.py`; exercise both fresh and existing database shapes.
 
-A new `LimitCard` field crosses three maintained surfaces: `app/models/schemas.py`, `webapp/src/api/types.ts`, and the interface example in `docs/api-reference.md`.
+A new `LimitCard` field crosses three maintained surfaces: `app/models/schemas.py`, `webapp/src/api/types/usage.ts`, and the interface example in `docs/api-reference.md`.
 
 Evidence: `app/core/db.py::init_db`, its column-addition helpers, and AGENTS.md → Core invariants.

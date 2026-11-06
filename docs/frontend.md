@@ -44,7 +44,7 @@ webapp/src/
 |---|---|
 | `client.ts` | The central `fetch` wrapper. It attaches the admin key when one is set, always sends `credentials: 'include'` so the HttpOnly `runway_session` cookie rides along, and uses `redirect: 'manual'`. It also owns `ApiError`, the admin-key store and the auth-redirect guard. |
 | `endpoints/` | One exported function per server endpoint. This is the only place that knows server URLs. The `index.ts` barrel keeps `@/api/endpoints`. |
-| `types.ts` | The TypeScript mirror of the server's response models. |
+| `types/` | The TypeScript mirror of the server's response models. `index.ts` re-exports the domain modules (`credentials`, `fleet`, `provider`, `settings`, `usage`). |
 
 Query-string building lives in `client.ts` (`qs()`); feature code never
 hand-builds a URL.
