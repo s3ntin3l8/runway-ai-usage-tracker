@@ -81,22 +81,43 @@ def _retry_on_lock[T](
         raise ValueError(f"max_retries must be positive, got {max_retries}")
     if initial_backoff < 0:
         raise ValueError(f"initial_backoff must be non-negative, got {initial_backoff}")
+    blocked_total = 0.0
     for attempt in range(max_retries):
+        started = time.monotonic()
         try:
             return fn()
         except OperationalError as exc:
-            if _is_sqlite_locked_or_busy(exc) and attempt < max_retries - 1:
+            # Wall time of the whole failed attempt: any `busy_timeout` wait
+            # plus the statements run around it. A lock error that SQLite
+            # raises without invoking the busy handler (a deferred-BEGIN
+            # read->write escalation) reads as ~0s here, which is the
+            # momentary-vs-stuck signal.
+            waited = time.monotonic() - started
+            if not _is_sqlite_locked_or_busy(exc):
+                raise
+            blocked_total += waited
+            # Log only the operation's name and the timings: never `exc`, whose
+            # text carries the statement and its bound parameters.
+            if attempt < max_retries - 1:
                 session.rollback()
                 delay = initial_backoff * (2**attempt) + random.uniform(0.01, 0.05)
                 logger.warning(
-                    "Database locked during %s (attempt %d/%d); retrying in %.2fs",
+                    "Database locked during %s (attempt %d/%d) after %.2fs in the attempt; retrying in %.2fs",
                     action_desc,
                     attempt + 1,
                     max_retries,
+                    waited,
                     delay,
                 )
                 time.sleep(delay)
                 continue
+            logger.error(
+                "Database still locked during %s after %d attempt%s; %.2fs spent in failed attempts in total",
+                action_desc,
+                max_retries,
+                "" if max_retries == 1 else "s",
+                blocked_total,
+            )
             raise
     raise AssertionError("unreachable: retry loop either returns or re-raises")
 
