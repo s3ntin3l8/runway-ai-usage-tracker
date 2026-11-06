@@ -175,6 +175,28 @@ def executable_manifests(index: dict[str, Any]) -> dict[str, Any]:
     return manifests
 
 
+def _annotation(level: str, finding: dict[str, Any]) -> str:
+    """One GitHub workflow command. The finding fields contain no newlines."""
+    return (
+        f"::{level}::{finding['id']} {finding['package']} {finding['version']} "
+        f"{finding['architecture']} {finding['fix_state']}"
+    )
+
+
+def report_findings(evidence: dict[str, Any]) -> None:
+    """Name every finding the counts hide.
+
+    A blocked finding is an error, so the job summary shows it without
+    downloading the audit artifact. An unfixed Debian package is a warning:
+    it is recorded and does not fail the build.
+    """
+    for platform in evidence["platforms"].values():
+        for finding in platform.get("blocked") or []:
+            print(_annotation("error", finding))
+        for finding in platform.get("unfixed_base") or []:
+            print(_annotation("warning", finding))
+
+
 def audit(
     image: str | None,
     output: Path,
@@ -260,6 +282,7 @@ def audit(
         raise
     finally:
         (output / "evidence.json").write_text(json.dumps(evidence, indent=2))
+    report_findings(evidence)
     print(
         json.dumps(
             {

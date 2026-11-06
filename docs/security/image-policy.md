@@ -1,10 +1,14 @@
 # Release image security policy
 
 Runway blocks image promotion on every Critical/High Grype match unless an exact,
-reviewed applicability exception exists. Whether the scanner reports a fix does
-not change this rule. Medium, Low, Negligible and Unknown findings remain visible;
-Python findings are separately enumerated for review. Scanner failures, missing
-architectures, invalid reports and stale databases fail closed.
+reviewed applicability exception exists. One base-image case does not block: a
+`debian:distro:*` finding whose fix state is exactly `not-fixed`. No upgrade can
+remove it, so the audit records it and the job warns instead of failing.
+`fixed`, `unknown`, and `wont-fix` still block, as does any finding outside that
+namespace, including a Python package. Medium, Low, Negligible and Unknown
+findings remain visible; Python findings are separately enumerated for review.
+Scanner failures, missing architectures, invalid reports and stale databases
+fail closed.
 
 An expired exception fails closed too, but only for the finding it covered. A
 lapsed entry applies to nothing, so the Critical/High match it excepted becomes
@@ -74,7 +78,10 @@ new advisories, other architectures or expired entries do not inherit an excepti
 An exception is a time-limited deployment decision, not a claim that the installed
 library is patched. Changes to runtime behavior require re-review even when the
 package version is unchanged. Review the exception document in the same PR as the
-image change. Never add a wildcard, blanket severity suppression or `only-fixed` filter.
+image change. Never add a wildcard, a blanket severity suppression, or a filter
+that ignores every unfixed finding. A `not-fixed` Debian distro package is
+already recorded rather than blocked; that is the namespace and the fix state
+together, not a licence to ignore a fixable advisory or a Python package.
 
 The document has a single expiry horizon: every entry expires at the same instant,
 so the whole document is re-reviewed on one cycle and there is one deadline to
@@ -94,7 +101,9 @@ to the policy.
 The exact package version is part of the match, and the runtime version moves with
 the base image: the Dockerfile runs `apt-get upgrade -y`, so a new Debian point
 release changes the installed version and invalidates the matching exception.
-Never widen a match to cover it — re-review and pin the new version instead.
+That `RUN` is cached until its instruction changes, so a SPA-only rebuild does
+not pick up a security update that landed after the layer was built. Never widen
+a match to cover a new version — re-review and pin the new version instead.
 
 Exceptions apply to the documented non-root server runtime: no privileged container,
 Docker socket, arbitrary SQL executor, uploaded SQLite databases, Kerberos acceptor,

@@ -30,11 +30,11 @@ def database(**overrides):
     }
 
 
-def finding(severity="High", state="not-fixed", kind="deb"):
+def finding(severity="High", state="not-fixed", kind="deb", namespace="debian:12"):
     return {
         "vulnerability": {
             "id": "CVE-2026-TEST",
-            "namespace": "debian:12",
+            "namespace": namespace,
             "severity": severity,
             "fix": {"state": state},
         },
@@ -82,7 +82,93 @@ def test_blocks_without_applicability_review(severity, state):
     result = evaluate(report, "amd64", ExceptionSet())
     assert not result["passed"]
     assert result["blocked"][0]["fix_state"] == state
+    assert result["unfixed_base"] == []
     assert report["matches"]  # raw evidence remains untouched
+
+
+def test_unfixed_debian_distro_package_is_recorded_not_blocked():
+    report = {
+        "matches": [
+            finding(namespace="debian:distro:debian:13"),
+            finding(severity="Critical", namespace="debian:distro:debian:13"),
+        ]
+    }
+    result = evaluate(report, "amd64", ExceptionSet())
+    assert result["passed"]
+    assert result["blocked"] == []
+    assert [item["severity"] for item in result["unfixed_base"]] == ["High", "Critical"]
+    assert {item["fix_state"] for item in result["unfixed_base"]} == {"not-fixed"}
+
+
+@pytest.mark.parametrize("state", ["fixed", "wont-fix", "unknown"])
+def test_other_debian_fix_states_still_block(state):
+    report = {"matches": [finding(state=state, namespace="debian:distro:debian:13")]}
+    result = evaluate(report, "amd64", ExceptionSet())
+    assert not result["passed"]
+    assert result["unfixed_base"] == []
+    assert result["blocked"][0]["fix_state"] == state
+
+
+def test_unfixed_outside_the_debian_namespace_still_blocks():
+    report = {"matches": [finding(kind="python", namespace="github:language:python")]}
+    result = evaluate(report, "amd64", ExceptionSet())
+    assert not result["passed"]
+    assert result["unfixed_base"] == []
+    assert result["blocked"][0]["namespace"] == "github:language:python"
+
+
+def test_active_exception_still_records_an_unfixed_debian_finding(tmp_path):
+    loaded = load_exceptions(
+        write_exceptions(tmp_path, [exception(namespace="debian:distro:debian:13")]), NOW
+    )
+    report = {"matches": [finding(namespace="debian:distro:debian:13")]}
+    result = evaluate(report, "amd64", loaded)
+    assert result["passed"]
+    assert result["unfixed_base"] == []
+    assert len(result["exceptions"]) == 1
+
+
+def test_lapsed_exception_does_not_block_an_unfixed_debian_finding(tmp_path):
+    loaded = load_exceptions(
+        write_exceptions(tmp_path, [expired_exception(namespace="debian:distro:debian:13")]),
+        NOW,
+    )
+    report = {"matches": [finding(namespace="debian:distro:debian:13")]}
+    result = evaluate(report, "amd64", loaded)
+    assert result["passed"]
+    assert result["blocked"] == []
+    assert result["unfixed_base"][0]["id"] == "CVE-2026-TEST"
+
+
+def test_audit_names_blocked_and_unfixed_findings(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(
+        audit_module,
+        "prepare_database",
+        lambda _: (database(), {"status": "active", "checksum": "sha256:" + "a" * 64}),
+    )
+    monkeypatch.setattr(audit_module, "check_database", lambda *args: None)
+    monkeypatch.setattr(
+        audit_module,
+        "scan_archive",
+        lambda *args, **kwargs: {
+            "matches": [
+                finding(state="fixed", namespace="debian:distro:debian:13"),
+                finding(namespace="debian:distro:debian:13"),
+            ]
+        },
+    )
+    failed = audit_module.audit(
+        None,
+        tmp_path / "audit",
+        archive=tmp_path / "image.tar",
+        architecture="amd64",
+        exceptions_path=write_exceptions(tmp_path, []),
+    )
+    output = capsys.readouterr().out
+    assert failed is True
+    assert "::error::CVE-2026-TEST test-package 1.0 amd64 fixed" in output
+    assert "::warning::CVE-2026-TEST test-package 1.0 amd64 not-fixed" in output
+    assert '"passed": false' in output
 
 
 def test_lower_severities_and_python_are_reported():

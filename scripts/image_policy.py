@@ -178,6 +178,17 @@ def load_exceptions(path: Path, now: datetime) -> ExceptionSet:
     return ExceptionSet(active=active, expired=expired)
 
 
+def _unfixed_debian(finding: dict[str, Any]) -> bool:
+    """A Debian package with no fix yet. An upgrade cannot remove it.
+
+    The namespace is the one Grype emits for a distro package
+    (``debian:distro:debian:13``), not a shortened stand-in. ``wont-fix`` and
+    ``unknown`` stay blocking: a postponement is still a decision, and a
+    missing fix state fails closed.
+    """
+    return finding["fix_state"] == "not-fixed" and finding["namespace"].startswith("debian:distro:")
+
+
 def evaluate(
     report: dict[str, Any],
     architecture: str,
@@ -185,7 +196,7 @@ def evaluate(
 ) -> dict[str, Any]:
     if architecture not in {"amd64", "arm64"} or not isinstance(report.get("matches"), list):
         raise ValueError("Missing architecture or vulnerability matches")
-    blocked, accepted, python = [], [], []
+    blocked, accepted, python, unfixed_base = [], [], [], []
     counts: Counter[str] = Counter()
     for match in report["matches"]:
         vulnerability, artifact = match["vulnerability"], match["artifact"]
@@ -209,6 +220,11 @@ def evaluate(
             exception = exceptions.active.get(key)
             if exception:
                 accepted.append({**finding, "exception": exception})
+            elif _unfixed_debian(finding):
+                # No upgrade exists, so failing the build cannot change the
+                # image. A reviewed exception, when one is still active, is
+                # recorded above instead of here.
+                unfixed_base.append(finding)
             else:
                 lapsed = exceptions.expired.get(key)
                 blocked.append(
@@ -218,6 +234,7 @@ def evaluate(
         "architecture": architecture,
         "counts": dict(counts),
         "blocked": blocked,
+        "unfixed_base": unfixed_base,
         "exceptions": accepted,
         "python_findings": python,
         "passed": not blocked,
