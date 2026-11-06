@@ -175,6 +175,38 @@ def executable_manifests(index: dict[str, Any]) -> dict[str, Any]:
     return manifests
 
 
+def _command_text(value: object) -> str:
+    """Escape a value for a GitHub workflow command.
+
+    ``%`` is escaped first so the replacements for CR and LF are not escaped
+    again.
+    """
+    return str(value).replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+
+
+def _annotation(level: str, finding: dict[str, Any]) -> str:
+    """One GitHub workflow command."""
+    fields = " ".join(
+        _command_text(finding[key])
+        for key in ("id", "severity", "package", "version", "architecture", "fix_state")
+    )
+    return f"::{_command_text(level)}::{fields}"
+
+
+def report_findings(evidence: dict[str, Any]) -> None:
+    """Name every finding the counts hide.
+
+    A blocked finding is an error, so the job summary shows it without
+    downloading the audit artifact. An unfixed Debian package is a warning:
+    it is recorded and does not fail the build.
+    """
+    for platform in evidence["platforms"].values():
+        for finding in platform.get("blocked") or []:
+            print(_annotation("error", finding))
+        for finding in platform.get("unfixed_base") or []:
+            print(_annotation("warning", finding))
+
+
 def audit(
     image: str | None,
     output: Path,
@@ -192,9 +224,10 @@ def audit(
         "grype": GRYPE,
         "platforms": {},
         "passed": False,
-        # Entries whose review window closed. They waive nothing, so the
-        # findings they covered are blocked; naming them here is what turns
-        # "the document is invalid" into "this advisory lost its exception".
+        # Entries whose review window closed. They waive nothing. A finding
+        # that still blocks is blocked again; an unfixed Debian package is
+        # recorded either way. Naming the entries is what turns "the document
+        # is invalid" into "this advisory lost its exception".
         "expired_exceptions": [],
     }
     try:
@@ -260,11 +293,16 @@ def audit(
         raise
     finally:
         (output / "evidence.json").write_text(json.dumps(evidence, indent=2))
+    report_findings(evidence)
     print(
         json.dumps(
             {
                 "passed": evidence["passed"],
                 "counts": {arch: p["counts"] for arch, p in evidence["platforms"].items()},
+                "unfixed_base": {
+                    arch: len(p.get("unfixed_base") or [])
+                    for arch, p in evidence["platforms"].items()
+                },
                 "expired_exceptions": len(evidence["expired_exceptions"]),
             },
             indent=2,

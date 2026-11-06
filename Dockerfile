@@ -56,7 +56,11 @@ WORKDIR /app
 
 # Refresh the entire runtime distro, not only individually installed packages.
 # Build tools and pip never belong in the application runtime.
-RUN apt-get update && apt-get upgrade -y \
+# This RUN is cached until the instruction itself changes, so a SPA-only
+# rebuild keeps the previous distro. The echo is that change: 2026-11-06,
+# pick up apt 3.0.4 (CVE-2026-109518, DSA-6607-1).
+RUN echo "distro refresh 2026-11-06 CVE-2026-109518" \
+    && apt-get update && apt-get upgrade -y \
     && rm -rf /var/lib/apt/lists/* \
     && /usr/local/bin/python -m pip uninstall -y pip setuptools wheel \
     && find /usr -type f -perm /6000 -exec chmod a-s {} +
