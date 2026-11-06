@@ -165,10 +165,27 @@ def test_audit_names_blocked_and_unfixed_findings(tmp_path, monkeypatch, capsys)
         exceptions_path=write_exceptions(tmp_path, []),
     )
     output = capsys.readouterr().out
+    summary = json.loads(output[output.index("{") :])
     assert failed is True
     assert "::error::CVE-2026-TEST test-package 1.0 amd64 fixed" in output
     assert "::warning::CVE-2026-TEST test-package 1.0 amd64 not-fixed" in output
-    assert '"passed": false' in output
+    assert summary["passed"] is False
+    assert summary["unfixed_base"] == {"amd64": 1}
+
+
+def test_annotation_escapes_workflow_command_characters():
+    line = audit_module._annotation(
+        "error",
+        {
+            "id": "CVE-2026-TEST",
+            "package": "bad\nname%extra",
+            "version": "1.0\r2",
+            "architecture": "amd64",
+            "fix_state": "fixed",
+        },
+    )
+    assert line == "::error::CVE-2026-TEST bad%0Aname%25extra 1.0%0D2 amd64 fixed"
+    assert "\n" not in line and "\r" not in line
 
 
 def test_lower_severities_and_python_are_reported():

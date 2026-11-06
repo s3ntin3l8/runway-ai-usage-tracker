@@ -10,10 +10,12 @@ findings remain visible; Python findings are separately enumerated for review.
 Scanner failures, missing architectures, invalid reports and stale databases
 fail closed.
 
-An expired exception fails closed too, but only for the finding it covered. A
-lapsed entry applies to nothing, so the Critical/High match it excepted becomes
-unexcepted and blocks promotion, with the advisory and the expiry date named in
-the audit evidence. The rest of the exception document keeps working: one lapsed
+An expired exception fails closed too, but only for a finding that still blocks.
+A lapsed entry applies to nothing, so the Critical/High match it excepted
+becomes unexcepted. Anything other than a `not-fixed` `debian:distro:*` package
+then blocks promotion, with the advisory and the expiry date named in the audit
+evidence. An unfixed Debian package is recorded whether or not its exception
+lapsed. The rest of the exception document keeps working: one lapsed
 entry no longer invalidates the others. A malformed document — a missing field,
 an unsupported architecture, non-HTTPS evidence, a duplicate entry, a review
 dated in the future or a window longer than 30 days — still fails the whole
