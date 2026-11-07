@@ -10,7 +10,8 @@ Safety contract: no string value, session id, working directory, path or user
 text is ever printed. Key names are field names; one that is not a plain
 identifier is counted under ``other_keys`` instead of being echoed. The
 argument is the only place a path is accepted and it is not echoed.
-Symlinked files and directories are skipped (counted as unreadable), never followed.
+Symlinked files are counted as unreadable; symlinked session directories are
+counted under ``sessions.skipped_symlinks``. Nothing is ever followed.
 """
 
 from __future__ import annotations
@@ -225,14 +226,25 @@ def _is_real_dir(path: Path) -> bool:
     return path.is_dir() and not path.is_symlink()
 
 
-def _sorted_children(path: Path, prefix: str) -> list[Path]:
-    if not _is_real_dir(path):  # a symlinked parent would leave the given directory
+def _sorted_children(path: Path, prefix: str, skipped: list[int]) -> list[Path]:
+    """Real subdirectories named ``prefix*``; a symlink is counted in ``skipped[0]``."""
+    if path.is_symlink():  # a symlinked parent would leave the given directory
+        skipped[0] += 1
+        return []
+    if not path.is_dir():
         return []
     try:
         names = sorted(n for n in os.listdir(path) if n.startswith(prefix))
     except OSError:
         return []
-    return [path / n for n in names if _is_real_dir(path / n)]
+    out: list[Path] = []
+    for n in names:
+        child = path / n
+        if child.is_symlink():
+            skipped[0] += 1
+        elif child.is_dir():
+            out.append(child)
+    return out
 
 
 def _render_jsonl_counters(stats: JsonlStats) -> dict[str, int]:
@@ -251,16 +263,16 @@ def describe(root: Path) -> dict[str, Any]:
     titles = TitleKeys()
 
     session_dirs: list[Path] = []
-    workdirs = _sorted_children(root / "sessions", "wd_")
+    skipped_links = [0]
+    workdirs = _sorted_children(root / "sessions", "wd_", skipped_links)
     for workdir in workdirs:
-        session_dirs.extend(_sorted_children(workdir, "session_"))
+        session_dirs.extend(_sorted_children(workdir, "session_", skipped_links))
     found = len(session_dirs)
     session_dirs = session_dirs[:MAX_SESSIONS]
 
     state_keys = KeySet()
     state_read = state_missing = state_invalid = state_oversized = 0
     wire_stats = JsonlStats()
-    wire_missing = 0
     record_types: dict[str, dict[str, Any]] = {}
 
     for session in session_dirs:
@@ -288,7 +300,6 @@ def describe(root: Path) -> dict[str, Any]:
                 state_invalid += 1
 
         wire_path = session / "agents" / "main" / "wire.jsonl"
-        before_unreadable = wire_stats.files_unreadable
         agents_dir = session / "agents"
         wire_records: Iterator[dict[str, Any]] = iter(())
         if _is_real_dir(agents_dir) and _is_real_dir(agents_dir / "main"):
@@ -306,8 +317,6 @@ def describe(root: Path) -> dict[str, Any]:
             entry["count"] += 1
             entry["keys"].observe(record)
             titles.observe("wire.jsonl", rtype, record)
-        if wire_stats.files_unreadable > before_unreadable:
-            wire_missing += 1
 
     wire_types_out: dict[str, Any] = {}
     for rtype, entry in sorted(record_types.items()):
@@ -337,6 +346,7 @@ def describe(root: Path) -> dict[str, Any]:
             "found": found,
             "scanned": len(session_dirs),
             "truncated": found > len(session_dirs),
+            "skipped_symlinks": skipped_links[0],
         },
         "state_json": {
             "files_read": state_read,

@@ -139,6 +139,7 @@ def test_session_cap_and_bad_argument(tmp_path, capsys):
         "found": kimi_structure.MAX_SESSIONS + 3,
         "scanned": kimi_structure.MAX_SESSIONS,
         "truncated": True,
+        "skipped_symlinks": 0,
     }
     assert kimi_structure.main([str(tmp_path / "nope")]) == 2
     assert str(tmp_path) not in capsys.readouterr().out
@@ -189,6 +190,7 @@ def test_symlinks_are_not_followed(tmp_path, capsys):
     _, doc, out = _run(root, capsys)
     assert "outside" not in out
     assert doc["sessions"]["found"] == 1
+    assert doc["sessions"]["skipped_symlinks"] == 1
     assert doc["state_json"]["files_read"] == 0
     assert doc["state_json"]["files_missing_or_unreadable"] == 1
     assert doc["wire_jsonl"]["files_missing_or_unreadable"] == 1
@@ -215,6 +217,7 @@ def test_symlinked_directory_components_are_not_followed(tmp_path, capsys, linke
     assert doc["wire_jsonl"]["record_types"] == {}
     if linked == "sessions":
         assert doc["sessions"]["found"] == 0
+        assert doc["sessions"]["skipped_symlinks"] == 1
         assert doc["state_json"]["files_read"] == 0
     else:
         assert doc["wire_jsonl"]["files_missing_or_unreadable"] == 1
