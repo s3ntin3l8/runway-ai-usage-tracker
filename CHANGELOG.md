@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0-beta.17](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v3.0.0-beta.16...v3.0.0-beta.17) (2026-11-07)
+
+
+### Features
+
+* **data-health:** log how long a locked batch waited, so a stuck apply can be diagnosed ([fdec264](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/fdec26462854734df324624e53f2b4631f1e546e))
+
+
+### Bug Fixes
+
+* **security:** record unfixed Debian image findings instead of failing ([#1220](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1220)) ([d7c18b2](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/d7c18b2bc9650d16df9c9a422245b919922a6f37))
+
 ## [3.0.0-beta.16](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v3.0.0-beta.15...v3.0.0-beta.16) (2026-11-02)
 
 
