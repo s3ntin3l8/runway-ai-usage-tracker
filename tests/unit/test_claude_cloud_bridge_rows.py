@@ -146,6 +146,8 @@ async def test_live_report_is_counts_only(environment, monkeypatch, capsys, scri
         {},
     )
     patch_client(monkeypatch, server)
+    # The in-process fixture already holds the login; keep the durable path off.
+    monkeypatch.setattr(check_bridge_sessions.source_controls, "initialize", lambda: None)
     # The script owns its event loop, so it runs off the test's.
     code = await asyncio.to_thread(check_bridge_sessions.main, ["--live", "--yes-call-provider"])
     assert code == 0
@@ -163,3 +165,30 @@ def test_live_failure_exits_nonzero_with_a_fixed_outcome(monkeypatch, capsys, sc
     monkeypatch.setattr(check_bridge_sessions, "_live_rows", boom)
     assert check_bridge_sessions.main(["--live", "--yes-call-provider"]) == 3
     assert "rejected" in capsys.readouterr().err
+
+
+@pytest.mark.asyncio
+async def test_live_rows_enable_the_durable_snapshot_before_reading(monkeypatch):
+    # A fresh process only hydrates its login cache once source controls are enabled.
+    order: list[str] = []
+
+    async def fake_read(client):
+        order.append("read")
+        return []
+
+    monkeypatch.setattr(
+        check_bridge_sessions.source_controls, "initialize", lambda: order.append("init")
+    )
+    monkeypatch.setattr(check_bridge_sessions, "read_all_bridge_rows", fake_read)
+    assert await check_bridge_sessions._live_rows() == []
+    assert order == ["init", "read"]
+
+
+@pytest.mark.asyncio
+async def test_a_network_timeout_is_reported_as_timeout(environment):
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("slow", request=request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(support.ProbeError, match="timeout"):
+            await read_bridge_rows(client, SOURCE_REF)

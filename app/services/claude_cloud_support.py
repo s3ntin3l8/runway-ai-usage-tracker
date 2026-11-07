@@ -42,6 +42,20 @@ class ProbeError(Exception):
     """Only internal, fixed outcome categories cross this boundary."""
 
 
+# Usage-block key of each compared counter, as the session list reports it.
+COUNTER_KEYS = {
+    "input": "input_tokens",
+    "output": "output_tokens",
+    "cache_read": "cache_read_tokens",
+    "cache_write": "cache_write_tokens",
+}
+
+
+def count(value: object) -> int | None:
+    """A usage-block counter: a non-negative int below 2**53, else unknown (``None``)."""
+    return value if type(value) is int and 0 <= value < 2**53 else None
+
+
 def strict_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     """Reject a JSON object with a duplicate key instead of silently keeping one."""
     result: dict[str, Any] = {}

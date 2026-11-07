@@ -21,12 +21,7 @@ from app.services.probe_mode import probing
 logger = logging.getLogger(__name__)
 
 BRIDGE_KIND = "bridge"
-# Cloud usage-block key of each compared counter.
-_BLOCK_KEYS = {
-    "input": "input_tokens",
-    "cache_read": "cache_read_tokens",
-    "cache_write": "cache_write_tokens",
-}
+_COMPARED = ("input", "cache_read", "cache_write")
 
 
 class BridgeRow(TypedDict):
@@ -45,17 +40,12 @@ class BridgeSource(NamedTuple):
     source_id: str
 
 
-def _count(value: object) -> int | None:
-    # Same rule as the collector's block reader: a non-negative int, else unknown.
-    return value if type(value) is int and 0 <= value < 2**53 else None
-
-
 def _bridge_row(row: dict[str, Any]) -> BridgeRow | None:
     metadata = row.get("external_metadata")
     usage = metadata.get("usage") if isinstance(metadata, dict) else None
     if not isinstance(usage, dict):
         return None
-    counts = {name: _count(usage.get(key)) for name, key in _BLOCK_KEYS.items()}
+    counts = {name: support.count(usage.get(support.COUNTER_KEYS[name])) for name in _COMPARED}
     if all(value is None for value in counts.values()):
         return None
     return BridgeRow(
@@ -100,11 +90,20 @@ async def read_bridge_rows(client: httpx.AsyncClient, source: BridgeSource) -> l
                     await attempt.check_source()
     except TimeoutError:
         raise support.ProbeError("timeout") from None
+    except httpx.TimeoutException:
+        raise support.ProbeError("timeout") from None
     except httpx.HTTPError:
         raise support.ProbeError("unavailable") from None
     if "max_pages" in read.notes or "cursor_repeat" in read.notes:
         logger.warning("Bridge session list cut short (%s)", ",".join(read.notes))
-    return [bridge for row in read.rows if (bridge := _bridge_row(row)) is not None]
+    bridge_rows = [bridge for row in read.rows if (bridge := _bridge_row(row)) is not None]
+    if len(bridge_rows) < len(read.rows):
+        logger.info(
+            "%d of %d bridge rows carried no usable usage counter",
+            len(read.rows) - len(bridge_rows),
+            len(read.rows),
+        )
+    return bridge_rows
 
 
 async def list_bridge_sources() -> list[BridgeSource]:

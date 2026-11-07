@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare bridge-session cloud usage blocks with Runway's local events (offline).
+"""Compare bridge-session cloud usage blocks with Runway's local events (offline; --live reads the provider).
 
 ``--rows rows.json`` is a JSON list of ``{session_id, input, cache_read, cache_write}``
 (any value may be null). The script reads the configured database read-only, makes no
@@ -8,7 +8,7 @@ provider call, and prints a counts-only JSON report (no ids). See docs/collectio
 ``--live`` instead pages ``GET /v1/code/sessions`` with the cached Claude Code login (the
 collector's bounds, read-only, no refresh). It calls the provider, so it also requires
 ``--yes-call-provider`` and refuses to run without it. The login lives in the server
-process's token cache, so ``--live`` finds one only when run in a process that holds it.
+process's token cache, so ``--live`` hydrates it from the durable contributions in the database.
 
   python scripts/check_bridge_sessions.py --rows rows.json
   python scripts/check_bridge_sessions.py --live --yes-call-provider
@@ -30,6 +30,7 @@ import httpx  # noqa: E402
 from sqlmodel import Session  # noqa: E402
 
 from app.core.db import engine  # noqa: E402
+from app.services import source_controls  # noqa: E402
 from app.services.claude_cloud_bridge_check import (  # noqa: E402
     compare_bridge_blocks,
     load_local_totals,
@@ -40,6 +41,9 @@ from app.services.claude_cloud_support import ProbeError  # noqa: E402
 
 
 async def _live_rows() -> list[BridgeRow]:
+    # A fresh process hydrates its login cache only from the durable snapshot, which is read
+    # only once source controls are enabled (the server does this in its lifespan).
+    source_controls.initialize()
     async with httpx.AsyncClient() as client:
         return await read_all_bridge_rows(client)
 

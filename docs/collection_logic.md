@@ -321,9 +321,11 @@ is a spot check, not coverage, and does not replace local scraping.
 list reader (`read_session_list`), page bound, headers and read-only login handling, and keeps the
 `bridge` rows that carry a usage block, with `null` for any counter the API did not report. Because
 it calls the provider it also requires `--yes-call-provider` and exits non-zero without making a
-request when that is missing; the report is the same counts-only JSON. The login comes from the
-token cache of the process running the script, so `--live` finds one only inside a process that
-holds it, and otherwise exits with `source_unavailable`.
+request when that is missing; the report is the same counts-only JSON. The script
+enables source controls first, so the token cache hydrates from the durable Claude Code
+contributions in the configured database (read-only, no refresh); with none it exits 3 with
+`source_unavailable`. Bridge rows whose block carries no usable counter are dropped and counted in
+the log, so `without_block` stays 0 in a live report.
 
 ```
 python scripts/check_bridge_sessions.py --live --yes-call-provider

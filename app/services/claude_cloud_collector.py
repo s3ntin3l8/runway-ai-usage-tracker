@@ -161,16 +161,12 @@ def _timestamp(value: object) -> datetime | None:
     return parsed.astimezone(UTC) if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
-def _count(value: object) -> int | None:
-    return value if type(value) is int and 0 <= value < 2**53 else None
-
-
 def _block(row: dict[str, Any]) -> dict[str, int] | None:
     metadata = row.get("external_metadata")
     usage = metadata.get("usage") if isinstance(metadata, dict) else None
     if not isinstance(usage, dict):
         return None
-    counts = {key: _count(usage.get(key)) for key, _ in _COUNTERS}
+    counts = {key: support.count(usage.get(key)) for key, _ in _COUNTERS}
     if all(value is None for value in counts.values()):
         return None
     return {key: value or 0 for key, value in counts.items()}
