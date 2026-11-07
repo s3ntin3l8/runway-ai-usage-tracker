@@ -22,6 +22,7 @@ from app.core.utils import scrub_log
 from app.models._datetime import iso_utc
 from app.models.db import (
     AuditLog,
+    ClaudeCloudCollectorState,
     LatestUsage,
     SidecarRegistry,
 )
@@ -224,15 +225,58 @@ async def get_app_settings(request: Request) -> dict[str, Any]:
     return response
 
 
+_CLOUD_UNHEALTHY_FAILURES = 3
+
+
+def _claude_cloud_health(session: Session) -> dict[str, Any]:
+    enabled = settings.CLAUDE_CLOUD_COLLECTOR_ENABLED
+    accounts: list[dict[str, Any]] = []
+    if enabled:
+        try:
+            rows = session.exec(
+                select(ClaudeCloudCollectorState).order_by(
+                    col(ClaudeCloudCollectorState.account_id)
+                )
+            ).all()
+        except Exception as e:
+            logger.warning("Claude cloud health read failed (%s)", type(e).__name__)
+            rows = []
+        stale_after = 3 * settings.CLAUDE_CLOUD_COLLECTOR_INTERVAL_SECONDS
+        now = time.time()
+        for row in rows:
+            healthy = (
+                row.consecutive_failures < _CLOUD_UNHEALTHY_FAILURES
+                and now - row.last_cycle_at <= stale_after
+            )
+            accounts.append(
+                {
+                    "account_id": row.account_id,
+                    "last_outcome": row.last_outcome,
+                    "last_cycle_at": row.last_cycle_at,
+                    "last_events": row.last_events,
+                    "consecutive_failures": row.consecutive_failures,
+                    "backlog": bool(row.backlog),
+                    "healthy": healthy,
+                }
+            )
+    return {"enabled": enabled, "accounts": accounts}
+
+
 @router.get("/status", dependencies=[Depends(require_admin_key)])
 @limiter.limit("30/minute")
-async def get_collector_status(request: Request) -> dict[str, Any]:
-    """Return detailed health and cache stats for all active collectors."""
+async def get_collector_status(
+    request: Request, session: Session = Depends(get_session)
+) -> dict[str, Any]:
+    """Return detailed health and cache stats for all active collectors.
+
+    ``claude_cloud`` carries the cloud-runner collector's per-account health record: numbers,
+    enums and the account id only.
+    """
     try:
         await manager._sync_collectors()
     except Exception as e:
         logger.error(f"Failed to sync collectors for status: {e}")
-    return manager.get_collector_stats()
+    return {**manager.get_collector_stats(), "claude_cloud": _claude_cloud_health(session)}
 
 
 @router.get("/sidecar-downloads", response_model=SidecarDownloadsResponse)

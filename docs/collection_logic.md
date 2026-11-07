@@ -291,6 +291,7 @@ their history. The rules are specified in
   turn within its pages gets a larger page budget next time (never beyond the request cap; a turn longer
   than that is skipped until the session changes again and reported as `stalled_turn_skipped`), and while work is left the next cycle runs
   after 120 s instead of the interval, reusing the unfinished sessions instead of listing again. The 120 s pace also holds when a cycle cannot see its login (`source_ineligible`) while sessions are still pending, but only for `MAX_UNREAD_CATCH_UPS` (3) such cycles in a row that read nothing; after that the interval applies until a cycle reads again, and the collector logs `unread_catch_up_capped` once when it falls back. Logs carry counts and fixed labels only.
+- **Health record.** Every cycle upserts one `claude_cloud_collector_state` row per account (last outcome and time, events read, cycles, consecutive failures, backlog flag); `GET /api/v1/system/status` reports it as `claude_cloud` and Settings shows it in the Claude detail, flagging an account unhealthy after 3 failed cycles in a row or no cycle for 3 intervals. A `busy` cycle only refreshes the time.
 - **Migration.** While events of the first (coarse) collector exist (`cloud:<digest>:<n>` ids) the
   cycle writes nothing and reports `migration_required`; the `cloud_coarse_events` Data Health fix
   removes them.

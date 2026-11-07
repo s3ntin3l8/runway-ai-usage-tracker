@@ -222,7 +222,7 @@ The grouped pending-events response reports `total_events` across the full queue
 | Method | Route | Auth | Description |
 |--------|-------|------|-------------|
 | `GET` | `/api/v1/system/health` | Public | Liveness check |
-| `GET` | `/api/v1/system/status` | Admin | Collector cache states and error counts |
+| `GET` | `/api/v1/system/status` | Admin | Collector cache states and error counts (`collectors`), plus `claude_cloud`: `{enabled, accounts: [{account_id, last_outcome, last_cycle_at, last_events, consecutive_failures, backlog, healthy}]}` for the Claude cloud-runner collector (`healthy` is false after 3 failed cycles in a row or no cycle for 3 intervals) |
 | `GET` | `/api/v1/system/settings` | Public | Non-sensitive runtime configuration: `version` (the release this build belongs to), `build_sha` (the commit the running build was built from, `null` when the build carries none — every `:edge` image ships the same `version`, so this is what identifies one exact build), `latest_version`/`update_available`, `app_host`/`app_port`, `encryption_enabled`, `admin_auth_required`, `auth_methods`, `user_context`, `is_authenticated` |
 | `GET` | `/api/v1/system/audit-log` | Admin | Append-only admin-mutation trail |
 | `GET` | `/api/v1/system/sidecar-downloads` | Public | Cached GitHub release assets for the Fleet page's *Add sidecar* card; `?channel=stable\|beta\|edge` |

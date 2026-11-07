@@ -106,7 +106,25 @@ export interface DashboardLayout {
   card_orders: Record<string, string[]>;
 }
 
+// One account's row of the Claude cloud-runner collector's health record
+// (numbers, enums and the account id only; never session ids or error text).
+export interface ClaudeCloudAccountHealth {
+  account_id: string;
+  last_outcome: string;
+  last_cycle_at: number; // epoch seconds
+  last_events: number;
+  consecutive_failures: number;
+  backlog: boolean;
+  healthy: boolean;
+}
+
+export interface ClaudeCloudHealth {
+  enabled: boolean;
+  accounts: ClaudeCloudAccountHealth[];
+}
+
 export interface CollectorStatus {
+  claude_cloud?: ClaudeCloudHealth;
   [key: string]: unknown;
 }
 

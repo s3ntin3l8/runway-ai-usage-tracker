@@ -40,7 +40,7 @@ from app.core.db import engine
 from app.core.encryption import DecryptionError, encryption_service
 from app.core.source_apps import CLAUDE_CODE
 from app.models.claude_cloud_probe import ClaudeCloudProbeRequest
-from app.models.db import ClaudeCloudSessionCheckpoint, UsageEvent
+from app.models.db import ClaudeCloudCollectorState, ClaudeCloudSessionCheckpoint, UsageEvent
 from app.models.schemas import SessionNameIn, UsageEventPush
 from app.services import claude_cloud_probe as probe
 from app.services import claude_cloud_support as support
@@ -720,6 +720,29 @@ async def collect_account(
     return report
 
 
+_SUCCESS_OUTCOMES = frozenset({"ok", "partial", "truncated"})
+
+
+def _record_cycle(account: str, report: CycleReport) -> None:
+    """Upsert the account's health row. A busy cycle only stamps the time and outcome."""
+    with Session(engine) as session:
+        row = session.get(ClaudeCloudCollectorState, account)
+        if row is None:
+            row = ClaudeCloudCollectorState(account_id=account)
+        row.last_cycle_at = time.time()
+        row.last_outcome = report.outcome
+        if report.outcome != "busy":
+            row.cycles += 1
+            row.last_events = report.events
+            row.backlog = 1 if report.backlog else 0
+            if report.outcome in _SUCCESS_OUTCOMES:
+                row.consecutive_failures = 0
+            else:
+                row.consecutive_failures += 1
+        session.add(row)
+        session.commit()
+
+
 async def collect_all(client: httpx.AsyncClient) -> dict[str, CycleReport]:
     """Run one cycle for every account that has a usable Claude Code login, once per account."""
     reports: dict[str, CycleReport] = {}
@@ -753,6 +776,10 @@ async def collect_all(client: httpx.AsyncClient) -> dict[str, CycleReport]:
             if report.outcome == "busy":
                 break
     for account, report in reports.items():
+        try:
+            await asyncio.to_thread(_record_cycle, account, report)
+        except Exception as exc:  # never break the cycle or the other accounts
+            logger.warning("Claude cloud collector: state write failed (%s)", type(exc).__name__)
         logger.info(
             "Claude cloud collector: outcome=%s list_pages=%d history_pages=%d listed=%d cloud=%d "
             "read=%d new_events=%d names_updated=%d crosscheck=%s stats=%s notes=%s logins=%s",
