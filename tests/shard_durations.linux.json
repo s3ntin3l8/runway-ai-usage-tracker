@@ -26,7 +26,6 @@
     "tests/integration/test_fleet_api.py": 0.32,
     "tests/integration/test_fleet_config.py": 0.12,
     "tests/integration/test_fleet_config_settings_reload_regression.py": 0.04,
-    "tests/integration/test_fleet_credentials.py": 6.96,
     "tests/integration/test_fleet_endpoint.py": 1.02,
     "tests/integration/test_forecast_endpoint.py": 0.37,
     "tests/integration/test_github_oauth_auth.py": 0.02,
