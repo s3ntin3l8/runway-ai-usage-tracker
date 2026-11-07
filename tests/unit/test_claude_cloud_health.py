@@ -142,9 +142,7 @@ def api(engine, monkeypatch):
     monkeypatch.setattr(settings, "CLAUDE_CLOUD_COLLECTOR_INTERVAL_SECONDS", 1800)
     monkeypatch.setattr(
         "app.api.endpoints.system_health.manager",
-        SimpleNamespace(
-            _sync_collectors=lambda: _noop(), get_collector_stats=lambda: {"collectors": []}
-        ),
+        SimpleNamespace(_sync_collectors=_noop, get_collector_stats=lambda: {"collectors": []}),
     )
     app = FastAPI()
     app.include_router(router, prefix="/api/v1/system")
