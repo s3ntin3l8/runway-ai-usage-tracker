@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import types
 
 from scripts import sidecar
 
@@ -36,8 +35,23 @@ def test_queue_push_uses_patched_dirs_and_ensure_dirs(monkeypatch, tmp_path):
 
 
 def test_moved_code_reads_os_from_facade(monkeypatch, tmp_path):
-    fake = types.SimpleNamespace(name="nt")
-    monkeypatch.setattr(sidecar, "os", fake)
+    class FakeOs:
+        reads: list[str] = []
+
+        @property
+        def name(self):
+            FakeOs.reads.append("name")
+            return "nt"
+
+    monkeypatch.setattr(sidecar, "os", FakeOs())
     monkeypatch.setattr(sidecar, "get_queue_dir", lambda: tmp_path / "missing")
-    # nt + missing queue dir returns early; proves os.name came from the patched name.
+    # nt + missing queue dir returns early; the recorded read proves os came from the facade.
     assert sidecar.queue_flush("http://x", "k") == 0
+    assert FakeOs.reads == ["name"]
+
+
+def test_token_only_units_patch_reaches_strip_credentials(monkeypatch):
+    card = {"remaining": "Token", "unit": "oauth"}
+    assert sidecar.strip_credentials({"metrics": [card]})["metrics"] == []
+    monkeypatch.setattr(sidecar, "_TOKEN_ONLY_UNITS", frozenset())
+    assert sidecar.strip_credentials({"metrics": [card]})["metrics"] == [card]

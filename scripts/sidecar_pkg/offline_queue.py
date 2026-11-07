@@ -35,7 +35,10 @@ def _facade() -> Any:
     The sidecar can be loaded twice in one process, as ``scripts.sidecar`` and as
     a bare ``sidecar`` (tests put ``scripts/`` on ``sys.path``), and a test patches
     one copy. Both copies share this module, so the calling copy is found from the
-    call stack; ``sys.modules`` is only the fallback.
+    call stack; ``sys.modules`` is only the fallback. A caller whose globals hold
+    both copies resolves to the first one found, so a test module must patch
+    through a single import style (do not mix ``import sidecar`` and
+    ``from scripts import sidecar``).
     """
     frame = sys._getframe(1)
     while frame is not None:
@@ -188,7 +191,7 @@ def strip_credentials(payload: dict[str, Any]) -> dict[str, Any]:
             if not (
                 isinstance(card, dict)
                 and card.get("remaining") == "Token"
-                and card.get("unit") in _TOKEN_ONLY_UNITS
+                and card.get("unit") in _sidecar_attr("_TOKEN_ONLY_UNITS")
             )
         ]
     if payload.get("last_log_lines"):
