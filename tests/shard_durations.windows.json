@@ -146,7 +146,6 @@
     "tests/unit/test_event_extractor_antigravity.py": 0.67,
     "tests/unit/test_event_extractor_chatgpt.py": 0.24,
     "tests/unit/test_event_extractor_gemini.py": 0.3,
-    "tests/unit/test_event_extractor_hermes.py": 2.18,
     "tests/unit/test_event_extractor_opencode.py": 5.04,
     "tests/unit/test_event_extractor_xai.py": 0.29,
     "tests/unit/test_event_identity.py": 1.56,
