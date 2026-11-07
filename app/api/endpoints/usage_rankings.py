@@ -40,6 +40,7 @@ from app.services.queries import (
     rank_top_sessions,
     rank_top_tools,
 )
+from app.services.session_names import resolve_names
 
 # Higher rank = longer / more authoritative window.
 
@@ -251,6 +252,26 @@ async def get_top_projects(
     return result
 
 
+def _attach_session_names(session: Session, rows: list[dict[str, Any]]) -> None:
+    """Set ``name`` on each ranked row from the stored session names.
+
+    Names are keyed per provider while a row may span several, so each provider
+    (alphabetical) is asked once about only the ranked ids it contributed to;
+    the first provider with a name wins. Query count is bounded by the distinct
+    providers in the page. Names are free text: never logged here.
+    """
+    ids_by_provider: dict[str, list[str]] = {}
+    for row in rows:
+        row["name"] = None
+        for provider in row["providers"]:
+            ids_by_provider.setdefault(provider, []).append(row["session_id"])
+    for provider in sorted(ids_by_provider):
+        names = resolve_names(session, provider, ids_by_provider[provider])
+        for row in rows:
+            if row["name"] is None and provider in row["providers"]:
+                row["name"] = names.get(row["session_id"])
+
+
 @router.get("/top-sessions")
 @limiter.limit("30/minute")
 async def get_top_sessions(
@@ -302,6 +323,7 @@ async def get_top_sessions(
             sidecar_id=sidecar_id,
             limit=limit,
         )
+        _attach_session_names(session, ranked.rows)
         return TopSessionsResponse.model_validate(
             {
                 "sessions": ranked.rows,

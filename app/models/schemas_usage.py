@@ -173,6 +173,8 @@ class TopSessionEntry(BaseModel):
     """One session's totals in the cross-provider Top Sessions ranking."""
 
     session_id: str
+    # Stored display name; the first provider (alphabetical) with one wins.
+    name: str | None = None
     project: str | None = None
     cwd: str | None = None
     sidecar_id: str | None = None  # the host that pushed the session's latest event

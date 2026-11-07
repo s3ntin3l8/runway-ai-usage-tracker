@@ -90,6 +90,16 @@ describe('TopSessionsCard', () => {
     expect(firstRow()).toHaveAttribute('data-label', 'my-app');
   });
 
+  it('labels a row with the session name when it has one', async () => {
+    vi.mocked(api.fetchTopSessions).mockResolvedValue(
+      makeResponse([{ ...mockSession, name: 'Fix the login bug' }], 'tokens'),
+    );
+    renderWithProviders(<TopSessionsCard range={{ days: 7 }} />);
+    await waitFor(() => expect(screen.getByTestId('rankbar')).toBeInTheDocument());
+    expect(firstRow()).toHaveAttribute('data-label', 'Fix the login bug');
+    expect(firstRow()).toHaveTextContent('89abcdef');
+  });
+
   it('falls back to the session id when the session has no project', async () => {
     vi.mocked(api.fetchTopSessions).mockResolvedValue(
       makeResponse([{ ...mockSession, project: null }], 'tokens'),

@@ -19,7 +19,7 @@ from sqlmodel.pool import StaticPool
 from app.core.cache import cache_clear
 from app.core.db import get_session
 from app.main import app
-from app.models.db import UsageEvent
+from app.models.db import SessionName, UsageEvent
 
 
 @pytest.fixture
@@ -100,6 +100,68 @@ def test_top_sessions_endpoint_reports_the_session_context(session):
     assert entry["models"] == ["opus-4.8"]
     assert entry["tokens_total"] == 110
     assert entry["ts_start"] is not None
+
+
+def _name(session: Session, provider: str, sid: str, name: str, kind: str = "agent") -> None:
+    session.add(SessionName(provider_id=provider, session_id=sid, name=name, kind=kind))
+    session.commit()
+
+
+def _names_by_id() -> dict[str, str | None]:
+    body = _client().get("/api/v1/usage/top-sessions?days=1").json()
+    return {s["session_id"]: s["name"] for s in body["sessions"]}
+
+
+def test_top_sessions_name_prefers_agent_and_is_null_without_one(session):
+    now = datetime.now(UTC)
+    _event(session, "e1", now, session_id="s1", tokens_input=1000)
+    _event(session, "e2", now, session_id="s2", tokens_input=10)
+    _name(session, "anthropic", "s1", "generated one", kind="generated")
+    _name(session, "anthropic", "s1", "agent one", kind="agent")
+
+    assert _names_by_id() == {"s1": "agent one", "s2": None}
+
+
+def test_top_sessions_shared_id_is_one_row_and_gets_the_name(session):
+    now = datetime.now(UTC)
+    _event(session, "e1", now, provider_id="anthropic", session_id="s1")
+    _event(session, "e2", now, provider_id="openai", session_id="s1")
+    _name(session, "openai", "s1", "only openai")
+
+    body = _client().get("/api/v1/usage/top-sessions?days=1").json()
+    assert len(body["sessions"]) == 1
+    assert body["sessions"][0]["name"] == "only openai"
+
+
+def test_top_sessions_alphabetically_first_provider_name_wins(session):
+    now = datetime.now(UTC)
+    _event(session, "e1", now, provider_id="openai", session_id="s1")
+    _event(session, "e2", now, provider_id="anthropic", session_id="s1")
+    _name(session, "openai", "s1", "from openai")
+    _name(session, "anthropic", "s1", "from anthropic")
+
+    assert _names_by_id() == {"s1": "from anthropic"}
+
+
+def test_top_sessions_name_queries_are_bounded_by_providers(session, monkeypatch):
+    from app.api.endpoints import usage_rankings
+
+    now = datetime.now(UTC)
+    for i in range(6):
+        _event(session, f"e{i}", now, provider_id="anthropic", session_id=f"s{i}")
+    _event(session, "eo", now, provider_id="openai", session_id="s0")
+    calls: list[tuple[str, list[str]]] = []
+    real = usage_rankings.resolve_names
+
+    def spy(sess, provider_id, session_ids):
+        calls.append((provider_id, list(session_ids)))
+        return real(sess, provider_id, session_ids)
+
+    monkeypatch.setattr(usage_rankings, "resolve_names", spy)
+    _client().get("/api/v1/usage/top-sessions?days=1")
+
+    assert sorted(p for p, _ in calls) == ["anthropic", "openai"]
+    assert dict(calls)["openai"] == ["s0"]
 
 
 def test_top_sessions_endpoint_one_day_window_is_the_last_24_hours(session):
