@@ -161,7 +161,7 @@ def _canonical_for(oc_provider_id: str, model_id: str) -> CanonicalProviderTuple
     canonical = map_opencode_canonical(oc_provider_id)
     if (
         canonical is None
-        and oc_provider_id in _OC_GATEWAY_PROVIDER_IDS
+        and (oc_provider_id or "").strip().lower() in _OC_GATEWAY_PROVIDER_IDS
         and is_openrouter_model_id(model_id)
     ):
         canonical = map_opencode_canonical("openrouter")
