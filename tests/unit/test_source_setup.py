@@ -465,6 +465,9 @@ def test_a_failure_finishing_a_later_member_keeps_an_earlier_sibling_authorized(
     _enabled(monkeypatch)
     # Two sources that read the same Keychain item, so they run as one group.
     first, second = sorted(d.id for d in catalog().values() if d.browser_key == "chrome")[:2]
+    # Pin the assumption the comment above makes, so a catalog change can't silently turn this
+    # into a test of two separate groups.
+    assert catalog()[first].item_key == catalog()[second].item_key
     controller = SetupController(launch=Mock(return_value=True), verify=Mock(return_value=True))
     real_finish = controller._finish
 
