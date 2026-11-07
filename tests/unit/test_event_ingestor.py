@@ -849,3 +849,50 @@ def test_ingest_prices_a_long_prompt_haiku_55_message_at_the_long_tier():
     assert costs["cloud:abc:m:long"] == round(0.075 + 2.50, 6)
     # A remainder aggregates several calls: standard tier regardless of size.
     assert costs["cloud:abc:r:1:haiku-5.5"] == round(0.015 + 0.50, 6)
+
+
+# --- raw_provider_id persistence (verbatim, NULL when absent) ----------------
+
+
+def _ingest_one(**kw) -> UsageEvent:
+    s = _seeded_session()
+    res = EventIngestor(s).ingest([_make_push(**kw)], sidecar_id="dev-01")
+    assert res.events_inserted == 1
+    return s.exec(select(UsageEvent)).one()
+
+
+def test_message_push_stores_raw_provider_id():
+    ev = _ingest_one(raw_provider_id="openrouter")
+    assert ev.kind != "error"
+    assert ev.raw_provider_id == "openrouter"
+
+
+def test_error_push_stores_raw_provider_id():
+    ev = _ingest_one(kind="error", error_reason="rate_limited", raw_provider_id="openrouter")
+    assert ev.kind == "error"
+    assert ev.raw_provider_id == "openrouter"
+
+
+def test_message_push_without_raw_provider_id_stores_null():
+    ev = _ingest_one()
+    assert ev.kind != "error"
+    assert ev.raw_provider_id is None
+
+
+def test_error_push_without_raw_provider_id_stores_null():
+    ev = _ingest_one(kind="error", error_reason="rate_limited")
+    assert ev.kind == "error"
+    assert ev.raw_provider_id is None
+
+
+def test_message_push_stores_raw_provider_id_verbatim():
+    # Normalisation happens on read, never on write.
+    ev = _ingest_one(raw_provider_id=" OpenCode-Go ")
+    assert ev.kind != "error"
+    assert ev.raw_provider_id == " OpenCode-Go "
+
+
+def test_error_push_stores_raw_provider_id_verbatim():
+    err = _ingest_one(kind="error", error_reason="x", raw_provider_id=" OpenCode-Go ")
+    assert err.kind == "error"
+    assert err.raw_provider_id == " OpenCode-Go "
