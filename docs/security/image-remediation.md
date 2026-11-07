@@ -412,6 +412,61 @@ carries a glibc without the flaw.
 Building SQLite `3.54.x` from source in the image would remove the findings
 outright; it was not done here because the image would then own SQLite patching.
 
+#### Renewed 2026-11-06 for the 2026-12-06 horizon, and CVE-2026-76844
+
+The whole document was re-reviewed and moved to one new horizon,
+`2026-12-06T12:00:00Z`, with `reviewed_at` `2026-11-06T12:00:00Z`. The fixture
+moved to the `edge` index built from `main` after the unfixed-Debian gate
+(#1220) landed.
+
+| Reference | Digest |
+| --- | --- |
+| Published index (`edge`) | `sha256:3a6ff61a7bdcaa67d267692ec1d0af2d370fd6b19e57edae0b78afde4f187b77` |
+| linux/amd64 manifest | `sha256:d0468026d177a4b1db0ec0f3eb7e4c6b344b46530aa7b480582e157325f85bff` |
+| linux/arm64 manifest | `sha256:4e375b64126b62673355ed78e0328c632690e456a283c1f40ce6453cf584d7e5` |
+
+| | amd64 | arm64 |
+| --- | --- | --- |
+| passed | true | true |
+| blocked | 0 | 0 |
+| expired exceptions | 0 | 0 |
+| High | 61 | 61 |
+| Medium | 69 | 69 |
+| Low | 12 | 12 |
+| Negligible | 47 | 47 |
+
+Scanned at `2026-11-06T22:05:14Z` against the database built
+`2026-11-06T06:21:59Z`. Against the previous fixture the scan adds one
+advisory and drops none, and changes one fix state: CVE-2026-119373,
+CVE-2026-119374 and CVE-2026-119379 (`libsqlite3-0`) moved from `not-fixed` to
+`wont-fix`, as CVE-2026-84243 did on 2026-11-02. Exception matching ignores fix
+state, so the document is unchanged, but the gate records only `not-fixed`
+Debian findings without failing. These six entries (three advisories, two
+architectures) now block if they ever lapse, so they need a real review at every
+renewal, the same as the glibc ones below.
+
+- CVE-2026-76844 (`zlib1g` `1:1.3.dfsg+really1.3.1-1+b1`, High, `not-fixed` in
+  trixie, fixed in sid) is a heap overflow in native `gz_write()`. It is the same
+  `gz*` write path as CVE-2026-85091, with the same argument: the server uses
+  Python's `zlib` compression and decompression and calls no native gz-file
+  write API (`app/` imports neither `gzip` nor `ctypes`; its `GZipMiddleware`
+  compresses through Python's `zlib`, not the native `gz*` file API). Two entries, one per
+  architecture. The gate would have recorded it as an unfixed Debian finding
+  without an entry; it has one anyway, because the document and the scan are
+  checked for equality and every other `zlib1g` advisory carries one.
+- CVE-2026-84243 (`libc6`, `libc-bin`) is still `wont-fix`: Debian's tracker
+  lists trixie as `no-dsa (Minor issue)` and no glibc fix exists in any release.
+  A `wont-fix` finding blocks by design, because it is a vendor decision that
+  needs an applicability review, and this renewal is that review. The four
+  entries (issue #1130) stay; they clear only if a point release ships a fixed
+  glibc.
+
+Exposure was re-checked rather than carried over: the Dockerfile still runs as
+`runway`, still strips setuid/setgid from `/usr` and still sets
+`LANG=C.UTF-8`; the `runway` service in both compose files has no privileged
+mode, added capability or Docker socket (the socket mount in
+`docker-compose.traefik.yml` belongs to the `traefik` service).
+
 ### Advisories Debian lists as fixed in trixie
 
 These nine advisories no longer apply to the runtime. Their exceptions are removed rather than renewed: an exception for a fixed advisory is not a decision, it is a false record.
