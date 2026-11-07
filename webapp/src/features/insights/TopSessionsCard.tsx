@@ -3,7 +3,7 @@
 // per-provider Sessions browser (provider detail → Sessions) stays the
 // detailed drill-down.
 //
-// Each row is labelled by project (falling back to the tail of the session
+// Each row is labelled by session name, else project (falling back to the tail of the session
 // id) and names the host that pushed the session's latest event, so a spike
 // can be traced to a machine without leaving the page. A session that moved
 // between machines says so.
@@ -48,7 +48,7 @@ function sessionRow(
     ...(s.hosts > 1 ? [`${s.hosts} hosts`] : []),
     ...(s.providers.length ? [`via ${s.providers.join(', ')}`] : []),
   ].join(' · ');
-  const label = s.project || shortSessionId(s.session_id);
+  const label = s.name || s.project || shortSessionId(s.session_id);
 
   if (metric === 'cost') {
     const segments = costSegments(s, series, excludeCache);

@@ -174,7 +174,7 @@ account unless `provider_id` says otherwise, and resolve their window the way
 the other rankings do: an explicit `since`/`until` pair (upper bound
 exclusive) wins, else the last `days` — `days=1` is the rolling last 24
 hours — else the current month on the user's local calendar. A session row
-carries the session's `project`, `cwd` and pushing host (`sidecar_id`), its
+carries the session's `name` (the stored display name, `null` when none; a session spanning providers takes the name of the alphabetically first provider that has one), `project`, `cwd` and pushing host (`sidecar_id`), its
 first and last event, and the distinct `providers`/`models` behind it; a host
 row carries the number of distinct `sessions` that ran on it. Events with no
 `session_id` — or, for the host ranking, no pushing host — are not
