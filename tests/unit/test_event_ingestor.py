@@ -874,7 +874,9 @@ def test_error_push_stores_raw_provider_id():
 
 
 def test_message_push_without_raw_provider_id_stores_null():
-    assert _ingest_one().raw_provider_id is None
+    ev = _ingest_one()
+    assert ev.kind != "error"
+    assert ev.raw_provider_id is None
 
 
 def test_error_push_without_raw_provider_id_stores_null():
@@ -885,7 +887,9 @@ def test_error_push_without_raw_provider_id_stores_null():
 
 def test_message_push_stores_raw_provider_id_verbatim():
     # Normalisation happens on read, never on write.
-    assert _ingest_one(raw_provider_id=" OpenCode-Go ").raw_provider_id == " OpenCode-Go "
+    ev = _ingest_one(raw_provider_id=" OpenCode-Go ")
+    assert ev.kind != "error"
+    assert ev.raw_provider_id == " OpenCode-Go "
 
 
 def test_error_push_stores_raw_provider_id_verbatim():
