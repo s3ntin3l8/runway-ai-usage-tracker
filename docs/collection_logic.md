@@ -300,6 +300,21 @@ their history. The rules are specified in
   session later resumed on a local machine could also appear in local transcripts; none of about 290
   checked message ids does, and there is no cross-source de-duplication.
 
+### Bridge-session spot check
+
+`app/services/claude_cloud_bridge_check.py` and `scripts/check_bridge_sessions.py` compare the
+`external_metadata.usage` block of `bridge` list rows with the sums of the same session's local
+events (`provider_id = 'anthropic'`, not `sidecar_id = 'anthropic-cloud'`; `cse_` and `session_`
+ids are the same session). It is an offline, counts-only check of local accuracy: the operator
+supplies the rows, and nothing calls the provider or writes events. Input, cache read and cache
+write are compared; a value unknown on either side is counted as unknown, never as 0 or a
+mismatch. Output is excluded because the assistant `output_tokens` the cloud records are
+placeholders. The block's input exceeds the local input by the side model's (Haiku) input, which
+local transcripts omit, so a small positive input difference is expected, while cache counters
+should match exactly. Most bridge rows carry no block at all (37 of 1,479 in
+[the source-shape evidence](evidence/acceptance/claude-cloud-source-shape-20261029.md)), so this
+is a spot check, not coverage, and does not replace local scraping.
+
 ## Which events get a `project_ref`
 
 The sidecar names the git repository of each event's working directory
