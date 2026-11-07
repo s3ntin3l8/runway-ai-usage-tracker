@@ -345,7 +345,7 @@ class SetupController:
                             # before the failing member keeps its result.
                             if (
                                 consent.POLICY.current(ticket)
-                                and self._states.get(source_id, (None, ""))[1] == "Connecting"
+                                and self.state(source_id) == "Connecting"
                             ):
                                 self._states[source_id] = (ticket, "Action required")
                 with self._lock:
