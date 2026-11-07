@@ -15,7 +15,7 @@ import { ResponsiveDialog } from '@/components/ui/ResponsiveDialog';
 import { displayAccountName, maskAccountId } from '@/lib/accountDisplay';
 import { ProviderAccountDialog } from './ProviderAccountDialog';
 import { ProviderDetailAccountList } from './ProviderDetailAccountList';
-import { ClaudeCloudHealthLines } from './ClaudeCloudHealthLines';
+import { ClaudeCloudCollectorSwitch } from './ClaudeCloudCollectorSwitch';
 import { ProviderDetailHeader } from './ProviderDetailHeader';
 
 interface ProviderDetailDialogProps {
@@ -263,7 +263,7 @@ export function ProviderDetailDialog({
               setPendingDelete={setPendingDelete}
               onAddAccount={onAddAccount}
             />
-            {provider.provider_id === 'anthropic' ? <ClaudeCloudHealthLines /> : null}
+            {provider.provider_id === 'anthropic' ? <ClaudeCloudCollectorSwitch /> : null}
 
             {pendingDelete ? (
               <div className="rounded-md border border-critical/30 bg-critical/5 p-3">

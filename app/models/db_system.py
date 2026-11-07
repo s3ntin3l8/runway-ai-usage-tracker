@@ -97,6 +97,9 @@ class SystemConfig(SQLModel, table=True):  # type: ignore[call-arg]
     # own Fleet override says otherwise. It can only turn keep-alive on — it never switches off
     # a sidecar whose local flag is on. Pushed via the /fleet/ingest response. None/False = off.
     sidecar_keep_alive_default: bool | None = None
+    # Claude cloud-runner collector switch set in the app. None = use the
+    # CLAUDE_CLOUD_COLLECTOR_ENABLED environment default.
+    claude_cloud_collector_enabled: bool | None = None
     # Fernet key that signs browser session cookies, generated on first use
     # and stored encrypted-at-rest with DB_ENCRYPTION_KEY. Kept separate from
     # DB_ENCRYPTION_KEY so rotating it ("log out everywhere") invalidates all
