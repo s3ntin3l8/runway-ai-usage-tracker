@@ -370,60 +370,47 @@ class _CollectorProbe(probe.Probe):
             return await super().get(*args, **kwargs)
 
 
+def new_probe(account: str, source_id: str, client: httpx.AsyncClient) -> probe.Probe:
+    """A read-only probe with the collector's bounds, for callers that list sessions themselves."""
+    return _CollectorProbe(account, source_id, client)
+
+
 async def _list_rows(
     attempt: _CollectorProbe, headers: dict[str, str], report: CycleReport
 ) -> list[_Row]:
     """Every cloud-runner row of the session list (bridge rows are skipped)."""
+    read = support.ListRead()
+    try:
+        await support.read_session_list(
+            attempt,
+            headers,
+            limit=LIST_LIMIT,
+            max_pages=MAX_LIST_PAGES,
+            pause=PAGE_PAUSE,
+            keep=lambda row: row.get("environment_kind") == CLOUD_KIND,
+            into=read,
+        )
+    finally:
+        report.pages += read.pages
+        report.listed += read.listed
+        report.notes.extend(read.notes)
     rows: list[_Row] = []
-    listed_ids: set[str] = set()
-    seen: set[str] = set()
-    cursor: str | None = None
-    while True:
-        params: dict[str, Any] = {"limit": LIST_LIMIT}
-        if cursor is not None:
-            params["cursor"] = cursor
-        attempt.report["stage"] = "page_get"
-        payload = await attempt.get("/v1/code/sessions", headers, params)
-        attempt.report["stage"] = "page_shape"
-        page, cursor = probe.page_with_terminal_omission(payload, LIST_LIMIT)
-        report.pages += 1
-        report.listed += len(page)
-        for row in page:
-            sid = row.get("id")
-            if not isinstance(sid, str) or not probe.SESSION_ID.fullmatch(sid):
-                attempt.report["stage"] = "row_id"
-                raise probe.ProbeError("unsupported_contract")
-            if sid in listed_ids:
-                # One session twice would be read twice; the verifier rejects this too.
-                attempt.report["stage"] = "row_duplicate"
-                raise probe.ProbeError("unsupported_contract")
-            listed_ids.add(sid)
-            if row.get("environment_kind") != CLOUD_KIND:
-                continue
-            digest = session_digest(sid)
-            raw = row.get("last_event_at")
-            rows.append(
-                _Row(
-                    session_id=sid,
-                    digest=digest,
-                    facts=_facts(row, attempt.account, digest),
-                    last_event_at=_timestamp(raw),
-                    last_event_raw=raw if isinstance(raw, str) else None,
-                    block=_block(row),
-                    title=title if isinstance(title := row.get("title"), str) else None,
-                )
+    for row in read.rows:
+        sid = row["id"]
+        digest = session_digest(sid)
+        raw = row.get("last_event_at")
+        rows.append(
+            _Row(
+                session_id=sid,
+                digest=digest,
+                facts=_facts(row, attempt.account, digest),
+                last_event_at=_timestamp(raw),
+                last_event_raw=raw if isinstance(raw, str) else None,
+                block=_block(row),
+                title=title if isinstance(title := row.get("title"), str) else None,
             )
-        if cursor is None:
-            if len(page) == LIST_LIMIT:
-                # A full last page is ambiguous: the end of the list, or paging that stopped
-                # emitting cursors. The note lets the cycle log tell the two apart.
-                report.notes.append("full_last_page")
-            return rows
-        if cursor in seen or report.pages >= MAX_LIST_PAGES:
-            report.notes.append("cursor_repeat" if cursor in seen else "max_pages")
-            return rows
-        seen.add(cursor)
-        await asyncio.sleep(PAGE_PAUSE)
+        )
+    return rows
 
 
 def _needs_reading(row: _Row, checkpoint: _Checkpoint, now: float) -> bool:

@@ -133,10 +133,8 @@ def test_script_rejects_malformed_rows(tmp_path: Path, capsys: pytest.CaptureFix
     assert check_bridge_sessions.main(["--rows", str(path)]) == 2
 
 
-@pytest.mark.parametrize(
-    "rel", ["app/services/claude_cloud_bridge_check.py", "scripts/check_bridge_sessions.py"]
-)
-def test_no_provider_client_imports(rel: str) -> None:
-    src = (ROOT / rel).read_text(encoding="utf-8")
+def test_the_offline_check_has_no_provider_client() -> None:
+    # The live reader is the sibling claude_cloud_bridge_rows; this module stays offline.
+    src = (ROOT / "app/services/claude_cloud_bridge_check.py").read_text(encoding="utf-8")
     assert "httpx" not in src
     assert "claude_cloud_collector" not in src
