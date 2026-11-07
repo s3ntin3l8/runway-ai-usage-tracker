@@ -226,6 +226,8 @@ def _is_real_dir(path: Path) -> bool:
 
 
 def _sorted_children(path: Path, prefix: str) -> list[Path]:
+    if not _is_real_dir(path):  # a symlinked parent would leave the given directory
+        return []
     try:
         names = sorted(n for n in os.listdir(path) if n.startswith(prefix))
     except OSError:
@@ -287,7 +289,13 @@ def describe(root: Path) -> dict[str, Any]:
 
         wire_path = session / "agents" / "main" / "wire.jsonl"
         before_unreadable = wire_stats.files_unreadable
-        for record in _scan_jsonl(wire_path, wire_stats):
+        agents_dir = session / "agents"
+        wire_records: Iterator[dict[str, Any]] = iter(())
+        if _is_real_dir(agents_dir) and _is_real_dir(agents_dir / "main"):
+            wire_records = _scan_jsonl(wire_path, wire_stats)
+        else:  # a missing or symlinked directory component: counted, never followed
+            wire_stats.files_unreadable += 1
+        for record in wire_records:
             raw_type = record.get("type")
             rtype = (
                 (_safe_name(raw_type) or "<unprintable>")

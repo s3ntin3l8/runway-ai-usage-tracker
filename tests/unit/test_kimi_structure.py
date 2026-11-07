@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
+
+import pytest
 
 from scripts import kimi_structure
 
@@ -44,7 +47,7 @@ def _build(tmp_path: Path) -> Path:
             "input": 10,
             "output": 5.5,
             "model": SENTINELS["title"],
-            "final": True,
+            "finalName": True,
         },
         "not an object",
     ]
@@ -101,7 +104,7 @@ def test_output_is_structure_only(tmp_path, capsys):
     assert meta_title["string_length"]["max"] == len(SENTINELS["title"])
     assert ("state.json", "state", "title") in located
     assert ("wire.jsonl", "token_counting.turn_recorded", "model") not in located
-    assert ("wire.jsonl", "token_counting.turn_recorded", "final") not in located
+    assert ("wire.jsonl", "token_counting.turn_recorded", "finalName") in located
 
     index = doc["session_index_jsonl"]["keys"]
     assert set(index) == {"sessionDir", "sessionId", "workDir"}
@@ -190,6 +193,32 @@ def test_symlinks_are_not_followed(tmp_path, capsys):
     assert doc["state_json"]["files_missing_or_unreadable"] == 1
     assert doc["wire_jsonl"]["files_missing_or_unreadable"] == 1
     assert doc["session_index_jsonl"]["files_missing_or_unreadable"] == 1
+
+
+@pytest.mark.parametrize("linked", ["sessions", "agents", "main"])
+def test_symlinked_directory_components_are_not_followed(tmp_path, capsys, linked):
+    root = _build(tmp_path)
+    session = next(root.glob("sessions/*/session_*"))
+    outside = tmp_path / "outside"
+    if linked == "sessions":
+        shutil.move(str(root / "sessions"), str(outside))
+        (root / "sessions").symlink_to(outside, target_is_directory=True)
+    elif linked == "agents":
+        shutil.move(str(session / "agents"), str(outside))
+        (session / "agents").symlink_to(outside, target_is_directory=True)
+    else:
+        shutil.move(str(session / "agents" / "main"), str(outside))
+        (session / "agents" / "main").symlink_to(outside, target_is_directory=True)
+
+    _, doc, out = _run(root, capsys)
+    assert doc["wire_jsonl"]["files_read"] == 0
+    assert doc["wire_jsonl"]["record_types"] == {}
+    if linked == "sessions":
+        assert doc["sessions"]["found"] == 0
+        assert doc["state_json"]["files_read"] == 0
+    else:
+        assert doc["wire_jsonl"]["files_missing_or_unreadable"] == 1
+        assert not any(t["file"] == "wire.jsonl" for t in doc["title_or_name_keys"])
 
 
 def test_line_cap_flags_truncation_only_when_lines_remain(tmp_path, monkeypatch, capsys):
