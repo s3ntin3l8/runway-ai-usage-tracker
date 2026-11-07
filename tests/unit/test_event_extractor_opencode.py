@@ -14,6 +14,7 @@ from scripts.sidecar_pkg.event_extractors.opencode import (
     _OC_CANONICAL_MAP,
     _OC_PROVIDER_MAP,
     _classify_opencode_error,
+    event_provider_id,
     map_opencode_canonical,
     map_opencode_provider_id,
     parse_opencode_events,
@@ -421,7 +422,7 @@ def _expected_provider_id(provider_id: str) -> str:
     OpenRouter serves, so the expectation here holds only for a model id that
     is not OpenRouter-shaped — which is what `_raw_provider_message` uses by
     default. Change that default and this expectation flips (`opencode` ->
-    `openrouter`) without any map change; the fold itself is tracked in #1160.
+    `openrouter`) without any map change.
     """
     canonical = _OC_CANONICAL_MAP.get(provider_id)
     return canonical[0] if canonical else _OC_PROVIDER_MAP[provider_id]
@@ -473,9 +474,8 @@ def test_raw_provider_id_is_not_normalized_by_the_extractor(provider_id):
     it, and the tests pin that.
 
     Note this holds for the raw value only. The extractor's *own* gateway
-    fold compares the raw tag against `_OC_GATEWAY_PROVIDER_IDS` without
-    normalizing it, so a cased gateway tag does not fold onto `openrouter`
-    the way the lowercase one does — a separate defect tracked in #1160.
+    fold normalizes the tag before comparing it, so a cased gateway tag folds
+    onto `openrouter` like the lowercase one (pinned further down, #1160).
     """
     db_path = _build_db([_raw_provider_message("msg_raw", provider_id)])
     try:
@@ -1595,3 +1595,48 @@ def test_v2_compaction_with_zero_usage_emits_nothing(tmp_path, usage):
         "data": {"status": "completed", "reason": "auto", **usage},
     }
     assert parse_opencode_events(_v2_db(tmp_path, [comp]), account_id="u", since=_V2_SINCE) == []
+
+
+@pytest.mark.parametrize("gateway", ["opencode-go", "opencode", "open-design-byok"])
+@pytest.mark.parametrize("shape", [str.upper, lambda g: f" {g.title()} "], ids=["upper", "padded"])
+def test_gateway_fold_ignores_case_and_padding_of_the_tag(gateway, shape):
+    """A cased/padded gateway tag folds exactly like the lowercase one (#1160)."""
+    tag = shape(gateway)
+    results = []
+    for provider_tag in (gateway, tag):
+        msg = _byok_message("msg_fold", "vendor/x:free")
+        msg["data"]["providerID"] = provider_tag
+        msg["data"]["cost"] = 0.5
+        db_path = _build_db([msg])
+        try:
+            (evt,) = parse_opencode_events(
+                db_path, account_id="default", since=datetime(2020, 1, 1, tzinfo=UTC)
+            )
+        finally:
+            db_path.unlink(missing_ok=True)
+        results.append((evt.provider_id, evt.cost_usd))
+    assert results[0] == ("openrouter", None)
+    assert results[1] == results[0]
+
+
+@pytest.mark.parametrize("tag", ["OPENCODE-GO", " OpenCode-Go "])
+@pytest.mark.parametrize("model_id", ["", "qwen/qwen3-coder-30b", "glm-5.1"])
+def test_gateway_fold_does_not_fire_without_an_openrouter_model_id(tag, model_id):
+    """No model id, or one only another backend serves: the tag keeps its tier."""
+    msg = _byok_message("msg_nofold", model_id)
+    msg["data"]["providerID"] = tag
+    db_path = _build_db([msg])
+    try:
+        (evt,) = parse_opencode_events(
+            db_path, account_id="default", since=datetime(2020, 1, 1, tzinfo=UTC)
+        )
+    finally:
+        db_path.unlink(missing_ok=True)
+    assert evt.provider_id == "opencode"
+    assert event_provider_id(tag, model_id) == "opencode"
+
+
+@pytest.mark.parametrize("tag", [None, ""])
+def test_missing_or_empty_provider_id_folds_on_an_openrouter_model_id(tag):
+    assert event_provider_id(tag, "vendor/x:free") == "openrouter"
+    assert event_provider_id(tag, "my-local-model") == "opencode"

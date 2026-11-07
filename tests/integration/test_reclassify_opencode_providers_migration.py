@@ -200,6 +200,45 @@ def test_migration_reclassifies_byok_openrouter_and_errors(engine):
         assert "opencode-byok" not in rollup_providers
 
 
+def test_migration_retags_a_cased_gateway_tag_like_the_lowercase_one(engine):
+    """A cased/padded gateway tag on an OpenRouter-served model id retags (#1160)."""
+    with Session(engine) as s:
+        _seed_event(s, "msg_lower", "opencode", model_id="vendor/x:free")
+        _seed_event(s, "msg_cased", "opencode", model_id="vendor/x:free")
+        s.commit()
+
+    def _msg(msg_id: str, tag: str) -> dict:
+        return {
+            "id": msg_id,
+            "data": {
+                "role": "assistant",
+                "providerID": tag,
+                "modelID": "vendor/x:free",
+                "cost": 0,
+                "tokens": {"input": 100, "output": 50},
+            },
+        }
+
+    db_path = _make_opencode_db(
+        [_msg("msg_lower", "opencode-go"), _msg("msg_cased", " OpenCode-Go ")]
+    )
+    try:
+        with (
+            patch("scripts.reclassify_opencode_providers.engine", engine),
+            patch("scripts.backfill_rollups.engine", engine),
+        ):
+            from scripts.reclassify_opencode_providers import migrate
+
+            migrate(db_path, apply=True)
+    finally:
+        db_path.unlink(missing_ok=True)
+
+    with Session(engine) as s:
+        by_id = {ev.event_id: ev for ev in s.exec(select(UsageEvent)).all()}
+    assert by_id["msg_lower"].provider_id == "openrouter"
+    assert by_id["msg_cased"].provider_id == "openrouter"
+
+
 def test_migration_retags_minimax_coding_plan_preserves_account_id(engine):
     """Events under 'opencode-minimax-coding-plan' (the fallback id OpenCode's
     minimax-coding-plan providerID mints) move to the canonical 'minimax'
