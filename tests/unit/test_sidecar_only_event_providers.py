@@ -4,7 +4,7 @@ import json
 import re
 from pathlib import Path
 
-from app.api.endpoints.fleet import SIDECAR_ONLY_EVENT_PROVIDERS
+from app.api.endpoints.fleet_ingest import SIDECAR_ONLY_EVENT_PROVIDERS
 
 ROOT = Path(__file__).resolve().parents[2]
 
