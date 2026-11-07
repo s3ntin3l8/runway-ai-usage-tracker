@@ -1552,6 +1552,20 @@ from scripts.sidecar_pkg.offline_queue import (  # noqa: E402,F401
     strip_credentials,
 )
 
+# Re-exported names that tests and callers reach as ``sidecar.<name>``.
+_OFFLINE_QUEUE_REEXPORTS = (
+    _TOKEN_ONLY_UNITS,
+    _check_queue_snapshot,
+    _open_queue_file,
+    _queue_limit_mb,
+    _queue_names,
+    _replay_queue_lines,
+    _sanitize_queue_line,
+    _secure_queue_dir,
+    _unlink_queue_file,
+    queue_rotate,
+)
+
 # --- HTTP Utilities ---
 
 

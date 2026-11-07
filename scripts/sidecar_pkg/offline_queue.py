@@ -188,7 +188,7 @@ def strip_credentials(payload: dict[str, Any]) -> dict[str, Any]:
             if not (
                 isinstance(card, dict)
                 and card.get("remaining") == "Token"
-                and card.get("unit") in _sidecar_attr("_TOKEN_ONLY_UNITS")
+                and card.get("unit") in _TOKEN_ONLY_UNITS
             )
         ]
     if payload.get("last_log_lines"):
@@ -455,12 +455,14 @@ def queue_flush(
                     if dir_fd < 0
                     else _sidecar_attr("_open_queue_file")(dir_fd, name, os.O_RDONLY)
                 )
+                wrapped = False
                 try:
                     source = os.fdopen(source_fd, encoding="utf-8")
-                except BaseException:
+                    wrapped = True
+                finally:
                     # Failed wrapping leaves the raw descriptor owned here.
-                    os.close(source_fd)
-                    raise
+                    if not wrapped:
+                        os.close(source_fd)
                 with source:
                     snapshot = os.fstat(source.fileno())
                     # Random names and O_EXCL defend against leftovers from a
@@ -472,12 +474,14 @@ def queue_flush(
                         else _sidecar_attr("_open_queue_file")(dir_fd, temporary, flags)
                     )
                     temporary_created = True
+                    retained_wrapped = False
                     try:
                         retained = os.fdopen(fd, "w", encoding="utf-8")
-                    except BaseException:
+                        retained_wrapped = True
+                    finally:
                         # Close the unwrapped descriptor, even on interruption.
-                        os.close(fd)
-                        raise
+                        if not retained_wrapped:
+                            os.close(fd)
                     with retained:
                         failed_count, interrupted = _sidecar_attr("_replay_queue_lines")(
                             source, retained, target_url, api_key, stop_event, config, record_sent
