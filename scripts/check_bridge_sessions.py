@@ -7,8 +7,10 @@ provider call, and prints a counts-only JSON report (no ids). See docs/collectio
 
 ``--live`` instead pages ``GET /v1/code/sessions`` with the cached Claude Code login (the
 collector's bounds, read-only, no refresh). It calls the provider, so it also requires
-``--yes-call-provider`` and refuses to run without it. The login lives in the server
-process's token cache, so ``--live`` hydrates it from the durable contributions in the database.
+``--yes-call-provider`` and refuses to run without it. The login is read from the
+process's token cache; a standalone invocation first hydrates that cache from the durable
+Claude Code contributions in the configured database (read-only, no refresh) and exits 3
+with ``source_unavailable`` when it holds none.
 
   python scripts/check_bridge_sessions.py --rows rows.json
   python scripts/check_bridge_sessions.py --live --yes-call-provider
@@ -27,6 +29,7 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 import httpx  # noqa: E402
+from sqlalchemy.exc import OperationalError  # noqa: E402
 from sqlmodel import Session  # noqa: E402
 
 from app.core.db import engine  # noqa: E402
@@ -43,9 +46,13 @@ from app.services.claude_cloud_support import ProbeError  # noqa: E402
 async def _live_rows() -> list[BridgeRow]:
     # A fresh process hydrates its login cache only from the durable snapshot, which is read
     # only once source controls are enabled (the server does this in its lifespan).
-    source_controls.initialize()
-    async with httpx.AsyncClient() as client:
-        return await read_all_bridge_rows(client)
+    try:
+        source_controls.initialize()
+        async with httpx.AsyncClient() as client:
+            return await read_all_bridge_rows(client)
+    except OperationalError:
+        # A mis-pointed DATABASE_PATH (no sidecar tables) is the documented outcome, not a traceback.
+        raise ProbeError("source_unavailable") from None
 
 
 def main(argv: list[str] | None = None) -> int:

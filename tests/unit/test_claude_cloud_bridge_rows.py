@@ -184,6 +184,19 @@ async def test_live_rows_enable_the_durable_snapshot_before_reading(monkeypatch)
     assert order == ["init", "read"]
 
 
+def test_live_on_a_database_without_the_sidecar_tables_exits_with_source_unavailable(
+    monkeypatch, capsys
+):
+    from sqlalchemy.exc import OperationalError
+
+    def broken() -> None:
+        raise OperationalError("select", {}, Exception("no such table"))
+
+    monkeypatch.setattr(check_bridge_sessions.source_controls, "initialize", broken)
+    assert check_bridge_sessions.main(["--live", "--yes-call-provider"]) == 3
+    assert "source_unavailable" in capsys.readouterr().err
+
+
 @pytest.mark.asyncio
 async def test_a_network_timeout_is_reported_as_timeout(environment):
     def handler(request: httpx.Request) -> httpx.Response:

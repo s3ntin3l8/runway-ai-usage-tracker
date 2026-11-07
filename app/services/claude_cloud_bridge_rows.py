@@ -98,7 +98,8 @@ async def read_bridge_rows(client: httpx.AsyncClient, source: BridgeSource) -> l
         logger.warning("Bridge session list cut short (%s)", ",".join(read.notes))
     bridge_rows = [bridge for row in read.rows if (bridge := _bridge_row(row)) is not None]
     if len(bridge_rows) < len(read.rows):
-        logger.info(
+        # WARNING so a standalone script (no logging config) still surfaces it on stderr.
+        logger.warning(
             "%d of %d bridge rows carried no usable usage counter",
             len(read.rows) - len(bridge_rows),
             len(read.rows),
