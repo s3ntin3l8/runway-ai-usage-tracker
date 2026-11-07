@@ -384,6 +384,7 @@ async def _list_rows(
         await support.read_session_list(
             attempt,
             headers,
+            parse_page=probe.page_with_terminal_omission,
             limit=LIST_LIMIT,
             max_pages=MAX_LIST_PAGES,
             pause=PAGE_PAUSE,

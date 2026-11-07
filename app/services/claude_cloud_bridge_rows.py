@@ -90,6 +90,7 @@ async def read_bridge_rows(client: httpx.AsyncClient, source: BridgeSource) -> l
                     read = await support.read_session_list(
                         attempt,
                         headers,
+                        parse_page=probe.page_with_terminal_omission,
                         limit=collector.LIST_LIMIT,
                         max_pages=collector.MAX_LIST_PAGES,
                         pause=collector.PAGE_PAUSE,

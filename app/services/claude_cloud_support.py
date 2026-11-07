@@ -177,7 +177,9 @@ class _ListSource(Protocol):
 
     async def get(
         self, path: str, headers: dict[str, str], params: dict[str, Any] | None = None
-    ) -> Any: ...
+    ) -> Any:
+        """GET ``path`` and return the decoded payload."""
+        raise NotImplementedError
 
 
 @dataclass
@@ -194,6 +196,7 @@ async def read_session_list(
     attempt: _ListSource,
     headers: dict[str, str],
     *,
+    parse_page: Callable[[object, int], tuple[list[dict[str, Any]], str | None]],
     limit: int,
     max_pages: int,
     pause: float,
@@ -202,14 +205,15 @@ async def read_session_list(
 ) -> ListRead:
     """Page the session list and return the raw rows ``keep`` accepts.
 
+    ``parse_page`` is the probe's ``page_with_terminal_omission``, passed in because the probe
+    module imports this one.
+
     The one list reader of the collector and the bridge check. Every row must carry a well-formed,
     unique id (a violation is ``unsupported_contract``), whether or not it is kept. Paging ends at
     the last page, at a repeated cursor (note ``cursor_repeat``) or at ``max_pages`` (note
     ``max_pages``); a full last page adds the note ``full_last_page``. ``into`` lets a caller keep
     the counts of a read that raised part-way.
     """
-    from app.services.claude_cloud_probe import page_with_terminal_omission
-
     result = into if into is not None else ListRead()
     listed_ids: set[str] = set()
     seen: set[str] = set()
@@ -221,7 +225,7 @@ async def read_session_list(
         attempt.report["stage"] = "page_get"
         payload = await attempt.get("/v1/code/sessions", headers, params)
         attempt.report["stage"] = "page_shape"
-        page, cursor = page_with_terminal_omission(payload, limit)
+        page, cursor = parse_page(payload, limit)
         result.pages += 1
         result.listed += len(page)
         for row in page:
