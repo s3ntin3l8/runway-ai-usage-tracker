@@ -72,6 +72,10 @@ export interface AppConfig {
   sidecar_auto_update?: boolean | null;
   /** Fleet-wide default: keep-alive on for every sidecar without its own override. */
   sidecar_keep_alive_default?: boolean | null;
+  /** Stored Claude cloud-runner collector switch; null/absent = none stored (the env default applies). */
+  claude_cloud_collector_enabled?: boolean | null;
+  /** The collector switch in effect: the stored value, else the env default. */
+  claude_cloud_collector_effective?: boolean;
   /** Extra worktree directory patterns for project labels (added to the built-ins). */
   worktree_patterns?: string[];
   /** The built-in worktree directory names (read-only). */

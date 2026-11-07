@@ -167,9 +167,19 @@ async def lifespan(app: FastAPI):
     # every 24h so the fleet view can flag outdated sidecars).
     sidecar_version_checker.start()
 
-    # On by default (CLAUDE_CLOUD_COLLECTOR_ENABLED=false disables it): collect usage for Claude Code cloud-runner sessions from the session list.
+    # On by default: collect usage for Claude Code cloud-runner sessions from the session list.
+    # The Claude provider's switch in the app wins over CLAUDE_CLOUD_COLLECTOR_ENABLED; the
+    # instance lives on app.state so PUT /system/app-config can start or stop it live.
+    from sqlmodel import Session as _CloudSession
+
+    from app.core.db import engine as _cloud_engine
+    from app.services.claude_cloud_setting import claude_cloud_collector_enabled
+
     claude_cloud_collector = ClaudeCloudCollector(settings.CLAUDE_CLOUD_COLLECTOR_INTERVAL_SECONDS)
-    if settings.CLAUDE_CLOUD_COLLECTOR_ENABLED:
+    app.state.claude_cloud_collector = claude_cloud_collector
+    with _CloudSession(_cloud_engine) as _cloud_session:
+        cloud_enabled = claude_cloud_collector_enabled(_cloud_session)
+    if cloud_enabled:
         claude_cloud_collector.start()
 
     yield

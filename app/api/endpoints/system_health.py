@@ -28,6 +28,7 @@ from app.models.db import (
 )
 from app.models.schemas import SidecarDownloadsResponse
 from app.services import audit_log
+from app.services.claude_cloud_setting import claude_cloud_collector_enabled
 from app.services.collector_manager import manager
 from app.services.credential_provider import CredentialProvider
 from app.services.sidecar_downloads import sidecar_downloads
@@ -229,7 +230,12 @@ _CLOUD_UNHEALTHY_FAILURES = 3
 
 
 def _claude_cloud_health(session: Session) -> dict[str, Any]:
-    enabled = settings.CLAUDE_CLOUD_COLLECTOR_ENABLED
+    try:
+        enabled = claude_cloud_collector_enabled(session)
+    except Exception as e:
+        # The health line must not take /status down: fall back to the env default.
+        logger.warning("Claude cloud switch read failed (%s)", type(e).__name__)
+        enabled = settings.CLAUDE_CLOUD_COLLECTOR_ENABLED
     accounts: list[dict[str, Any]] = []
     if enabled:
         try:

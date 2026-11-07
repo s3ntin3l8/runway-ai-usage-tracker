@@ -249,7 +249,7 @@ their history. The rules are specified in
 [the cloud event contract](claude-cloud-event-contract.md); the wire facts behind them are in
 [the source-shape evidence](evidence/acceptance/claude-cloud-source-shape-20261029.md).
 
-- **On by default; turning it off.** The collector runs unless `CLAUDE_CLOUD_COLLECTOR_ENABLED=false`
+- **On by default; turning it off.** The collector runs unless switched off in the app (Settings → Providers → Claude) or `CLAUDE_CLOUD_COLLECTOR_ENABLED=false`
   is set. Enabled, it reads cloud-runner sessions only (`environment_kind == anthropic_cloud`),
   never scrapes local files, and needs one eligible Claude Code OAuth login already held by the
   server (exact source, account and organization checks; read-only, no refresh). With no Claude

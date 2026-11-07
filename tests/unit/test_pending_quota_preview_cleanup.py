@@ -120,3 +120,49 @@ async def test_lifespan_runs_startup_cleanup_and_stops_periodic_task(monkeypatch
         await asyncio.sleep(0)
 
     assert "Pending quota preview cleanup task cancelled during shutdown" in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("env", "stored", "expect_start"),
+    [(True, None, True), (False, None, False), (False, True, True), (True, False, False)],
+)
+async def test_lifespan_starts_the_cloud_collector_only_when_the_helper_says_so(
+    monkeypatch, mock_db_session, env, stored, expect_start
+):
+    from app.core.config import settings
+    from app.models.db import SystemConfig
+
+    # ``sqlmodel.Session`` is the suite's autouse mock; its ``first()`` is the stored row.
+    mock_db_session.exec.return_value.first.return_value = (
+        None if stored is None else SystemConfig(claude_cloud_collector_enabled=stored)
+    )
+    import app.services.accumulator as accumulator
+
+    monkeypatch.setattr(main, "init_db", lambda: None)
+    monkeypatch.setattr(main, "_expire_pending_quota_previews", lambda: None)
+    monkeypatch.setattr(accumulator, "evict_orphan_error_rows", lambda _session: None)
+
+    async def collect_all() -> list[dict]:
+        return []
+
+    async def noop() -> None:
+        return None
+
+    monkeypatch.setattr(main.manager, "collect_all", collect_all)
+    monkeypatch.setattr(main.manager, "close", noop)
+    monkeypatch.setattr(main.poller, "start", lambda: None)
+    monkeypatch.setattr(main.poller, "stop", noop)
+    monkeypatch.setattr(main.sidecar_version_checker, "start", lambda: None)
+    monkeypatch.setattr(main.sidecar_version_checker, "stop", noop)
+    monkeypatch.setattr(main.token_auto_refresher, "stop", noop)
+    monkeypatch.setattr(settings, "TOKEN_AUTO_REFRESH_ENABLED", False)
+    monkeypatch.setattr(settings, "CLAUDE_CLOUD_COLLECTOR_ENABLED", env)
+
+    started: list[bool] = []
+    monkeypatch.setattr(main.ClaudeCloudCollector, "start", lambda self: started.append(True))
+    monkeypatch.setattr(main.ClaudeCloudCollector, "stop", lambda self: noop())
+
+    async with main.lifespan(main.app):
+        assert main.app.state.claude_cloud_collector is not None
+    assert bool(started) is expect_start

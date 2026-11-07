@@ -12,6 +12,10 @@ from app.models.db import (
     SystemConfig,
 )
 from app.services import audit_log
+from app.services.claude_cloud_setting import (
+    apply_claude_cloud_collector_setting,
+    claude_cloud_collector_enabled,
+)
 from app.services.project_label import WORKTREE_CONTAINERS, clean_worktree_patterns
 from app.services.worktree_patterns import (
     invalidate_worktree_patterns,
@@ -32,6 +36,9 @@ class _AppConfigUpdate(BaseModel):
     sidecar_auto_update: bool | None = None
     # Fleet-wide default: keep-alive on for every sidecar without its own override.
     sidecar_keep_alive_default: bool | None = None
+    # Claude cloud-runner collector switch; null leaves it as it is (the env default applies
+    # until a value is stored).
+    claude_cloud_collector_enabled: bool | None = None
     # Extra worktree directory patterns for project labels (added to the built-ins);
     # [] clears them, null leaves them as they are.
     worktree_patterns: list[str] | None = Field(default=None, max_length=200)
@@ -55,6 +62,9 @@ async def get_app_config(request: Request, session: Session = Depends(get_sessio
         "sidecar_update_channel": (cfg.sidecar_update_channel if cfg else None) or "stable",
         "sidecar_auto_update": bool(cfg.sidecar_auto_update) if cfg else False,
         "sidecar_keep_alive_default": bool(cfg.sidecar_keep_alive_default) if cfg else False,
+        # The stored switch (null = none stored) and the value in effect.
+        "claude_cloud_collector_enabled": (cfg.claude_cloud_collector_enabled if cfg else None),
+        "claude_cloud_collector_effective": claude_cloud_collector_enabled(session),
         "worktree_patterns": list(
             parse_stored_patterns(cfg.worktree_patterns_json if cfg else None)
         ),
@@ -119,6 +129,10 @@ async def upsert_app_config(
         cfg.sidecar_auto_update = bool(body.sidecar_auto_update)
     if body.sidecar_keep_alive_default is not None:
         cfg.sidecar_keep_alive_default = bool(body.sidecar_keep_alive_default)
+    cloud_changed = False
+    if body.claude_cloud_collector_enabled is not None:
+        cfg.claude_cloud_collector_enabled = bool(body.claude_cloud_collector_enabled)
+        cloud_changed = True
     patterns_changed = False
     if body.worktree_patterns is not None:
         try:
@@ -128,6 +142,13 @@ async def upsert_app_config(
         cfg.worktree_patterns_json = json.dumps(patterns) if patterns else None
         patterns_changed = True
     session.commit()
+    if cloud_changed:
+        # Apply the switch to the running collector; no restart. A cycle in flight is
+        # cancelled by stop(); events and checkpoints stay.
+        await apply_claude_cloud_collector_setting(
+            getattr(request.app.state, "claude_cloud_collector", None),
+            claude_cloud_collector_enabled(session),
+        )
     if patterns_changed:
         # Ingest labels events through the cached patterns; drop them so the
         # next event (and the next relabel scan) sees the new list.
