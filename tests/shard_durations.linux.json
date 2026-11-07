@@ -130,7 +130,6 @@
     "tests/unit/test_credential_robustness.py": 0.03,
     "tests/unit/test_credential_sources.py": 0.93,
     "tests/unit/test_credential_status_parity.py": 0.6,
-    "tests/unit/test_credential_tags.py": 2.74,
     "tests/unit/test_credential_token.py": 0.06,
     "tests/unit/test_cross_account_credentials.py": 0.04,
     "tests/unit/test_cumulative_tz.py": 0.19,
