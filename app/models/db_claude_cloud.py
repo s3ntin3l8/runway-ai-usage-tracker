@@ -91,3 +91,7 @@ class ClaudeCloudCollectorState(SQLModel, table=True):  # type: ignore[call-arg]
     last_outcome: str = "never_run"
     last_events: int = 0
     last_regressions: int = 0
+    # Cycles in a row that failed (busy ones change nothing); 0 after ok/partial/truncated.
+    consecutive_failures: int = 0
+    # 1 while the last cycle left sessions unread.
+    backlog: int = 0

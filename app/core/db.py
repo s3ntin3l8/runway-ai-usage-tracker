@@ -247,6 +247,8 @@ def init_db() -> None:
 
 _DEFERRED_COLUMNS: list[tuple[str, str, str]] = [
     ("sidecar_devices", "platform", "TEXT"),
+    ("claude_cloud_collector_state", "consecutive_failures", "INTEGER NOT NULL DEFAULT 0"),
+    ("claude_cloud_collector_state", "backlog", "INTEGER NOT NULL DEFAULT 0"),
     ("sidecar_devices", "last_source_sync_at", "DATETIME"),
     # (table, column, sql_type_with_default)
     ("sidecar_registry", "collection_enabled", "BOOLEAN NOT NULL DEFAULT 1"),
