@@ -336,7 +336,7 @@ export interface TopProjectsResponse {
 
 export interface TopSessionEntry {
   session_id: string;
-  name?: string | null; // stored display name (first provider alphabetically that has one)
+  name: string | null; // stored display name (first provider alphabetically that has one)
   project: string | null;
   cwd: string | null;
   sidecar_id: string | null; // the host that pushed the session's latest event

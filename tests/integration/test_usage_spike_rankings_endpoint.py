@@ -135,12 +135,15 @@ def test_top_sessions_shared_id_is_one_row_and_gets_the_name(session):
 
 def test_top_sessions_alphabetically_first_provider_name_wins(session):
     now = datetime.now(UTC)
-    _event(session, "e1", now, provider_id="openai", session_id="s1")
-    _event(session, "e2", now, provider_id="anthropic", session_id="s1")
-    _name(session, "openai", "s1", "from openai")
-    _name(session, "anthropic", "s1", "from anthropic")
+    # A bigger single-provider row seeds ``openai`` first, so only the explicit
+    # sort (not insertion order) makes the two-provider row resolve to anthropic.
+    _event(session, "e1", now, provider_id="openai", session_id="only-openai", tokens_input=9999)
+    _event(session, "e2", now, provider_id="openai", session_id="dual")
+    _event(session, "e3", now, provider_id="anthropic", session_id="dual")
+    _name(session, "openai", "dual", "from openai")
+    _name(session, "anthropic", "dual", "from anthropic")
 
-    assert _names_by_id() == {"s1": "from anthropic"}
+    assert _names_by_id()["dual"] == "from anthropic"
 
 
 def test_top_sessions_name_queries_are_bounded_by_providers(session, monkeypatch):

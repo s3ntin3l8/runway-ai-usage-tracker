@@ -37,6 +37,7 @@ vi.mock('@/components/charts/theme', () => ({
 
 const mockSession: TopSessionEntry = {
   session_id: 'mvs_0123456789abcdef',
+  name: null,
   project: 'my-app',
   cwd: '/repo/my-app',
   sidecar_id: 'workstation',
