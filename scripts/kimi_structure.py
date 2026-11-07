@@ -10,6 +10,7 @@ Safety contract: no string value, session id, working directory, path or user
 text is ever printed. Key names are field names; one that is not a plain
 identifier is counted under ``other_keys`` instead of being echoed. The
 argument is the only place a path is accepted and it is not echoed.
+Symlinked files and directories are skipped (counted as unreadable), never followed.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import stat
 import sys
 from collections.abc import Iterator, Sequence
 from pathlib import Path
@@ -120,6 +122,7 @@ class TitleKeys:
 
     def __init__(self) -> None:
         self.found: dict[tuple[str, str, str], KeyStats] = {}
+        self.unprintable: dict[tuple[str, str], int] = {}
 
     def observe(self, file_kind: str, record_type: str, obj: Any, depth: int = 0) -> None:
         if not isinstance(obj, dict) or depth > MAX_NEST_DEPTH:
@@ -129,6 +132,9 @@ class TitleKeys:
                 name = _safe_name(key)
                 if name is not None:
                     self.found.setdefault((file_kind, record_type, name), KeyStats()).add(value)
+                else:  # counted, never echoed
+                    loc = (file_kind, record_type)
+                    self.unprintable[loc] = self.unprintable.get(loc, 0) + 1
             if isinstance(value, dict):
                 self.observe(file_kind, record_type, value, depth + 1)
             elif isinstance(value, list):
@@ -141,15 +147,30 @@ class TitleKeys:
             row = {"file": file_kind, "record_type": record_type, "key": key}
             row.update(stats.render("occurrences"))
             rows.append(row)
+        for (file_kind, record_type), n in sorted(self.unprintable.items()):
+            rows.append({"file": file_kind, "record_type": record_type, "other_title_keys": n})
         return rows
 
 
-def _read_lines(path: Path) -> Iterator[bytes | None]:
+def _open_regular(path: Path) -> Any:
+    """Open a regular file for reading without following a symlink.
+
+    Raises OSError for a missing file, a symlink or anything not a regular file,
+    so a link can never make the reader describe data outside the given directory.
+    """
+    if not stat.S_ISREG(os.lstat(path).st_mode):
+        raise OSError("not a regular file")
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    return os.fdopen(fd, "rb")
+
+
+def _read_lines(path: Path, stats: JsonlStats) -> Iterator[bytes | None]:
     """Yield each line's bytes, or None for an oversized line. Stops at the line cap.
 
+    Counts a truncated file only when data remains past the cap.
     Raises OSError when the file cannot be opened.
     """
-    with path.open("rb") as handle:
+    with _open_regular(path) as handle:
         for _ in range(MAX_LINES_PER_FILE):
             chunk = handle.readline(MAX_LINE_BYTES + 1)
             if not chunk:
@@ -162,6 +183,8 @@ def _read_lines(path: Path) -> Iterator[bytes | None]:
                 yield None
             else:
                 yield chunk
+        if handle.read(1):
+            stats.files_truncated += 1
 
 
 class JsonlStats:
@@ -177,9 +200,7 @@ class JsonlStats:
 
 def _scan_jsonl(path: Path, stats: JsonlStats) -> Iterator[dict[str, Any]]:
     try:
-        count = 0
-        for raw in _read_lines(path):
-            count += 1
+        for raw in _read_lines(path, stats):
             stats.lines += 1
             if raw is None:
                 stats.oversized_lines += 1
@@ -195,8 +216,6 @@ def _scan_jsonl(path: Path, stats: JsonlStats) -> Iterator[dict[str, Any]]:
                 stats.non_object_lines += 1
                 continue
             yield record
-        if count >= MAX_LINES_PER_FILE:
-            stats.files_truncated += 1
         stats.files_read += 1
     except OSError:
         stats.files_unreadable += 1
@@ -237,7 +256,7 @@ def describe(root: Path) -> dict[str, Any]:
     session_dirs = session_dirs[:MAX_SESSIONS]
 
     state_keys = KeySet()
-    state_read = state_missing = state_invalid = 0
+    state_read = state_missing = state_invalid = state_oversized = 0
     wire_stats = JsonlStats()
     wire_missing = 0
     record_types: dict[str, dict[str, Any]] = {}
@@ -245,7 +264,7 @@ def describe(root: Path) -> dict[str, Any]:
     for session in session_dirs:
         state_path = session / "state.json"
         try:
-            with state_path.open("rb") as handle:
+            with _open_regular(state_path) as handle:
                 raw = handle.read(MAX_LINE_BYTES + 1)
         except OSError:
             state_missing += 1
@@ -253,6 +272,7 @@ def describe(root: Path) -> dict[str, Any]:
         if raw is not None:
             try:
                 if len(raw) > MAX_LINE_BYTES:
+                    state_oversized += 1
                     raise ValueError("oversized")
                 state = json.loads(raw)
             except (ValueError, RecursionError):
@@ -314,6 +334,7 @@ def describe(root: Path) -> dict[str, Any]:
             "files_read": state_read,
             "files_missing_or_unreadable": state_missing,
             "files_invalid": state_invalid,
+            "files_oversized": state_oversized,
             **state_keys.render("sessions"),
         },
         "wire_jsonl": {
