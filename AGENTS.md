@@ -122,9 +122,10 @@ procedure (`scripts/action_pins.json`) are in [`CONTRIBUTING.md`](CONTRIBUTING.m
   itself): it must report no determinism failure. `baseHarness` renders the base with the
   head's `scripts/demo`, seed (`seed_demo.py`) included, and the merge base's app, `demo`
   target, `requirements*.txt` and `webapp/package-lock.json`. So a seed edit moves both
-  sides and shows up as no diff in the check (the committed baselines still catch it:
-  `make visual-baseline`), and a PR that changes `scripts/demo` together with the app code
-  it depends on can fail to start its base demo, and then every scene reports "new" (the
+  sides and the check against the merge base shows no diff for it (the baseline scenes
+  are still compared with their committed baselines, which reports the change;
+  `make visual-baseline` regenerates them), and a PR that changes `scripts/demo`
+  together with the app code it depends on can fail to start its base demo, and then every scene reports "new" (the
   reason is only a stderr line). The same check runs on
   UI PRs in CI (advisory). Scenes flagged `"baseline": true` also have committed shots in
   `visual/baselines/`: regenerate them in the PR that moves those pages
