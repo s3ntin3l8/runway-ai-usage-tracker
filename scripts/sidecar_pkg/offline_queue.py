@@ -185,13 +185,15 @@ def strip_credentials(payload: dict[str, Any]) -> dict[str, Any]:
     # The predicate is the server's own token-only rule, which is also what feeds the
     # token cache, so a credential the server would act on is always removed here.
     if "metrics" in payload:
+        # Resolved once per call (not per card): the facade stack walk is the costly part.
+        token_only_units = _sidecar_attr("_TOKEN_ONLY_UNITS")
         stripped["metrics"] = [
             card
             for card in payload["metrics"] or []
             if not (
                 isinstance(card, dict)
                 and card.get("remaining") == "Token"
-                and card.get("unit") in _sidecar_attr("_TOKEN_ONLY_UNITS")
+                and card.get("unit") in token_only_units
             )
         ]
     if payload.get("last_log_lines"):
