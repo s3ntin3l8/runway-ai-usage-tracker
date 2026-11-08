@@ -1,0 +1,692 @@
+"""Unit tests for Hermes Agent event extraction, mapping, and discovery."""
+
+import sqlite3
+from datetime import UTC, datetime
+
+import pytest
+
+from scripts.sidecar_pkg.event_extractors.hermes import (
+    _discover_hermes_db_paths,
+    map_hermes_canonical,
+    map_hermes_provider_id,
+    parse_hermes_events,
+    resolve_hermes_provider_and_canonical,
+)
+from tests.fixtures.hermes_fixture import make_hermes_db
+from tests.unit._event_extractor_hermes_helpers import _make_db
+
+# ---------------------------------------------------------------------------
+# Canonical Mapping Tests
+# ---------------------------------------------------------------------------
+
+
+def test_canonical_provider_mapping():
+    assert map_hermes_canonical("kimi-coding") == ("kimi_coding", None)
+    assert map_hermes_canonical("kimi") == ("kimi_coding", None)
+    assert map_hermes_canonical("minimax-oauth") == ("minimax", None)
+    assert map_hermes_canonical("minimax") == ("minimax", None)
+    assert map_hermes_canonical("opencode-go") == ("opencode", None)
+    assert map_hermes_canonical("opencode-zen") == ("opencode", None)
+    assert map_hermes_canonical("opencode-free") == ("opencode-free", None)
+    assert map_hermes_canonical("openrouter") == ("openrouter", None)
+    assert map_hermes_canonical("deepseek") == ("deepseek", None)
+    assert map_hermes_canonical("xai") == ("xai", None)
+    assert map_hermes_canonical("xai-oauth") == ("xai", None)
+    assert map_hermes_canonical("unknown-provider") is None
+
+
+def test_provider_id_mapping():
+    assert map_hermes_provider_id("kimi-coding") == "kimi_coding"
+    assert map_hermes_provider_id("minimax-oauth") == "minimax"
+    assert map_hermes_provider_id("xai-oauth") == "xai"
+    assert map_hermes_provider_id("custom-llm") == "hermes-custom-llm"
+    assert map_hermes_provider_id("") == "hermes"
+
+
+def test_resolve_hermes_provider_and_canonical():
+    # xai-oauth maps to xai
+    pid, canon = resolve_hermes_provider_and_canonical(
+        "xai-oauth", "https://api.x.ai/v1", "grok-4.7"
+    )
+    assert pid == "xai"
+    assert canon == ("xai", None)
+
+    # Empty billing_provider with kimi model resolves to kimi_coding
+    pid, canon = resolve_hermes_provider_and_canonical("", "", "kimi-for-coding")
+    assert pid == "kimi_coding"
+    assert canon == ("kimi_coding", None)
+
+    # Empty billing_provider falls back to parent session opencode-go
+    pid, canon = resolve_hermes_provider_and_canonical(
+        "", "", "deepseek-v4-flash", session_billing_provider="opencode-go"
+    )
+    assert pid == "opencode"
+    assert canon == ("opencode", None)
+
+    # Empty billing_provider with free model falls back to opencode-free
+    pid, canon = resolve_hermes_provider_and_canonical(
+        "", "", "deepseek-v4-flash-free", session_billing_provider="opencode-go"
+    )
+    assert pid == "opencode-free"
+    assert canon == ("opencode-free", None)
+
+    # auto billing_provider with opencode base_url
+    pid, canon = resolve_hermes_provider_and_canonical(
+        "auto", "https://opencode.ai/zen/v1/", "deepseek-v4-flash"
+    )
+    assert pid == "opencode"
+    assert canon == ("opencode", None)
+
+    pid, canon = resolve_hermes_provider_and_canonical(
+        "auto", "https://opencode.ai/zen/v1/", "deepseek-v4-flash-free"
+    )
+    assert pid == "opencode-free"
+    assert canon == ("opencode-free", None)
+
+    # Colon free model syntax
+    pid, canon = resolve_hermes_provider_and_canonical(
+        "auto", "https://opencode.ai/zen/v1/", "nvidia/nemotron-3-ultra-550b-a55b:free"
+    )
+    assert pid == "opencode-free"
+    assert canon == ("opencode-free", None)
+
+    # grok model with empty billing_provider resolves to xai
+    pid, canon = resolve_hermes_provider_and_canonical("", "", "grok-4.7")
+    assert pid == "xai"
+    assert canon == ("xai", None)
+
+    # False-positive heuristic guard: model with -free- inside name is NOT free tier
+    pid, canon = resolve_hermes_provider_and_canonical("opencode", "", "claude-free-preview")
+    assert pid == "opencode"
+    assert canon == ("opencode", None)
+
+    # Host matching: exact host or subdomain matches
+    pid, canon = resolve_hermes_provider_and_canonical("", "https://api.kimi.com/v1", "")
+    assert pid == "kimi_coding"
+    assert canon == ("kimi_coding", None)
+
+    pid, canon = resolve_hermes_provider_and_canonical("", "https://api.minimax.io/v1", "")
+    assert pid == "minimax"
+    assert canon == ("minimax", None)
+
+    # Substring attacker domain is rejected
+    pid, _ = resolve_hermes_provider_and_canonical("", "https://evil-kimi.com/v1", "")
+    assert pid == "hermes"
+
+    # MiniMax model with empty billing_provider resolves to minimax
+    pid, canon = resolve_hermes_provider_and_canonical("", "", "MiniMax-M3")
+    assert pid == "minimax"
+    assert canon == ("minimax", None)
+
+    # MiniMax greedy prefix rejection: non-hyphenated model is rejected
+    pid, _ = resolve_hermes_provider_and_canonical("", "", "minimaximal")
+    assert pid == "hermes"
+
+    # session_billing_mode="free" routes opencode to opencode-free even for paid model name
+    pid, canon = resolve_hermes_provider_and_canonical(
+        "opencode", "", "claude-3-5-sonnet", session_billing_mode="free"
+    )
+    assert pid == "opencode-free"
+    assert canon == ("opencode-free", None)
+
+
+# ---------------------------------------------------------------------------
+# Path Discovery Tests
+# ---------------------------------------------------------------------------
+
+
+def test_discover_hermes_db_paths(monkeypatch, tmp_path):
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.setenv("USERPROFILE", str(fake_home))
+    monkeypatch.delenv("HERMES_HOME", raising=False)
+
+    hermes_dir = fake_home / ".hermes"
+    hermes_dir.mkdir()
+    default_db = hermes_dir / "state.db"
+    default_db.touch()
+
+    profiles_dir = hermes_dir / "profiles"
+    review_bot_dir = profiles_dir / "review-bot"
+    review_bot_dir.mkdir(parents=True)
+    review_db = review_bot_dir / "state.db"
+    review_db.touch()
+
+    paths = _discover_hermes_db_paths()
+    assert default_db in paths
+    assert review_db in paths
+    assert len(paths) == 2
+
+
+def test_discover_hermes_db_paths_with_hermes_home_profiles(monkeypatch, tmp_path):
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.setenv("USERPROFILE", str(fake_home))
+
+    custom_dir = tmp_path / "custom_hermes"
+    custom_dir.mkdir()
+    custom_default_db = custom_dir / "state.db"
+    custom_default_db.touch()
+
+    custom_profiles = custom_dir / "profiles" / "worker"
+    custom_profiles.mkdir(parents=True)
+    worker_db = custom_profiles / "state.db"
+    worker_db.touch()
+
+    monkeypatch.setenv("HERMES_HOME", str(custom_dir))
+
+    paths = _discover_hermes_db_paths()
+    assert custom_default_db in paths
+    assert worker_db in paths
+    assert len(paths) == 2
+
+
+def test_discover_hermes_db_paths_canonicalizes_symlinks(tmp_path, monkeypatch, make_symlink):
+    """If HERMES_HOME points to a symlink of ~/.hermes, discovery canonicalizes with
+    resolve() and returns the database only once."""
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.setenv("USERPROFILE", str(fake_home))
+
+    real_dir = fake_home / ".hermes"
+    real_dir.mkdir()
+    real_db = real_dir / "state.db"
+    real_db.touch()
+
+    symlink_dir = tmp_path / "symlink_hermes"
+    make_symlink(symlink_dir, real_dir)
+
+    monkeypatch.setenv("HERMES_HOME", str(symlink_dir))
+
+    discovered = _discover_hermes_db_paths()
+    assert len(discovered) == 1
+    assert discovered[0].resolve() == real_db.resolve()
+
+
+# ---------------------------------------------------------------------------
+# Extraction Tests
+# ---------------------------------------------------------------------------
+
+
+def test_parse_hermes_events_basic(tmp_path):
+    db_path, _ = _make_db(tmp_path)
+    state_file = tmp_path / "hermes_watermark.jsonl"
+
+    try:
+        events = parse_hermes_events(
+            db_paths=[db_path],
+            account_id="default",
+            since=datetime(2020, 1, 1, tzinfo=UTC),
+            state_file=state_file,
+        )
+
+        assert len(events) == 2
+        # The client app is Hermes even for events retagged onto another
+        # provider (kimi_coding below) — the provider says who was billed,
+        # source_app says who made the call.
+        assert all(e.source_app == "hermes" for e in events)
+
+        # First event: Kimi Coding
+        kimi_ev = next(e for e in events if e.model_id == "kimi-for-coding")
+        assert kimi_ev.provider_id == "kimi_coding"
+        assert kimi_ev.account_id == "default"
+        assert kimi_ev.account_source == "default"
+        assert kimi_ev.entrypoint == "hermes"
+        assert kimi_ev.tokens_input == 50000
+        assert kimi_ev.tokens_output == 2000
+        assert kimi_ev.tokens_cache_read == 200000
+        assert kimi_ev.tokens_reasoning == 500
+        assert kimi_ev.cwd == "/home/bjoern/projects/runway"
+        assert kimi_ev.git_branch == "feat/review-check"
+        assert kimi_ev.cost_usd is None  # 0.0 costs stay None to allow server pricing
+
+        # Second event: MiniMax with background review task
+        mm_ev = next(e for e in events if e.model_id == "MiniMax-M3")
+        assert mm_ev.provider_id == "minimax"
+        assert mm_ev.account_id == "default"
+        assert mm_ev.account_source == "default"
+        assert mm_ev.subagent_type == "background_review"
+        assert mm_ev.tokens_input == 80000
+        assert mm_ev.tokens_output == 4000
+        assert mm_ev.tokens_cache_read == 150000
+        assert mm_ev.cost_usd == pytest.approx(0.05)
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_parse_hermes_events_with_canonical_hints(tmp_path):
+    db_path, _ = _make_db(tmp_path)
+    state_file = tmp_path / "hermes_watermark.jsonl"
+
+    canonical_hints = {
+        "minimax": {"provider:minimax": "operator@example.com"},
+        "kimi_coding": {"provider:kimi_coding": "kimi-user@example.com"},
+    }
+
+    try:
+        events = parse_hermes_events(
+            db_paths=[db_path],
+            account_id="fallback@example.com",
+            since=datetime(2020, 1, 1, tzinfo=UTC),
+            canonical_hints=canonical_hints,
+            state_file=state_file,
+        )
+
+        kimi_ev = next(e for e in events if e.model_id == "kimi-for-coding")
+        assert kimi_ev.account_id == "kimi-user@example.com"
+        assert kimi_ev.account_source == "tag"
+
+        mm_ev = next(e for e in events if e.model_id == "MiniMax-M3")
+        assert mm_ev.account_id == "operator@example.com"
+        assert mm_ev.account_source == "tag"
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_unhinted_canonical_provider_holds_back_as_default_even_with_custom_host_account(
+    tmp_path,
+):
+    """When an event maps to a canonical provider (e.g. kimi_coding or minimax),
+    the host's Hermes account label (e.g. 'bot-team') does NOT prove which
+    upstream provider account owns the message. It must be held back as
+    account_id='default' and account_source='default' for operator assignment.
+    """
+    db_path, _ = _make_db(tmp_path)
+    state_file = tmp_path / "hermes_watermark.jsonl"
+
+    try:
+        events = parse_hermes_events(
+            db_paths=[db_path],
+            account_id="bot-team",
+            since=datetime(2020, 1, 1, tzinfo=UTC),
+            state_file=state_file,
+            canonical_hints=None,
+        )
+
+        kimi_ev = next(e for e in events if e.model_id == "kimi-for-coding")
+        assert kimi_ev.provider_id == "kimi_coding"
+        assert kimi_ev.account_id == "default"
+        assert kimi_ev.account_source == "default"
+
+        mm_ev = next(e for e in events if e.model_id == "MiniMax-M3")
+        assert mm_ev.provider_id == "minimax"
+        assert mm_ev.account_id == "default"
+        assert mm_ev.account_source == "default"
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_native_provider_preserves_host_account_id_and_leaves_account_source_none(tmp_path):
+    """Native non-canonical Hermes events retain the host account_id and leave
+    account_source=None so sidecar.py can stamp its local/tag attribution.
+    """
+    conn = make_hermes_db(":memory:")
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO sessions (
+            id, source, profile_name, model, billing_provider, billing_base_url,
+            cwd, git_branch, started_at, ended_at, input_tokens, output_tokens,
+            estimated_cost_usd, actual_cost_usd
+        ) VALUES (
+            'sess-native-01', 'api_server', 'default', 'local-llm',
+            'custom-internal', 'http://localhost:8000', '/home/bjoern',
+            'main', 1780003000.0, 1780003500.0, 100, 50, 0.0, 0.0
+        )
+    """)
+    cur.execute("""
+        INSERT INTO session_model_usage (
+            session_id, model, billing_provider, billing_base_url, billing_mode,
+            task, api_call_count, input_tokens, output_tokens, cache_read_tokens,
+            cache_write_tokens, reasoning_tokens, estimated_cost_usd, actual_cost_usd,
+            cost_status, cost_source, first_seen, last_seen
+        ) VALUES (
+            'sess-native-01', 'local-llm', 'custom-internal',
+            'http://localhost:8000', '', '', 1, 100, 50, 0,
+            0, 0, 0.0, 0.0, 'none', 'none', 1780003000.0, 1780003500.0
+        )
+    """)
+    conn.commit()
+
+    db_path = tmp_path / "native_state.db"
+    file_conn = sqlite3.connect(str(db_path))
+    conn.backup(file_conn)
+    file_conn.close()
+    conn.close()
+
+    state_file = tmp_path / "hermes_watermark.jsonl"
+
+    try:
+        events = parse_hermes_events(
+            db_paths=[db_path],
+            account_id="bot-team",
+            since=datetime(2020, 1, 1, tzinfo=UTC),
+            state_file=state_file,
+        )
+        native_ev = next(e for e in events if e.model_id == "local-llm")
+        assert native_ev.provider_id == "hermes-custom-internal"
+        assert native_ev.account_id == "bot-team"
+        assert native_ev.account_source is None
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_missing_or_corrupt_db(tmp_path):
+    missing_path = tmp_path / "nonexistent.db"
+    events = parse_hermes_events(
+        db_paths=[missing_path],
+        account_id="default",
+        since=datetime(2020, 1, 1, tzinfo=UTC),
+    )
+    assert events == []
+
+
+def test_missing_both_timestamps_skips_and_warns(tmp_path, caplog):
+    """Rows with both last_seen and first_seen NULL are skipped with a warning."""
+    import logging
+
+    conn = make_hermes_db(":memory:")
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO sessions (
+            id, source, profile_name, model, billing_provider, billing_base_url,
+            cwd, git_branch, started_at, ended_at, input_tokens, output_tokens,
+            estimated_cost_usd, actual_cost_usd
+        ) VALUES (
+            'sess-null-ts', 'api_server', 'default', 'local-llm',
+            'custom', 'http://localhost:8000', '/home', 'main',
+            1780003000.0, 1780003500.0, 100, 50, 0.0, 0.0
+        )
+    """)
+    cur.execute("""
+        INSERT INTO session_model_usage (
+            session_id, model, billing_provider, billing_base_url, billing_mode,
+            task, api_call_count, input_tokens, output_tokens, cache_read_tokens,
+            cache_write_tokens, reasoning_tokens, estimated_cost_usd, actual_cost_usd,
+            cost_status, cost_source, first_seen, last_seen
+        ) VALUES (
+            'sess-null-ts', 'local-llm', 'custom', 'http://localhost:8000', '',
+            '', 1, 100, 50, 0, 0, 0, 0.0, 0.0, 'none', 'none', NULL, NULL
+        )
+    """)
+    conn.commit()
+
+    db_path = tmp_path / "null_ts.db"
+    file_conn = sqlite3.connect(str(db_path))
+    conn.backup(file_conn)
+    file_conn.close()
+    conn.close()
+
+    with caplog.at_level(logging.WARNING):
+        events = parse_hermes_events(
+            db_paths=[db_path],
+            account_id="default",
+            since=datetime(2020, 1, 1, tzinfo=UTC),
+            state_file=tmp_path / "hermes_watermark.jsonl",
+        )
+    assert not any(e.session_id == "sess-null-ts" for e in events)
+    assert any("has both last_seen and first_seen NULL" in r.message for r in caplog.records)
+
+
+def test_hermes_entrypoint_distinguishes_source(tmp_path):
+    """Sessions with non-api_server source (e.g. discord, cron) propagate
+    as hermes-<source> entrypoint."""
+    conn = make_hermes_db(":memory:")
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO sessions (
+            id, source, profile_name, model, billing_provider, billing_base_url,
+            cwd, git_branch, started_at, ended_at, input_tokens, output_tokens,
+            estimated_cost_usd, actual_cost_usd
+        ) VALUES (
+            'sess-discord-01', 'discord', 'default', 'local-llm',
+            'custom', 'http://localhost:8000', '/home', 'main',
+            1780003000.0, 1780003500.0, 100, 50, 0.0, 0.0
+        )
+    """)
+    cur.execute("""
+        INSERT INTO session_model_usage (
+            session_id, model, billing_provider, billing_base_url, billing_mode,
+            task, api_call_count, input_tokens, output_tokens, cache_read_tokens,
+            cache_write_tokens, reasoning_tokens, estimated_cost_usd, actual_cost_usd,
+            cost_status, cost_source, first_seen, last_seen
+        ) VALUES (
+            'sess-discord-01', 'local-llm', 'custom', 'http://localhost:8000', '',
+            '', 1, 100, 50, 0, 0, 0, 0.0, 0.0, 'none', 'none', 1780003000.0, 1780003500.0
+        )
+    """)
+    conn.commit()
+
+    db_path = tmp_path / "discord_state.db"
+    file_conn = sqlite3.connect(str(db_path))
+    conn.backup(file_conn)
+    file_conn.close()
+    conn.close()
+
+    events = parse_hermes_events(
+        [db_path],
+        "default",
+        datetime(2020, 1, 1, tzinfo=UTC),
+        state_file=tmp_path / "hermes_watermark.jsonl",
+    )
+    discord_ev = next(e for e in events if e.session_id == "sess-discord-01")
+    assert discord_ev.entrypoint == "hermes-discord"
+
+    # Default api_server sessions have entrypoint="hermes"
+    api_ev = next(e for e in events if e.session_id == "api-sess-kimi-01")
+    assert api_ev.entrypoint == "hermes"
+
+
+def test_gemini_model_ids_are_normalized_to_pricing_buckets(tmp_path):
+    """Gemini events carry the versioned bucket (flash-2.5), not the raw id,
+    so the cost calculator finds a pricing row; event_id keeps the raw model."""
+    conn = make_hermes_db(":memory:")
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO sessions (
+            id, source, profile_name, model, billing_provider, billing_base_url,
+            cwd, git_branch, started_at, ended_at, input_tokens, output_tokens,
+            estimated_cost_usd, actual_cost_usd
+        ) VALUES (
+            'sess-gem-01', 'api_server', 'default', 'gemini-2.5-flash',
+            'gemini', 'https://generativelanguage.googleapis.com', '/home', 'main',
+            1780004000.0, 1780004500.0, 100, 50, 0.0, 0.0
+        )
+    """)
+    cur.execute("""
+        INSERT INTO session_model_usage (
+            session_id, model, billing_provider, billing_base_url, billing_mode,
+            task, api_call_count, input_tokens, output_tokens, cache_read_tokens,
+            cache_write_tokens, reasoning_tokens, estimated_cost_usd, actual_cost_usd,
+            cost_status, cost_source, first_seen, last_seen
+        ) VALUES (
+            'sess-gem-01', 'gemini-2.5-flash', 'gemini',
+            'https://generativelanguage.googleapis.com', '',
+            '', 1, 100, 50, 0, 0, 0, 0.0, 0.0, 'none', 'none', 1780004000.0, 1780004500.0
+        )
+    """)
+    conn.commit()
+
+    db_path = tmp_path / "gemini_state.db"
+    file_conn = sqlite3.connect(str(db_path))
+    conn.backup(file_conn)
+    file_conn.close()
+    conn.close()
+
+    events = parse_hermes_events(
+        [db_path],
+        "default",
+        datetime(2020, 1, 1, tzinfo=UTC),
+        state_file=tmp_path / "hermes_watermark.jsonl",
+    )
+    gem_ev = next(e for e in events if e.session_id == "sess-gem-01")
+    assert gem_ev.provider_id == "gemini"
+    assert gem_ev.model_id == "flash-2.5"
+    assert "|gemini-2.5-flash|" in gem_ev.event_id
+
+
+def test_first_seen_newer_than_last_seen_extracted(tmp_path):
+    """Rows where first_seen > since_epoch are extracted even if last_seen is older or zero."""
+    db_path = tmp_path / "state.db"
+    conn = make_hermes_db(str(db_path))
+
+    # Add a row where last_seen is 0.0 (or older) but first_seen is 1790000000.0 (> since)
+    conn.execute("""
+        INSERT INTO session_model_usage (
+            session_id, model, billing_provider, billing_base_url, billing_mode,
+            task, api_call_count, input_tokens, output_tokens, cache_read_tokens,
+            cache_write_tokens, reasoning_tokens, estimated_cost_usd, actual_cost_usd,
+            cost_status, cost_source, first_seen, last_seen
+        ) VALUES (
+            'api-sess-kimi-01', 'custom-model', 'custom',
+            '', '', '', 1, 500, 100, 0, 0, 0, 0.0, 0.0, 'none', 'none', 1790000000.0, 1770000000.0
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+    try:
+        events = parse_hermes_events(
+            [db_path], "default", datetime.fromtimestamp(1785000000.0, tz=UTC)
+        )
+        assert len(events) == 1
+        assert events[0].model_id == "custom-model"
+    finally:
+        db_path.unlink(missing_ok=True)
+
+
+def test_hermes_parent_session_and_model_heuristics_extraction(tmp_path):
+    """Auxiliary tasks with empty or auto billing_provider resolve via parent session and model heuristics."""
+    db_path = tmp_path / "state.db"
+    conn = make_hermes_db(str(db_path))
+
+    # 1. Parent session is opencode-go; title_generation task has empty billing_provider
+    conn.execute("""
+        INSERT INTO sessions (
+            id, source, profile_name, model, billing_provider, billing_base_url,
+            started_at, ended_at
+        ) VALUES (
+            'sess-opencode-01', 'api_server', 'review-bot', 'deepseek-v4-flash',
+            'opencode-go', 'https://opencode.ai/zen/go/v1', 1780000000.0, 1780000500.0
+        )
+    """)
+    conn.execute("""
+        INSERT INTO session_model_usage (
+            session_id, model, billing_provider, billing_base_url, billing_mode,
+            task, api_call_count, input_tokens, output_tokens, cache_read_tokens,
+            cache_write_tokens, reasoning_tokens, estimated_cost_usd, actual_cost_usd,
+            cost_status, cost_source, first_seen, last_seen
+        ) VALUES (
+            'sess-opencode-01', 'deepseek-v4-flash', '', '', '',
+            'title_generation', 1, 500, 50, 0, 0, 0, 0.0, 0.0, 'none', 'none',
+            1780000100.0, 1780000500.0
+        )
+    """)
+
+    # 2. xai-oauth billing_provider
+    conn.execute("""
+        INSERT INTO sessions (
+            id, source, profile_name, model, billing_provider, billing_base_url,
+            started_at, ended_at
+        ) VALUES (
+            'sess-xai-01', 'api_server', 'review-bot', 'grok-4.7',
+            'xai-oauth', 'https://api.x.ai/v1', 1780000000.0, 1780000500.0
+        )
+    """)
+    conn.execute("""
+        INSERT INTO session_model_usage (
+            session_id, model, billing_provider, billing_base_url, billing_mode,
+            task, api_call_count, input_tokens, output_tokens, cache_read_tokens,
+            cache_write_tokens, reasoning_tokens, estimated_cost_usd, actual_cost_usd,
+            cost_status, cost_source, first_seen, last_seen
+        ) VALUES (
+            'sess-xai-01', 'grok-4.7', 'xai-oauth', 'https://api.x.ai/v1', '',
+            'main', 5, 2000, 300, 0, 0, 0, 0.0, 0.0, 'none', 'none',
+            1780000100.0, 1780000500.0
+        )
+    """)
+
+    # 3. auto billing_provider with free model against opencode.ai URL
+    conn.execute("""
+        INSERT INTO sessions (
+            id, source, profile_name, model, billing_provider, billing_base_url,
+            started_at, ended_at
+        ) VALUES (
+            'sess-free-01', 'api_server', 'review-bot', 'deepseek-v4-flash-free',
+            'opencode-zen', 'https://opencode.ai/zen/v1', 1780000000.0, 1780000500.0
+        )
+    """)
+    conn.execute("""
+        INSERT INTO session_model_usage (
+            session_id, model, billing_provider, billing_base_url, billing_mode,
+            task, api_call_count, input_tokens, output_tokens, cache_read_tokens,
+            cache_write_tokens, reasoning_tokens, estimated_cost_usd, actual_cost_usd,
+            cost_status, cost_source, first_seen, last_seen
+        ) VALUES (
+            'sess-free-01', 'deepseek-v4-flash-free', 'auto', 'https://opencode.ai/zen/v1/', '',
+            'compression', 2, 800, 100, 0, 0, 0, 0.0, 0.0, 'none', 'none',
+            1780000100.0, 1780000500.0
+        )
+    """)
+
+    # 4. Kimi model in session whose main billing provider was minimax
+    conn.execute("""
+        INSERT INTO session_model_usage (
+            session_id, model, billing_provider, billing_base_url, billing_mode,
+            task, api_call_count, input_tokens, output_tokens, cache_read_tokens,
+            cache_write_tokens, reasoning_tokens, estimated_cost_usd, actual_cost_usd,
+            cost_status, cost_source, first_seen, last_seen
+        ) VALUES (
+            'api-sess-minimax-02', 'kimi-for-coding', '', '', '',
+            'title_generation', 1, 592, 23, 0, 0, 0, 0.0, 0.0, 'none', 'none',
+            1780001000.0, 1780001500.0
+        )
+    """)
+
+    conn.commit()
+    conn.close()
+
+    canonical_hints = {
+        "opencode": {"provider:opencode": "operator@opencode.com"},
+        "xai": {"provider:xai": "operator@xai.com"},
+    }
+
+    try:
+        events = parse_hermes_events(
+            [db_path],
+            "fallback@host.com",
+            datetime.fromtimestamp(1779000000.0, tz=UTC),
+            canonical_hints=canonical_hints,
+            state_file=tmp_path / "hermes_watermark.jsonl",
+        )
+
+        by_session_task = {(ev.session_id, ev.subagent_type): ev for ev in events}
+
+        # 1. Opencode title generation resolved from session to opencode
+        ev_oc = by_session_task[("sess-opencode-01", "title_generation")]
+        assert ev_oc.provider_id == "opencode"
+        assert ev_oc.account_id == "operator@opencode.com"
+        assert ev_oc.account_source == "tag"
+
+        # 2. xai-oauth resolved to xai
+        ev_xai = by_session_task[("sess-xai-01", "main")]
+        assert ev_xai.provider_id == "xai"
+        assert ev_xai.account_id == "operator@xai.com"
+        assert ev_xai.account_source == "tag"
+
+        # 3. auto with free model resolved to opencode-free and inherited provider:opencode hint
+        ev_free = by_session_task[("sess-free-01", "compression")]
+        assert ev_free.provider_id == "opencode-free"
+        assert ev_free.account_id == "operator@opencode.com"
+        assert ev_free.account_source == "tag"
+
+        # 4. Kimi model resolved to kimi_coding even when session was minimax
+        ev_kimi = by_session_task[("api-sess-minimax-02", "title_generation")]
+        assert ev_kimi.provider_id == "kimi_coding"
+        # No hint for kimi_coding was provided -> holds back as default
+        assert ev_kimi.account_id == "default"
+        assert ev_kimi.account_source == "default"
+    finally:
+        db_path.unlink(missing_ok=True)

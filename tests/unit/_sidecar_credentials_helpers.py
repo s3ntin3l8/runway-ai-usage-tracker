@@ -20,7 +20,7 @@ def isolate_host_credentials(monkeypatch, tmp_path):
 
     def guarded_run(command, *args, **kwargs):
         if (
-            isinstance(command, list | tuple)
+            isinstance(command, (list, tuple))
             and command
             and Path(str(command[0])).name == "security"
         ):
