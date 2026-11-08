@@ -57,3 +57,12 @@ updates:
       # lift this when it is time.
       - dependency-name: "typescript"
         versions: [">=7.0.0"]
+
+  # The visual-kit image `make screenshots` / `make visual-check` render in (visual/Dockerfile). A bump moves the
+  # browser and fonts, so it recaptures the check's base and makes the committed baselines stale: regenerate them
+  # (`make visual-baseline`, or `/update-baselines` on the PR) in the same change.
+  - package-ecosystem: docker
+    directory: /visual
+    schedule:
+      interval: weekly
+      day: monday

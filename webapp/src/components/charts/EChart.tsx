@@ -62,6 +62,12 @@ interface EChartProps {
   ariaLabel?: string;
 }
 
+// ECharts animates on its own clock, so the stylesheet's reduced-motion rule never reaches a chart: honour the
+// preference here, and a chart is drawn in its final state straight away.
+function prefersReducedMotion(): boolean {
+  return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
 export function EChart({ option, className, notMerge = true, onReady, ariaLabel }: EChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<ECharts | null>(null);
@@ -85,7 +91,9 @@ export function EChart({ option, className, notMerge = true, onReady, ariaLabel 
   }, []);
 
   useEffect(() => {
-    chartRef.current?.setOption(option, { notMerge });
+    chartRef.current?.setOption(prefersReducedMotion() ? { ...option, animation: false } : option, {
+      notMerge,
+    });
   }, [option, notMerge]);
 
   return (

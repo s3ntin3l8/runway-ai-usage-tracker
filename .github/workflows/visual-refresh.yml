@@ -1,0 +1,50 @@
+name: Visual refresh
+
+# Weekly: regenerate the README and PWA screenshots (`make screenshots`) and, only when an image changed by more
+# than the pixel tolerance, open or update one rolling pull request from `bot/refresh-screenshots`. The `baselines`
+# job does the same for the committed visual baselines (`make visual-baseline`, PR from `bot/refresh-baselines`):
+# the safety net for a UI PR that moved a baseline scene and forgot `/update-baselines`. The mechanics, the
+# tolerance and the self-approval of the PR's held checks live in the shared workflow in s3ntin3l8/.github
+# (visual-refresh.yml); `workflow_dispatch` runs both on demand.
+#
+# `max-diff-pixels: 50` (the default is 20): the history chart's time axis moves by a few pixels with the demo
+# server's clock, which keeps ticking from DEMO_NOW; that scene carries the same allowance in visual/scenes.json.
+on:
+  schedule:
+    - cron: "43 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+jobs:
+  refresh:
+    if: ${{ !github.event.repository.fork }}
+    uses: s3ntin3l8/.github/.github/workflows/visual-refresh.yml@main
+    with:
+      python-version: "3.12"
+      node-version: "24"
+      paths: "docs/screenshots webapp/public/screenshots"
+      max-diff-pixels: 50
+      title: "chore(uiux): refresh screenshots"
+
+  # After the screenshots job, never beside it: the shared workflow runs one refresh at a time per repo, and a
+  # third queued run would be dropped. `!cancelled()` so a failed screenshots refresh does not skip this one.
+  # A dispatch landing while the Monday run holds that group can drop this queued job (one pending run per
+  # group): it simply retries next Monday, or dispatch again. The shared workflow refuses any changed file that is
+  # not PNG or JSON, so a non-constant stamp in visual/baselines/.visual-kit would fail this job.
+  baselines:
+    needs: refresh
+    if: ${{ !cancelled() && !github.event.repository.fork }}
+    uses: s3ntin3l8/.github/.github/workflows/visual-refresh.yml@main
+    with:
+      python-version: "3.12"
+      node-version: "24"
+      target: visual-baseline
+      paths: visual/baselines
+      max-diff-pixels: 50
+      branch: bot/refresh-baselines
+      title: "chore(uiux): refresh visual baselines"
+      allow-json: true

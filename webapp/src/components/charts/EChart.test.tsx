@@ -64,6 +64,22 @@ describe('EChart', () => {
     expect(setOption).toHaveBeenCalledWith(option, { notMerge: true });
   });
 
+  it('draws the chart without animation when the user prefers reduced motion', () => {
+    const matchMedia = window.matchMedia;
+    window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+      matches: query === '(prefers-reduced-motion: reduce)',
+      media: query,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    }));
+    try {
+      render(<EChart option={{ series: [] }} />);
+      expect(setOption).toHaveBeenCalledWith({ series: [], animation: false }, { notMerge: true });
+    } finally {
+      window.matchMedia = matchMedia;
+    }
+  });
+
   it('passes the chart instance to onReady', () => {
     const onReady = vi.fn();
     render(<EChart option={{}} onReady={onReady} />);

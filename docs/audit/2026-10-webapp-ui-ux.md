@@ -15,7 +15,7 @@ sidecar tray app and the installer are out of scope.
 | Layer | Method |
 |---|---|
 | Product IA and flows | Every page and component under `webapp/src/features/**` plus the routing in `app.tsx` |
-| Visual reality | The committed renders in `assets/screenshots/` — the real UI, not a mockup |
+| Visual reality | The committed renders in `docs/screenshots/` (at the time of the audit: `assets/screenshots/`) — the real UI, not a mockup |
 | Interaction and accessibility | `webapp/src/components/ui/**`, `layout/**`, `charts/**`, plus WCAG 2.x contrast math over the real token values |
 | Mobile ergonomics | Breakpoint, safe-area, overflow and touch-target analysis of `AppShell`, `BottomNav`, `PageHeader` and `useMediaQuery` |
 | Independent slices | Four parallel read-only audits (design system, responsive, IA/journeys, tables/charts/formatting), each finding cross-checked against the source before it was accepted |

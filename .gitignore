@@ -122,6 +122,12 @@ artifacts/
 # the permanent history weight — see docs/audit/README.md.
 docs/audit/assets/
 
+# --- VISUAL-KIT ---
+# The launcher extracted from the pinned image, the check's reports and captures, and a folder visual-kit is writing.
+visual/.kit/
+visual/.out/
+*.staging
+
 # Developer worktrees (one worktree per branch under .wt/ — see AGENTS.md)
 .wt/
 
