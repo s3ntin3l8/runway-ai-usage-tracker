@@ -963,7 +963,7 @@ class TestAnthropicCollector:
 
         with patch("app.services.collectors.anthropic_local.asyncio") as mock_asyncio:
             mock_asyncio.to_thread = AsyncMock(return_value=None)
-            result = await collector._get_claude_local_enhanced()
+            await collector._get_claude_local_enhanced()
 
         mock_asyncio.to_thread.assert_called_once()
         called_fn = mock_asyncio.to_thread.call_args[0][0]
