@@ -220,6 +220,7 @@ TASKS_WITHOUT_VENV = {
 }
 
 BASELINE = ".secrets.baseline"
+SECRETS_BATCH = 200  # paths per check_secrets.py call (Win32 command-line limit)
 SHARD_TABLE_GLOB = "tests/shard_durations.*.json"
 
 
@@ -260,18 +261,26 @@ def check_secrets(root: Path) -> int:
     """Run the secrets gate the way ``make secrets`` does; returns its exit code."""
     tracked = _git(root, "ls-files", "-z").stdout.split("\0")
     names = [name for name in tracked if name]
-    return subprocess.run(
-        [
-            str(venv_python()),
-            "scripts/check_secrets.py",
-            "--baseline",
-            BASELINE,
-            *names,
-        ],
-        cwd=root,
-        env=without_git_env(),
-        check=False,
-    ).returncode
+    # Batch the paths: one command line holding every tracked file exceeds the
+    # Win32 CreateProcess limit (32,767 chars) on native Windows.
+    status = 0
+    for start in range(0, len(names), SECRETS_BATCH):
+        status = max(
+            status,
+            subprocess.run(
+                [
+                    str(venv_python()),
+                    "scripts/check_secrets.py",
+                    "--baseline",
+                    BASELINE,
+                    *names[start : start + SECRETS_BATCH],
+                ],
+                cwd=root,
+                env=without_git_env(),
+                check=False,
+            ).returncode,
+        )
+    return status
 
 
 def prune_shard_table(path: Path, root: Path) -> int:
