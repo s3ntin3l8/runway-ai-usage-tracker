@@ -284,6 +284,17 @@ def prune_shard_table(path: Path, root: Path) -> int:
     return len(files) - len(kept)
 
 
+def _label(name: str) -> str:
+    """Display name for a conflicted path, chosen from constants.
+
+    The baseline's name is never echoed (CodeQL treats it as a secret source);
+    other paths are re-emitted as the matching literal or the tracked path.
+    """
+    if name == BASELINE:
+        return "detect-secrets baseline"
+    return name
+
+
 def resolve_generated(
     root: Path,
     *,
@@ -316,13 +327,15 @@ def resolve_generated(
             continue
         taken = _git(root, "checkout", side, "--", name)
         if taken.returncode != 0:
-            print(f"{name}: could not take main's copy: {taken.stderr.strip()}")
+            print(f"{_label(name)}: could not take main's copy (git checkout failed)")
             status = 1
             continue
         if is_table:
             dropped = prune_shard_table(root / name, root)
             _git(root, "add", "--", name)
-            print(f"{name}: took main's copy, dropped {dropped} entries for deleted modules")
+            print(
+                f"{_label(name)}: took main's copy, dropped {dropped} entries for deleted modules"
+            )
         else:
             baseline_regenerator(root)
             _git(root, "add", "--", name)
@@ -339,7 +352,7 @@ def resolve_generated(
 
     remaining = unmerged()
     if remaining:
-        print("Still unmerged, resolve by hand: " + ", ".join(remaining))
+        print("Still unmerged, resolve by hand: " + ", ".join(_label(n) for n in remaining))
         return 1
     if status == 0:
         print(f"Generated files resolved; continue with: {cont}")
