@@ -76,7 +76,7 @@ def test_reset_provider_requires_admin_key(client, monkeypatch):
     Pins the admin gate `require_admin_key` now enforces on this endpoint —
     without it, any caller who could reach the server could force a
     collector out of its error state. Pattern from
-    `test_multi_account_provider_config.py::test_delete_provider_config_requires_admin_key`:
+    `test_multi_account_provider_config_lifecycle.py::test_delete_provider_config_requires_admin_key`:
     patch both `app.core.config.settings` and `app.core.security.settings`,
     since `resolve_auth` reads the latter's module-level binding.
     """
