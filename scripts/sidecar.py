@@ -1968,23 +1968,25 @@ def _file_rule_paths_with_opencode_v2(paths: list) -> list[tuple[Path, Path | No
 
 # --- Browser Cookie Extraction (moved to sidecar_pkg/cookie_extractor.py) ---
 
-# Re-exported names that tests and callers reach as ``sidecar.<name>``.
-from scripts.sidecar_pkg.cookie_extractor import (  # noqa: E402,F401
-    SOURCE_BLOCK_REASONS,
-    BrowserCookieExtractor,
-    _BlockedCookieStore,
-    _cookie_store_advice,
-    _cookie_store_blocked,
-    _cookie_store_detail,
-    _cookie_store_reason,
-    _cookie_store_remedy,
-    _record_cookie_store_block,
-    _session_cookie_env_var,
-    blocked_source_entries,
-    decrypt_chromium_cookie,
-    report_cookie_stores,
-    reset_cookie_store_tracking,
-)
+# Re-exported names that tests and callers reach as ``sidecar.<name>``. Bound by
+# assignment (not ``from ... import``) so each is a used definition; the shared
+# block-tracking dicts keep their identity.
+from scripts.sidecar_pkg import cookie_extractor as _cookie_extractor  # noqa: E402
+
+SOURCE_BLOCK_REASONS = _cookie_extractor.SOURCE_BLOCK_REASONS
+BrowserCookieExtractor = _cookie_extractor.BrowserCookieExtractor
+_BlockedCookieStore = _cookie_extractor._BlockedCookieStore
+_cookie_store_advice = _cookie_extractor._cookie_store_advice
+_cookie_store_blocked = _cookie_extractor._cookie_store_blocked
+_cookie_store_detail = _cookie_extractor._cookie_store_detail
+_cookie_store_reason = _cookie_extractor._cookie_store_reason
+_cookie_store_remedy = _cookie_extractor._cookie_store_remedy
+_record_cookie_store_block = _cookie_extractor._record_cookie_store_block
+_session_cookie_env_var = _cookie_extractor._session_cookie_env_var
+blocked_source_entries = _cookie_extractor.blocked_source_entries
+decrypt_chromium_cookie = _cookie_extractor.decrypt_chromium_cookie
+report_cookie_stores = _cookie_extractor.report_cookie_stores
+reset_cookie_store_tracking = _cookie_extractor.reset_cookie_store_tracking
 
 
 def get_windows_credential(target: str) -> str | None:
