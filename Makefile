@@ -9,7 +9,7 @@ MYPY := $(VENV)/bin/mypy
 # Source .env (if present) into the recipe shell, exporting every var.
 LOAD_ENV := set -a; [ -f .env ] && . ./.env; set +a
 
-.PHONY: help install install-hooks remove-worktree demo screenshots screenshots-landing screenshots-audit visual-check visual-baseline dev dev-all run run-all sidecar sidecar-registry sidecar-app sidecar-dmg sidecar-installer test test-unit test-shard test-cov shard-weights lint format web web-dev web-lint web-test logo secrets secrets-baseline clean
+.PHONY: help install install-hooks remove-worktree demo screenshots screenshots-landing screenshots-audit visual-check visual-baseline dev dev-all run run-all sidecar sidecar-registry sidecar-app sidecar-dmg sidecar-installer test test-unit test-shard test-cov shard-weights resolve-generated lint format web web-dev web-lint web-test logo secrets secrets-baseline clean
 
 help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
@@ -162,6 +162,9 @@ logo: ## Regenerate every brand surface from the canonical assets/logo.svg (see 
 	$(PYTHON) sidecar_app/assets/generate_icons.py
 	npm --prefix webapp run render-brand-rasters
 	$(PYTHON) installer/generate_app_icons.py
+
+resolve-generated: ## Mid-rebase/merge: resolve conflicted .secrets.baseline + shard tables (main's copy, regenerated)
+	$(PYTHON) scripts/dev_checks.py resolve-generated
 
 secrets: ## Gate: fail if any tracked file has a secret not in the baseline (matches CI)
 	git ls-files -z | xargs -0 $(PYTHON) scripts/check_secrets.py --baseline .secrets.baseline

@@ -202,6 +202,11 @@ def write_weights(path: Path, durations: dict[str, float]) -> None:
         "total_seconds": round(sum(durations.values()), 1),
         "files": {name: round(seconds, 2) for name, seconds in sorted(durations.items())},
     }
+    write_weight_payload(path, payload)
+
+
+def write_weight_payload(path: Path, payload: dict[str, object]) -> None:
+    """Write a weight table's JSON; the one place its formatting is decided."""
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
