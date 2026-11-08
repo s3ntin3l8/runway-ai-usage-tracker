@@ -1,6 +1,5 @@
 """Unit tests for Hermes Agent event extraction, mapping, and discovery."""
 
-import logging
 import sqlite3
 from datetime import UTC, datetime
 
@@ -386,6 +385,8 @@ def test_missing_or_corrupt_db(tmp_path):
 
 def test_missing_both_timestamps_skips_and_warns(tmp_path, caplog):
     """Rows with both last_seen and first_seen NULL are skipped with a warning."""
+    import logging
+
     conn = make_hermes_db(":memory:")
     cur = conn.cursor()
     cur.execute("""
