@@ -10,16 +10,8 @@ Migrations and index integrity:
 
 from __future__ import annotations
 
-from sqlalchemy import text
 from sqlmodel import SQLModel, create_engine
 from sqlmodel.pool import StaticPool
-
-from app.core.db import (
-    _DEFERRED_COLUMNS,
-    _add_columns_if_missing,
-    _drop_redundant_credential_tag_indexes,
-    _migrate_credential_tag_scoping,
-)
 
 
 def test_migrate_credential_tag_scoping_upgrades_legacy_table():
@@ -28,6 +20,10 @@ def test_migrate_credential_tag_scoping_upgrades_legacy_table():
     post-#319 shape; existing rows become deployment-wide (sidecar_id
     NULL). Idempotent on second run. Fresh DBs skip (no legacy constraint).
     """
+    from sqlalchemy import text
+
+    from app.core.db import _migrate_credential_tag_scoping
+
     engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
@@ -90,6 +86,10 @@ def test_migrate_credential_tag_scoping_upgrades_legacy_table():
 
 def test_fresh_db_skips_credential_tag_scoping_migration():
     """create_all already builds the post-#319 shape — migration is a no-op."""
+    from sqlalchemy import text
+
+    from app.core.db import _migrate_credential_tag_scoping
+
     engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
@@ -114,6 +114,10 @@ def test_fresh_db_skips_credential_tag_scoping_migration():
 def test_drop_redundant_credential_tag_indexes():
     """Duplicate ``Field(index=True)`` indexes from earlier model versions
     are dropped at startup; fresh DBs never create them (#322 review)."""
+    from sqlalchemy import text
+
+    from app.core.db import _drop_redundant_credential_tag_indexes
+
     engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
@@ -149,6 +153,8 @@ def test_drop_redundant_credential_tag_indexes():
 
 
 def test_pending_preview_columns_have_forward_safe_migrations():
+    from app.core.db import _DEFERRED_COLUMNS
+
     assert ("pending_credential_tags", "quota_preview_json", "TEXT") in _DEFERRED_COLUMNS
     assert (
         "pending_credential_tags",
@@ -158,6 +164,10 @@ def test_pending_preview_columns_have_forward_safe_migrations():
 
 
 def test_existing_pending_table_gets_preview_columns_idempotently():
+    from sqlalchemy import text
+
+    from app.core.db import _add_columns_if_missing
+
     engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
@@ -182,6 +192,10 @@ def test_existing_pending_table_gets_preview_columns_idempotently():
 
 
 def test_existing_credential_tags_table_gets_target_provider_column_idempotently():
+    from sqlalchemy import text
+
+    from app.core.db import _add_columns_if_missing
+
     engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
@@ -200,4 +214,6 @@ def test_existing_credential_tags_table_gets_target_provider_column_idempotently
 
 
 def test_keep_alive_column_is_added_to_existing_sidecar_registries():
+    from app.core.db import _DEFERRED_COLUMNS
+
     assert ("sidecar_registry", "keep_alive", "BOOLEAN") in _DEFERRED_COLUMNS

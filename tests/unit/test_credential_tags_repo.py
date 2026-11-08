@@ -21,13 +21,8 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session
 
-from app.models.db import CredentialTag, ProviderConfig
-from app.services.credential_sources import real_account_ids
-from app.services.credential_tags import (
-    CredentialTagRepo,
-    ParkedMapping,
-    archived_account_pairs,
-)
+from app.models.db import CredentialTag
+from app.services.credential_tags import CredentialTagRepo
 from tests.unit._credential_tags_helpers import session_fixture  # noqa: F401
 
 
@@ -282,6 +277,8 @@ def test_retagging_without_a_target_clears_a_previous_redirect(session: Session)
 
 
 def test_real_account_ids_count_a_redirect_tag_under_its_target_provider(session: Session):
+    from app.services.credential_sources import real_account_ids
+
     CredentialTagRepo.set_tag(
         session,
         provider_id="gemini",
@@ -302,6 +299,9 @@ def test_archived_account_pairs_lists_only_archived_rows(session: Session):
     the tag — so archiving an account parks the mappings that point at it and
     restoring it revives them with no backfill.
     """
+    from app.models.db import ProviderConfig
+    from app.services.credential_tags import archived_account_pairs
+
     session.add(
         ProviderConfig(
             provider_id="kimi_coding",
@@ -389,6 +389,9 @@ def test_parked_mapping_matches_a_legacy_non_canonical_account_row(session: Sess
     compared in that form too — otherwise a mapping onto a legacy row would
     keep shipping and the retired account would keep being stamped.
     """
+    from app.models.db import ProviderConfig
+    from app.services.credential_tags import ParkedMapping
+
     session.add(
         ProviderConfig(
             provider_id="kimi_coding",

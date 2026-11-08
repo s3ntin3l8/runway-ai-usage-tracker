@@ -10,11 +10,8 @@ card instead of the synthetic-default card.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
-
 from sqlmodel import Session
 
-from app.models.db import ProviderConfig, SidecarRegistry
 from app.services.credential_tags import (
     CredentialTagRepo,
     PendingCredentialTagRepo,
@@ -24,6 +21,8 @@ from tests.unit._credential_tags_helpers import session_fixture  # noqa: F401
 
 def test_auto_hints_single_labeled_row_ships_hint(session: Session) -> None:
     """The MiniMax card-split scenario: one enabled non-default row."""
+    from app.models.db import ProviderConfig
+
     session.add(
         ProviderConfig(
             provider_id="minimax",
@@ -48,6 +47,8 @@ def test_auto_hints_skips_default_only_account(session: Session) -> None:
     """A single ``account_id="default"`` row → no hint. The sidecar's
     events already land at ``("default")``; no benefit to retargeting
     them to themselves."""
+    from app.models.db import ProviderConfig
+
     session.add(
         ProviderConfig(
             provider_id="minimax",
@@ -67,6 +68,8 @@ def test_auto_hints_skips_multi_account_ambiguity(session: Session) -> None:
     The operator must tag explicitly via the Untagged Credentials
     dialog; the auto-hint heuristic refuses to guess which account
     the sidecar's events belong to."""
+    from app.models.db import ProviderConfig
+
     for aid in ("alice@example.com", "bob@example.com"):
         session.add(
             ProviderConfig(
@@ -84,6 +87,8 @@ def test_auto_hints_skips_multi_account_ambiguity(session: Session) -> None:
 def test_auto_hints_skips_disabled_labeled_row(session: Session) -> None:
     """A disabled row → no hint. The collector isn't running, so
     shipping events there would land on a card the user can't see."""
+    from app.models.db import ProviderConfig
+
     session.add(
         ProviderConfig(
             provider_id="minimax",
@@ -100,6 +105,8 @@ def test_auto_hints_skips_disabled_labeled_row(session: Session) -> None:
 def test_auto_hints_independent_per_provider(session: Session) -> None:
     """Single-account hints are scoped per-provider — a single labeled
     MiniMax row fires only the MiniMax hint."""
+    from app.models.db import ProviderConfig
+
     session.add(
         ProviderConfig(
             provider_id="minimax",
@@ -136,6 +143,8 @@ def test_auto_hints_suppressed_in_multi_sidecar_deployment(session: Session) -> 
     no hint. See the sibling tests for the pending-row path and the
     unidentified-requester path.
     """
+    from app.models.db import ProviderConfig, SidecarRegistry
+
     # Single-account setup that would normally fire the auto-hint.
     session.add(
         ProviderConfig(
@@ -161,6 +170,8 @@ def test_auto_hints_ships_to_sidecar_with_pending_row_in_multi_sidecar(session: 
     """Multi-host + identified requester WITH a pending
     ``provider:<pid>`` row → the hint ships (that host reported the
     credential; it's the one that needs the auto-resolution)."""
+    from app.models.db import ProviderConfig, SidecarRegistry
+
     session.add(
         ProviderConfig(
             provider_id="minimax",
@@ -194,6 +205,8 @@ def test_auto_hints_withheld_when_unidentified_in_multi_sidecar(session: Session
     """Multi-host + unidentified requester (old sidecar binary that
     doesn't send ``?sidecar_id=``): ship nothing — the safe pre-#319
     behavior for multi-host deployments."""
+    from app.models.db import ProviderConfig, SidecarRegistry
+
     session.add(
         ProviderConfig(
             provider_id="minimax",
@@ -230,6 +243,10 @@ def test_auto_hints_not_suppressed_by_stale_sidecar_rows(session: Session) -> No
     and the 60-min staleness threshold, but short enough that retired
     machines age out — and logs at DEBUG when it withholds.
     """
+    from datetime import UTC, datetime, timedelta
+
+    from app.models.db import ProviderConfig, SidecarRegistry
+
     session.add(
         ProviderConfig(
             provider_id="minimax",
@@ -254,6 +271,8 @@ def test_auto_hints_unaffected_when_only_one_sidecar(session: Session) -> None:
     """The single-host happy path: one sidecar registered, one labeled
     row → auto-hint fires unconditionally (no pending row required —
     the MiniMax first-cycle fix for single-host deployments)."""
+    from app.models.db import ProviderConfig, SidecarRegistry
+
     session.add(
         ProviderConfig(
             provider_id="minimax",
