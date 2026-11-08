@@ -36,7 +36,6 @@
     "tests/integration/test_merge_antigravity_accounts.py": 1.88,
     "tests/integration/test_merge_gemini_default_account.py": 0.08,
     "tests/integration/test_migrate_kimi_coding_key.py": 0.05,
-    "tests/integration/test_multi_account_provider_config.py": 13.73,
     "tests/integration/test_new_limits_endpoint.py": 0.03,
     "tests/integration/test_normalize_sidecar_ids_migration.py": 0.26,
     "tests/integration/test_pending_identity_verification.py": 3.1,

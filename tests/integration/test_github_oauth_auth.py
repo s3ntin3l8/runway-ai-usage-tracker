@@ -5,7 +5,7 @@ dependency at all — any caller who could reach the server could kick off a
 device-flow login (that ends with this server persisting a GitHub access
 token to disk) or wipe an existing one. `/status` also requires authentication.
 
-Same pattern as `test_multi_account_provider_config.py::test_delete_provider_config_requires_admin_key`
+Same pattern as `test_multi_account_provider_config_lifecycle.py::test_delete_provider_config_requires_admin_key`
 and `test_status_reset.py::test_reset_provider_requires_admin_key`: patch
 both `app.core.config.settings` and `app.core.security.settings` (the
 latter is what `resolve_auth` actually reads), and bind off-loopback so the
