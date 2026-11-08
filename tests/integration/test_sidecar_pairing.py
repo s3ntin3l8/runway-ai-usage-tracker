@@ -140,7 +140,9 @@ class TestRedeem:
         session.commit()
         assert client.post("/api/v1/fleet/pair", json={"code": code}).status_code == 400
 
-    @pytest.mark.parametrize("code", ["", "ABCDE-FGHJK", "short", "x" * 500])
+    @pytest.mark.parametrize(
+        "code", ["", "ABCDE-FGHJK", "short", pytest.param("x" * 500, id="oversized-code")]
+    )
     def test_unknown_code_rejected_uniformly(self, client, code):
         _mint(client)
         r = client.post("/api/v1/fleet/pair", json={"code": code})
