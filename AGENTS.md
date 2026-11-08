@@ -94,6 +94,15 @@ procedure (`scripts/action_pins.json`) are in [`CONTRIBUTING.md`](CONTRIBUTING.m
 - A single test file: `pytest tests/path/to/test_file.py`.
   `make test-shard SHARD=1 SHARDS=4` is the split native Windows CI uses;
   `make shard-weights` re-measures the per-module durations that balance it.
+- **Conflicted rebase or merge on generated files:** `.secrets.baseline`,
+  `tests/shard_durations.linux.json` and `tests/shard_durations.windows.json`
+  are regenerable and conflict whenever sibling PRs land together. Mid-rebase or
+  mid-merge run `make resolve-generated` (native Windows: `python
+  scripts/dev_checks.py resolve-generated`): it takes main's copy of whichever of
+  those three is unmerged, regenerates the baseline, drops shard entries for
+  deleted modules, and stages them. It never continues or commits; it lists any
+  other unmerged file and exits 1 — resolve those by hand, then
+  `git rebase --continue` (or commit the merge).
 - `make sidecar-registry` regenerates the sidecar's baked credential rules after
   editing `app/core/registry.json` — the baked block is generated, never
   hand-edited.
