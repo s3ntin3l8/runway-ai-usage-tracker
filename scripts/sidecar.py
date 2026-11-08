@@ -1988,6 +1988,26 @@ decrypt_chromium_cookie = _cookie_extractor.decrypt_chromium_cookie
 report_cookie_stores = _cookie_extractor.report_cookie_stores
 reset_cookie_store_tracking = _cookie_extractor.reset_cookie_store_tracking
 
+# Public facade surface for the moved cookie names: tests and callers reach them
+# as ``sidecar.<name>``. Listing them here marks the assignments as intentional
+# re-exports (they are otherwise unused inside this module).
+__all__ = [
+    "SOURCE_BLOCK_REASONS",
+    "BrowserCookieExtractor",
+    "_BlockedCookieStore",
+    "_cookie_store_advice",
+    "_cookie_store_blocked",
+    "_cookie_store_detail",
+    "_cookie_store_reason",
+    "_cookie_store_remedy",
+    "_record_cookie_store_block",
+    "_session_cookie_env_var",
+    "blocked_source_entries",
+    "decrypt_chromium_cookie",
+    "report_cookie_stores",
+    "reset_cookie_store_tracking",
+]
+
 
 def get_windows_credential(target: str) -> str | None:
     """Extract credential from Windows Credential Manager with caching.
