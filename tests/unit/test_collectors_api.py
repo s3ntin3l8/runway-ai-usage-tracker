@@ -58,16 +58,14 @@ class TestCredentialAccountSlotLookup:
         get_with_metadata.assert_awaited_once_with(provider_id, account_id="default")
 
 
-async def _gemini_cache_with(tokens: dict[str, str] | None = None) -> AsyncMock:
-    """Return an AsyncMock token cache returning the provided tokens."""
-    mock = AsyncMock()
-    mock.get_with_metadata = AsyncMock(
-        return_value=(
-            tokens or {"gemini_refresh_token": "rt"},
-            {"source": "sidecar"},
-        )
-    )
-    return mock
+async def _gemini_cache_with(tokens: dict[str, str] | None = None):
+    """A fresh TokenCache holding a sidecar-pushed Gemini bundle (the only credential source)."""
+    from app.services.token_cache import TokenCache
+
+    cache = TokenCache()
+    if tokens is not None:
+        await cache.store("gemini", tokens, account_id=None, source="sidecar")
+    return cache
 
 
 class TestGeminiCollector:
