@@ -28,7 +28,6 @@ from app.services.data_health.base import (
     FixResult,
     Severity,
 )
-from app.services.maintenance._retry import DATA_HEALTH_LOCK_PROFILE
 from app.services.maintenance.event_cost import resolve_event_cost
 from app.services.maintenance.recost import (
     apply_recost,
@@ -36,6 +35,7 @@ from app.services.maintenance.recost import (
     legacy_reported_cost,
     plan_recost,
 )
+from app.services.maintenance.retry import DATA_HEALTH_LOCK_PROFILE
 
 
 def _is_excluded(provider_id: str, model_id: str) -> bool:

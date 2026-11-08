@@ -304,7 +304,7 @@ def test_permanent_delete_removes_empty_archived_account_and_source_state(
         {"source": "sidecar"},
     )
     preferences = {("opencode", account_id): {"sidecar:old-auth": (True, 0)}}
-    monkeypatch.setattr(manager, "_credential_source_preferences", preferences)
+    monkeypatch.setattr(manager, "credential_source_preferences", preferences)
 
     response = client.delete(
         f"/api/v1/system/provider-config/opencode/{account_id}?permanent=true",
@@ -357,7 +357,7 @@ def test_permanent_delete_removes_empty_archived_account_and_source_state(
         is None
     )
     assert token_cache._cache.get("opencode", {}).get(account_id) is None
-    assert ("opencode", account_id) not in manager._credential_source_preferences
+    assert ("opencode", account_id) not in manager.credential_source_preferences
 
     audit_entry = session.exec(
         select(AuditLog).where(
@@ -673,7 +673,7 @@ def test_delete_provider_config_writes_audit_row(client: TestClient, session: Se
 
 
 def test_delete_provider_config_drops_smart_collector(client: TestClient, session: Session) -> None:
-    """PR #317 round-2 re-review suggestion: pin the ``_sync_collectors(force=True)``
+    """PR #317 round-2 re-review suggestion: pin the ``sync_collectors(force=True)``
     call with the manager's real pair key shape.
 
     Without the sync, ``manager.smart_collectors`` keeps a SmartCollector

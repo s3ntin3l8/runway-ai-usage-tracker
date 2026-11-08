@@ -54,7 +54,7 @@ from sqlalchemy import select as sa_select
 from sqlmodel import Session, col
 
 from app.models.db import UsageEvent
-from app.services.maintenance._chunked_sql import chunked_update
+from app.services.maintenance.chunked_sql import chunked_update
 from app.services.maintenance.cloud_events_reset import cloud_event_where
 
 
@@ -173,7 +173,7 @@ def apply_cloud_session_lead_repo(session: Session, session_id: str) -> CloudSes
     """Label the session's unlabelled events with its lead repository.
 
     The write is chunked and retried on a locked database (see
-    `app/services/maintenance/_chunked_sql.py`), and it is idempotent: a
+    `app/services/maintenance/chunked_sql.py`), and it is idempotent: a
     labelled event no longer matches the scope, so a second run changes
     nothing.
     """

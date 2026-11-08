@@ -15,7 +15,7 @@ def test_record_expiry_prefers_the_live_millisecond_record_over_a_dead_microseco
     record would outrank a live millisecond one and the collector would keep
     presenting a dead token.
     """
-    from app.services.credential_provider import _record_expiry
+    from app.services.credential_provider import record_expiry
 
     record = {
         # 2020-09-13, in microseconds — long expired.
@@ -23,7 +23,7 @@ def test_record_expiry_prefers_the_live_millisecond_record_over_a_dead_microseco
         # 2100-01-01, in milliseconds — still live.
         "expiresAtMs": 4_102_444_800_000,
     }
-    assert _record_expiry(record) == pytest.approx(4_102_444_800)
+    assert record_expiry(record) == pytest.approx(4_102_444_800)
 
 
 def test_record_expiry_ignores_an_implausible_expiry():
@@ -32,13 +32,13 @@ def test_record_expiry_ignores_an_implausible_expiry():
     Treating it as "no expiry" is the safe direction: an unknown expiry must
     not win the largest-expiry picker over a record that states one.
     """
-    from app.services.credential_provider import _record_expiry
+    from app.services.credential_provider import record_expiry
 
     record = {
         "expiresAt": 1e21,
         "expiresAtMs": 4_102_444_800_000,
     }
-    assert _record_expiry(record) == pytest.approx(4_102_444_800)
+    assert record_expiry(record) == pytest.approx(4_102_444_800)
 
 
 def test_has_unexpired_token_does_not_call_a_microsecond_expiry_fresh(tmp_path):
@@ -47,15 +47,15 @@ def test_has_unexpired_token_does_not_call_a_microsecond_expiry_fresh(tmp_path):
     Dividing a microsecond epoch by a thousand only once leaves it thousands of
     years ahead, so the freshness probe would call a dead credential live.
     """
-    from app.services.credential_provider import _has_unexpired_token
+    from app.services.credential_provider import has_unexpired_token
 
     dead = tmp_path / "microsecond-expiry.json"
     dead.write_text(json.dumps({"accessToken": "tok", "expiresAtUs": 1_600_000_000_000_000}))
-    assert _has_unexpired_token(str(dead)) is False
+    assert has_unexpired_token(str(dead)) is False
 
     live = tmp_path / "millisecond-expiry.json"
     live.write_text(json.dumps({"accessToken": "tok", "expiresAtMs": 4_102_444_800_000}))
-    assert _has_unexpired_token(str(live)) is True
+    assert has_unexpired_token(str(live)) is True
 
 
 @pytest.mark.asyncio
@@ -274,7 +274,7 @@ def test_expand_rule_paths_glob_freshest_first(tmp_path):
     """Glob matches sort by mtime descending — the file loop is first-match-wins
     per target key, so the freshest credential must come first. (The sidecar's
     loop overwrites per file and sorts ascending; both end with the freshest.)"""
-    from app.services.credential_provider import _expand_rule_paths
+    from app.services.credential_provider import expand_rule_paths
 
     older = tmp_path / "kimi-code-env-aaa.json"
     older.write_text("{}")
@@ -283,14 +283,14 @@ def test_expand_rule_paths_glob_freshest_first(tmp_path):
     os.utime(older, (1000, 1000))
     os.utime(newer, (2000, 2000))
 
-    matches = _expand_rule_paths([str(tmp_path / "kimi-code-env-*.json")])
+    matches = expand_rule_paths([str(tmp_path / "kimi-code-env-*.json")])
     assert matches == [str(newer), str(older)]
 
 
 def test_expand_rule_paths_valid_token_beats_newer_expired(tmp_path):
     """A stale-but-recently-touched file must not beat a valid token:
     valid files sort first (first-match-wins), expired ones after."""
-    from app.services.credential_provider import _expand_rule_paths
+    from app.services.credential_provider import expand_rule_paths
 
     valid = tmp_path / "kimi-code-env-valid.json"
     valid.write_text(json.dumps({"access_token": "good", "expires_at": 9999999999}))
@@ -299,7 +299,7 @@ def test_expand_rule_paths_valid_token_beats_newer_expired(tmp_path):
     os.utime(valid, (1000, 1000))  # older mtime …
     os.utime(stale, (2000, 2000))  # … but stale is the recently-touched one
 
-    matches = _expand_rule_paths([str(tmp_path / "kimi-code-env-*.json")])
+    matches = expand_rule_paths([str(tmp_path / "kimi-code-env-*.json")])
     assert matches == [str(valid), str(stale)]
 
 
@@ -310,7 +310,7 @@ def test_expand_rule_paths_nested_record_expiry_beats_a_newer_dead_file(tmp_path
     Otherwise the glob falls back to mtime alone and a dead file that was
     touched more recently wins.
     """
-    from app.services.credential_provider import _expand_rule_paths
+    from app.services.credential_provider import expand_rule_paths
 
     live = tmp_path / "mcode-live.json"
     live.write_text(
@@ -341,7 +341,7 @@ def test_expand_rule_paths_nested_record_expiry_beats_a_newer_dead_file(tmp_path
     os.utime(live, (1000, 1000))  # older mtime …
     os.utime(dead, (2000, 2000))  # … but the dead file is the recently-touched one
 
-    matches = _expand_rule_paths([str(tmp_path / "mcode-*.json")])
+    matches = expand_rule_paths([str(tmp_path / "mcode-*.json")])
     assert matches == [str(live), str(dead)]
 
 
@@ -349,7 +349,7 @@ def test_expand_rule_paths_sees_a_nested_expiry_key_of_any_spelling(tmp_path):
     """The nested probe and the record picker must agree on what an expiry
     key is called — otherwise a record that is selectable never makes its file
     sort as fresh."""
-    from app.services.credential_provider import _expand_rule_paths
+    from app.services.credential_provider import expand_rule_paths
 
     live = tmp_path / "mcode-expiry-date.json"
     live.write_text(
@@ -380,19 +380,19 @@ def test_expand_rule_paths_sees_a_nested_expiry_key_of_any_spelling(tmp_path):
     os.utime(live, (1000, 1000))  # older mtime …
     os.utime(dead, (2000, 2000))  # … but the dead file is the recently-touched one
 
-    matches = _expand_rule_paths([str(tmp_path / "mcode-*.json")])
+    matches = expand_rule_paths([str(tmp_path / "mcode-*.json")])
     assert matches == [str(live), str(dead)]
 
 
 def test_expand_rule_paths_sees_a_top_level_expiry_key_of_any_spelling(tmp_path):
     """The top-level pass must accept the same expiry keys as the picker.
 
-    A top-level ``expiry_date`` is selectable by ``_record_expiry``; if the
+    A top-level ``expiry_date`` is selectable by ``record_expiry``; if the
     freshness probe only recognised ``expires``, the file would never sort as
     fresh. A millisecond epoch must be read as milliseconds, not as a
     timestamp that is always in the future.
     """
-    from app.services.credential_provider import _expand_rule_paths
+    from app.services.credential_provider import expand_rule_paths
 
     live = tmp_path / "top-level-expiry-date.json"
     live.write_text(json.dumps({"accessToken": "mmoat_live", "expiry_date": 4102444800000}))
@@ -401,18 +401,18 @@ def test_expand_rule_paths_sees_a_top_level_expiry_key_of_any_spelling(tmp_path)
     os.utime(live, (1000, 1000))  # older mtime …
     os.utime(dead, (2000, 2000))  # … but the dead file is the recently-touched one
 
-    matches = _expand_rule_paths([str(tmp_path / "top-level-*.json")])
+    matches = expand_rule_paths([str(tmp_path / "top-level-*.json")])
     assert matches == [str(live), str(dead)]
 
 
 def test_expand_rule_paths_plain_exact_match(tmp_path):
     """Non-glob entries keep exact-match behavior; missing files are skipped."""
-    from app.services.credential_provider import _expand_rule_paths
+    from app.services.credential_provider import expand_rule_paths
 
     existing = tmp_path / "kimi-code.json"
     existing.write_text("{}")
-    assert _expand_rule_paths([str(existing)]) == [str(existing)]
-    assert _expand_rule_paths([str(tmp_path / "missing.json")]) == []
+    assert expand_rule_paths([str(existing)]) == [str(existing)]
+    assert expand_rule_paths([str(tmp_path / "missing.json")]) == []
 
 
 # The three sibling providers whose opencode auth.json rule was added to
@@ -469,22 +469,22 @@ def test_opencode_auth_json_env_rule_still_works(
 
 
 def test_a_file_rule_outside_runways_config_dir_is_never_evaluated(monkeypatch):
-    """``_server_may_read`` gates the RAW paths, before any ``~`` expansion or glob."""
+    """``server_may_read`` gates the RAW paths, before any ``~`` expansion or glob."""
     from app.services.credentials import provider as cp
 
-    assert cp._server_may_read({"paths": ["{{CONFIG_DIR:runway}}/github_oauth.json"]})
-    assert not cp._server_may_read({"paths": ["~/.gemini/oauth_creds.json"]})
-    assert not cp._server_may_read({"paths": ["{{CONFIG_DIR:gemini}}/oauth_creds.json"]})
+    assert cp.server_may_read({"paths": ["{{CONFIG_DIR:runway}}/github_oauth.json"]})
+    assert not cp.server_may_read({"paths": ["~/.gemini/oauth_creds.json"]})
+    assert not cp.server_may_read({"paths": ["{{CONFIG_DIR:gemini}}/oauth_creds.json"]})
     # One foreign path poisons the rule: the whole rule stays off the server.
-    assert not cp._server_may_read(
+    assert not cp.server_may_read(
         {"paths": ["{{CONFIG_DIR:runway}}/a.json", "~/.config/gh/hosts.yml"]}
     )
-    assert not cp._server_may_read({"paths": []})
+    assert not cp.server_may_read({"paths": []})
 
     def boom(_paths):
-        raise AssertionError("_expand_rule_paths must not run for a sidecar-only rule")
+        raise AssertionError("expand_rule_paths must not run for a sidecar-only rule")
 
-    monkeypatch.setattr(cp, "_expand_rule_paths", boom)
+    monkeypatch.setattr(cp, "expand_rule_paths", boom)
     monkeypatch.setattr(
         cp.registry,
         "get_provider",

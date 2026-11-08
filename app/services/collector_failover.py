@@ -42,7 +42,7 @@ class CollectorFailover:
         raise AttributeError(name)
 
     @staticmethod
-    async def _source_candidates(
+    async def source_candidates(
         provider_id: object, account_id: object, identity_verification: bool
     ) -> list[dict[str, Any]]:
         if not isinstance(provider_id, str) or not isinstance(account_id, str):
@@ -74,7 +74,7 @@ class CollectorFailover:
             candidate for candidate in swept if candidate["source_id"] not in seen
         ]
 
-    def _ordered_candidates(
+    def ordered_candidates(
         self,
         provider_id: str,
         account_id: str,
@@ -106,7 +106,7 @@ class CollectorFailover:
             if slot != account_id:
                 keys.append((provider_id, account_id))
             for key in keys:
-                row = self._credential_source_preferences.get(key, {})
+                row = self.credential_source_preferences.get(key, {})
                 if source_id in row:
                     return row[source_id]
             return None
@@ -180,7 +180,7 @@ class CollectorFailover:
         identity_verification = is_verifier_key(key)
         candidates: list[dict[str, Any]] = []
         if isinstance(provider_id, str):
-            candidates = await self._source_candidates(
+            candidates = await self.source_candidates(
                 provider_id, account_id, identity_verification
             )
             # A regular default collector must not race the verifier for pending
@@ -201,7 +201,7 @@ class CollectorFailover:
         candidates = await self._due_for_verification(
             identity_verification,
             provider_id,
-            self._ordered_candidates(provider_id, account_id, candidates),
+            self.ordered_candidates(provider_id, account_id, candidates),
         )
         if not candidates:
             return []
@@ -219,8 +219,8 @@ class CollectorFailover:
                 break
             if index:
                 await smart.reset()
-            self._reset_attempt_identity(collector, account_id, default_account_label)
-            if self._awaiting_machine_renewal(provider_id, candidate, all_candidates):
+            self.reset_attempt_identity(collector, account_id, default_account_label)
+            if self.awaiting_machine_renewal(provider_id, candidate, all_candidates):
                 # An idle CLI let its access token lapse. The machine renews it (the server
                 # must not: rotating its refresh token would sign that CLI out), so calling
                 # the API now could only 401 and flag a healthy login as revoked. No health
@@ -303,7 +303,7 @@ class CollectorFailover:
                 and resolved_id.strip()
                 and resolved_id.strip().lower() != "default"
             ):
-                if not await self._promote_source_identity(
+                if not await self.promote_source_identity(
                     provider_id,
                     account_id,
                     candidate["source_id"],
@@ -346,7 +346,7 @@ class CollectorFailover:
             # Nothing ran, so the collector still holds the previous poll's state (often
             # "complete"). Say "skipped" so the poller keeps the last good cards instead of
             # reconciling them away, and the server-credential stamping leaves rows alone.
-            smart._set_collection_state(
+            smart.set_collection_state(
                 "skipped",
                 "login expired — "
                 + await self._renewal_wait_reason(provider_id, renewal_candidate),

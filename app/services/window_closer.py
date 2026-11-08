@@ -65,7 +65,7 @@ def close_window(  # noqa: PLR0913 -- window closer aggregates across all grain 
     lock escalation and allowing SQLite busy_timeout to wait safely under concurrent writers.
     Because `commit_read=True` commits the session, any prior work staged by the caller is
     committed as well; callers holding pending uncommitted modifications (such as
-    `_maybe_close_previous_window` during live upserts) must keep `commit_read=False`.
+    `maybe_close_previous_window` during live upserts) must keep `commit_read=False`.
     """
     # Summarize the smallest grain in SQLite. Loading every UsageEvent also
     # materializes raw_json and ORM state: a busy monthly window can otherwise
@@ -174,7 +174,7 @@ def close_window(  # noqa: PLR0913 -- window closer aggregates across all grain 
     return inserted
 
 
-def _maybe_close_previous_window(
+def maybe_close_previous_window(
     session: Session,
     *,
     existing: LatestUsage | None,

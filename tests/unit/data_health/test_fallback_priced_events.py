@@ -14,7 +14,6 @@ from app.models.db import UsageEvent, UsagePeriodRollup
 from app.services.cost_calculator import PricingIndex, resolve_price_row
 from app.services.data_health.checks.fallback_priced_events import FallbackPricedEventsCheck
 from app.services.maintenance import fallback_priced_events
-from app.services.maintenance._retry import LockRetryProfile
 from app.services.maintenance.fallback_priced_events import (
     FallbackPlan,
     _tally,
@@ -22,6 +21,7 @@ from app.services.maintenance.fallback_priced_events import (
     fallback_price_row,
     plan_fallback_priced_events,
 )
+from app.services.maintenance.retry import LockRetryProfile
 from tests.unit.data_health.conftest import make_event, make_price
 from tests.unit.lock_contention import lock_batches_after, lock_every_batch
 

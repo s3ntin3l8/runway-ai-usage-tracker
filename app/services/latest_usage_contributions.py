@@ -17,14 +17,14 @@ from app.core.utils import with_failing_prefix
 
 def _latest_usage_sidecar_id(contributions: Iterable[Any], *, provider_id: str) -> str:
     """Select the materialized owner from contributions ordered oldest first."""
-    from app.services.accumulator import _parse_source_id
+    from app.services.accumulator import parse_source_id
 
     latest_owner = "local"
     latest_fresh_sidecar_id: str | None = None
     has_fresh_server_source = False
 
     for contribution in contributions:
-        source_kind, source_scope, source_provider = _parse_source_id(contribution.source_id)
+        source_kind, source_scope, source_provider = parse_source_id(contribution.source_id)
         if source_provider != provider_id:
             continue
         latest_owner = source_scope if source_kind == "sidecar" else "local"
@@ -40,7 +40,7 @@ def _latest_usage_sidecar_id(contributions: Iterable[Any], *, provider_id: str) 
     return latest_fresh_sidecar_id or latest_owner
 
 
-def _rebuild_latest_usage_slot(
+def rebuild_latest_usage_slot(
     session: Session,
     *,
     provider_id: str,
@@ -117,7 +117,7 @@ def _rebuild_latest_usage_slot(
         )
 
 
-def _upsert_contribution(
+def upsert_contribution(
     session: Session, *, source_id: str, card: Any, account_id: str, card_json: dict
 ) -> None:
     from app.models.db import LatestUsageContribution
@@ -161,7 +161,7 @@ def _upsert_contribution(
 def backfill_latest_usage_contributions(session: Session) -> int:
     """Seed producer ownership from existing current cards on upgrade."""
     from app.models.db import LatestUsage, LatestUsageContribution
-    from app.services.accumulator import _is_error_card, _source_id
+    from app.services.accumulator import is_error_card_json, sidecar_source_id
 
     rows = session.exec(select(LatestUsage)).all()
     inserted = 0
@@ -170,7 +170,7 @@ def backfill_latest_usage_contributions(session: Session) -> int:
             data = json.loads(row.card_json or "{}")
         except (ValueError, TypeError):
             continue
-        if _is_error_card(row.card_json):
+        if is_error_card_json(row.card_json):
             continue
         # Existing rows predate source ownership and may contain merged
         # provenance. Prefer the API collector when it was one of the sources;
@@ -179,7 +179,7 @@ def backfill_latest_usage_contributions(session: Session) -> int:
         if row.sidecar_id == "local" or "api" in data_sources:
             source_id = f"server:{row.provider_id}"
         else:
-            source_id = _source_id(row.provider_id, row.sidecar_id or "local")
+            source_id = sidecar_source_id(row.provider_id, row.sidecar_id or "local")
         existing = session.exec(
             select(LatestUsageContribution).where(
                 LatestUsageContribution.provider_id == row.provider_id,
@@ -254,7 +254,7 @@ def reconcile_latest_usage_snapshot(
         touched.add(key)
         removed += 1
     for window_type, variant, model_id in touched:
-        _rebuild_latest_usage_slot(
+        rebuild_latest_usage_slot(
             session,
             provider_id=provider_id,
             account_id=account_id,
@@ -306,7 +306,7 @@ def mark_latest_usage_source_stale(
         row.card_json = json.dumps(data)
         touched.add((row.account_id, row.window_type, row.variant, row.model_id))
     for touched_account_id, window_type, variant, model_id in touched:
-        _rebuild_latest_usage_slot(
+        rebuild_latest_usage_slot(
             session,
             provider_id=provider_id,
             account_id=touched_account_id,

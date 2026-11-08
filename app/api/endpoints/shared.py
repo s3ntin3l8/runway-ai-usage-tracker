@@ -13,7 +13,7 @@ from app.core.utils import resolve_user_tz
 # Higher rank = longer / more authoritative window.
 
 
-def _validate_iso_param(name: str, value: str | None) -> None:
+def validate_iso_param(name: str, value: str | None) -> None:
     """Validate an ISO-8601 query parameter, raising 422 on malformed input."""
     if value:
         try:
@@ -22,7 +22,7 @@ def _validate_iso_param(name: str, value: str | None) -> None:
             raise HTTPException(status_code=422, detail=f"{name} must be a valid ISO-8601 datetime")
 
 
-def _local_period_anchors(tz: ZoneInfo, *, now: datetime | None = None) -> dict[str, Any]:
+def local_period_anchors(tz: ZoneInfo, *, now: datetime | None = None) -> dict[str, Any]:
     """Current month/year boundaries in `tz`, as UTC instants + key strings.
 
     The "This period" / "Yearly" cumulative gauges reset on the user's local
@@ -41,7 +41,7 @@ def _local_period_anchors(tz: ZoneInfo, *, now: datetime | None = None) -> dict[
     }
 
 
-_MONTH_KEY_RE = re.compile(r"^\d{4}-\d{2}$")
+MONTH_KEY_RE = re.compile(r"^\d{4}-\d{2}$")
 
 # TTL response-cache config for the read-heavy dashboard endpoints (see
 # app/core/cache.py). TTLs are set below each endpoint's own client poll
@@ -55,17 +55,17 @@ _MONTH_KEY_RE = re.compile(r"^\d{4}-\d{2}$")
 # (HomePage.tsx), and it must report how old the underlying computation
 # really is (up to the TTL above) — restamping it at serve time would make
 # a cache hit falsely claim to be as fresh as a live recompute.
-_FLEET_CACHE_KEY = "fleet"
-_FLEET_CACHE_TTL = 30.0
-_GLOBAL_STATS_CACHE_KEY = "global-stats"
-_GLOBAL_STATS_CACHE_TTL = 300.0
-_USAGE_SOURCES_CACHE_KEY = "usage-sources:v2"
-_USAGE_SOURCES_CACHE_TTL = 60.0
-_TOP_N_CACHE_TTL = 300.0
-_FORECAST_CACHE_TTL = 45.0
+FLEET_CACHE_KEY = "fleet"
+FLEET_CACHE_TTL = 30.0
+GLOBAL_STATS_CACHE_KEY = "global-stats"
+GLOBAL_STATS_CACHE_TTL = 300.0
+USAGE_SOURCES_CACHE_KEY = "usage-sources:v2"
+USAGE_SOURCES_CACHE_TTL = 60.0
+TOP_N_CACHE_TTL = 300.0
+FORECAST_CACHE_TTL = 45.0
 
 
-def _normalize_filter(value: str | None) -> str | None:
+def normalize_filter(value: str | None) -> str | None:
     """Canonicalize an optional string filter used both as a cache key
     component and a query predicate, so equivalent requests that differ only
     in casing/whitespace share one cache entry and one SQL path instead of
@@ -75,7 +75,7 @@ def _normalize_filter(value: str | None) -> str | None:
     return value.strip().lower() or None
 
 
-def _month_bounds_utc(tz: ZoneInfo, period_key: str) -> tuple[datetime, datetime]:
+def month_bounds_utc(tz: ZoneInfo, period_key: str) -> tuple[datetime, datetime]:
     """[start, end) UTC instants for a 'YYYY-MM' month on the user's local calendar.
 
     Mirrors the frontend's startOfMonthISO/endOfMonthISO so historical month
@@ -90,7 +90,7 @@ def _month_bounds_utc(tz: ZoneInfo, period_key: str) -> tuple[datetime, datetime
     return start_local.astimezone(UTC), end_local.astimezone(UTC)
 
 
-def _resolve_ranking_since(session: Session, since: str | None, days: float | None) -> datetime:
+def resolve_ranking_since(session: Session, since: str | None, days: float | None) -> datetime:
     """Lower bound for the Top-* rankings: explicit `since` wins, else `days`
     back from now, else the start of the current month on the user's calendar
     (the UTC rollup lags that boundary, so these scan events live)."""
@@ -98,13 +98,13 @@ def _resolve_ranking_since(session: Session, since: str | None, days: float | No
         return parse_iso8601_utc(since)
     if days is not None:
         return datetime.now(UTC) - timedelta(days=days)
-    return _local_period_anchors(resolve_user_tz(session))["month_start_utc"]
+    return local_period_anchors(resolve_user_tz(session))["month_start_utc"]
 
 
 __all__ = [
-    "_local_period_anchors",
-    "_month_bounds_utc",
-    "_normalize_filter",
-    "_resolve_ranking_since",
-    "_validate_iso_param",
+    "local_period_anchors",
+    "month_bounds_utc",
+    "normalize_filter",
+    "resolve_ranking_since",
+    "validate_iso_param",
 ]

@@ -51,7 +51,7 @@ class ZaiCollector(BaseCollector):
         account_id = getattr(self, "credential_account_id", None) or self.account_id or "default"
         db_key = credential_provider.get_provider_api_key("zai", account_id=account_id)
         if db_key:
-            self._current_input_source = "config"
+            self.current_input_source = "config"
             return db_key
         from app.services.token_cache import token_cache
 
@@ -59,7 +59,7 @@ class ZaiCollector(BaseCollector):
         if cache_data:
             tokens, metadata = cache_data
             source = metadata.get("source") or "sidecar"
-            self._current_input_source = (
+            self.current_input_source = (
                 "config" if source in ("config", "manual_config") else "sidecar"
             )
             cached_key = tokens.get("api_key") or tokens.get("oauth_token")
@@ -67,7 +67,7 @@ class ZaiCollector(BaseCollector):
                 return cached_key
         key = (settings.ZAI_API_KEY or None) if account_id == "default" else None
         if key:
-            self._current_input_source = "server"
+            self.current_input_source = "server"
         return key
 
     async def _get_current_key(self) -> str | None:
@@ -125,7 +125,7 @@ class ZaiCollector(BaseCollector):
             "pace": "N/A",
             "detail": detail,
             "data_source": self.DATA_SOURCE_API,
-            "input_source": getattr(self, "_current_input_source", "unknown"),
+            "input_source": getattr(self, "current_input_source", "unknown"),
             "is_unlimited": False,
             "unit_type": "unknown",
         }
@@ -259,7 +259,7 @@ class ZaiCollector(BaseCollector):
             "reset_at": reset_at,
             "window": window_str,
             "data_source": self.DATA_SOURCE_API,
-            "input_source": getattr(self, "_current_input_source", "unknown"),
+            "input_source": getattr(self, "current_input_source", "unknown"),
             "updated_at": datetime.now(UTC).isoformat(),
         }
 

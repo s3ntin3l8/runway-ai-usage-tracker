@@ -69,7 +69,7 @@ from sqlalchemy import select as sa_select
 from sqlmodel import Session, col, select
 
 from app.models.db import UsageEvent
-from app.services.maintenance._chunked_sql import chunked_update
+from app.services.maintenance.chunked_sql import chunked_update
 from app.services.project_label import (
     WORKTREE_CONTAINERS,
     derive_project,

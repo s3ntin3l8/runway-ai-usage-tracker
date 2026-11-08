@@ -8,7 +8,7 @@ from sqlmodel import Session, SQLModel, create_engine
 
 from app.models.db import QuotaSnapshot
 from app.models.schemas import LimitCard
-from app.services.forecast import _fit_trend, compute_forecast
+from app.services.forecast import compute_forecast, fit_trend
 
 
 @pytest.fixture
@@ -62,7 +62,7 @@ class TestTheilSenEstimator:
         """On clean linear data, Theil-Sen and OLS produce the same fit."""
         xs = [0.0, 3600.0, 7200.0, 10800.0]
         ys = [10.0, 30.0, 50.0, 70.0]
-        fit = _fit_trend(xs, ys)
+        fit = fit_trend(xs, ys)
         assert fit is not None
         assert fit.method == "theil_sen"
         assert fit.slope == pytest.approx(20.0 / 3600.0, rel=1e-9)
@@ -73,7 +73,7 @@ class TestTheilSenEstimator:
         # Clean slope = 5 pct/hr = 5/3600 pct/sec
         clean_xs = [i * 3600.0 for i in range(8)]
         clean_ys = [5.0 * (i + 1) for i in range(8)]
-        clean = _fit_trend(clean_xs, clean_ys)
+        clean = fit_trend(clean_xs, clean_ys)
         assert clean is not None
 
         # Inject a 10× spike at index 4 — y jumps from 25 to 250 then resumes.
@@ -82,7 +82,7 @@ class TestTheilSenEstimator:
         spiky_ys[5] = 30.0
         spiky_ys[6] = 35.0
         spiky_ys[7] = 40.0
-        spiky = _fit_trend(clean_xs, spiky_ys)
+        spiky = fit_trend(clean_xs, spiky_ys)
         assert spiky is not None
 
         # Theil-Sen median-of-pairwise-slopes is robust: a single outlier
@@ -91,8 +91,8 @@ class TestTheilSenEstimator:
 
     def test_below_min_buckets_returns_none(self):
         """Fewer than MIN_BUCKETS_FOR_TREND points → no fit."""
-        assert _fit_trend([0.0, 3600.0], [10.0, 20.0]) is None
-        assert _fit_trend([0.0, 3600.0, 7200.0], [10.0, 20.0, 30.0]) is None
+        assert fit_trend([0.0, 3600.0], [10.0, 20.0]) is None
+        assert fit_trend([0.0, 3600.0, 7200.0], [10.0, 20.0, 30.0]) is None
 
 
 class TestHorizonCap:

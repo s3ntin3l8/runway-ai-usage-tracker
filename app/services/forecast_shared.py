@@ -14,7 +14,7 @@ LIMIT_PCT = 100.0
 
 
 @dataclass(frozen=True)
-class _NowState:
+class NowState:
     """Card's current position."""
 
     used: float | None
@@ -22,7 +22,7 @@ class _NowState:
 
 
 @dataclass(frozen=True)
-class _Projection:
+class Projection:
     """Projected position at the end of the window."""
 
     used: float | None = None

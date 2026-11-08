@@ -35,13 +35,13 @@ from sqlmodel import Session, col, select
 
 from app.models.db import ProviderConfig, UsageEvent, UsagePeriodRollup
 from app.services.cost_calculator import PricingIndex, is_aggregate_event_id, resolve_price_row
-from app.services.maintenance._rebuild import rebuild_pairs_best_effort
-from app.services.maintenance._retry import (
+from app.services.maintenance.event_cost import ResolvedCost, resolve_event_cost
+from app.services.maintenance.rebuild import rebuild_pairs_best_effort
+from app.services.maintenance.retry import (
     DEFAULT_LOCK_PROFILE,
     LockRetryProfile,
     commit_batch,
 )
-from app.services.maintenance.event_cost import ResolvedCost, resolve_event_cost
 from app.services.maintenance.windows import rebuild_windows_for_providers
 from app.services.model_normalization import ARGON_MODEL_ID, is_argon_model_id
 from app.services.period_rollups import rebuild_rollups_for_pairs

@@ -15,11 +15,11 @@ from app.services.refresh_policy import ROTATING_REFRESH_PROVIDERS, machine_owns
 
 logger = logging.getLogger(__name__)
 
-_active_source: ContextVar[tuple[str, str, str] | None] = ContextVar(
+active_source: ContextVar[tuple[str, str, str] | None] = ContextVar(
     "active_credential_source", default=None
 )
 
-_OAUTH_CREDENTIAL_KEYS = {
+OAUTH_CREDENTIAL_KEYS = {
     "oauth_token",
     "refresh_token",
     "id_token",
@@ -34,10 +34,10 @@ _OAUTH_CREDENTIAL_KEYS = {
     "xai_access",
     "xai_refresh",
 }
-_CLI_FAMILY_KEYS = frozenset({"cli_access_token", "cli_expires_at", "cli_device_id"})
+CLI_FAMILY_KEYS = frozenset({"cli_access_token", "cli_expires_at", "cli_device_id"})
 
 
-def _credential_expiry(tokens: dict[str, str]) -> float | None:
+def credential_expiry(tokens: dict[str, str]) -> float | None:
     expiry = IdentityExtractor.exp_from_tokens(tokens)
     if expiry is not None or not tokens.get("cli_access_token"):
         return expiry
@@ -49,14 +49,14 @@ def _credential_expiry(tokens: dict[str, str]) -> float | None:
         return None
 
 
-def _merge_cli_family(
+def merge_cli_family(
     target: dict[str, str], incoming: dict[str, str], *, prefer_incoming: bool
 ) -> None:
     """The device identity and expiry belong to the selected CLI bearer."""
     if incoming.get("cli_access_token") and prefer_incoming:
-        for key in _CLI_FAMILY_KEYS:
+        for key in CLI_FAMILY_KEYS:
             target.pop(key, None)
-        target.update({key: value for key, value in incoming.items() if key in _CLI_FAMILY_KEYS})
+        target.update({key: value for key, value in incoming.items() if key in CLI_FAMILY_KEYS})
 
 
 AUTH_VALUE_KEYS = CREDENTIAL_VALUE_KEYS
@@ -70,7 +70,7 @@ OAUTH_TOKEN_VALUE_KEYS = AUTH_VALUE_KEYS - {"api_key", "session_cookie"}
 _EXPLICIT_SOURCES = frozenset({"config", "manual_config"})
 
 
-def _resolve_source(incoming: str | None, existing: str | None) -> str | None:
+def resolve_source(incoming: str | None, existing: str | None) -> str | None:
     """Pick the winning origin for an entry being (re)stored.
 
     Falsy incoming keeps the previous origin; an explicit dashboard origin is

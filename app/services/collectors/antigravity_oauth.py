@@ -10,7 +10,7 @@ from app.services.token_cache import borrowable_entries, token_cache
 logger = logging.getLogger(__name__)
 
 
-def _is_token_expired(tokens: dict) -> bool:
+def is_token_expired(tokens: dict) -> bool:
     """True when *tokens* carries a known expiry that has already passed.
 
     Unknown/opaque expiry (no `exp`/`expiry_date`) returns False — absence of
@@ -51,7 +51,7 @@ class AntigravityOAuthMixin(OAuthBaseCollector):
         # "nothing usable" when diagnosing a 401 incident.
         if cache_data is None:
             slot_state = "missing"
-        elif _is_token_expired(cache_data[0]):
+        elif is_token_expired(cache_data[0]):
             slot_state = "expired"
         else:
             slot_state = "fresh"
@@ -78,7 +78,7 @@ class AntigravityOAuthMixin(OAuthBaseCollector):
                 self.account_id,
                 provider="antigravity",
             )
-            fresh = [a for a in candidates if not _is_token_expired(a["tokens"])]
+            fresh = [a for a in candidates if not is_token_expired(a["tokens"])]
             pool = fresh or candidates
             if pool:
                 newest = min(pool, key=lambda a: a["age"])
@@ -98,7 +98,7 @@ class AntigravityOAuthMixin(OAuthBaseCollector):
         if cache_data:
             tokens, metadata = cache_data
             source = metadata.get("source") or "sidecar"
-            self._current_input_source = (
+            self.current_input_source = (
                 "config" if source in ("config", "manual_config") else "sidecar"
             )
             # The agy version the sidecar reported with this token (#687). It
@@ -113,7 +113,7 @@ class AntigravityOAuthMixin(OAuthBaseCollector):
             return tokens.get("oauth_token")
         return None
 
-    async def _is_token_expired(self) -> bool:
+    async def is_token_expired(self) -> bool:
         """Defer freshness to the cache TTL; agy owns the token's renewal."""
         return False
 

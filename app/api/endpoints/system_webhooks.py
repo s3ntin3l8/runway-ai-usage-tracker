@@ -9,13 +9,13 @@ from sqlmodel import Session, col, select
 from app.core.db import get_session
 from app.core.rate_limit import limiter
 from app.core.security import require_admin_key
-from app.models._datetime import iso_utc
 from app.models.db import (
     ProviderConfig,
     WebhookConfig,
     WebhookCredentialAlert,
 )
 from app.models.schemas import LimitCard
+from app.models.utc_datetime import iso_utc
 
 router = APIRouter()
 
@@ -264,7 +264,7 @@ async def test_webhook(
     if not config:
         raise HTTPException(status_code=404, detail="Webhook not found")
 
-    from app.services.webhooks import _fire_webhook
+    from app.services.webhooks import fire_webhook
 
     test_card = LimitCard(
         service_name="Test Alert",
@@ -284,7 +284,7 @@ async def test_webhook(
     )
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
-            await _fire_webhook(client, config, test_card, config.threshold_pct + 5)
+            await fire_webhook(client, config, test_card, config.threshold_pct + 5)
         return {"status": "sent"}
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Webhook delivery failed: {e}")

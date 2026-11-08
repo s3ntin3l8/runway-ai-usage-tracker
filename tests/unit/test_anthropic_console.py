@@ -191,7 +191,7 @@ async def test_collector_errors_are_sanitized_and_independent(status, error_type
     assert result[0]["error_type"] == error_type
     assert "sample-session" not in str(result)
     if status == 429:
-        assert collector._last_retry_after == 1234
+        assert collector.last_retry_after == 1234
 
 
 async def test_collector_uses_pinned_org_and_returns_zero_not_empty():

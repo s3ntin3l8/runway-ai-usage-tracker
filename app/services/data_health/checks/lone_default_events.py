@@ -15,7 +15,6 @@ from sqlalchemy import func
 from sqlmodel import Session, col, select
 
 from app.models.db import LatestUsage, ProviderConfig, QuotaSnapshot, UsageEvent
-from app.services.data_health._provider_accounts import candidate_targets
 from app.services.data_health.base import (
     AsyncHook,
     Check,
@@ -27,6 +26,7 @@ from app.services.data_health.base import (
     ParamSpec,
     Severity,
 )
+from app.services.data_health.provider_accounts import candidate_targets
 from app.services.maintenance.account_merge import merge_gauge_series, plan_merge_gauge_series
 from app.services.maintenance.event_reassign import apply_reassign_default, plan_reassign_default
 

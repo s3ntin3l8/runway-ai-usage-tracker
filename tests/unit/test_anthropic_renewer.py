@@ -96,8 +96,8 @@ def _renewer(*paths: Path) -> AnthropicRenewer:
 
 
 def test_constants_match_the_server_refresher():
-    assert token_refresher._REFRESH_ENDPOINTS["anthropic"] == ar.TOKEN_ENDPOINT
-    assert token_refresher._PROVIDER_CLIENT_IDS["anthropic"] == ar.CLIENT_ID
+    assert token_refresher.REFRESH_ENDPOINTS["anthropic"] == ar.TOKEN_ENDPOINT
+    assert token_refresher.PROVIDER_CLIENT_IDS["anthropic"] == ar.CLIENT_ID
 
 
 def test_the_renewer_is_named_after_its_provider():

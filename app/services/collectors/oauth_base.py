@@ -97,13 +97,13 @@ class OAuthBaseCollector(BaseCollector):
             if self._is_refresh_backoff_active():
                 logger.debug(f"Skipping {self.provider_name} token refresh — in rate-limit backoff")
                 token = await self._get_current_token()
-                if token and not await self._is_token_expired():
+                if token and not await self.is_token_expired():
                     return token
                 return None
 
             # 2. Check if we have a valid token
             token = await self._get_current_token()
-            if token and not await self._is_token_expired() and not force_refresh:
+            if token and not await self.is_token_expired() and not force_refresh:
                 # Pre-emptive refresh: if the token is expiring soon, refresh
                 # proactively to avoid an expiry race during the next API call.
                 if await self._is_token_expiring_soon():
@@ -161,7 +161,7 @@ class OAuthBaseCollector(BaseCollector):
             # Refresh failed — return current token if still valid so the caller
             # can attempt the API call with the existing token rather than failing
             # entirely because the refresh endpoint is struggling.
-            if token and not await self._is_token_expired():
+            if token and not await self.is_token_expired():
                 return token
             return None
 
@@ -201,7 +201,7 @@ class OAuthBaseCollector(BaseCollector):
     async def _get_current_token(self) -> str | None:
         raise NotImplementedError
 
-    async def _is_token_expired(self) -> bool:
+    async def is_token_expired(self) -> bool:
         raise NotImplementedError
 
     async def _execute_refresh(self, client: httpx.AsyncClient) -> dict | None:

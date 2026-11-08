@@ -23,15 +23,15 @@ from app.core.utils import IdentityExtractor, scrub_log
 from app.services.account_identity import canonical_account_id
 from app.services.refresh_policy import ROTATING_REFRESH_PROVIDERS, is_machine_bundle
 from app.services.token_cache_sources import (
-    _OAUTH_CREDENTIAL_KEYS,
     AUTH_VALUE_KEYS,
+    OAUTH_CREDENTIAL_KEYS,
     OAUTH_TOKEN_VALUE_KEYS,
     SourceCacheInstance,
-    _active_source,
-    _merge_cli_family,
-    _resolve_source,
+    active_source,
     borrowable_entries,
     is_foreign_account_entry,
+    merge_cli_family,
+    resolve_source,
     server_may_refresh,
 )
 from app.services.token_cache_store import TokenCacheStore
@@ -145,7 +145,7 @@ class TokenCache(TokenCacheStore):
         async with self._lock:
             self._clear_expired_unlocked()
 
-            selection = _active_source.get()
+            selection = active_source.get()
             if selection and selection[0] == provider:
                 account_id, source_id = selection[1], selection[2]
                 entry = self._source_cache.get(provider, {}).get(account_id, {}).get(source_id)
@@ -183,7 +183,7 @@ class TokenCache(TokenCacheStore):
         async with self._lock:
             self._clear_expired_unlocked()
 
-            selection = _active_source.get()
+            selection = active_source.get()
             if selection and selection[0] == provider:
                 selected_account = selection[1] if account_id in (None, "default") else account_id
                 selected = (
@@ -232,7 +232,7 @@ class TokenCache(TokenCacheStore):
         async with self._lock:
             self._clear_expired_unlocked()
 
-            selection = _active_source.get()
+            selection = active_source.get()
             if selection and selection[0] == provider:
                 selected_account = selection[1] if account_id in (None, "default") else account_id
                 selected = (
@@ -274,14 +274,14 @@ class TokenCache(TokenCacheStore):
     @asynccontextmanager
     async def using_source(self, provider: str, account_id: str, source_id: str):
         """Route cache reads in the current async task to one credential bundle."""
-        token = _active_source.set((provider, canonical_account_id(account_id), source_id))
+        token = active_source.set((provider, canonical_account_id(account_id), source_id))
         attempt: dict[str, bool] = {"auth_failed": False}
         attempt_token = _active_attempt.set(attempt)
         try:
             yield attempt
         finally:
             _active_attempt.reset(attempt_token)
-            _active_source.reset(token)
+            active_source.reset(token)
 
     async def observe_response(self, response: Any) -> None:
         """Mark the active bundle rejected when its credential gets HTTP 401 or 403."""
@@ -309,7 +309,7 @@ class TokenCache(TokenCacheStore):
         attempt["auth_failed"] = True
 
     def _request_uses_active_source(self, request: Any) -> bool:
-        selection = _active_source.get()
+        selection = active_source.get()
         if selection is None:
             return False
         provider, account_id, source_id = selection
@@ -497,7 +497,7 @@ class TokenCache(TokenCacheStore):
 
     def current_source_tokens(self, provider: str, account_id: str) -> dict[str, str] | None:
         """Synchronous lookup used by legacy credential-provider helpers."""
-        selection = _active_source.get()
+        selection = active_source.get()
         if not selection or selection[0] != provider:
             return None
         requested = canonical_account_id(account_id) if account_id else selection[1]
@@ -509,14 +509,14 @@ class TokenCache(TokenCacheStore):
 
     def selected_source(self, provider: str) -> tuple[str, str] | None:
         """``(account_id, source_id)`` this context is pinned to for ``provider``, if any."""
-        selection = _active_source.get()
+        selection = active_source.get()
         if selection is None or selection[0] != provider:
             return None
         return selection[1], selection[2]
 
     def is_source_selected(self, provider: str, account_id: str | None = None) -> bool:
         """Whether this context is pinned to a source for the requested account."""
-        selection = _active_source.get()
+        selection = active_source.get()
         if selection is None or selection[0] != provider:
             return False
         if account_id is None or canonical_account_id(account_id) == "default":
@@ -524,7 +524,7 @@ class TokenCache(TokenCacheStore):
         return canonical_account_id(account_id) == selection[1]
 
     def current_source_metadata(self, provider: str, account_id: str) -> dict[str, Any] | None:
-        selection = _active_source.get()
+        selection = active_source.get()
         if not selection or selection[0] != provider:
             return None
         requested = canonical_account_id(account_id) if account_id else selection[1]
@@ -569,7 +569,7 @@ class TokenCache(TokenCacheStore):
                 }
             return stats
 
-    async def _get_source_credentials(self, provider: str) -> list[dict[str, Any]]:
+    async def get_source_credentials(self, provider: str) -> list[dict[str, Any]]:
         """Internal Token Health helper; returned token values must never be exposed."""
         async with self._lock:
             self._clear_expired_unlocked()
@@ -606,10 +606,10 @@ __all__ = [
     "SourceCacheInstance",
     "TokenCache",
     "TokenCacheStore",
-    "_OAUTH_CREDENTIAL_KEYS",
-    "_active_source",
-    "_merge_cli_family",
-    "_resolve_source",
+    "OAUTH_CREDENTIAL_KEYS",
+    "active_source",
+    "merge_cli_family",
+    "resolve_source",
     "borrowable_entries",
     "is_foreign_account_entry",
     "server_may_refresh",

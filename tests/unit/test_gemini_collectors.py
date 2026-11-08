@@ -484,9 +484,9 @@ async def test_default_gemini_collector_reads_only_the_cached_bundle(tmp_path, m
 
     assert await collector.is_configured() is True
     assert await collector._get_current_token() == "ya29.cached"
-    assert await collector._is_token_expired() is False
+    assert await collector.is_token_expired() is False
     assert collector.account_label == "me@example.com"
-    assert collector._current_input_source == "sidecar"
+    assert collector.current_input_source == "sidecar"
 
 
 @pytest.mark.asyncio
@@ -498,7 +498,7 @@ async def test_default_gemini_collector_without_a_bundle_is_unconfigured(monkeyp
 
     assert await collector.is_configured() is False
     # No bundle is "nothing to check", not "expired" (that would force a pointless refresh).
-    assert await collector._is_token_expired() is False
+    assert await collector.is_token_expired() is False
     (card,) = await collector._error_handler()
     assert card["error_type"] == "missing_config"
 
@@ -522,7 +522,7 @@ async def test_default_gemini_collector_refreshes_the_cached_bundle(monkeypatch)
     monkeypatch.setattr("app.services.collectors.gemini_oauth.http_request_with_retry", post)
     collector = GeminiCollector()
 
-    assert await collector._is_token_expired() is True
+    assert await collector.is_token_expired() is True
     # An API 401 is what forces the refresh (an expired token is otherwise tried as-is).
     token = await collector._get_valid_token(MagicMock(), force_refresh=True)
 
@@ -532,7 +532,7 @@ async def test_default_gemini_collector_refreshes_the_cached_bundle(monkeypatch)
     assert cached is not None
     assert cached[0]["oauth_token"] == "ya29.fresh"
     assert cached[0]["refresh_token"] == "1//rt"
-    assert await collector._is_token_expired() is False
+    assert await collector.is_token_expired() is False
 
 
 @pytest.mark.asyncio

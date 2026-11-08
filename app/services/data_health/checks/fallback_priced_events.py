@@ -31,7 +31,6 @@ from app.services.data_health.base import (
     FixResult,
     Severity,
 )
-from app.services.maintenance._retry import DATA_HEALTH_LOCK_PROFILE
 from app.services.maintenance.fallback_priced_events import (
     FALLBACK_TOLERANCE,
     apply_fallback_priced_events,
@@ -43,6 +42,7 @@ from app.services.maintenance.fallback_priced_events import (
 from app.services.maintenance.fallback_priced_events import (
     group_key as make_group_key,
 )
+from app.services.maintenance.retry import DATA_HEALTH_LOCK_PROFILE
 from app.services.maintenance.sql_cost import sql_cost as _sql_cost
 
 

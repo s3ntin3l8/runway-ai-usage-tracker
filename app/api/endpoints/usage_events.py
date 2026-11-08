@@ -7,7 +7,7 @@ from sqlmodel import Session
 from app.core.date_utils import parse_iso8601_utc
 from app.core.db import get_session
 from app.core.rate_limit import limiter
-from app.models._datetime import iso_utc
+from app.models.utc_datetime import iso_utc
 from app.services.event_query import (
     query_events,
     query_heatmap,

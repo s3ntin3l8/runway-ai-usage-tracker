@@ -10,7 +10,7 @@ import httpx
 
 from app.core.utils import error_card
 from app.services.account_identity import canonical_account_id
-from app.services.collectors._anthropic_common import anthropic_limits_from
+from app.services.collectors.anthropic_common import anthropic_limits_from
 from app.services.token_cache import token_cache
 
 
@@ -56,7 +56,7 @@ async def collect_native_oauth(collector: Any, client: httpx.AsyncClient) -> lis
 
     if not token:
         return []
-    if await collector._is_token_expired():
+    if await collector.is_token_expired():
         return failure("Native login expired; renew in the owning app", "auth_failed")
     headers = {
         "Authorization": f"Bearer {token}",
@@ -67,7 +67,7 @@ async def collect_native_oauth(collector: Any, client: httpx.AsyncClient) -> lis
     def response_failure(response: httpx.Response) -> list[dict[str, Any]]:
         if response.status_code == 429:
             delay = response.headers.get("Retry-After", "300")
-            collector._last_retry_after = max(300, int(delay) if delay.isdigit() else 300)
+            collector.last_retry_after = max(300, int(delay) if delay.isdigit() else 300)
             return failure("Native OAuth rate limited", "rate_limited")
         if response.status_code in (401, 403):
             return failure("Native OAuth access rejected", "auth_failed")
@@ -118,9 +118,9 @@ async def collect_native_oauth(collector: Any, client: httpx.AsyncClient) -> lis
         return failure("Unsupported native OAuth response", "parse_error")
     if token_cache.current_source_tokens("anthropic", collector.account_id or "default") != tokens:
         return failure("Native OAuth credential changed during verification", "unavailable")
-    collector._current_input_source = "sidecar"
+    collector.current_input_source = "sidecar"
     try:
-        cards = collector._parse_oauth_response(usage, collector._name_map, {"email": identity})
+        cards = collector.parse_oauth_response(usage, collector.web_name_map, {"email": identity})
     except (ValueError, TypeError, AttributeError, KeyError):
         return failure("Unsupported native OAuth quota", "parse_error")
     if not cards or any(

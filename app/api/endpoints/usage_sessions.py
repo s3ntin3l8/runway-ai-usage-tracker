@@ -5,7 +5,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, Depends, Query, Request
 from sqlmodel import Session
 
-from app.api.endpoints._shared import _validate_iso_param
+from app.api.endpoints.shared import validate_iso_param
 from app.core.date_utils import parse_iso8601_utc
 from app.core.db import get_session
 from app.core.rate_limit import limiter
@@ -88,8 +88,8 @@ async def get_usage_sessions_paginated(  # noqa: PLR0913, PLR0917 — known-debt
     events from the totals. All are event-level and intersect. Sorting is
     server-side over the full result set; `sort_by` picks the column (duration /
     messages / tokens / cost / recent) and `sort_dir` the direction."""
-    _validate_iso_param("since", since)
-    _validate_iso_param("until", until)
+    validate_iso_param("since", since)
+    validate_iso_param("until", until)
     # Synchronous SQLite work: off the event loop, so a cold aggregation does
     # not stall the server (and the sidecar ingests that arrive meanwhile).
     return await asyncio.to_thread(
@@ -124,8 +124,8 @@ async def _session_options(
     limit: int,
     session: Session,
 ) -> list[str]:
-    _validate_iso_param("since", since)
-    _validate_iso_param("until", until)
+    validate_iso_param("since", since)
+    validate_iso_param("until", until)
     return await asyncio.to_thread(
         query_session_filter_options,
         session,

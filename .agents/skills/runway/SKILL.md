@@ -22,9 +22,9 @@ Evidence: `app/models/db.py::UsageEvent`, `EventIngestor._try_insert_event`, `Ev
 
 `usage_events` is authoritative. Editing a rollup or usage window alone creates a repair that the next rebuild can undo. Data Health actions and CLI repair wrappers share plan/apply services under `app/services/maintenance/`; keep the substantive repair there.
 
-For repairs that commit batches, failure after an earlier batch still leaves committed event changes. Preserve rebuilding for the affected provider/account pairs even on partial failure. `maintenance/_rebuild.py::rebuild_pairs_best_effort` rolls back the failed transaction before rebuilding and does not mask the original exception.
+For repairs that commit batches, failure after an earlier batch still leaves committed event changes. Preserve rebuilding for the affected provider/account pairs even on partial failure. `maintenance/rebuild.py::rebuild_pairs_best_effort` rolls back the failed transaction before rebuilding and does not mask the original exception.
 
-Evidence: `app/services/period_rollups.py`, `app/services/maintenance/_rebuild.py`, `docs/data-health.md`.
+Evidence: `app/services/period_rollups.py`, `app/services/maintenance/rebuild.py`, `docs/data-health.md`.
 
 ## 3. An empty response is not proof that live cards disappeared
 

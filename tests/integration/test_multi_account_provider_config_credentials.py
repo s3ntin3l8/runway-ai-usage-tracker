@@ -299,7 +299,7 @@ def test_setting_api_key_while_clearing_cookie_keeps_same_account_key(
     from app.services.collector_manager import manager
     from app.services.token_cache import token_cache
 
-    monkeypatch.setattr(manager, "_sync_collectors", no_sync)
+    monkeypatch.setattr(manager, "sync_collectors", no_sync)
     monkeypatch.setattr(manager, "collect_one", no_collect)
 
     r = client.put(

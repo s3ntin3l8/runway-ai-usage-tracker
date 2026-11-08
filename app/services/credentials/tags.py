@@ -24,7 +24,7 @@ from sqlmodel import Session, and_, col, or_, select
 from app.models.db import CredentialTag, PendingCredentialTag, ProviderConfig
 from app.services.account_identity import canonical_account_id
 
-_QUOTA_PREVIEW_FIELDS = frozenset(
+QUOTA_PREVIEW_FIELDS = frozenset(
     {
         "service_name",
         "remaining",
@@ -40,7 +40,7 @@ _QUOTA_PREVIEW_FIELDS = frozenset(
 
 def safe_quota_preview(preview: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Keep only the quota fields safe to persist and return to the UI."""
-    return [{key: item[key] for key in _QUOTA_PREVIEW_FIELDS if key in item} for item in preview]
+    return [{key: item[key] for key in QUOTA_PREVIEW_FIELDS if key in item} for item in preview]
 
 
 def live_sidecar_ids(session: Session) -> list[str]:

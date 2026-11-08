@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 
 from app.core.registry import registry
-from app.services.credential_provider import CredentialProvider, _server_may_read
+from app.services.credential_provider import CredentialProvider, server_may_read
 from app.services.credentials import provider as cp
 
 MARKER = "PLANTED-SECRET"
@@ -31,7 +31,7 @@ def _file_rules():
     """Every ``(provider_id, rule)`` file rule in the registry the server does not own."""
     for provider_id in registry.get_all_providers():
         for rule in registry.get_provider(provider_id).get("rules", []):
-            if rule.get("type") == "file" and not _server_may_read(rule):
+            if rule.get("type") == "file" and not server_may_read(rule):
                 yield provider_id, rule
 
 
@@ -91,7 +91,7 @@ def hermetic_home(tmp_path, monkeypatch):
 def test_the_planted_files_would_be_credentials_if_the_server_read_them(hermetic_home, monkeypatch):
     """Control: with the gate off, the same planted files DO yield credentials. Without
     this the regression test below could pass for the wrong reason (a bad plant)."""
-    monkeypatch.setattr(cp, "_server_may_read", lambda _rule: True)
+    monkeypatch.setattr(cp, "server_may_read", lambda _rule: True)
 
     leaked = {
         provider_id
@@ -221,9 +221,9 @@ def test_the_static_guard_catches_what_it_is_meant_to(tmp_path):
 def test_a_rule_the_server_skips_says_why(caplog):
     """A malformed rule must not look like an intentional sidecar-only skip."""
     with caplog.at_level("DEBUG", logger=cp.logger.name):
-        assert not _server_may_read({"type": "file", "id": "broken"})
-        assert not _server_may_read({"type": "file", "id": "gem", "paths": ["~/.gemini/x"]})
-        assert _server_may_read(
+        assert not server_may_read({"type": "file", "id": "broken"})
+        assert not server_may_read({"type": "file", "id": "gem", "paths": ["~/.gemini/x"]})
+        assert server_may_read(
             {"type": "file", "paths": ["{{CONFIG_DIR:runway}}/github_oauth.json"]}
         )
     reasons = [r.getMessage() for r in caplog.records]

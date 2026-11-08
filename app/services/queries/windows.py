@@ -8,8 +8,8 @@ from typing import Any
 from sqlalchemy import func
 from sqlmodel import Session, and_, col, or_, select
 
-from app.models._datetime import iso_utc
 from app.models.db import UsageEvent, UsageWindow
+from app.models.utc_datetime import iso_utc
 from app.services.window_closer import WINDOW_DURATION
 
 # ---------------------------------------------------------------------------

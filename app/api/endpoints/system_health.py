@@ -19,7 +19,6 @@ from app.core.log_redaction import redact_secrets, redact_url
 from app.core.rate_limit import limiter
 from app.core.security import SESSION_COOKIE, require_admin_key, resolve_auth
 from app.core.utils import scrub_log
-from app.models._datetime import iso_utc
 from app.models.db import (
     AuditLog,
     ClaudeCloudCollectorState,
@@ -27,6 +26,7 @@ from app.models.db import (
     SidecarRegistry,
 )
 from app.models.schemas import SidecarDownloadsResponse
+from app.models.utc_datetime import iso_utc
 from app.services import audit_log
 from app.services.claude_cloud_setting import claude_cloud_collector_enabled
 from app.services.collector_manager import manager
@@ -97,7 +97,7 @@ def _debug_split_strategies(
     primary: list[tuple[Any, str]] = []
     enrichment: list[tuple[Any, str]] = []
     for strategy_fn, s_id in dynamic:
-        opts = collector._get_strategy_options(s_id)
+        opts = collector.get_strategy_options(s_id)
         if opts.get("enrich"):
             enrichment.append((strategy_fn, s_id))
         else:
@@ -279,7 +279,7 @@ async def get_collector_status(
     enums and the account id only.
     """
     try:
-        await manager._sync_collectors()
+        await manager.sync_collectors()
     except Exception as e:
         logger.error(f"Failed to sync collectors for status: {e}")
     return {**manager.get_collector_stats(), "claude_cloud": _claude_cloud_health(session)}
@@ -539,7 +539,7 @@ async def get_raw_provider_data(
         raw_responses.append(_capture_response_entry(response))
 
     try:
-        await manager._sync_collectors()
+        await manager.sync_collectors()
 
         if account_id is not None:
             selected = manager.smart_collectors.get(f"{provider_id}:{account_id}")
@@ -561,7 +561,7 @@ async def get_raw_provider_data(
             ]
 
         if not target_collectors and account_id is None:
-            collector = manager._create_collector(provider_id)
+            collector = manager.create_collector(provider_id)
             if collector:
                 target_collectors = [collector]
 
@@ -591,7 +591,7 @@ async def get_raw_provider_data(
         active_strategy: str | None = None
         active_strategy_card_count = 0
 
-        dynamic = collector._resolve_strategies() if collector.STRATEGIES else []
+        dynamic = collector.resolve_strategies() if collector.STRATEGIES else []
 
         if not dynamic:
             async with httpx.AsyncClient(

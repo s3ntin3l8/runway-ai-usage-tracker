@@ -9,7 +9,7 @@ from sqlalchemy import text
 from sqlmodel import Session, select
 
 from app.models.db import UsageEvent
-from app.services.queries._shared import sqlite_utc_timestamp
+from app.services.queries.shared import sqlite_utc_timestamp
 
 # ---------------------------------------------------------------------------
 # 7.3  query_heatmap

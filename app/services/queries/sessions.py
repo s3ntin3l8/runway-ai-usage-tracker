@@ -10,8 +10,8 @@ from sqlalchemy import text
 from sqlmodel import Session
 
 from app.core.cache import cache_get, cache_set
-from app.models._datetime import iso_utc
-from app.services.queries._shared import _parse_ts, sqlite_utc_timestamp
+from app.models.utc_datetime import iso_utc
+from app.services.queries.shared import parse_ts, sqlite_utc_timestamp
 from app.services.session_names import resolve_names
 
 # ---------------------------------------------------------------------------
@@ -301,8 +301,8 @@ def query_sessions(  # noqa: PLR0913 — the event-level filters extend the sign
 
     results: list[dict[str, Any]] = []
     for row in rows:
-        ts_start = _parse_ts(row.ts_start)
-        ts_end = _parse_ts(row.ts_end)
+        ts_start = parse_ts(row.ts_start)
+        ts_end = parse_ts(row.ts_end)
         duration = int((ts_end - ts_start).total_seconds()) if ts_start and ts_end else 0
 
         # Parse model list from GROUP_CONCAT result

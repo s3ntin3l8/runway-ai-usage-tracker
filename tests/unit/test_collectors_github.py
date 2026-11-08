@@ -163,7 +163,7 @@ class TestGitHubCollector:
         assert len(result) == 1
         assert result[0]["remaining"] == "ERR"
         assert result[0]["error_type"] == "rate_limited"
-        assert collector._last_retry_after == 60.0
+        assert collector.last_retry_after == 60.0
 
     @pytest.mark.asyncio
     async def test_github_token_lookup_uses_account_scope(self, mock_http_client):

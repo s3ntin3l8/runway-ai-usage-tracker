@@ -12,7 +12,7 @@ from app.services.collector_manager import CollectorManager
 from app.services.smart_collector import SmartCollector
 from app.services.source_outcome import source_outcome
 from app.services.source_probe import isolated_collector, probe_sources
-from app.services.token_cache import TokenCache, _active_source
+from app.services.token_cache import TokenCache, active_source
 
 GOOD = {"service_name": "x", "remaining": "10", "data_source": "api"}
 ERR_AUTH = {"service_name": "x", "remaining": "ERR", "error_type": "auth_failed"}
@@ -52,18 +52,18 @@ class _Stub:
         self.account_id = account_id or "default"
         self.account_label = account_label
         self.credential_account_id = "default"
-        self._user_strategies = None
+        self.user_strategies = None
         self.verified_identity = None
         self.verified_subject = None
         self.collect_calls = 0
         _Stub.instances.append(self)
 
     def apply_strategy_config(self, strategies):
-        self._user_strategies = strategies
+        self.user_strategies = strategies
 
     async def collect(self, client):
         self.collect_calls += 1
-        selection = _active_source.get()
+        selection = active_source.get()
         source_id = selection[2] if selection else "?"
         _Stub.seen.append((source_id, self.REFRESHABLE))
         behaviour = _Stub.behaviours.get(source_id, [GOOD])
@@ -98,9 +98,9 @@ def manager_fixture(monkeypatch):
         "deepseek:default": SmartCollector(collector=shared, collector_name="x", ttl=60)
     }
     m.shared_collector = shared  # for assertions
-    m._sync_collectors = AsyncMock()
+    m.sync_collectors = AsyncMock()
     # Every write a real collection makes must stay untouched.
-    for name in ("_record_source_health", "_promote_source_identity", "_revoke_cookie_tag"):
+    for name in ("_record_source_health", "promote_source_identity", "_revoke_cookie_tag"):
         monkeypatch.setattr(m, name, Mock(), raising=False)
     monkeypatch.setattr("app.services.source_probe.token_cache", TokenCache())
     monkeypatch.setattr("app.services.collector_manager.token_cache", TokenCache())
@@ -108,7 +108,7 @@ def manager_fixture(monkeypatch):
 
 
 def _serve(manager, candidates):
-    manager._source_candidates = AsyncMock(return_value=candidates)
+    manager.source_candidates = AsyncMock(return_value=candidates)
 
 
 @pytest.mark.asyncio
@@ -133,7 +133,7 @@ async def test_each_source_is_probed_pinned_in_failover_order_without_touching_t
     assert manager.shared_collector.collect_calls == 0
     # Nothing a real collection writes was written.
     manager._record_source_health.assert_not_called()
-    manager._promote_source_identity.assert_not_called()
+    manager.promote_source_identity.assert_not_called()
     manager._revoke_cookie_tag.assert_not_called()
 
 
@@ -147,7 +147,7 @@ async def test_a_probe_never_refreshes_a_token(manager):
 
 @pytest.mark.asyncio
 async def test_sources_that_cannot_or_should_not_be_called_are_reported_not_probed(manager):
-    manager._awaiting_machine_renewal = Mock(
+    manager.awaiting_machine_renewal = Mock(
         side_effect=lambda p, c, all_: c["source_id"] == "src:idle"
     )
     manager.set_credential_source_preferences("deepseek", "default", {"src:off": (False, 9)})
@@ -227,17 +227,17 @@ def test_isolated_collector_copies_configuration_but_shares_no_state():
     assert clone is not template
     assert (clone.account_id, clone.account_label) == ("alice@example.com", "Alice")
     assert clone.credential_account_id == "slot-1"
-    assert clone._user_strategies == {"web": {"enabled": False}}
+    assert clone.user_strategies == {"web": {"enabled": False}}
     clone.account_id = "changed-by-a-response"
     assert template.account_id == "alice@example.com"
-    clone._user_strategies["web"]["enabled"] = True  # a collector editing its own strategies
-    assert template._user_strategies == {"web": {"enabled": False}}
+    clone.user_strategies["web"]["enabled"] = True  # a collector editing its own strategies
+    assert template.user_strategies == {"web": {"enabled": False}}
 
 
 @pytest.mark.asyncio
 async def test_unknown_account_without_a_collector_returns_nothing(manager, monkeypatch):
     manager.smart_collectors = {}
-    monkeypatch.setattr(manager, "_create_collector", Mock(return_value=None))
+    monkeypatch.setattr(manager, "create_collector", Mock(return_value=None))
     assert await probe_sources(manager, "deepseek", "ghost") == []
 
 
@@ -340,7 +340,7 @@ async def test_a_collector_that_cannot_be_built_means_nothing_to_probe_not_a_500
     manager, monkeypatch
 ):
     manager.smart_collectors = {}
-    monkeypatch.setattr(manager, "_create_collector", Mock(side_effect=RuntimeError("bad ctor")))
+    monkeypatch.setattr(manager, "create_collector", Mock(side_effect=RuntimeError("bad ctor")))
     assert await probe_sources(manager, "deepseek", "ghost") == []
 
 

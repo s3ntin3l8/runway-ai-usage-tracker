@@ -8,7 +8,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from sqlmodel import Session, col, select
 
-from app.api.endpoints.fleet_shared import _validation_summary
+from app.api.endpoints.fleet_shared import validation_summary
 from app.core.date_utils import parse_iso8601_utc
 from app.core.db import get_session
 from app.core.login_dirs import stored_login_dirs
@@ -895,7 +895,7 @@ async def _write_local_cards(
         # Force the next collect_all to re-sync per-account collectors so
         # the freshly-pushed accounts get SmartCollectors immediately
         # instead of waiting the 60s sync throttle.
-        manager._last_sync_time = 0.0
+        manager.last_sync_time = 0.0
         poller.wake()
 
 
@@ -1062,7 +1062,7 @@ async def ingest_metrics(
     try:
         payload = IngestRequest.model_validate_json(body_bytes)
     except Exception as e:
-        detail = _validation_summary(e)
+        detail = validation_summary(e)
         logger.error("Failed to parse ingest payload: %s", detail)
         raise HTTPException(status_code=400, detail=f"Invalid payload: {detail}") from None
 

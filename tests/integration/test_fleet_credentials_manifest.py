@@ -850,7 +850,7 @@ async def test_completed_claude_manifest_keeps_reported_resolved_siblings(
         first[1],
         other_store[1],
     }
-    preferences = manager._credential_source_preferences[(provider, first[2])]
+    preferences = manager.credential_source_preferences[(provider, first[2])]
     assert preferences[first[1]] == (False, 3)
     assert other_store[1] in preferences and second[1] not in preferences
 
@@ -897,7 +897,7 @@ async def test_failed_manifest_commit_retains_claude_cache_and_preferences(
         source_id,
         reported[1],
     }
-    assert manager._credential_source_preferences[(provider, account)][source_id] == (True, 3)
+    assert manager.credential_source_preferences[(provider, account)][source_id] == (True, 3)
 
 
 @pytest.mark.asyncio

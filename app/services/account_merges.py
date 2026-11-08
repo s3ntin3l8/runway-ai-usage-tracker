@@ -23,7 +23,6 @@ from typing import Any
 from sqlalchemy.exc import OperationalError
 from sqlmodel import Session, select
 
-from app.models._datetime import iso_utc
 from app.models.db import (
     LatestUsage,
     LatestUsageContribution,
@@ -32,6 +31,7 @@ from app.models.db import (
     UsageEvent,
     UsageWindow,
 )
+from app.models.utc_datetime import iso_utc
 from app.services.account_identity import canonical_account_id
 
 logger = logging.getLogger(__name__)

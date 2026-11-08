@@ -337,7 +337,7 @@ def test_the_credential_inventory_lists_the_merged_accounts(client, session, mon
     from app.services.credentials import inventory as credential_inventory
 
     monkeypatch.setattr(credential_inventory, "engine", session.get_bind())
-    monkeypatch.setattr(credential_inventory, "_scan_server_credentials", lambda: ({}, set()))
+    monkeypatch.setattr(credential_inventory, "scan_server_credentials", lambda: ({}, set()))
     _add_provider_config(session, provider_id="openrouter", account_id="alice@example.com")
     _add_provider_config(session, provider_id="openrouter", account_id="bob@example.com")
 
@@ -363,7 +363,7 @@ def test_building_the_inventory_gives_its_connection_back(client, session, monke
 
     engine = session.get_bind().engine
     monkeypatch.setattr(credential_inventory, "engine", engine)
-    monkeypatch.setattr(credential_inventory, "_scan_server_credentials", lambda: ({}, set()))
+    monkeypatch.setattr(credential_inventory, "scan_server_credentials", lambda: ({}, set()))
 
     # Warm up first: the endpoint's own session checks its connection out
     # lazily, and that one stays checked out for the rest of the test.

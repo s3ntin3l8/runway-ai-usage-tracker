@@ -51,10 +51,10 @@ from typing import Any
 from sqlalchemy import ColumnElement
 from sqlmodel import Session, SQLModel, col, delete, select, update
 
-from app.services.maintenance._retry import (
-    _INITIAL_BACKOFF,
-    _MAX_RETRIES,
-    _retry_on_lock,
+from app.services.maintenance.retry import (
+    INITIAL_BACKOFF,
+    MAX_RETRIES,
+    retry_on_lock,
 )
 
 logger = logging.getLogger(__name__)
@@ -69,8 +69,8 @@ def _next_batch_ids(
     cursor_id: int,
     batch_size: int,
     *,
-    max_retries: int = _MAX_RETRIES,
-    initial_backoff: float = _INITIAL_BACKOFF,
+    max_retries: int = MAX_RETRIES,
+    initial_backoff: float = INITIAL_BACKOFF,
 ) -> list[int]:
     id_col = col(model.id)  # type: ignore[attr-defined]
     stmt = (
@@ -82,7 +82,7 @@ def _next_batch_ids(
         session.commit()
         return rows
 
-    return _retry_on_lock(
+    return retry_on_lock(
         _read,
         session=session,
         action_desc=f"batch ID lookup of {model.__name__}",
@@ -96,14 +96,14 @@ def _execute_with_retry(
     statement: Any,
     *,
     action_desc: str,
-    max_retries: int = _MAX_RETRIES,
-    initial_backoff: float = _INITIAL_BACKOFF,
+    max_retries: int = MAX_RETRIES,
+    initial_backoff: float = INITIAL_BACKOFF,
 ) -> None:
     def _write() -> None:
         session.exec(statement)
         session.commit()
 
-    _retry_on_lock(
+    retry_on_lock(
         _write,
         session=session,
         action_desc=action_desc,
@@ -119,8 +119,8 @@ def chunked_update(
     values: dict[str, Any],
     *,
     batch_size: int = _DEFAULT_BATCH,
-    max_retries: int = _MAX_RETRIES,
-    initial_backoff: float = _INITIAL_BACKOFF,
+    max_retries: int = MAX_RETRIES,
+    initial_backoff: float = INITIAL_BACKOFF,
 ) -> int:
     """UPDATE `model` rows matching `where`, `batch_size` at a time."""
     if max_retries <= 0:
@@ -162,8 +162,8 @@ def chunked_delete(
     where: Sequence[ColumnElement[bool]],
     *,
     batch_size: int = _DEFAULT_BATCH,
-    max_retries: int = _MAX_RETRIES,
-    initial_backoff: float = _INITIAL_BACKOFF,
+    max_retries: int = MAX_RETRIES,
+    initial_backoff: float = INITIAL_BACKOFF,
 ) -> int:
     """DELETE `model` rows matching `where`, `batch_size` at a time."""
     if max_retries <= 0:

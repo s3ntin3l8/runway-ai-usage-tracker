@@ -34,14 +34,14 @@ class OpenRouterCollector(BaseCollector):
         account_id = getattr(self, "credential_account_id", None) or self.account_id or "default"
         db_key = credential_provider.get_provider_api_key("openrouter", account_id=account_id)
         if db_key:
-            self._current_input_source = "config"
+            self.current_input_source = "config"
             return db_key
 
         cache_data = await token_cache.get_with_metadata("openrouter", account_id=account_id)
         if cache_data:
             tokens, metadata = cache_data
             source = metadata.get("source") or "sidecar"
-            self._current_input_source = (
+            self.current_input_source = (
                 "config" if source in ("config", "manual_config") else "sidecar"
             )
             cached_key = tokens.get("api_key") or tokens.get("oauth_token")
@@ -50,7 +50,7 @@ class OpenRouterCollector(BaseCollector):
 
         key = (settings.OPENROUTER_API_KEY or None) if account_id == "default" else None
         if key:
-            self._current_input_source = "server"
+            self.current_input_source = "server"
         return key
 
     async def is_configured(self) -> bool:
@@ -123,7 +123,7 @@ class OpenRouterCollector(BaseCollector):
                         "limit_value": total_credits,
                         "unit_type": "currency",
                         "data_source": "api",
-                        "input_source": getattr(self, "_current_input_source", "unknown"),
+                        "input_source": getattr(self, "current_input_source", "unknown"),
                         "updated_at": datetime.now(UTC).isoformat(),
                     }
                 )
@@ -158,7 +158,7 @@ class OpenRouterCollector(BaseCollector):
                             "limit_value": key_limit,
                             "unit_type": "currency",
                             "data_source": self.DATA_SOURCE_API,
-                            "input_source": getattr(self, "_current_input_source", "unknown"),
+                            "input_source": getattr(self, "current_input_source", "unknown"),
                             "updated_at": datetime.now(UTC).isoformat(),
                         }
                     )

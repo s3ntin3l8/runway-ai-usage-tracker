@@ -134,7 +134,7 @@ The sidecar extracts the token and expiry from `~/.claude/.credentials.json`, an
 | `app/services/collectors/anthropic_oauth.py` | OAuth bearer strategy |
 | `app/services/collectors/anthropic_web.py` | Claude.ai web session strategy |
 | `app/services/collectors/anthropic_console.py` | Claude Console (`platform.claude.com`) balance strategy |
-| `app/services/collectors/_anthropic_common.py` | Shared card shaping for every Anthropic source |
+| `app/services/collectors/anthropic_common.py` | Shared card shaping for every Anthropic source |
 | `app/services/collectors/base.py` | Collector base class — strategies, enrichment, card contract |
 | `app/services/collectors/oauth_base.py` | Shared OAuth token handling |
 | `scripts/sidecar.py` | Sidecar credential rules and event dispatch |

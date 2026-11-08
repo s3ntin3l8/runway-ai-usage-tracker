@@ -214,7 +214,7 @@ class AnthropicConsoleCollector(BaseCollector):
     def _cookie(self) -> str | None:
         account_id = getattr(self, "credential_account_id", None) or self.account_id or "default"
         metadata = token_cache.current_source_metadata(self.PROVIDER_ID, account_id) or {}
-        self._current_input_source = (
+        self.current_input_source = (
             "sidecar" if metadata.get("source_type") in ("cookie", "keychain") else "config"
         )
         return credential_provider.get_provider_session_cookie(
@@ -252,7 +252,7 @@ class AnthropicConsoleCollector(BaseCollector):
             data = await console_get(client, f"/api/organizations/{org_id}/prepaid/credits", cookie)
             return [parse_console_balance(data)]
         except ConsoleAPIError as exc:
-            self._last_retry_after = exc.retry_after
+            self.last_retry_after = exc.retry_after
             return [error_card("Claude Console", "🟠", str(exc), error_type=exc.error_type)]
         except (ValueError, TypeError, AttributeError):
             return [

@@ -22,13 +22,13 @@ class _FakeCollector:
 
     STRATEGIES: dict = {}
 
-    def _get_strategy_options(self, s_id: str) -> dict:
+    def get_strategy_options(self, s_id: str) -> dict:
         entry = self.STRATEGIES.get(s_id)
         if entry and len(entry) == 3:
             return entry[2]
         return {}
 
-    def _resolve_strategies(self) -> list:
+    def resolve_strategies(self) -> list:
         return []
 
     async def reset(self):
@@ -287,7 +287,7 @@ def test_debug_raw_endpoint_with_strategies(client, monkeypatch):
     async def _noop_sync():
         pass
 
-    monkeypatch.setattr(manager, "_sync_collectors", _noop_sync)
+    monkeypatch.setattr(manager, "sync_collectors", _noop_sync)
     smart = SmartCollector(_MockCollector(), "test_provider", ttl=9999)
     manager.smart_collectors["test_provider"] = smart
 
@@ -341,7 +341,7 @@ def test_debug_raw_endpoint_active_strategy_detection(client, monkeypatch):
     async def _noop_sync():
         pass
 
-    monkeypatch.setattr(manager, "_sync_collectors", _noop_sync)
+    monkeypatch.setattr(manager, "sync_collectors", _noop_sync)
     smart = SmartCollector(_MultiStrategyCollector(), "multi_test", ttl=9999)
     manager.smart_collectors["multi_test"] = smart
 
@@ -383,7 +383,7 @@ def test_debug_raw_endpoint_selects_requested_account(client, monkeypatch):
     async def _noop_sync():
         pass
 
-    monkeypatch.setattr(manager, "_sync_collectors", _noop_sync)
+    monkeypatch.setattr(manager, "sync_collectors", _noop_sync)
     manager.smart_collectors["account_test:alice"] = SmartCollector(
         _AccountCollector(account_id="alice"), "Account Test Alice", ttl=9999
     )
@@ -442,7 +442,7 @@ def test_debug_raw_endpoint_legacy_collector(client, monkeypatch):
     async def _noop_sync():
         pass
 
-    monkeypatch.setattr(manager, "_sync_collectors", _noop_sync)
+    monkeypatch.setattr(manager, "sync_collectors", _noop_sync)
     smart = SmartCollector(_LegacyCollector(), "legacy_provider", ttl=9999)
     manager.smart_collectors["legacy_provider"] = smart
 
@@ -495,7 +495,7 @@ def test_debug_raw_endpoint_with_enrichment(client, monkeypatch):
     async def _noop_sync():
         pass
 
-    monkeypatch.setattr(manager, "_sync_collectors", _noop_sync)
+    monkeypatch.setattr(manager, "sync_collectors", _noop_sync)
     smart = SmartCollector(_EnrichCollector(), "enrich_provider", ttl=9999)
     manager.smart_collectors["enrich_provider"] = smart
 
@@ -536,7 +536,7 @@ def test_debug_raw_endpoint_collector_error(client, monkeypatch):
     async def _noop_sync():
         pass
 
-    monkeypatch.setattr(manager, "_sync_collectors", _noop_sync)
+    monkeypatch.setattr(manager, "sync_collectors", _noop_sync)
     smart = SmartCollector(_ErrorCollector(), "error_provider", ttl=9999)
     manager.smart_collectors["error_provider"] = smart
 
@@ -575,7 +575,7 @@ def test_debug_raw_endpoint_legacy_collector_exception(client, monkeypatch):
     async def _noop_sync():
         pass
 
-    monkeypatch.setattr(manager, "_sync_collectors", _noop_sync)
+    monkeypatch.setattr(manager, "sync_collectors", _noop_sync)
     smart = SmartCollector(_FailingLegacyCollector(), "failing_legacy", ttl=9999)
     manager.smart_collectors["failing_legacy"] = smart
 
@@ -644,7 +644,7 @@ def test_raw_capture_runs_on_a_copy_so_it_never_resets_the_pollers_collector(cli
         "smart_collectors",
         {"deepseek:default": SmartCollector(collector=live, collector_name="x", ttl=60)},
     )
-    monkeypatch.setattr(manager, "_sync_collectors", AsyncMock())
+    monkeypatch.setattr(manager, "sync_collectors", AsyncMock())
     reset_on: list[object] = []
 
     async def record_reset(self):

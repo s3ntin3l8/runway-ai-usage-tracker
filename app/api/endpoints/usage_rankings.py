@@ -5,19 +5,18 @@ from typing import Any
 from fastapi import APIRouter, Depends, Query, Request
 from sqlmodel import Session
 
-from app.api.endpoints._shared import (
-    _GLOBAL_STATS_CACHE_KEY,
-    _GLOBAL_STATS_CACHE_TTL,
-    _TOP_N_CACHE_TTL,
-    _normalize_filter,
-    _resolve_ranking_since,
+from app.api.endpoints.shared import (
+    GLOBAL_STATS_CACHE_KEY,
+    GLOBAL_STATS_CACHE_TTL,
+    TOP_N_CACHE_TTL,
+    normalize_filter,
+    resolve_ranking_since,
 )
 from app.core.cache import cache_get, cache_set
 from app.core.date_utils import parse_iso8601_utc
 from app.core.db import get_session
 from app.core.rate_limit import limiter
 from app.core.utils import resolve_user_tz
-from app.models._datetime import iso_utc
 from app.models.schemas import (
     GlobalStatsResponse,
     SourceAppsResponse,
@@ -27,6 +26,7 @@ from app.models.schemas import (
     TopSessionsResponse,
     TopToolsResponse,
 )
+from app.models.utc_datetime import iso_utc
 from app.services.event_query import (
     query_anomalies,
 )
@@ -69,7 +69,7 @@ async def get_top_models(
 
     Offloaded to a worker thread via `asyncio.to_thread` (see
     `fetch_fleet_view` for why) — this is a `GROUP BY` scan over usage_events.
-    Response is cached (keyed by every query param) for `_TOP_N_CACHE_TTL`.
+    Response is cached (keyed by every query param) for `TOP_N_CACHE_TTL`.
     """
     # The key carries every filter the total depends on, so a cached entry never mixes counts.
     cache_key = f"top-models:{metric}:{days}:{since}:{until}:{exclude_cache}:{sidecar_id}:{limit}"
@@ -78,7 +78,7 @@ async def get_top_models(
         return cached
 
     def _work() -> TopModelsResponse:
-        since_utc = _resolve_ranking_since(session, since, days)
+        since_utc = resolve_ranking_since(session, since, days)
         # One query, so the rows and the count they describe cannot disagree.
         ranked = rank_top_models(
             session,
@@ -100,7 +100,7 @@ async def get_top_models(
         )
 
     result = await asyncio.to_thread(_work)
-    cache_set(cache_key, result, _TOP_N_CACHE_TTL)
+    cache_set(cache_key, result, TOP_N_CACHE_TTL)
     return result
 
 
@@ -132,7 +132,7 @@ async def get_source_apps(  # noqa: PLR0913, PLR0917 — known-debt: 11 query fi
 
     Offloaded to a worker thread via `asyncio.to_thread` (see
     `fetch_fleet_view` for why) — this is a `GROUP BY` scan over usage_events.
-    Response is cached (keyed by every query param) for `_TOP_N_CACHE_TTL`.
+    Response is cached (keyed by every query param) for `TOP_N_CACHE_TTL`.
     """
     cache_key = (
         f"source-apps:{metric}:{days}:{since}:{until}:{exclude_cache}:"
@@ -143,7 +143,7 @@ async def get_source_apps(  # noqa: PLR0913, PLR0917 — known-debt: 11 query fi
         return cached
 
     def _work() -> SourceAppsResponse:
-        since_utc = _resolve_ranking_since(session, since, days)
+        since_utc = resolve_ranking_since(session, since, days)
         apps = query_source_apps(
             session,
             since=since_utc,
@@ -160,7 +160,7 @@ async def get_source_apps(  # noqa: PLR0913, PLR0917 — known-debt: 11 query fi
         )
 
     result = await asyncio.to_thread(_work)
-    cache_set(cache_key, result, _TOP_N_CACHE_TTL)
+    cache_set(cache_key, result, TOP_N_CACHE_TTL)
     return result
 
 
@@ -177,9 +177,9 @@ async def get_global_stats(
 
     Offloaded to a worker thread via `asyncio.to_thread` (see
     `fetch_fleet_view` for why) — includes a full `usage_events` session-economics
-    scan (no index on session_id). Response is cached for `_GLOBAL_STATS_CACHE_TTL`.
+    scan (no index on session_id). Response is cached for `GLOBAL_STATS_CACHE_TTL`.
     """
-    cache_key = f"{_GLOBAL_STATS_CACHE_KEY}:{sidecar_id}:{exclude_cache}"
+    cache_key = f"{GLOBAL_STATS_CACHE_KEY}:{sidecar_id}:{exclude_cache}"
     cached = cache_get(cache_key)
     if cached is not None:
         return cached
@@ -193,7 +193,7 @@ async def get_global_stats(
             )
         )
     )
-    cache_set(cache_key, result, _GLOBAL_STATS_CACHE_TTL)
+    cache_set(cache_key, result, GLOBAL_STATS_CACHE_TTL)
     return result
 
 
@@ -216,9 +216,9 @@ async def get_top_projects(
 
     Offloaded to a worker thread via `asyncio.to_thread` (see
     `fetch_fleet_view` for why) — this is a `GROUP BY` scan over usage_events.
-    Response is cached (keyed by every query param) for `_TOP_N_CACHE_TTL`.
+    Response is cached (keyed by every query param) for `TOP_N_CACHE_TTL`.
     """
-    provider_id = _normalize_filter(provider_id)
+    provider_id = normalize_filter(provider_id)
     # The key carries every filter the total depends on, so a cached entry never mixes counts.
     cache_key = f"top-projects:{metric}:{days}:{since}:{until}:{exclude_cache}:{provider_id}:{sidecar_id}:{limit}"
     cached = cache_get(cache_key)
@@ -229,7 +229,7 @@ async def get_top_projects(
         # One query, so the rows and the count they describe cannot disagree.
         ranked = rank_top_projects(
             session,
-            since=_resolve_ranking_since(session, since, days),
+            since=resolve_ranking_since(session, since, days),
             until=parse_iso8601_utc(until) if until else None,
             metric=metric,
             exclude_cache=exclude_cache,
@@ -248,7 +248,7 @@ async def get_top_projects(
         )
 
     result = await asyncio.to_thread(_work)
-    cache_set(cache_key, result, _TOP_N_CACHE_TTL)
+    cache_set(cache_key, result, TOP_N_CACHE_TTL)
     return result
 
 
@@ -299,9 +299,9 @@ async def get_top_sessions(
 
     Offloaded to a worker thread via `asyncio.to_thread` (see
     `fetch_fleet_view` for why) — this is a `GROUP BY` scan over usage_events.
-    Response is cached (keyed by every query param) for `_TOP_N_CACHE_TTL`.
+    Response is cached (keyed by every query param) for `TOP_N_CACHE_TTL`.
     """
-    provider_id = _normalize_filter(provider_id)
+    provider_id = normalize_filter(provider_id)
     # The key carries every filter the total depends on, so a cached entry never mixes counts.
     cache_key = (
         f"top-sessions:{metric}:{days}:{since}:{until}:{exclude_cache}:"
@@ -315,7 +315,7 @@ async def get_top_sessions(
         # One query, so the rows and the count they describe cannot disagree.
         ranked = rank_top_sessions(
             session,
-            since=_resolve_ranking_since(session, since, days),
+            since=resolve_ranking_since(session, since, days),
             until=parse_iso8601_utc(until) if until else None,
             metric=metric,
             exclude_cache=exclude_cache,
@@ -335,7 +335,7 @@ async def get_top_sessions(
         )
 
     result = await asyncio.to_thread(_work)
-    cache_set(cache_key, result, _TOP_N_CACHE_TTL)
+    cache_set(cache_key, result, TOP_N_CACHE_TTL)
     return result
 
 
@@ -367,9 +367,9 @@ async def get_top_hosts(
 
     Offloaded to a worker thread via `asyncio.to_thread` (see
     `fetch_fleet_view` for why) — this is a `GROUP BY` scan over usage_events.
-    Response is cached (keyed by every query param) for `_TOP_N_CACHE_TTL`.
+    Response is cached (keyed by every query param) for `TOP_N_CACHE_TTL`.
     """
-    provider_id = _normalize_filter(provider_id)
+    provider_id = normalize_filter(provider_id)
     # The key carries every filter the total depends on, so a cached entry never mixes counts.
     cache_key = (
         f"top-hosts:{metric}:{days}:{since}:{until}:{exclude_cache}:"
@@ -383,7 +383,7 @@ async def get_top_hosts(
         # One query, so the rows and the count they describe cannot disagree.
         ranked = rank_top_hosts(
             session,
-            since=_resolve_ranking_since(session, since, days),
+            since=resolve_ranking_since(session, since, days),
             until=parse_iso8601_utc(until) if until else None,
             metric=metric,
             exclude_cache=exclude_cache,
@@ -402,7 +402,7 @@ async def get_top_hosts(
         )
 
     result = await asyncio.to_thread(_work)
-    cache_set(cache_key, result, _TOP_N_CACHE_TTL)
+    cache_set(cache_key, result, TOP_N_CACHE_TTL)
     return result
 
 
@@ -423,9 +423,9 @@ async def get_top_tools(
     Offloaded to a worker thread via `asyncio.to_thread` (see
     `fetch_fleet_view` for why) — includes a `json_each` unnest over
     usage_events, inherently unindexable. Response is cached (keyed by every
-    query param) for `_TOP_N_CACHE_TTL`.
+    query param) for `TOP_N_CACHE_TTL`.
     """
-    provider_id = _normalize_filter(provider_id)
+    provider_id = normalize_filter(provider_id)
     # The key carries every filter the total depends on, so a cached entry never mixes counts.
     cache_key = f"top-tools:{days}:{since}:{until}:{provider_id}:{sidecar_id}:{limit}"
     cached = cache_get(cache_key)
@@ -436,7 +436,7 @@ async def get_top_tools(
         # One query, so the rows and the count they describe cannot disagree.
         ranked = rank_top_tools(
             session,
-            since=_resolve_ranking_since(session, since, days),
+            since=resolve_ranking_since(session, since, days),
             until=parse_iso8601_utc(until) if until else None,
             provider_id=provider_id,
             sidecar_id=sidecar_id,
@@ -452,7 +452,7 @@ async def get_top_tools(
         )
 
     result = await asyncio.to_thread(_work)
-    cache_set(cache_key, result, _TOP_N_CACHE_TTL)
+    cache_set(cache_key, result, TOP_N_CACHE_TTL)
     return result
 
 

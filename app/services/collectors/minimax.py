@@ -125,7 +125,7 @@ class MiniMaxCollector(BaseCollector):
         account_id = getattr(self, "credential_account_id", None) or self.account_id or "default"
         db_key = credential_provider.get_provider_api_key("minimax", account_id=account_id)
         if db_key:
-            self._current_input_source = "config"
+            self.current_input_source = "config"
             self._credential_kind = _credential_kind_of(db_key)
             return db_key
 
@@ -135,7 +135,7 @@ class MiniMaxCollector(BaseCollector):
         if cache_data:
             tokens, metadata = cache_data
             source = metadata.get("source") or "sidecar"
-            self._current_input_source = (
+            self.current_input_source = (
                 "config" if source in ("config", "manual_config") else "sidecar"
             )
             api_key = tokens.get("api_key")
@@ -150,7 +150,7 @@ class MiniMaxCollector(BaseCollector):
                 return oauth_token
         key = (settings.MINIMAX_API_KEY or None) if account_id == "default" else None
         if key:
-            self._current_input_source = "server"
+            self.current_input_source = "server"
             self._credential_kind = _credential_kind_of(key)
         return key
 
@@ -357,7 +357,7 @@ class MiniMaxCollector(BaseCollector):
                     "pace": "N/A",
                     "detail": "No active plan",
                     "data_source": self.DATA_SOURCE_API,
-                    "input_source": getattr(self, "_current_input_source", "unknown"),
+                    "input_source": getattr(self, "current_input_source", "unknown"),
                     "is_unlimited": False,
                     "unit_type": "unknown",
                     "updated_at": now_str,
@@ -493,7 +493,7 @@ class MiniMaxCollector(BaseCollector):
             "model_id": None,
             "reset_at": reset_at.isoformat() if reset_at else None,
             "data_source": self.DATA_SOURCE_API,
-            "input_source": getattr(self, "_current_input_source", "unknown"),
+            "input_source": getattr(self, "current_input_source", "unknown"),
             "usage_url": self.USAGE_URL,
             "updated_at": now_str,
         }

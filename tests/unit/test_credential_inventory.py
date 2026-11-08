@@ -36,7 +36,7 @@ def engine(monkeypatch):
     SQLModel.metadata.create_all(eng)
     monkeypatch.setattr(credential_inventory, "engine", eng)
     # Hermetic: never read this machine's real env vars / files. Tests that care patch it.
-    monkeypatch.setattr(credential_inventory, "_scan_server_credentials", lambda: ({}, set()))
+    monkeypatch.setattr(credential_inventory, "scan_server_credentials", lambda: ({}, set()))
     return eng
 
 
@@ -471,7 +471,7 @@ async def test_data_path_tolerates_garbage_card_json(engine, cache, card):
 def _scan(monkeypatch, found, scanned=None):
     monkeypatch.setattr(
         credential_inventory,
-        "_scan_server_credentials",
+        "scan_server_credentials",
         lambda: (found, set(found) if scanned is None else scanned),
     )
 
@@ -610,9 +610,9 @@ async def test_a_failed_scan_never_hides_registered_server_rows(engine, cache, m
 @pytest.mark.asyncio
 async def test_scan_server_credentials_reads_env_and_flags_shadowing(monkeypatch):
     monkeypatch.setenv("GITHUB_TOKEN", "ghp_test")  # pragma: allowlist secret
-    monkeypatch.setattr("app.services.credentials.provider._expand_rule_paths", lambda _p: [])
+    monkeypatch.setattr("app.services.credentials.provider.expand_rule_paths", lambda _p: [])
 
-    found, scanned = credential_inventory._scan_server_credentials()
+    found, scanned = credential_inventory.scan_server_credentials()
 
     (origin,) = found["github"]
     assert (origin["source_type"], origin["label"], origin["keys"]) == (
@@ -644,7 +644,7 @@ async def test_scan_server_credentials_includes_runways_own_device_login_file(mo
         staticmethod(lambda provider_id: [managed] if provider_id == "github" else []),
     )
 
-    found, _ = credential_inventory._scan_server_credentials()
+    found, _ = credential_inventory.scan_server_credentials()
 
     (origin,) = found["github"]
     assert origin["label"] == "github_oauth.json"

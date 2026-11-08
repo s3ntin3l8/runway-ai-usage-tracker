@@ -20,7 +20,7 @@ from sqlalchemy import func
 from sqlmodel import Session, col, select
 
 from app.models.db import LatestUsage, QuotaSnapshot, UsageEvent, UsagePeriodRollup
-from app.services.maintenance._chunked_sql import chunked_delete, chunked_update
+from app.services.maintenance.chunked_sql import chunked_delete, chunked_update
 from app.services.maintenance.legacy_providers import LEGACY_PROVIDER_MAP
 from app.services.maintenance.rollups import rebuild_rollups_for_providers
 from app.services.maintenance.windows import rebuild_windows_for_providers
@@ -119,7 +119,7 @@ def apply_legacy_retag(session: Session, legacy_provider_id: str) -> RetagResult
     `rollup_drift` orphans), and rebuilding rollups/windows for both
     providers.
 
-    Every write is chunked (`_chunked_sql`) and committed per batch — a
+    Every write is chunked (`chunked_sql`) and committed per batch — a
     legacy id like `opencode-openrouter` can carry tens of thousands of
     events, and this fixer must never hold SQLite's writer lock for one
     giant transaction. Resumable: interrupting mid-run and calling again

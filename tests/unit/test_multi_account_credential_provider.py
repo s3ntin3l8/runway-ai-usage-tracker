@@ -22,8 +22,8 @@ import pytest
 from app.services.credential_provider import (
     AmbiguousProviderAccountError,
     CredentialProvider,
-    _resolve_legacy_provider_config,
-    _resolve_provider_config,
+    resolve_legacy_provider_config,
+    resolve_provider_config,
 )
 
 
@@ -120,7 +120,7 @@ def test_resolve_single_row_no_account_id_returns_it():
         "app.services.credentials.provider.Session",
         _make_fake_session({"anthropic": [row]}),
     ):
-        cfg = _resolve_provider_config("anthropic")
+        cfg = resolve_provider_config("anthropic")
         assert cfg is row
 
 
@@ -129,7 +129,7 @@ def test_resolve_zero_rows_returns_none():
         "app.services.credentials.provider.Session",
         _make_fake_session({"anthropic": []}),
     ):
-        assert _resolve_provider_config("anthropic") is None
+        assert resolve_provider_config("anthropic") is None
 
 
 def test_resolve_explicit_account_id_picks_specific_row():
@@ -139,8 +139,8 @@ def test_resolve_explicit_account_id_picks_specific_row():
         "app.services.credentials.provider.Session",
         _make_fake_session({"anthropic": [a, b]}),
     ):
-        assert _resolve_provider_config("anthropic", account_id="alice_invalid") is b
-        assert _resolve_provider_config("anthropic", account_id="default") is a
+        assert resolve_provider_config("anthropic", account_id="alice_invalid") is b
+        assert resolve_provider_config("anthropic", account_id="default") is a
 
 
 def test_resolve_multiple_rows_no_account_id_raises():
@@ -151,7 +151,7 @@ def test_resolve_multiple_rows_no_account_id_raises():
         _make_fake_session({"anthropic": [a, b]}),
     ):
         with pytest.raises(AmbiguousProviderAccountError) as excinfo:
-            _resolve_provider_config("anthropic")
+            resolve_provider_config("anthropic")
         assert excinfo.value.provider_id == "anthropic"
         assert excinfo.value.account_count == 2
 
@@ -165,7 +165,7 @@ def test_resolve_ambiguous_skips_disabled_rows():
         _make_fake_session({"anthropic": [a, b]}),
     ):
         # `require_enabled=True` (default) — picks the only enabled row.
-        assert _resolve_provider_config("anthropic") is a
+        assert resolve_provider_config("anthropic") is a
 
 
 def test_resolve_ambiguous_includes_disabled_when_not_required():
@@ -177,7 +177,7 @@ def test_resolve_ambiguous_includes_disabled_when_not_required():
     ):
         with pytest.raises(AmbiguousProviderAccountError):
             # `require_enabled=False` — both rows count.
-            _resolve_provider_config("anthropic", require_enabled=False)
+            resolve_provider_config("anthropic", require_enabled=False)
 
 
 def test_get_provider_api_key_picks_only_row():
@@ -212,7 +212,7 @@ def test_get_provider_api_key_ambiguous_legacy_returns_default_row():
     """Legacy single-account call site: with no account_id and multiple rows,
     the public method falls back to the ``account_id="default"`` row rather
     than raising. The strict raise only fires when an explicit account_id
-    disambiguation is needed (covered by ``_resolve_provider_config`` tests)."""
+    disambiguation is needed (covered by ``resolve_provider_config`` tests)."""
     a = _row("anthropic", "default")
     a.api_key = "default-key"  # pragma: allowlist secret
     b = _row("anthropic", "alice_invalid")
@@ -228,7 +228,7 @@ def test_get_provider_api_key_ambiguous_legacy_returns_default_row():
 
 
 def test_resolve_provider_config_strict_raises_without_account_id():
-    """Strict helper (``_resolve_provider_config``) raises for multi-row when
+    """Strict helper (``resolve_provider_config``) raises for multi-row when
     no account_id is supplied. Distinct from the public method's legacy
     fallback — this is the path the wizard + new PUT endpoint use."""
     a = _row("anthropic", "default")
@@ -238,7 +238,7 @@ def test_resolve_provider_config_strict_raises_without_account_id():
         _make_fake_session({"anthropic": [a, b]}),
     ):
         with pytest.raises(AmbiguousProviderAccountError) as excinfo:
-            _resolve_provider_config("anthropic")
+            resolve_provider_config("anthropic")
         assert excinfo.value.provider_id == "anthropic"
         assert excinfo.value.account_count == 2
 
@@ -300,7 +300,7 @@ def test_get_credentials_with_explicit_account_id_picks_that_row():
         ),
     ):
         # Legacy call (no account_id) returns the "default" row's key —
-        # never raises. The strict raise lives in ``_resolve_provider_config``,
+        # never raises. The strict raise lives in ``resolve_provider_config``,
         # exercised by ``test_resolve_provider_config_strict_raises_without_account_id``.
         creds_legacy = CredentialProvider.get_credentials("anthropic")
         assert creds_legacy.get("api_key") == "default"
@@ -339,7 +339,7 @@ def test_legacy_helper_returns_none_when_default_disabled_and_other_enabled():
         "app.services.credentials.provider.Session",
         _make_fake_session({"anthropic": [disabled_default, enabled_other]}),
     ):
-        cfg = _resolve_legacy_provider_config("anthropic", require_enabled=True)
+        cfg = resolve_legacy_provider_config("anthropic", require_enabled=True)
         assert cfg is None
 
 
@@ -354,7 +354,7 @@ def test_legacy_helper_logs_warning_on_multi_row(caplog):
         _make_fake_session({"anthropic": [a, b]}),
     ):
         with caplog.at_level("WARNING", logger="app.services.credential_provider"):
-            _resolve_legacy_provider_config("anthropic")
+            resolve_legacy_provider_config("anthropic")
         assert any(
             "anthropic" in rec.message and "configured accounts" in rec.message
             for rec in caplog.records

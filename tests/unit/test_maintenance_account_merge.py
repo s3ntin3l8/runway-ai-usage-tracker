@@ -292,7 +292,7 @@ def test_chunked_retag_snapshots_spans_multiple_batches_with_collisions():
     """A batch containing both a movable row and a colliding row must
     resolve each correctly and never loop forever re-matching a row an
     `OR IGNORE` batch failed to move (the same class of bug the id-cursor
-    design in _chunked_sql.py guards against)."""
+    design in chunked_sql.py guards against)."""
     session = _session()
     for i in range(9):
         _snapshot(session, "default", datetime(2026, 9, 1 + i, tzinfo=UTC))

@@ -12,17 +12,17 @@ from typing import Any
 from app.core.utils import IdentityExtractor, has_refresh_credential
 from app.models.db import CredentialSource, ProviderConfig
 from app.services.account_identity import canonical_account_id
-from app.services.token_cache import _OAUTH_CREDENTIAL_KEYS
+from app.services.token_cache import OAUTH_CREDENTIAL_KEYS
 from app.services.token_health_status import (
-    _apply_invalid,
-    _classify_status,
-    _is_stale_source,
-    _redundancy_sibling,
+    apply_invalid,
+    classify_status,
     is_durably_rejected,
     is_failing,
+    is_stale_source,
+    redundancy_sibling,
 )
 from app.services.token_refresher import (
-    _REFRESH_ENDPOINTS,
+    REFRESH_ENDPOINTS,
     ROTATING_REFRESH_PROVIDERS,
     machine_owns_credential,
 )
@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 # changed in Settings → Providers or the server environment instead.
 _NON_REMOVABLE_SOURCES = frozenset({"config", "manual_config", "server"})
 # Credential fields that share one expiry (the OAuth token family).
-_OAUTH_FAMILY_KEYS = _OAUTH_CREDENTIAL_KEYS | {"access_token"}
+_OAUTH_FAMILY_KEYS = OAUTH_CREDENTIAL_KEYS | {"access_token"}
 
 
 def _row(  # noqa: PLR0913 - one flat record builder; every field is a distinct row column
@@ -52,7 +52,7 @@ def _row(  # noqa: PLR0913 - one flat record builder; every field is a distinct 
     machine_renewed: bool = False,
 ) -> dict[str, Any]:
     """Assemble one health record (internal ``_``-prefixed keys are stripped later)."""
-    status = _classify_status(
+    status = classify_status(
         exp, is_opaque=(exp is None) and bool(token_types), can_refresh=rollable
     )
     return {
@@ -154,7 +154,7 @@ def _append_cache_rows(
                     # classification still treats any refresh_token as rollable
                     # (a local agent re-pushes e.g. antigravity's short-lived token).
                     can_refresh=has_refresh_token
-                    and provider in _REFRESH_ENDPOINTS
+                    and provider in REFRESH_ENDPOINTS
                     and not machine_renewed,
                     ttl_remaining=info.get("ttl_remaining", 0),
                     rollable=has_refresh_token,
@@ -267,7 +267,7 @@ def _append_durable_rows(
             # lapses (and a manual refresh works); without these a 2h-valid Gemini
             # credential read "expiring" — the auto-refresh allowance never applied.
             can_refresh=durable_rollable
-            and provider_id in _REFRESH_ENDPOINTS
+            and provider_id in REFRESH_ENDPOINTS
             and not (provider_id in ROTATING_REFRESH_PROVIDERS and durable_source.sidecar_id),
             rollable=durable_rollable,
             machine_renewed=durable_rollable
@@ -280,7 +280,7 @@ def _append_durable_rows(
         row["_failing"] = is_failing(
             durable_source, durable_by_account.get((provider_id, account_id), [])
         )
-        if live is None and _is_stale_source(durable_source.last_seen):
+        if live is None and is_stale_source(durable_source.last_seen):
             # Not in the live cache and not re-reported recently: the stored
             # token types/expiry are history, not evidence. Without this a
             # removed machine's row reads "valid" forever (or "expired" forever,
@@ -400,12 +400,12 @@ def append_server_rows(
 
 def finalize_health_rows(result: list[dict[str, Any]]) -> None:
     """Apply rejection/failure upgrades and the redundancy flag, then strip internals."""
-    _apply_invalid(result)
+    apply_invalid(result)
 
     # Mark expired, unrefreshable entries as "redundant" when another credential
     # for that account is still healthy. Such an entry can't be auto-rolled and
     # isn't blocking collection — so the dashboard banner should not raise a hard
-    # alarm on it alone. See `_redundancy_sibling` for what counts as a sibling;
+    # alarm on it alone. See `redundancy_sibling` for what counts as a sibling;
     # rows that are merely assumed valid (config / env, no expiry) never do.
     healthy = [r for r in result if r["status"] in ("valid", "expiring") and not r["_assumed"]]
     for r in result:
@@ -413,7 +413,7 @@ def finalize_health_rows(result: list[dict[str, Any]]) -> None:
             r["status"] == "expired"
             and not r["_rollable"]
             and any(
-                h is not r and h["provider"] == r["provider"] and _redundancy_sibling(h, r)
+                h is not r and h["provider"] == r["provider"] and redundancy_sibling(h, r)
                 for h in healthy
             )
         )

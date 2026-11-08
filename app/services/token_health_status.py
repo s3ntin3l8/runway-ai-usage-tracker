@@ -24,7 +24,7 @@ EXPIRY_WARNING_SECS = 86400  # 24 hours — for tokens that require manual re-au
 SOURCE_STALE_SECS = 2 * TokenCache.DEFAULT_TTL
 
 
-def _classify_status(
+def classify_status(
     exp: float | None,
     is_opaque: bool = False,
     can_refresh: bool = False,
@@ -52,16 +52,16 @@ def _classify_status(
     return "valid"
 
 
-def _utc(value: datetime | None) -> datetime | None:
+def utc(value: datetime | None) -> datetime | None:
     """SQLite hands datetimes back naive; treat them as UTC so they compare with aware ones."""
     if value is None:
         return None
     return value if value.tzinfo else value.replace(tzinfo=UTC)
 
 
-def _is_stale_source(last_seen: datetime | None, now: float | None = None) -> bool:
+def is_stale_source(last_seen: datetime | None, now: float | None = None) -> bool:
     """True when a durable source hasn't been re-reported within ``SOURCE_STALE_SECS``."""
-    seen = _utc(last_seen)
+    seen = utc(last_seen)
     if seen is None:
         return False
     return (now if now is not None else time.time()) - seen.timestamp() > SOURCE_STALE_SECS
@@ -82,11 +82,11 @@ def is_durably_rejected(source: CredentialSource, siblings: Iterable[CredentialS
     """
     if source.health != "auth_failed" or not source.enabled:
         return False
-    attempted = _utc(source.last_attempt_at)
+    attempted = utc(source.last_attempt_at)
     for other in siblings:
         if other.source_id == source.source_id or not other.enabled:
             continue
-        succeeded = _utc(other.last_success_at)
+        succeeded = utc(other.last_success_at)
         # No attempt time (a row from before provenance existed): any success supersedes.
         if succeeded is not None and (attempted is None or succeeded >= attempted):
             return False
@@ -116,8 +116,8 @@ def is_failing(source: CredentialSource, siblings: Iterable[CredentialSource]) -
         return False
     if (source.consecutive_failures or 0) < FAILING_AFTER_ATTEMPTS:
         return False
-    attempted = _utc(source.last_attempt_at)
-    since = _utc(source.failing_since)
+    attempted = utc(source.last_attempt_at)
+    since = utc(source.failing_since)
     if attempted is None or since is None:
         return False
     if time.time() - attempted.timestamp() > FAILING_MAX_AGE_SECS:
@@ -127,7 +127,7 @@ def is_failing(source: CredentialSource, siblings: Iterable[CredentialSource]) -
     for other in siblings:
         if other.source_id == source.source_id or not other.enabled:
             continue
-        succeeded = _utc(other.last_success_at)
+        succeeded = utc(other.last_success_at)
         if succeeded is not None and succeeded >= attempted:
             return False
     return True
@@ -165,22 +165,20 @@ def credential_status(
     """One status for one credential: expiry, rejection and staleness combined.
 
     Composes the same three rules Token Health applies row by row
-    (:func:`_classify_status`, :func:`_is_stale_source`, :func:`apply_rejection`), so the
+    (:func:`classify_status`, :func:`is_stale_source`, :func:`apply_rejection`), so the
     credential inventory and Token Health cannot drift apart.
 
     - ``stale``: a machine-sourced credential that isn't live in the cache and hasn't been
       re-reported recently. Its stored expiry is history, so say nothing about it.
     - otherwise the expiry-based classification, upgraded to ``invalid`` on a rejection.
     """
-    if machine_sourced and not live and _is_stale_source(last_seen, now):
+    if machine_sourced and not live and is_stale_source(last_seen, now):
         return "stale"
-    base = _classify_status(
-        exp, is_opaque=(exp is None) and bool(token_types), can_refresh=rollable
-    )
+    base = classify_status(exp, is_opaque=(exp is None) and bool(token_types), can_refresh=rollable)
     return apply_failure(apply_rejection(base, rejected), failing)
 
 
-def _underlying_account(account_id: str) -> str:
+def underlying_account(account_id: str) -> str:
     """Map a synthetic Token Health row id back to the account it stands for."""
     if account_id == "server":
         return "default"
@@ -190,25 +188,25 @@ def _underlying_account(account_id: str) -> str:
     return account_id
 
 
-def _is_synthetic(account_id: str) -> bool:
+def is_synthetic(account_id: str) -> bool:
     """Rows Token Health builds itself (server env/file, dashboard config)."""
     return account_id == "server" or account_id.startswith(("config:", "config-cookie:"))
 
 
-def _build_accounts_by_provider(rows: list[dict[str, Any]]) -> dict[str, set[str]]:
+def build_accounts_by_provider(rows: list[dict[str, Any]]) -> dict[str, set[str]]:
     accounts_by_provider: dict[str, set[str]] = {}
     for r in rows:
         if r.get("assignment_pending") or r.get("identity_pending"):
             continue
         accounts_by_provider.setdefault(r["provider"], set()).add(
-            canonical_account_id(_underlying_account(r["account_id"]))
+            canonical_account_id(underlying_account(r["account_id"]))
         )
     return accounts_by_provider
 
 
 def is_flagged(row: dict[str, Any], accounts_by_provider: dict[str, set[str]]) -> bool:
     """True when *row*'s identity currently has a rejected credential flagged
-    in `auth_failures` — same matching rules as `_apply_invalid`.
+    in `auth_failures` — same matching rules as `apply_invalid`.
 
     Matching is by *identity*, not by the borrowing rule: two different
     opaque/fingerprint-keyed accounts of one provider must not flag each
@@ -222,19 +220,19 @@ def is_flagged(row: dict[str, Any], accounts_by_provider: dict[str, set[str]]) -
     show a healthy credential as rejected.
 
     Exposed (not `_`-prefixed) so `app.services.credential_alerts` can reuse
-    it directly on already-``expired`` rows, which `_apply_invalid` itself
+    it directly on already-``expired`` rows, which `apply_invalid` itself
     skips (see its docstring) — an auth-rejected credential whose access
     token also happens to be expired must still be detectable as rejected.
     """
     flagged = auth_failures.flagged_accounts(row["provider"])
     if not flagged:
         return False
-    row_id = canonical_account_id(_underlying_account(row["account_id"]))
+    row_id = canonical_account_id(underlying_account(row["account_id"]))
     sole_account = accounts_by_provider.get(row["provider"]) == {row_id}
     return row_id in flagged or ("default" in flagged and (row_id == "default" or sole_account))
 
 
-def _apply_invalid(rows: list[dict[str, Any]]) -> None:
+def apply_invalid(rows: list[dict[str, Any]]) -> None:
     """Flip healthy-looking rows to ``invalid`` when their credential was rejected.
 
     Runs after every row exists so statuses are final before redundancy is computed.
@@ -242,7 +240,7 @@ def _apply_invalid(rows: list[dict[str, Any]]) -> None:
     collection (``_rejected``) or an in-memory rejection flag matches its identity
     (:func:`is_flagged`). See :func:`apply_rejection` for what a rejection can change.
     """
-    accounts_by_provider = _build_accounts_by_provider(rows)
+    accounts_by_provider = build_accounts_by_provider(rows)
     for r in rows:
         rejected = bool(r.pop("_rejected", False))
         failing = bool(r.pop("_failing", False))
@@ -265,17 +263,17 @@ def is_redundancy_sibling(
     Two different opaque hashes are different accounts, and server/config credentials
     never count as a sibling of another account.
     """
-    h_id = canonical_account_id(_underlying_account(healthy_account_id))
-    r_id = canonical_account_id(_underlying_account(row_account_id))
+    h_id = canonical_account_id(underlying_account(healthy_account_id))
+    r_id = canonical_account_id(underlying_account(row_account_id))
     if h_id == r_id:
         return True
     return "@" in r_id and "@" not in h_id and not healthy_is_server_or_config
 
 
-def _redundancy_sibling(healthy: dict[str, Any], row: dict[str, Any]) -> bool:
+def redundancy_sibling(healthy: dict[str, Any], row: dict[str, Any]) -> bool:
     """True when *healthy* is a credential that could stand in for the expired *row*."""
     return is_redundancy_sibling(
         healthy["account_id"],
         row["account_id"],
-        healthy_is_server_or_config=_is_synthetic(healthy["account_id"]),
+        healthy_is_server_or_config=is_synthetic(healthy["account_id"]),
     )

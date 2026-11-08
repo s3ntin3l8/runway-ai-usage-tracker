@@ -278,7 +278,7 @@ class AntigravityApiMixin:
             if email:
                 self.account_id = email
                 self.account_label = email
-                self._account_label_cache = email  # type: ignore[attr-defined]
+                self.account_label_cache = email  # type: ignore[attr-defined]
 
         # When account_id is already a resolved email (durable seeding) but no
         # label was carried — the agy token has no id_token and the sidecar push
@@ -290,7 +290,7 @@ class AntigravityApiMixin:
             and (not self.account_label or self.account_label == "Default")
         ):
             self.account_label = self.account_id
-            self._account_label_cache = self.account_id  # type: ignore[attr-defined]
+            self.account_label_cache = self.account_id  # type: ignore[attr-defined]
 
         state = {
             "token": token,
@@ -546,7 +546,7 @@ class AntigravityApiMixin:
                 "unit_type": "percent",
                 "window_type": win,
                 "data_source": self.DATA_SOURCE_API,
-                "input_source": getattr(self, "_current_input_source", "unknown"),
+                "input_source": getattr(self, "current_input_source", "unknown"),
                 "quota_pool_id": pool_id,
                 "bucket_id": bucket_id,
                 "updated_at": now.isoformat(),

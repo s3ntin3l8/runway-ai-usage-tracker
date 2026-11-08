@@ -16,7 +16,7 @@ class TestDefaultCollectorSourceSweep:
     """The default collector must find bundles filed under a resolved identity.
 
     Sidecar ingest keys source bundles by the account it proved (the email from
-    userinfo), never by ``default``. Without a sweep, ``_source_candidates``
+    userinfo), never by ``default``. Without a sweep, ``source_candidates``
     returns nothing for the default slot and the failover loop silently
     degrades to a single unpinned ``collect()``: no cross-source failover, and
     reads that depend on the merged cache alone — the 2026-10-02 Antigravity
@@ -63,7 +63,7 @@ class TestDefaultCollectorSourceSweep:
         smart.collect = AsyncMock(side_effect=collect)
         manager.smart_collectors["antigravity:default"] = smart
         promote = AsyncMock()
-        monkeypatch.setattr(manager, "_promote_source_identity", promote)
+        monkeypatch.setattr(manager, "promote_source_identity", promote)
         monkeypatch.setattr(manager, "_persist_identity_pending_preview", MagicMock())
         health = {}
 
@@ -174,7 +174,7 @@ class TestDefaultCollectorSourceSweep:
             },
         ]
 
-        ordered = manager._ordered_candidates("antigravity", "default", swept)
+        ordered = manager.ordered_candidates("antigravity", "default", swept)
 
         # src:disabled dropped by the default-view row (that row applies to a
         # swept candidate at all); src:pinned is ordered by its slot row (0),
@@ -198,7 +198,7 @@ class TestDefaultCollectorSourceSweep:
             ("anthropic", "default"): {"src:revoked": ("auth_failed", later)}
         }
         # Resting: the revoked key is not tried this cycle, and it no longer leads.
-        ordered = manager._ordered_candidates("anthropic", "default", candidates)
+        ordered = manager.ordered_candidates("anthropic", "default", candidates)
         assert [c["source_id"] for c in ordered] == ["src:good", "src:other"]
 
         # Rest is over: it is due, so it is tried in its normal place. Demoting it instead
@@ -208,7 +208,7 @@ class TestDefaultCollectorSourceSweep:
                 "src:revoked": ("auth_failed", datetime.now(UTC) - timedelta(seconds=1))
             }
         }
-        ordered = manager._ordered_candidates("anthropic", "default", candidates)
+        ordered = manager.ordered_candidates("anthropic", "default", candidates)
         assert [c["source_id"] for c in ordered] == ["src:revoked", "src:good", "src:other"]
 
     def test_a_collector_that_legitimately_reports_nothing_is_not_failing(self, manager):
@@ -249,7 +249,7 @@ class TestDefaultCollectorSourceSweep:
                 "src:b": ("auth_failed", later),
             }
         }
-        ordered = manager._ordered_candidates("anthropic", "default", candidates)
+        ordered = manager.ordered_candidates("anthropic", "default", candidates)
         assert [c["source_id"] for c in ordered] == ["src:a"]  # one probe, best first
 
     async def test_all_pending_sweep_falls_back_to_unpinned_collect(self, manager, monkeypatch):
@@ -334,6 +334,6 @@ class TestDefaultCollectorSourceSweep:
             swept_rows,
         )
 
-        candidates = await CollectorManager._source_candidates("antigravity", "default", False)
+        candidates = await CollectorManager.source_candidates("antigravity", "default", False)
 
         assert [candidate["source_id"] for candidate in candidates] == ["src:dup", "src:swept"]

@@ -28,7 +28,7 @@ async def _both_views(monkeypatch):
 
     monkeypatch.setattr(credential_inventory, "engine", th.engine)
     monkeypatch.setattr(credential_inventory, "token_cache", th.token_cache)
-    monkeypatch.setattr(credential_inventory, "_scan_server_credentials", lambda: ({}, set()))
+    monkeypatch.setattr(credential_inventory, "scan_server_credentials", lambda: ({}, set()))
     health = {
         (r["provider"], r["account_id"], r["source_id"]): r["status"]
         for r in await TokenHealthService().get_health()
@@ -85,7 +85,7 @@ async def test_a_durable_auth_failure_marks_the_credential_invalid_in_both_views
 
     monkeypatch.setattr(credential_inventory, "engine", th.engine)
     monkeypatch.setattr(credential_inventory, "token_cache", th.token_cache)
-    monkeypatch.setattr(credential_inventory, "_scan_server_credentials", lambda: ({}, set()))
+    monkeypatch.setattr(credential_inventory, "scan_server_credentials", lambda: ({}, set()))
     key = ("gemini", ALICE, "sidecar:g1")
     health = {
         (r["provider"], r["account_id"], r.get("source_id")): r["status"]
@@ -287,7 +287,7 @@ async def test_inventory_applies_the_same_supersession_rule(monkeypatch):
     await _set_health(th, "sidecar:g2", last_success_at=now)
     monkeypatch.setattr(credential_inventory, "engine", th.engine)
     monkeypatch.setattr(credential_inventory, "token_cache", th.token_cache)
-    monkeypatch.setattr(credential_inventory, "_scan_server_credentials", lambda: ({}, set()))
+    monkeypatch.setattr(credential_inventory, "scan_server_credentials", lambda: ({}, set()))
 
     inv = await credential_inventory.build_inventory()
     inventory = {
@@ -334,7 +334,7 @@ async def _openrouter_views(monkeypatch, *, with_config: bool):
         s.commit()
     monkeypatch.setattr(credential_inventory, "engine", th.engine)
     monkeypatch.setattr(credential_inventory, "token_cache", th.token_cache)
-    monkeypatch.setattr(credential_inventory, "_scan_server_credentials", lambda: ({}, set()))
+    monkeypatch.setattr(credential_inventory, "scan_server_credentials", lambda: ({}, set()))
 
     health = {
         (r["account_id"], r.get("source_id")): r["status"]
@@ -412,7 +412,7 @@ async def test_both_views_agree_a_machines_rotating_login_has_no_server_refresh(
     )
     monkeypatch.setattr(credential_inventory, "engine", th.engine)
     monkeypatch.setattr(credential_inventory, "token_cache", th.token_cache)
-    monkeypatch.setattr(credential_inventory, "_scan_server_credentials", lambda: ({}, set()))
+    monkeypatch.setattr(credential_inventory, "scan_server_credentials", lambda: ({}, set()))
 
     health = {
         (r["provider"], r["account_id"], r.get("source_id")): r
@@ -486,7 +486,7 @@ async def test_both_views_agree_on_the_servers_own_credentials(monkeypatch):
     monkeypatch.setattr(credential_inventory, "engine", th.engine)
     monkeypatch.setattr(credential_inventory, "token_cache", th.token_cache)
     monkeypatch.setattr(
-        credential_inventory, "_scan_server_credentials", lambda: (found, set(found))
+        credential_inventory, "scan_server_credentials", lambda: (found, set(found))
     )
     auth_failures.mark("zai", "default")  # the provider rejected the unscoped key
 
@@ -563,7 +563,7 @@ async def test_both_views_report_a_failing_source_the_same_way(monkeypatch):
     )
     monkeypatch.setattr(credential_inventory, "engine", th.engine)
     monkeypatch.setattr(credential_inventory, "token_cache", th.token_cache)
-    monkeypatch.setattr(credential_inventory, "_scan_server_credentials", lambda: ({}, set()))
+    monkeypatch.setattr(credential_inventory, "scan_server_credentials", lambda: ({}, set()))
 
     inv = await credential_inventory.build_inventory()
     inventory = {

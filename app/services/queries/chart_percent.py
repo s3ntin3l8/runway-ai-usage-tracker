@@ -10,8 +10,8 @@ from datetime import UTC, datetime
 from sqlalchemy import text
 from sqlmodel import Session, select
 
-from app.models._datetime import iso_utc
-from app.services.queries.snapshots import _bucket_seconds_for, _parse_sqlite_dt
+from app.models.utc_datetime import iso_utc
+from app.services.queries.snapshots import bucket_seconds_for, parse_sqlite_dt
 
 _CHART_PERCENT_SQL = text(
     # Bucket aggregate is MAX(pct_used), not the latest sample in the bucket.
@@ -47,7 +47,7 @@ def query_chart_percent(
     # matched to the timeframe (see `_BUCKET_TIERS`). The `pct_used IS NOT
     # NULL` filter lives inside the bucketed CTE so a null row can never
     # be selected as the bucket representative.
-    bucket_seconds = _bucket_seconds_for(days)
+    bucket_seconds = bucket_seconds_for(days)
     chart_params = {
         "since": since.replace(tzinfo=None),
         "provider_id": provider_id,
@@ -73,7 +73,7 @@ def query_chart_percent(
                 "color_hint": s.provider_id,
                 "points": [],
             }
-        ts_dt = _parse_sqlite_dt(s.ts)
+        ts_dt = parse_sqlite_dt(s.ts)
         ts_iso = iso_utc(ts_dt) if ts_dt is not None else str(s.ts)
         series_map[key]["points"].append({"ts": ts_iso, "pct_used": s.pct_used})
 

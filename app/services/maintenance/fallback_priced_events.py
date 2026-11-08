@@ -37,19 +37,19 @@ from sqlmodel import Session, col, select
 
 from app.models.db import UsageEvent
 from app.services.cost_calculator import (
-    _VERSION_SUFFIX,
+    VERSION_SUFFIX,
     PricingIndex,
     PricingRowSnapshot,
     compute_event_cost_breakdown,
     is_aggregate_event_id,
 )
-from app.services.maintenance._rebuild import rebuild_pairs_best_effort
-from app.services.maintenance._retry import (
+from app.services.maintenance.event_cost import ResolvedCost, resolve_event_cost
+from app.services.maintenance.rebuild import rebuild_pairs_best_effort
+from app.services.maintenance.retry import (
     DEFAULT_LOCK_PROFILE,
     LockRetryProfile,
     commit_batch,
 )
-from app.services.maintenance.event_cost import ResolvedCost, resolve_event_cost
 from app.services.maintenance.windows import rebuild_windows_for_providers
 from app.services.model_normalization import is_free_tier_model_id
 from app.services.period_rollups import rebuild_rollups_for_pairs
@@ -80,7 +80,7 @@ def fallback_price_row(
     if not model_id or is_free_tier_model_id(model_id):
         return None
     row: PricingRowSnapshot | None = None
-    family = _VERSION_SUFFIX.sub("", model_id)
+    family = VERSION_SUFFIX.sub("", model_id)
     if family != model_id:
         row = index.exact(provider_id, family, effective_on)
     if row is None:

@@ -27,8 +27,8 @@ from sqlmodel import Session, col, select
 
 from app.core.source_apps import HERMES
 from app.models.db import UsageEvent
-from app.services.data_health._provider_accounts import candidate_targets
-from app.services.maintenance._chunked_sql import chunked_update
+from app.services.data_health.provider_accounts import candidate_targets
+from app.services.maintenance.chunked_sql import chunked_update
 from app.services.maintenance.legacy_retag import pick_winner
 from app.services.maintenance.rollups import rebuild_rollups_for_pairs
 from app.services.maintenance.windows import rebuild_windows_for_providers
@@ -50,7 +50,7 @@ def model_clause() -> ColumnElement[bool]:
     )
 
 
-def _source_where(provider_id: str | None = None) -> list[ColumnElement[bool]]:
+def source_where(provider_id: str | None = None) -> list[ColumnElement[bool]]:
     providers = (provider_id,) if provider_id else SOURCE_PROVIDER_IDS
     # Hermes reaches OpenCode Zen directly; never treat its events as
     # OpenRouter traffic even when the model id looks like one. Older rows
@@ -118,7 +118,7 @@ def _duplicate_event_ids(session: Session, provider_id: str) -> set[str]:
         row[0]
         for row in session.execute(
             select(UsageEvent.event_id)
-            .where(*_source_where(provider_id))
+            .where(*source_where(provider_id))
             .intersect(
                 select(UsageEvent.event_id).where(col(UsageEvent.provider_id) == TARGET_PROVIDER_ID)
             )
@@ -130,7 +130,7 @@ def plan_openrouter_retag(
     session: Session, provider_id: str, *, sample_size: int = 5
 ) -> OpenRouterRetagPlan:
     """Read-only preview for one source provider."""
-    where = _source_where(provider_id)
+    where = source_where(provider_id)
     total = session.execute(select(func.count()).where(*where)).one()[0]
     by_model = {
         row[0]: row[1]
@@ -175,7 +175,7 @@ def _resolve_duplicates(session: Session, provider_id: str) -> tuple[int, set[tu
             ev.event_id: ev
             for ev in session.exec(
                 select(UsageEvent).where(
-                    *_source_where(provider_id), col(UsageEvent.event_id).in_(batch)
+                    *source_where(provider_id), col(UsageEvent.event_id).in_(batch)
                 )
             )
         }
@@ -220,7 +220,7 @@ def apply_openrouter_retag(session: Session, provider_id: str) -> OpenRouterReta
     touched_pairs.add((TARGET_PROVIDER_ID, target))
     for source_provider, account in session.execute(
         select(UsageEvent.provider_id, UsageEvent.account_id)
-        .where(*_source_where(provider_id))
+        .where(*source_where(provider_id))
         .distinct()
     ):
         touched_pairs.add((source_provider, account))
@@ -228,7 +228,7 @@ def apply_openrouter_retag(session: Session, provider_id: str) -> OpenRouterReta
     result.retagged = chunked_update(
         session,
         UsageEvent,
-        _source_where(provider_id),
+        source_where(provider_id),
         {
             "provider_id": TARGET_PROVIDER_ID,
             "account_id": target,

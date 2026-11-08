@@ -149,7 +149,7 @@ class GitHubCollector(BaseCollector):
                 # Pass Retry-After to SmartCollector for centralized backoff
                 retry_after = user_resp.headers.get("Retry-After")
                 wait_sec = float(retry_after) if retry_after and retry_after.isdigit() else 300
-                self._last_retry_after = wait_sec
+                self.last_retry_after = wait_sec
                 logger.warning(f"GitHub API returned 429. Retry-After: {wait_sec}s")
                 return [
                     error_card(
@@ -304,7 +304,7 @@ class GitHubCollector(BaseCollector):
         token = creds.get("api_key")
 
         if token:
-            self._current_input_source = getattr(creds, "sources", {}).get("api_key", "server")
+            self.current_input_source = getattr(creds, "sources", {}).get("api_key", "server")
             return token
 
         # Check account-specific token cache
@@ -313,7 +313,7 @@ class GitHubCollector(BaseCollector):
             if cache_data:
                 tokens, metadata = cache_data
                 source = metadata.get("source") or "sidecar"
-                self._current_input_source = (
+                self.current_input_source = (
                     "config" if source in ("config", "manual_config") else "sidecar"
                 )
                 return tokens.get("api_key")
@@ -406,7 +406,7 @@ class GitHubCollector(BaseCollector):
                     "unit_type": "requests",
                     "reset_at": reset_at.isoformat() if reset_at else None,
                     "data_source": self.DATA_SOURCE_API,
-                    "input_source": getattr(self, "_current_input_source", "unknown"),
+                    "input_source": getattr(self, "current_input_source", "unknown"),
                     "usage_url": "https://github.com/settings/copilot/features",
                     "updated_at": datetime.now(UTC).isoformat(),
                 }
@@ -479,7 +479,7 @@ class GitHubCollector(BaseCollector):
                         "unit_type": "requests",
                         "reset_at": reset_at.isoformat() if reset_at else None,
                         "data_source": self.DATA_SOURCE_API,
-                        "input_source": getattr(self, "_current_input_source", "unknown"),
+                        "input_source": getattr(self, "current_input_source", "unknown"),
                         "usage_url": "https://github.com/settings/copilot/features",
                         "updated_at": datetime.now(UTC).isoformat(),
                     }

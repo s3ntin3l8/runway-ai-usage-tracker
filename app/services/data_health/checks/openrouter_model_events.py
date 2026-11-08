@@ -26,9 +26,9 @@ from app.services.maintenance.openrouter_retag import (
     TARGET_PROVIDER_ID,
     NoTargetAccountError,
     OpenRouterRetagPlan,
-    _source_where,
     apply_openrouter_retag,
     plan_openrouter_retag,
+    source_where,
 )
 
 
@@ -66,7 +66,7 @@ class OpenRouterModelEventsCheck(Check):
         present = {
             row[0]
             for row in session.execute(
-                select(UsageEvent.provider_id).distinct().where(*_source_where())
+                select(UsageEvent.provider_id).distinct().where(*source_where())
             )
         }
         groups: list[FindingGroup] = []

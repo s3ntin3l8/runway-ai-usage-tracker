@@ -11,9 +11,9 @@ from typing import Any, cast
 from sqlalchemy import text
 from sqlmodel import Session, select
 
-from app.models._datetime import iso_utc
 from app.models.db import UsagePeriodRollup
-from app.services.queries._shared import _parse_period_key, sqlite_utc_timestamp
+from app.models.utc_datetime import iso_utc
+from app.services.queries.shared import parse_period_key, sqlite_utc_timestamp
 
 
 def query_chart_bars(
@@ -228,7 +228,7 @@ def query_chart_bars(
 
     bars = []
     for key in sorted(bars_map.keys()):
-        ts = _parse_period_key(key, period_type)
+        ts = parse_period_key(key, period_type)
         bars.append(
             {
                 "date": ts.strftime("%Y-%m-%d") if ts else key[:10],

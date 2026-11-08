@@ -523,14 +523,14 @@ class TestSmartCollectorRateLimit:
             }
         ]
         mock_collector.collect.return_value = rate_limited
-        mock_collector._last_retry_after = 60.0
+        mock_collector.last_retry_after = 60.0
 
         smart = SmartCollector(mock_collector, "TestCollector", error_retry_delay=0)
 
         result = await smart.collect(mock_client)
         assert result[0].get("error_type") == "rate_limited"
         assert smart._is_429_backoff_active(smart.last_fetch_time or 0)
-        assert smart._last_retry_after == 60.0
+        assert smart.last_retry_after == 60.0
 
     @pytest.mark.asyncio
     async def test_429_backoff_prevents_fetch(self, mock_collector, mock_client):
@@ -546,7 +546,7 @@ class TestSmartCollectorRateLimit:
         good_data = [{"service_name": "Test", "remaining": "100%"}]
 
         mock_collector.collect.side_effect = [rate_limited, good_data]
-        mock_collector._last_retry_after = 0.2
+        mock_collector.last_retry_after = 0.2
 
         smart = SmartCollector(mock_collector, "TestCollector", error_retry_delay=0)
 
@@ -574,7 +574,7 @@ class TestSmartCollectorRateLimit:
         good_data = [{"service_name": "Test", "remaining": "100%"}]
 
         mock_collector.collect.side_effect = [rate_limited, good_data]
-        mock_collector._last_retry_after = 0.15
+        mock_collector.last_retry_after = 0.15
 
         smart = SmartCollector(mock_collector, "TestCollector", error_retry_delay=0)
 
@@ -593,7 +593,7 @@ class TestSmartCollectorRateLimit:
 
     @pytest.mark.asyncio
     async def test_429_default_retry_after_when_not_set(self, mock_collector, mock_client):
-        """Test default 60s retry-after when collector doesn't set _last_retry_after."""
+        """Test default 60s retry-after when collector doesn't set last_retry_after."""
         rate_limited = [
             {
                 "service_name": "Test",
@@ -603,12 +603,12 @@ class TestSmartCollectorRateLimit:
             }
         ]
         mock_collector.collect.return_value = rate_limited
-        # No _last_retry_after set
+        # No last_retry_after set
 
         smart = SmartCollector(mock_collector, "TestCollector", error_retry_delay=0)
 
         await smart.collect(mock_client)
-        assert smart._last_retry_after == 60.0  # Default
+        assert smart.last_retry_after == 60.0  # Default
 
     @pytest.mark.asyncio
     async def test_success_clears_429_backoff(self, mock_collector, mock_client):
@@ -624,7 +624,7 @@ class TestSmartCollectorRateLimit:
         good_data = [{"service_name": "Test", "remaining": "100%"}]
 
         mock_collector.collect.side_effect = [rate_limited, good_data]
-        mock_collector._last_retry_after = 0.15
+        mock_collector.last_retry_after = 0.15
 
         smart = SmartCollector(mock_collector, "TestCollector", ttl=0.01, error_retry_delay=0)
 
@@ -652,7 +652,7 @@ class TestSmartCollectorRateLimit:
             }
         ]
         mock_collector.collect.return_value = rate_limited
-        mock_collector._last_retry_after = 120.0
+        mock_collector.last_retry_after = 120.0
 
         smart = SmartCollector(mock_collector, "TestCollector", error_retry_delay=0)
         await smart.collect(mock_client)

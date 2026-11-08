@@ -44,7 +44,7 @@ def cache_fixture(monkeypatch) -> TokenCache:
 @pytest.fixture(name="client")
 def client_fixture(session: Session, cache, monkeypatch):
     monkeypatch.setattr(credential_inventory, "engine", session.get_bind())
-    monkeypatch.setattr(credential_inventory, "_scan_server_credentials", lambda: ({}, set()))
+    monkeypatch.setattr(credential_inventory, "scan_server_credentials", lambda: ({}, set()))
     app.dependency_overrides[get_session] = lambda: session
     yield TestClient(app)
     app.dependency_overrides.clear()
@@ -229,7 +229,7 @@ def test_a_registered_server_row_keeps_a_durable_rejection_when_its_credential_i
     origin = _server_origin(exp=time.time() + 3600)
     monkeypatch.setattr(
         credential_inventory,
-        "_scan_server_credentials",
+        "scan_server_credentials",
         lambda: ({"gemini": [origin]}, {"gemini"}),
     )
 
@@ -258,7 +258,7 @@ def test_a_registered_server_row_drops_a_stale_expiry_the_scan_no_longer_sees(
     )
     origin = _server_origin(source_type="env", label="ZAI_API_KEY", keys=["api_key"], exp=None)
     monkeypatch.setattr(
-        credential_inventory, "_scan_server_credentials", lambda: ({"zai": [origin]}, {"zai"})
+        credential_inventory, "scan_server_credentials", lambda: ({"zai": [origin]}, {"zai"})
     )
 
     row = _inventory_server_row(client)

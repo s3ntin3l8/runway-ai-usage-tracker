@@ -194,7 +194,7 @@ def test_list_all_orders_by_provider_then_origin(session: Session):
 
 def test_list_pending_payload_returns_map_for_known_origins(session: Session):
     """``list_pending_payload`` is the production read path used by
-    ``_account_tag_hints_for_providers`` in ``app/api/endpoints/fleet_shared.py``
+    ``account_tag_hints_for_providers`` in ``app/api/endpoints/fleet_shared.py``
     — the canonical ``account_tag_hints`` shape that ships in both
     ``/fleet/config`` and ``/fleet/ingest`` responses (PR #290 round-2
     review, Hermes suggestion #6: make the repo the canonical read

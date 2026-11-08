@@ -50,7 +50,7 @@ class KimiK2Collector(BaseCollector):
         account_id = getattr(self, "credential_account_id", None) or self.account_id or "default"
         db_key = credential_provider.get_provider_api_key("kimi_k2", account_id=account_id)
         if db_key:
-            self._current_input_source = "config"
+            self.current_input_source = "config"
             return db_key
         from app.services.token_cache import token_cache
 
@@ -58,7 +58,7 @@ class KimiK2Collector(BaseCollector):
         if cache_data:
             tokens, metadata = cache_data
             source = metadata.get("source") or "sidecar"
-            self._current_input_source = (
+            self.current_input_source = (
                 "config" if source in ("config", "manual_config") else "sidecar"
             )
             cached_key = tokens.get("api_key") or tokens.get("oauth_token")
@@ -66,7 +66,7 @@ class KimiK2Collector(BaseCollector):
                 return cached_key
         key = (settings.KIMI_K2_API_KEY or None) if account_id == "default" else None
         if key:
-            self._current_input_source = "server"
+            self.current_input_source = "server"
         return key
 
     async def is_configured(self) -> bool:
@@ -119,7 +119,7 @@ class KimiK2Collector(BaseCollector):
                     "pace": "Stable",
                     "detail": f"Credits (consumed: {credits_consumed:.2f})",
                     "data_source": self.DATA_SOURCE_API,
-                    "input_source": getattr(self, "_current_input_source", "unknown"),
+                    "input_source": getattr(self, "current_input_source", "unknown"),
                     "is_unlimited": False,
                     "unit_type": "credits",
                     "updated_at": datetime.now(UTC).isoformat(),

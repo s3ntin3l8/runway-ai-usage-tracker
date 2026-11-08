@@ -87,8 +87,8 @@ def _renewer(*paths: Path) -> CodexRenewer:
 
 
 def test_constants_match_the_server_refresher():
-    assert token_refresher._REFRESH_ENDPOINTS["chatgpt"] == cr.TOKEN_ENDPOINT
-    assert token_refresher._PROVIDER_CLIENT_IDS["chatgpt"] == cr.CLIENT_ID
+    assert token_refresher.REFRESH_ENDPOINTS["chatgpt"] == cr.TOKEN_ENDPOINT
+    assert token_refresher.PROVIDER_CLIENT_IDS["chatgpt"] == cr.CLIENT_ID
 
 
 def test_the_renewer_is_named_after_its_provider():

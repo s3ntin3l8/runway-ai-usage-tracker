@@ -76,7 +76,7 @@ class XaiCollector(BaseCollector):
         super().__init__(account_id=account_id, account_label=account_label)
         self._last_error_reason: str = "unknown"
         self._plan_tier: str | None = None  # from /v1/settings (best-effort enrichment)
-        self._current_input_source = self.INPUT_SOURCE_SERVER
+        self.current_input_source = self.INPUT_SOURCE_SERVER
 
     async def is_configured(self) -> bool:
         """xAI needs an access bearer; refresh-only credentials aren't consumed here."""
@@ -100,13 +100,13 @@ class XaiCollector(BaseCollector):
         if cache_data and cache_data[0].get("xai_access") == access:
             source = cache_data[1].get("source")
             if source:
-                self._current_input_source = (
+                self.current_input_source = (
                     "config" if source in ("config", "manual_config") else "sidecar"
                 )
             else:
-                self._current_input_source = self.INPUT_SOURCE_SERVER
+                self.current_input_source = self.INPUT_SOURCE_SERVER
         else:
-            self._current_input_source = self.INPUT_SOURCE_SERVER
+            self.current_input_source = self.INPUT_SOURCE_SERVER
         if not access:
             return []
         access = access.strip() if isinstance(access, str) else access
@@ -447,7 +447,7 @@ class XaiCollector(BaseCollector):
             "provider_id": "xai",
             "tier": self._plan_tier,
             "data_source": self.DATA_SOURCE_API,
-            "input_source": self._current_input_source,
+            "input_source": self.current_input_source,
             "usage_url": "https://grok.com",
             "updated_at": ctx["now_iso"],
         }

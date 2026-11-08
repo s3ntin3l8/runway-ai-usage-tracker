@@ -47,12 +47,12 @@ from app.services.data_health.base import (
     FixResult,
     Severity,
 )
-from app.services.maintenance._retry import DATA_HEALTH_LOCK_PROFILE
 from app.services.maintenance.recost import (
     apply_recost,
     is_priced_on_purpose_free,
     plan_recost,
 )
+from app.services.maintenance.retry import DATA_HEALTH_LOCK_PROFILE
 from app.services.maintenance.sql_cost import sql_cost as _sql_cost
 
 _KEY_SEP = "::"

@@ -312,7 +312,7 @@ async def apply_provider_account_merge(
         )
     await token_cache.remove(body.provider_id, source_id)
     auth_failures.clear(body.provider_id, source_id)
-    manager._last_sync_time = 0.0
+    manager.last_sync_time = 0.0
     for account_id in (source_id, destination_id):
         try:
             await manager.reset_collector(body.provider_id, account_id)
@@ -431,7 +431,7 @@ async def apply_provider_account_unmerge(
             credential_source_id,
         )
     auth_failures.clear(body.provider_id, plan.source_account_id)
-    manager._last_sync_time = 0.0
+    manager.last_sync_time = 0.0
     for account_id in (plan.source_account_id, plan.destination_account_id):
         try:
             await manager.reset_collector(body.provider_id, account_id)

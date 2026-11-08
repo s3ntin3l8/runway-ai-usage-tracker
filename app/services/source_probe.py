@@ -46,7 +46,7 @@ def isolated_collector(template: Any) -> Any:
     )
     if hasattr(template, "credential_account_id"):
         clone.credential_account_id = template.credential_account_id
-    user_strategies = getattr(template, "_user_strategies", None)
+    user_strategies = getattr(template, "user_strategies", None)
     if user_strategies:
         # A copy, so nothing a collector does to its strategies mid-collect reaches the live one.
         clone.apply_strategy_config(copy.deepcopy(user_strategies))
@@ -70,7 +70,7 @@ def _find_template(manager: Any, provider_id: str, account_id: str) -> Any:
     try:
         # A bare instance: no account_id/credential_account_id of its own, so the caller's slot
         # resolution falls through to the requested account_id (which is what we want).
-        return manager._create_collector(provider_id)
+        return manager.create_collector(provider_id)
     except Exception:
         # A collector that cannot even be constructed is a "nothing to probe", not a 500.
         logger.warning("Source probe: could not build a %s collector", scrub_log(provider_id))
@@ -89,7 +89,7 @@ async def _probe_one(
     candidate: dict[str, Any],
     all_candidates: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    if manager._awaiting_machine_renewal(provider_id, candidate, all_candidates):
+    if manager.awaiting_machine_renewal(provider_id, candidate, all_candidates):
         # A rotating login its machine's CLI owns: calling with an expired token can only 401,
         # and any refresh here would sign that CLI out.
         return _skipped(candidate, "waiting_on_machine")
@@ -98,7 +98,7 @@ async def _probe_one(
     # No server-side refresh from a probe: a refresh would rotate a refresh token (or write a
     # fresh one into the cache) as a side effect of "just looking".
     collector.REFRESHABLE = False
-    manager._reset_attempt_identity(collector, slot, getattr(template, "account_label", None))
+    manager.reset_attempt_identity(collector, slot, getattr(template, "account_label", None))
 
     with probing():
         return await _run_probe(collector, provider_id, slot, candidate)
@@ -158,7 +158,7 @@ async def _run_probe(
 
 async def probe_sources(manager: Any, provider_id: str, account_id: str) -> list[dict[str, Any]]:
     """Probe every credential source of ``(provider_id, account_id)``, in failover order."""
-    await manager._sync_collectors()
+    await manager.sync_collectors()
     template = _find_template(manager, provider_id, account_id)
     if template is None:
         return []
@@ -168,10 +168,10 @@ async def probe_sources(manager: Any, provider_id: str, account_id: str) -> list
         or account_id
         or "default"
     )
-    everything = await manager._source_candidates(provider_id, slot, False)
+    everything = await manager.source_candidates(provider_id, slot, False)
     pending = [c for c in everything if c.get("identity_pending")]
     live = [c for c in everything if not c.get("identity_pending")]
-    ordered = manager._ordered_candidates(provider_id, slot, live, include_resting=True)
+    ordered = manager.ordered_candidates(provider_id, slot, live, include_resting=True)
     ordered_ids = {c["source_id"] for c in ordered}
     disabled = [c for c in live if c["source_id"] not in ordered_ids]
 

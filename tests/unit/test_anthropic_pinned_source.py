@@ -58,9 +58,9 @@ async def test_pinned_expiry_comes_from_the_bundle(cache):
     )
     collector = _collector()
 
-    assert await collector._is_token_expired() is False  # unpinned → tried as-is
+    assert await collector.is_token_expired() is False  # unpinned → tried as-is
     async with cache.using_source("anthropic", ACCOUNT, SOURCE):
-        assert await collector._is_token_expired() is True
+        assert await collector.is_token_expired() is True
         assert await collector._is_token_expiring_soon() is True
 
 

@@ -44,7 +44,7 @@ class AmbiguousProviderAccountError(ValueError):
         self.account_count = account_count
 
 
-def _resolve_provider_config(
+def resolve_provider_config(
     provider_id: str,
     account_id: str | None = None,
     *,
@@ -88,7 +88,7 @@ def _resolve_provider_config(
         return rows[0] if rows else None
 
 
-def _resolve_legacy_provider_config(
+def resolve_legacy_provider_config(
     provider_id: str,
     *,
     require_enabled: bool = False,
@@ -113,7 +113,7 @@ def _resolve_legacy_provider_config(
       with the provider id (no credential value, no account_id hash —
       provider_id is not credential material).
 
-    This is intentionally distinct from :func:`_resolve_provider_config`,
+    This is intentionally distinct from :func:`resolve_provider_config`,
     which is the strict helper that callers explicitly opt into (e.g. the
     new per-account PUT endpoint and the multi-account wizard).
     """
@@ -149,21 +149,13 @@ def _resolve_legacy_provider_config(
         return None
 
 
-def _is_expiry_key(name: str) -> bool:
+def is_expiry_key(name: str) -> bool:
     """Whether a key name holds an expiry timestamp."""
     lowered = name.lower()
     return "expires" in lowered or "expiry" in lowered
 
 
-#: The epoch reader. Every expiry the server reads goes through it — the
-#: freshness probe below and ``IdentityExtractor.exp_from_tokens``, which is
-#: the single source of truth for a *stored* bundle's expiry. The sidecar has
-#: its own copy in ``scripts/sidecar_pkg/expiry.py``; the two are pinned
-#: together by ``tests/unit/test_mapping_resolver_parity.py``.
-_expiry_seconds = expiry_seconds
-
-
-def _record_expiry(record: Any) -> float | None:
+def record_expiry(record: Any) -> float | None:
     """The latest expiry a credential *record* carries, in epoch seconds.
 
     A credential store that keeps several logins in one file nests the expiry
@@ -174,9 +166,9 @@ def _record_expiry(record: Any) -> float | None:
         return None
     best: float | None = None
     for key, value in record.items():
-        if not _is_expiry_key(str(key)):
+        if not is_expiry_key(str(key)):
             continue
-        moment = _expiry_seconds(value)
+        moment = expiry_seconds(value)
         if moment is None:
             continue
         if best is None or moment > best:
@@ -184,7 +176,7 @@ def _record_expiry(record: Any) -> float | None:
     return best
 
 
-def _expiry_in_nested_records(data: dict) -> bool:
+def expiry_in_nested_records(data: dict) -> bool:
     """Whether any record nested inside *data* still holds a live expiry.
 
     A credential store that keeps several logins in one file nests the expiry
@@ -201,15 +193,15 @@ def _expiry_in_nested_records(data: dict) -> bool:
             if not isinstance(record, dict):
                 continue
             for key, val in record.items():
-                if not _is_expiry_key(str(key)):
+                if not is_expiry_key(str(key)):
                     continue
-                moment = _expiry_seconds(val)
+                moment = expiry_seconds(val)
                 if moment is not None and moment > now + 60:
                     return True
     return False
 
 
-def _has_unexpired_token(path: str) -> bool:
+def has_unexpired_token(path: str) -> bool:
     """Best-effort freshness probe: True when the file's JSON carries an
     '*expires*'/'*expiry*' key with a numeric epoch value still in the future
     (+60s skew). Unknown/absent/unparseable -> False (ordering falls back to
@@ -231,15 +223,15 @@ def _has_unexpired_token(path: str) -> bool:
         return False
     now = time.time()
     for key, val in data.items():
-        if not _is_expiry_key(str(key)):
+        if not is_expiry_key(str(key)):
             continue
-        moment = _expiry_seconds(val)
+        moment = expiry_seconds(val)
         if moment is not None and moment > now + 60:
             return True
-    return _expiry_in_nested_records(data)
+    return expiry_in_nested_records(data)
 
 
-def _expand_rule_paths(paths: list) -> list:
+def expand_rule_paths(paths: list) -> list:
     """Expand a file rule's path list to concrete existing files.
 
     Plain entries resolve exactly (existing behavior). Entries containing glob
@@ -260,7 +252,7 @@ def _expand_rule_paths(paths: list) -> list:
             try:
                 matches = sorted(
                     (p for p in glob_module.glob(resolved) if os.path.isfile(p)),
-                    key=lambda p: (_has_unexpired_token(p), os.stat(p).st_mtime),
+                    key=lambda p: (has_unexpired_token(p), os.stat(p).st_mtime),
                     reverse=True,
                 )
                 out.extend(matches)
@@ -271,22 +263,22 @@ def _expand_rule_paths(paths: list) -> list:
     return out
 
 
-_SERVER_READABLE_PREFIX = "{{CONFIG_DIR:runway}}"
+SERVER_READABLE_PREFIX = "{{CONFIG_DIR:runway}}"
 
 
-def _server_may_read(rule: dict[str, Any]) -> bool:
+def server_may_read(rule: dict[str, Any]) -> bool:
     """Whether the server itself may evaluate this registry file rule.
 
     The server reads no credential files except Runway's own (the GitHub OAuth token
     the UI flow writes into ``{{CONFIG_DIR:runway}}``). Every other file rule
     (``~/.gemini``, ``~/.claude``, ``~/.config/gh``, opencode, codex, ...) is a
     sidecar concern: the server may run in Docker with no host home at all. Applied to
-    the RAW rule paths, before ``_expand_rule_paths`` expands ``~`` or globs, so no
+    the RAW rule paths, before ``expand_rule_paths`` expands ``~`` or globs, so no
     ``exists``/``glob`` call ever touches the host home.
     """
     paths = rule.get("paths") or []
     allowed = bool(paths) and all(
-        isinstance(p, str) and p.startswith(_SERVER_READABLE_PREFIX) for p in paths
+        isinstance(p, str) and p.startswith(SERVER_READABLE_PREFIX) for p in paths
     )
     if not allowed:
         # Sidecar-only by design, or a malformed rule (no/empty ``paths``): say which, so a
@@ -308,7 +300,7 @@ class CredentialMap(dict):
         super().__init__(*args, **kwargs)
 
 
-def _inside_runway_config_dir(path: str | os.PathLike[str]) -> bool:
+def inside_runway_config_dir(path: str | os.PathLike[str]) -> bool:
     """Whether *path* is inside Runway's own config dir (a plain prefix test would also
     match a sibling such as ``runway-old``, and trips over separators on Windows)."""
     runway_config_dir = get_platform_config_dir("runway")
@@ -358,7 +350,7 @@ class CredentialProvider:
                 account's credential.
 
                 For callers that must disambiguate explicitly, use
-                :func:`_resolve_provider_config` directly — it raises
+                :func:`resolve_provider_config` directly — it raises
                 :class:`AmbiguousProviderAccountError` for the same condition.
         """
         from app.services.token_cache import token_cache
@@ -390,14 +382,14 @@ class CredentialProvider:
         try:
             _cfg: ProviderConfig | None
             if account_id is not None:
-                _cfg = _resolve_provider_config(provider_id, account_id=account_id)
+                _cfg = resolve_provider_config(provider_id, account_id=account_id)
             else:
                 # Pre-PR `get_credentials` filtered by `enabled == True` so a
                 # disabled provider's stored key could not silently override
                 # env/file sources. Keep that filter on the legacy path. The
                 # helper additionally refuses to fall back to a non-default
                 # row when the default row is missing or disabled.
-                _cfg = _resolve_legacy_provider_config(provider_id, require_enabled=True)
+                _cfg = resolve_legacy_provider_config(provider_id, require_enabled=True)
             if _cfg and _cfg.api_key:
                 discovered["api_key"] = _cfg.api_key
                 sources["api_key"] = "config"
@@ -429,8 +421,8 @@ class CredentialProvider:
                             sources[target_key] = "server"
 
             # 2. Local Files (JSON/YAML)
-            elif rule_type == "file" and _server_may_read(rule):
-                for path in _expand_rule_paths(rule.get("paths", [])):
+            elif rule_type == "file" and server_may_read(rule):
+                for path in expand_rule_paths(rule.get("paths", [])):
                     try:
                         fmt = rule.get("format", "json")
                         with open(path) as f:
@@ -448,7 +440,7 @@ class CredentialProvider:
                                 # If the file is in our own internal config dir, it's UI-managed -> config.
                                 # Otherwise it's discovered in the wild -> server.
                                 is_internal = (
-                                    _inside_runway_config_dir(path)
+                                    inside_runway_config_dir(path)
                                     or str(path) == settings.GITHUB_OAUTH_PATH
                                 )
                                 if val and is_internal:
@@ -510,8 +502,8 @@ class CredentialProvider:
                             **CredentialProvider._classify_values({target: env_value}),
                         }
                     )
-            elif rule_type == "file" and _server_may_read(rule):
-                for path in _expand_rule_paths(rule.get("paths", [])):
+            elif rule_type == "file" and server_may_read(rule):
+                for path in expand_rule_paths(rule.get("paths", [])):
                     try:
                         with open(path) as f:
                             data = (
@@ -532,7 +524,7 @@ class CredentialProvider:
                                 "source_type": "file",
                                 "label": os.path.basename(str(path)),
                                 "keys": keys,
-                                "managed": _inside_runway_config_dir(path),
+                                "managed": inside_runway_config_dir(path),
                                 **CredentialProvider._classify_values(
                                     {k: v for k, v in resolved.items() if v}
                                 ),
@@ -608,7 +600,7 @@ class CredentialProvider:
                     # and its expiry never come from two different records.
                     dated = []
                     for record, found in candidates:
-                        expiry = _record_expiry(record)
+                        expiry = record_expiry(record)
                         if expiry is not None:
                             dated.append((found, expiry))
                     if dated:
@@ -674,7 +666,7 @@ class CredentialProvider:
         try:
             cfg: ProviderConfig | None
             if account_id is not None:
-                cfg = _resolve_provider_config(
+                cfg = resolve_provider_config(
                     provider_id, account_id=account_id, require_enabled=False
                 )
             else:
@@ -687,7 +679,7 @@ class CredentialProvider:
                 # Do NOT "normalize" this — the asymmetry is intentional and
                 # pinned by ``test_db_read_failures_are_swallowed`` (DB-failure
                 # behavior) and the multi-account tests above.
-                cfg = _resolve_legacy_provider_config(provider_id)
+                cfg = resolve_legacy_provider_config(provider_id)
             if cfg and cfg.api_key:
                 return cfg.api_key
         except AmbiguousProviderAccountError:
@@ -724,7 +716,7 @@ class CredentialProvider:
         try:
             cfg: ProviderConfig | None
             if account_id is not None:
-                cfg = _resolve_provider_config(
+                cfg = resolve_provider_config(
                     provider_id, account_id=account_id, require_enabled=False
                 )
             else:
@@ -733,7 +725,7 @@ class CredentialProvider:
                 # pre-PR ``get_provider_session_cookie`` had no ``enabled``
                 # filter). ``get_credentials`` is the odd one out — see the
                 # matching comment in :meth:`get_provider_api_key` for why.
-                cfg = _resolve_legacy_provider_config(provider_id)
+                cfg = resolve_legacy_provider_config(provider_id)
             if cfg and cfg.session_cookie:
                 return cfg.session_cookie
         except AmbiguousProviderAccountError:
@@ -747,9 +739,9 @@ class CredentialProvider:
         """Return the explicitly selected OpenCode workspace for an account."""
         try:
             cfg = (
-                _resolve_provider_config("opencode", account_id=account_id, require_enabled=False)
+                resolve_provider_config("opencode", account_id=account_id, require_enabled=False)
                 if account_id is not None
-                else _resolve_legacy_provider_config("opencode")
+                else resolve_legacy_provider_config("opencode")
             )
             return cfg.opencode_workspace_id if cfg else None
         except Exception:

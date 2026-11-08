@@ -15,8 +15,8 @@ from typing import Any
 from sqlalchemy import text
 from sqlmodel import Session
 
-from app.models._datetime import iso_utc
-from app.services.queries._shared import RankedRows, _parse_ts, sqlite_utc_timestamp
+from app.models.utc_datetime import iso_utc
+from app.services.queries.shared import RankedRows, parse_ts, sqlite_utc_timestamp
 
 
 def rank_top_hosts(
@@ -128,8 +128,8 @@ def rank_top_hosts(
     results: list[dict[str, Any]] = []
     for row in rows:
         providers = [p for p in (row.providers_csv or "").split(",") if p]
-        ts_start = _parse_ts(row.ts_start)
-        ts_end = _parse_ts(row.ts_end)
+        ts_start = parse_ts(row.ts_start)
+        ts_end = parse_ts(row.ts_end)
         results.append(
             {
                 "sidecar_id": row.sidecar_id,

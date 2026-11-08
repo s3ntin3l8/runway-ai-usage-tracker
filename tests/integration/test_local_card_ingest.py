@@ -568,7 +568,7 @@ async def test_claude_oauth_resolution_retires_pending_cache_without_source_row(
         mock_settings.INGEST_API_KEY_IS_INSECURE_DEFAULT = False
         _ingest(TestClient(app), payload)
 
-    rows = await cache._get_source_credentials("anthropic")
+    rows = await cache.get_source_credentials("anthropic")
     assert [(row["account_id"], row["source_id"]) for row in rows] == [
         ("alice@example.com", source_id)
     ]

@@ -3,7 +3,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlmodel import Session
 
-from app.api.endpoints._shared import _validate_iso_param
+from app.api.endpoints.shared import validate_iso_param
 from app.core.date_utils import parse_iso8601_utc
 from app.core.db import get_session
 from app.core.rate_limit import limiter
@@ -40,8 +40,8 @@ async def get_history_windows(
     adds an exclusive upper bound. Per-type token breakdowns
     (input/output/reasoning/cache_read/cache_create) are included in each row.
     """
-    _validate_iso_param("since", since)
-    _validate_iso_param("until", until)
+    validate_iso_param("since", since)
+    validate_iso_param("until", until)
     return query_windows(
         session,
         provider_id=provider_id,
@@ -175,8 +175,8 @@ async def get_usage_history_deltas(
     An explicit ``since`` (ISO-8601 datetime) overrides ``days``; ``until``
     adds an exclusive upper bound.
     """
-    _validate_iso_param("since", since)
-    _validate_iso_param("until", until)
+    validate_iso_param("since", since)
+    validate_iso_param("until", until)
     return query_history_deltas(
         session,
         provider_id=provider_id,

@@ -16,7 +16,6 @@ Modules:
     snapshots — quota-snapshot timelines for the History dashboard tab
 """
 
-from app.services.queries._shared import RankedRows
 from app.services.queries.anomaly import query_anomalies
 from app.services.queries.cumulative import query_cumulative_live
 from app.services.queries.events import count_events, event_time_range, query_events
@@ -34,6 +33,7 @@ from app.services.queries.sessions import (
     query_sessions,
     query_sessions_paginated,
 )
+from app.services.queries.shared import RankedRows
 from app.services.queries.snapshots import (
     query_chart,
     query_snapshots,

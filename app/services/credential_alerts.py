@@ -21,16 +21,16 @@ from app.core.utils import has_refresh_credential
 from app.models.db import ProviderConfig, SystemConfig, WebhookConfig, WebhookCredentialAlert
 from app.services.account_identity import resolve_account_id
 from app.services.token_health import (
-    _build_accounts_by_provider,
-    _underlying_account,
+    build_accounts_by_provider,
     is_flagged,
     token_health_service,
+    underlying_account,
 )
 from app.services.webhooks import (
-    _credential_discord_payload,
-    _credential_slack_payload,
-    _post_payload,
-    _scope_matches,
+    credential_discord_payload,
+    credential_slack_payload,
+    post_payload,
+    scope_matches,
 )
 
 logger = logging.getLogger(__name__)
@@ -71,7 +71,7 @@ def _rearm_window_seconds(session: Session) -> int:
 
 def _as_utc(dt: datetime) -> datetime:
     """SQLite drops tzinfo on round-trip; UTCDateTime's coercion only runs on
-    Pydantic validation, not on ORM-hydrated reads (see app/models/_datetime.py)."""
+    Pydantic validation, not on ORM-hydrated reads (see app/models/utc_datetime.py)."""
     return dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
 
 
@@ -203,7 +203,7 @@ async def check_credential_alerts(session: Session) -> None:
     rows = [row for row in rows if not row.get("assignment_pending")]
     if not rows:
         return
-    accounts_by_provider = _build_accounts_by_provider(rows)
+    accounts_by_provider = build_accounts_by_provider(rows)
 
     # (provider, resolved_account_id) -> classification state built up
     # across every Token Health row that maps to that identity.
@@ -214,14 +214,14 @@ async def check_credential_alerts(session: Session) -> None:
             # matched safely to account-scoped webhooks until identity verifies.
             continue
         provider = row["provider"]
-        underlying = _underlying_account(row["account_id"])
+        underlying = underlying_account(row["account_id"])
         # Synthetic rows the service builds itself (`server`, in
         # particular) carry no account_label of their own — fall back to
         # the same provider_configs label `scope_labels` uses, so a
         # `default`-scoped webhook whose account has an email label still
         # matches a server-discovered credential for that account, the
         # same way it already matches cards for it (see
-        # `_scope_matches`'s docstring).
+        # `scope_matches`'s docstring).
         label = row.get("account_label") or scope_labels.get((provider, underlying))
         resolved = resolve_account_id(provider, underlying, label)
         state = keys.setdefault(
@@ -269,7 +269,7 @@ async def check_credential_alerts(session: Session) -> None:
                     continue
                 config_id = config.id
                 scope_label = scope_labels.get((config.provider_id, config.account_id))
-                if not _scope_matches(config, provider, account_id, scope_label):
+                if not scope_matches(config, provider, account_id, scope_label):
                     continue
 
                 alert = session.exec(
@@ -319,12 +319,12 @@ async def check_credential_alerts(session: Session) -> None:
                     "source_name": detail.get("source_name"),
                 }
                 payload = (
-                    _credential_discord_payload(**payload_kwargs)
+                    credential_discord_payload(**payload_kwargs)
                     if config.channel == "discord"
-                    else _credential_slack_payload(**payload_kwargs)
+                    else credential_slack_payload(**payload_kwargs)
                 )
                 try:
-                    await _post_payload(client, config, payload)
+                    await post_payload(client, config, payload)
                 except Exception as e:
                     logger.error(f"Credential alert delivery failed for {context}: {e}")
                     continue

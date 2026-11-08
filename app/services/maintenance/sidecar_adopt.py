@@ -37,7 +37,7 @@ from app.models.db import (
 )
 from app.services import sidecar_devices
 from app.services.account_identity import normalize_sidecar_id, split_keyed_origin
-from app.services.maintenance._chunked_sql import chunked_update
+from app.services.maintenance.chunked_sql import chunked_update
 from app.services.maintenance.rollups import rebuild_rollups_for_pairs
 from app.services.maintenance.windows import rebuild_windows_overlapping
 
@@ -390,7 +390,7 @@ def _tags_to_move(session: Session, legacy_id: str, device_id: str) -> list[Cred
 def apply_adopt_sidecar(session: Session, *, legacy_id: str, device_id: str) -> AdoptResult:
     """Move the legacy sidecar's history and settings onto the device, then retire it.
 
-    The event retag is chunked (``_chunked_sql``) so a long history never holds
+    The event retag is chunked (``chunked_sql``) so a long history never holds
     SQLite's writer lock in one transaction. Re-running after a partial failure
     resumes: the legacy row only goes last, and the rebuild set is read from the
     derived rows that still carry the legacy id, so it survives the events having

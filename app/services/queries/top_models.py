@@ -15,7 +15,7 @@ from typing import Any
 from sqlalchemy import text
 from sqlmodel import Session
 
-from app.services.queries._shared import RankedRows, sqlite_utc_timestamp
+from app.services.queries.shared import RankedRows, sqlite_utc_timestamp
 
 
 def rank_top_models(

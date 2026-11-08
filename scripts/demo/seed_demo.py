@@ -41,8 +41,8 @@ from app.core.db import engine, init_db  # noqa: E402
 from app.models.db import ProviderConfig, QuotaSnapshot  # noqa: E402
 from app.models.schemas import UsageEventPush  # noqa: E402
 from app.services.accumulator import upsert_latest_usage  # noqa: E402
-from app.services.collectors._anthropic_common import ANTHROPIC_WINDOW_NAME_MAP  # noqa: E402
 from app.services.collectors.anthropic import AnthropicCollector  # noqa: E402
+from app.services.collectors.anthropic_common import ANTHROPIC_WINDOW_NAME_MAP  # noqa: E402
 from app.services.collectors.chatgpt import ChatGPTCollector  # noqa: E402
 from app.services.collectors.gemini import GeminiCollector  # noqa: E402
 from app.services.collectors.github import GitHubCollector  # noqa: E402
@@ -116,7 +116,7 @@ def anthropic_cards() -> list[dict[str, Any]]:
             },
         ]
     }
-    parsed = c._parse_oauth_response(
+    parsed = c.parse_oauth_response(
         data, ANTHROPIC_WINDOW_NAME_MAP, {"tier": "Max 5x", "email": EMAIL}
     )
     return c._tag_results(parsed)

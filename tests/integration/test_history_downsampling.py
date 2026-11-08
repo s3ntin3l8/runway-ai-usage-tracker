@@ -17,7 +17,7 @@ from sqlmodel.pool import StaticPool
 from app.models.db import LatestUsage, QuotaSnapshot, UsageEvent, UsageWindow
 from app.services.pricing_seed import seed_pricing_table
 from app.services.queries.snapshots import (
-    _bucket_seconds_for,
+    bucket_seconds_for,
     query_chart,
     query_snapshots,
 )
@@ -54,17 +54,17 @@ def _bucket_interior(bucket_seconds: int = 300) -> datetime:
 
 
 def test_bucket_resolution_picks_right_tier():
-    assert _bucket_seconds_for(0.05) == 60
-    assert _bucket_seconds_for(0.1) == 60
-    assert _bucket_seconds_for(0.5) == 300
-    assert _bucket_seconds_for(1.0) == 300
-    assert _bucket_seconds_for(3.0) == 1800
-    assert _bucket_seconds_for(7.0) == 1800
-    assert _bucket_seconds_for(15.0) == 10800
-    assert _bucket_seconds_for(30.0) == 10800
-    assert _bucket_seconds_for(60.0) == 21600
-    assert _bucket_seconds_for(90.0) == 21600
-    assert _bucket_seconds_for(365.0) == 86400
+    assert bucket_seconds_for(0.05) == 60
+    assert bucket_seconds_for(0.1) == 60
+    assert bucket_seconds_for(0.5) == 300
+    assert bucket_seconds_for(1.0) == 300
+    assert bucket_seconds_for(3.0) == 1800
+    assert bucket_seconds_for(7.0) == 1800
+    assert bucket_seconds_for(15.0) == 10800
+    assert bucket_seconds_for(30.0) == 10800
+    assert bucket_seconds_for(60.0) == 21600
+    assert bucket_seconds_for(90.0) == 21600
+    assert bucket_seconds_for(365.0) == 86400
 
 
 # ---------------------------------------------------------------------------

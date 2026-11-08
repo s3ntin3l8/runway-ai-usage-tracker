@@ -27,7 +27,7 @@ from app.core.utils import (
     human_delta,
 )
 from app.services.account_identity import is_placeholder_label
-from app.services.collectors._anthropic_common import (
+from app.services.collectors.anthropic_common import (
     ANTHROPIC_WINDOW_NAME_MAP,
     anthropic_limits_from,
     anthropic_model_id_for,
@@ -50,7 +50,7 @@ class AnthropicWebMixin:
     Intended to be composed into AnthropicCollector.
     """
 
-    _name_map = ANTHROPIC_WINDOW_NAME_MAP
+    web_name_map = ANTHROPIC_WINDOW_NAME_MAP
 
     # ─────────────────────────────── Web API (cookie path) ───────────────────
 
@@ -106,7 +106,7 @@ class AnthropicWebMixin:
 
         native_source = is_native_claude_source("anthropic")
         if native_source or selected_organization("anthropic", self.account_id):
-            self._current_input_source = "sidecar" if native_source else "config"
+            self.current_input_source = "sidecar" if native_source else "config"
             try:
                 verified = await verify_collector_cookie(self, client, "anthropic", session_key)
             except ConsoleAPIError as exc:
@@ -334,7 +334,7 @@ class AnthropicWebMixin:
                     account_label=name_str,
                     identity_suffix=identity_suffix,
                     data_source=self.DATA_SOURCE_WEB,
-                    input_source=getattr(self, "_current_input_source", "unknown"),
+                    input_source=getattr(self, "current_input_source", "unknown"),
                     source_label="Web API",
                     usage_url="https://claude.ai/settings/usage",
                     tier_label=tier_label,
@@ -386,7 +386,7 @@ class AnthropicWebMixin:
                     "model_id": anthropic_model_id_for(api_key),
                     "reset_at": reset_at.isoformat() if reset_at else None,
                     "data_source": self.DATA_SOURCE_WEB,
-                    "input_source": getattr(self, "_current_input_source", "unknown"),
+                    "input_source": getattr(self, "current_input_source", "unknown"),
                     "tier": tier,
                     "account_label": name_str,
                     "usage_url": "https://claude.ai/settings/usage",
@@ -431,7 +431,7 @@ class AnthropicWebMixin:
                             # model.
                             "billing_evidence": "prepaid_credit",
                             "data_source": self.DATA_SOURCE_WEB,
-                            "input_source": getattr(self, "_current_input_source", "unknown"),
+                            "input_source": getattr(self, "current_input_source", "unknown"),
                             "tier": tier,
                             "account_label": name_str,
                             "usage_url": "https://claude.ai/settings/usage",
@@ -486,7 +486,7 @@ class AnthropicWebMixin:
                             "window_type": "monthly",
                             "model_id": None,
                             "data_source": self.DATA_SOURCE_WEB,
-                            "input_source": getattr(self, "_current_input_source", "unknown"),
+                            "input_source": getattr(self, "current_input_source", "unknown"),
                             "tier": tier,
                             "account_label": name_str,
                             "usage_url": "https://claude.ai/settings/usage",
@@ -527,7 +527,7 @@ class AnthropicWebMixin:
                                 "window_type": "monthly",
                                 "model_id": None,
                                 "data_source": self.DATA_SOURCE_WEB,
-                                "input_source": getattr(self, "_current_input_source", "unknown"),
+                                "input_source": getattr(self, "current_input_source", "unknown"),
                                 "tier": tier,
                                 "account_label": name_str,
                                 "usage_url": "https://claude.ai/settings/usage",

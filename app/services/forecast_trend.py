@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from statistics import median
 
-from app.services.forecast_shared import LIMIT_PCT, MIN_BUCKETS_FOR_TREND, _NowState, _Projection
+from app.services.forecast_shared import LIMIT_PCT, MIN_BUCKETS_FOR_TREND, NowState, Projection
 
 # Snapshots quantized to coarse steps (e.g. Antigravity reports pct_used in
 # ~20% increments) make trend fitting unreliable: Theil-Sen sees long plateaus
@@ -54,7 +54,7 @@ class TrendFit:
     method: str  # always "theil_sen"
 
 
-def _is_coarse_quantized(ys: Sequence[float]) -> bool:
+def is_coarse_quantized(ys: Sequence[float]) -> bool:
     """True when snapshots are step-quantized into coarse buckets.
 
     All three conditions must hold:
@@ -79,7 +79,7 @@ def _is_coarse_quantized(ys: Sequence[float]) -> bool:
     return any(abs(b - a) < 0.1 for a, b in zip(ys, ys[1:], strict=False))
 
 
-def _fit_trend(xs: list[float], ys: list[float]) -> TrendFit | None:
+def fit_trend(xs: list[float], ys: list[float]) -> TrendFit | None:
     """Fit a linear trend using Theil-Sen estimator (median of pairwise slopes).
 
     Resistant to outliers: a single spike in one bucket can't drag the slope
@@ -106,7 +106,7 @@ def _fit_trend(xs: list[float], ys: list[float]) -> TrendFit | None:
     return TrendFit(slope=slope, intercept=intercept, method="theil_sen")
 
 
-def _compute_hit_at(
+def compute_hit_at(
     *,
     fit: TrendFit,
     now: datetime,
@@ -141,14 +141,14 @@ def _compute_hit_at(
     return (now + timedelta(seconds=hit_secs_from_now)).isoformat()
 
 
-def _now_pct_floor_status(now_pct: float | None) -> str | None:
+def now_pct_floor_status(now_pct: float | None) -> str | None:
     """Status dictated purely by how full the card already is, or None.
 
     A card already at/near its limit is critical no matter what the recent
     trend looks like — including when the trend is flat, coarse-quantized, or
     too sparse to fit. This floor sits *above* the trend short-circuits in
     `_build_forecast_entry` because `low_resolution` / `insufficient_data`
-    return before `_classify_status` ever sees `now_pct`; a guard placed only
+    return before `classify_status` ever sees `now_pct`; a guard placed only
     in the classifier would miss those paths. Returns None when the card is not
     yet near its limit, leaving the trend-based classification untouched.
     """
@@ -161,14 +161,14 @@ def _now_pct_floor_status(now_pct: float | None) -> str | None:
     return None
 
 
-def _floor_projection(status: str, now_state: _NowState, limit_value: float) -> _Projection:
+def floor_projection(status: str, now_state: NowState, limit_value: float) -> Projection:
     """Projection for a now_pct-floored status (`exhausted` / `near_limit`)."""
     if status == "exhausted":
-        return _Projection(used=limit_value, pct=LIMIT_PCT)
-    return _Projection(used=now_state.used, pct=now_state.pct)
+        return Projection(used=limit_value, pct=LIMIT_PCT)
+    return Projection(used=now_state.used, pct=now_state.pct)
 
 
-def _classify_status(
+def classify_status(
     *,
     now_pct: float | None,
     projected_pct: float,

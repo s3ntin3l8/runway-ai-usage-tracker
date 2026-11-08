@@ -810,16 +810,16 @@ async def test_claude_pending_sources_survive_real_manager_poller_and_resync(
         transport=httpx.MockTransport(upstream), event_hooks={"response": [cache.observe_response]}
     )
     try:
-        await manager._sync_collectors(force=True)
+        await manager.sync_collectors(force=True)
         assert len(manager.smart_collectors) == 4
         poller = BackgroundPoller()
         await poller.poll_now()
-        await manager._sync_collectors(force=True)
+        await manager.sync_collectors(force=True)
         assert len(await cache.get_all_active_accounts()) == 2
         assert f"anthropic:{BOB}" in manager.smart_collectors
         assert f"anthropic_console:{org}" in manager.smart_collectors
         await poller.poll_now()
-        await manager._sync_collectors(force=True)
+        await manager.sync_collectors(force=True)
         assert len(await cache.get_all_active_accounts()) == 2
         with Session(engine) as session:
             rows = session.exec(select(LatestUsage)).all()
@@ -938,7 +938,7 @@ async def test_manager_rejected_regular_claude_poll_preserves_last_good(
     try:
         poller = BackgroundPoller()
         await poller.poll_now()
-        await manager._sync_collectors(force=True)
+        await manager.sync_collectors(force=True)
         with Session(engine) as session:
             assert len(session.exec(select(LatestUsageContribution)).all()) == 1
         if fallback:
@@ -980,7 +980,7 @@ async def test_manager_rejected_regular_claude_poll_preserves_last_good(
                     "priority": 1,
                 },
             )
-            await manager._sync_collectors(force=True)
+            await manager.sync_collectors(force=True)
         smart = manager.smart_collectors[f"anthropic:{BOB}"]
         collect = smart.collect
         changed = False

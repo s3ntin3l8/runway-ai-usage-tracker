@@ -80,12 +80,12 @@ def test_tag_endpoint_canonicalizes_target_and_refreshes_colliding_source(
     origin = "path:/home/alice/.claude/.credentials.json"
     source_id = "sidecar:alpha:path:/auth.json"
     monkeypatch.setitem(
-        manager._credential_source_preferences,
+        manager.credential_source_preferences,
         ("anthropic", "default"),
         {source_id: (False, 7)},
     )
     monkeypatch.setitem(
-        manager._credential_source_preferences,
+        manager.credential_source_preferences,
         ("anthropic", "alice@example.com"),
         {},
     )
@@ -138,10 +138,11 @@ def test_tag_endpoint_canonicalizes_target_and_refreshes_colliding_source(
     assert sources[0].source_label == "new machine label"
     assert sources[0].credential_origin == origin
     assert sources[0].sidecar_id == "alpha"
-    assert source_id not in manager._credential_source_preferences[("anthropic", "default")]
-    assert manager._credential_source_preferences[("anthropic", "alice@example.com")][
-        source_id
-    ] == (sources[0].enabled, sources[0].priority)
+    assert source_id not in manager.credential_source_preferences[("anthropic", "default")]
+    assert manager.credential_source_preferences[("anthropic", "alice@example.com")][source_id] == (
+        sources[0].enabled,
+        sources[0].priority,
+    )
 
 
 def test_tag_endpoint_404_when_provider_account_missing(client: TestClient):

@@ -251,7 +251,7 @@ class TestWindowsCredentialJsonRule:
 
     def test_the_expiry_is_stamped_as_ms_epoch(self):
         """agy's access token carries no JWT exp claim, so expiry_date (the
-        freshness signal token_cache._is_staler needs) comes from token.expiry."""
+        freshness signal token_cache.is_staler needs) comes from token.expiry."""
         expires_at = _in_an_hour()
         cards, _blocked = self._collect(_blob(expires_at))
         token_cards = [c for c in cards if c.get("remaining") == "Token"]
