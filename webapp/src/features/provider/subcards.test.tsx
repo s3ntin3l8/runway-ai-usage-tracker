@@ -383,6 +383,33 @@ describe('RecentSessions', () => {
     expect(screen.getByText('Recent sessions')).toBeInTheDocument();
   });
 
+  it('shows the session name with the short id as a suffix', async () => {
+    vi.mocked(api.fetchSessions).mockResolvedValue({
+      sessions: [session({ session_id: 'feedface0000', name: 'Fix the Login bug' })],
+    } as never);
+    renderWithProviders(<RecentSessions providerId="anthropic" accountId="me@example.com" />);
+    expect(await screen.findByText('Fix the Login bug')).toBeInTheDocument();
+    expect(screen.getByText('feedface')).toBeInTheDocument();
+    expect(screen.getByTitle('Fix the Login bug (feedface0000)')).toBeInTheDocument();
+  });
+
+  it('renders only the short id when the session has no name', async () => {
+    vi.mocked(api.fetchSessions).mockResolvedValue({
+      sessions: [session({ session_id: 'feedface0000', name: null })],
+    } as never);
+    renderWithProviders(<RecentSessions providerId="anthropic" accountId="me@example.com" />);
+    expect(await screen.findByText('feedface')).toHaveAttribute('title', 'feedface0000');
+  });
+
+  it('truncates a very long session name', async () => {
+    const name = 'x'.repeat(200);
+    vi.mocked(api.fetchSessions).mockResolvedValue({
+      sessions: [session({ session_id: 'feedface0000', name })],
+    } as never);
+    renderWithProviders(<RecentSessions providerId="anthropic" accountId="me@example.com" />);
+    expect(await screen.findByText(name)).toHaveClass('truncate');
+  });
+
   it('shows the empty state with no sessions', async () => {
     vi.mocked(api.fetchSessions).mockResolvedValue({ sessions: [] } as never);
     renderWithProviders(<RecentSessions providerId="anthropic" accountId="me@example.com" />);

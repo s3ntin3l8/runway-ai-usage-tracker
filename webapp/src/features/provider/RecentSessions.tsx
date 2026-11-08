@@ -37,9 +37,22 @@ function SessionCard({
       <CardContent className="flex flex-col gap-3 pt-4">
         <div className="flex items-baseline justify-between gap-2">
           <span className="flex min-w-0 items-baseline gap-2">
-            <span className="font-mono text-xs" title={s.session_id}>
-              {s.session_id.slice(0, 8)}
-            </span>
+            {s.name ? (
+              <span
+                className="flex min-w-0 items-baseline gap-2"
+                title={`${s.name} (${s.session_id})`}
+              >
+                {/* Free text, rendered as given (any case or length). */}
+                <span className="min-w-0 truncate text-sm">{s.name}</span>
+                <span className="shrink-0 font-mono text-xs text-fg-subtle">
+                  {s.session_id.slice(0, 8)}
+                </span>
+              </span>
+            ) : (
+              <span className="font-mono text-xs" title={s.session_id}>
+                {s.session_id.slice(0, 8)}
+              </span>
+            )}
             {sidecarName ? (
               <Badge variant="outline" className="shrink-0">
                 {sidecarName}
