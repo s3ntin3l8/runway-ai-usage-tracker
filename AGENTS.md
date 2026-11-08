@@ -102,10 +102,37 @@ procedure (`scripts/action_pins.json`) are in [`CONTRIBUTING.md`](CONTRIBUTING.m
   baseline stores its line number: editing a baselined file moves it, so re-run
   in the same change or the CI gate fails (and the baseline conflicts on the next
   rebase).
-- `make screenshots-audit AUDIT=<slug>` writes phone and tablet captures into
-  `docs/audit/assets/<slug>/`, which is **local only** (gitignored); the audit
+- `make screenshots-audit AUDIT=<slug>` writes desktop, tablet and phone captures
+  into `docs/audit/assets/<slug>/`, which is **local only** (gitignored); the audit
   *report* is the committed artifact, named `YYYY-MM-<scope>-<topic>.md` — read
   [`docs/audit/README.md`](docs/audit/README.md) before writing one.
+- **Look at every UI change before calling it done.** Run
+  `make visual-check ROUTES=<the pages you touched>` (Docker; routes are scene names or
+  paths from `visual/scenes.json`, e.g. `ROUTES=history,/provider`): it renders the merge
+  base and your working tree against `make demo` in the pinned
+  [visual-kit](https://github.com/s3ntin3l8/visual-kit) image and writes
+  `visual/.out/check/report/` (`index.html` side by side, `summary.md`). Open the changed
+  and new shots and read the deltas (axe, console errors, horizontal overflow, unnamed
+  controls): a diff is intended, a regression, or flake (then fix the demo or the settle
+  logic in `visual/hooks.mjs`, or give that one scene a `maxDiffPixels` with the reason;
+  never raise the threshold for every scene). The PR description gets a **Visual check**
+  section: routes, what changed and why, axe delta. A new page or state needs a scene in
+  `visual/scenes.json` (tags `check`, `audit`, `presentation`). After changing the demo or a
+  scene, run `make visual-check REPEAT=2` (the launcher recaptures the working tree
+  itself): it must report no determinism failure. `baseHarness` renders the base with the
+  head's `scripts/demo` but the merge base's seed (`scripts/demo/seed_demo.py`) and start
+  path (the `demo` target, `requirements*.txt`, `webapp/package-lock.json`), so a PR that
+  changes `scripts/demo` together with any of those can fail to start its base demo, and
+  then every scene reports "new" (the reason is only a stderr line). The same check runs on
+  UI PRs in CI (advisory). Scenes flagged `"baseline": true` also have committed shots in
+  `visual/baselines/`: regenerate them in the PR that moves those pages
+  (`make visual-baseline`, or comment `/update-baselines` on the PR). The README, PWA and
+  landing screenshots come from `make screenshots` / `make screenshots-landing` and are
+  refreshed weekly by `.github/workflows/visual-refresh.yml` (one rolling PR each for the
+  screenshots and the baselines); regenerate them yourself when a screen they show changes
+  (the loop re-encodes non-deterministically: do not commit `docs/screenshots/*.webm|mp4|jpg`,
+  `make screenshots` removes them). The demo's clock is `DEMO_NOW` (see `visual/scenes.json`);
+  spec and profiles: visual-kit's `CONTRACT.md`; the image is pinned in `visual/Dockerfile`.
 
 ## Core invariants
 

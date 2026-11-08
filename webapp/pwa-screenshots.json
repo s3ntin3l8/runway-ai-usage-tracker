@@ -1,0 +1,58 @@
+[
+  {
+    "src": "screenshots/dashboard-dark-desktop.png",
+    "sizes": "2880x1800",
+    "type": "image/png",
+    "form_factor": "wide",
+    "label": "Dashboard"
+  },
+  {
+    "src": "screenshots/history-dark-desktop.png",
+    "sizes": "2880x1800",
+    "type": "image/png",
+    "form_factor": "wide",
+    "label": "Usage history"
+  },
+  {
+    "src": "screenshots/fleet-dark-desktop.png",
+    "sizes": "2880x1800",
+    "type": "image/png",
+    "form_factor": "wide",
+    "label": "Fleet management"
+  },
+  {
+    "src": "screenshots/settings-dark-desktop.png",
+    "sizes": "2880x1800",
+    "type": "image/png",
+    "form_factor": "wide",
+    "label": "Settings"
+  },
+  {
+    "src": "screenshots/dashboard-dark-mobile.png",
+    "sizes": "780x1688",
+    "type": "image/png",
+    "form_factor": "narrow",
+    "label": "Dashboard"
+  },
+  {
+    "src": "screenshots/history-dark-mobile.png",
+    "sizes": "780x1688",
+    "type": "image/png",
+    "form_factor": "narrow",
+    "label": "Usage history"
+  },
+  {
+    "src": "screenshots/fleet-dark-mobile.png",
+    "sizes": "780x1688",
+    "type": "image/png",
+    "form_factor": "narrow",
+    "label": "Fleet management"
+  },
+  {
+    "src": "screenshots/settings-dark-mobile.png",
+    "sizes": "780x1688",
+    "type": "image/png",
+    "form_factor": "narrow",
+    "label": "Settings"
+  }
+]

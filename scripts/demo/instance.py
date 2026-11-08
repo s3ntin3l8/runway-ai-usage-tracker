@@ -1,14 +1,16 @@
 """A throwaway, isolated Runway with synthetic demo data.
 
     make demo                      # serve it until Ctrl-C, then delete everything
-    make screenshots               # README + manifest screenshots (scripts/demo/capture.py)
-    make screenshots-landing OUT=…  # landing-page stills + loop
+    DEMO_NOW=2026-10-15T10:00:00Z make demo   # fixed clock: relative times render the same on any day
 
 All state lives in one mkdtemp directory: the database (RUNWAY_CONFIG_DIR), HOME
 and the XDG dirs. The server runs from a scratch working directory without a
 `.env`, on a loopback port that must be free, with an environment built from
 scratch (scripts/demo/env.py refuses anything that points elsewhere). It never
 touches Docker, so a compose deployment on the same host is out of reach.
+
+Prints `DEMO_READY url=...` once the server answers, then runs until SIGINT/SIGTERM.
+visual-kit (`make screenshots`, `make visual-check`) starts it that way and sends TERM.
 """
 
 from __future__ import annotations
@@ -33,6 +35,7 @@ except ImportError:  # pragma: no cover - Windows
     fcntl = None  # type: ignore[assignment]
 
 from scripts.demo.env import assert_demo_env, assert_ports_free, demo_env
+from scripts.demo.freeze_time import parse_demo_now
 
 ROOT = Path(__file__).resolve().parents[2]
 PYTHON = ROOT / ".venv" / "bin" / "python"
@@ -84,6 +87,7 @@ SPA_INPUT_DIRS = ("src", "public")
 SPA_INPUT_GLOBS = (
     "index.html",
     "package.json",
+    "pwa-screenshots.json",
     "package-lock.json",
     "vite.config.*",
     "tsconfig*.json",
@@ -292,7 +296,22 @@ def clean_stale_scratch_dirs() -> None:
         shutil.rmtree(candidate, ignore_errors=True)
 
 
-def start_demo(*, keep: bool = False, quiet: bool = False) -> Demo:
+def _python(args: list[str], *, frozen: bool) -> list[str]:
+    """`python <args>` (a `-m module ...` or a script), run through scripts.demo.freeze_time when
+    the clock is fixed, so the seed and the server agree on what "now" is."""
+    if not frozen:
+        return [str(PYTHON), *args]
+    target = args[1:] if args[0] == "-m" else args
+    return [str(PYTHON), "-m", "scripts.demo.freeze_time", *target]
+
+
+def start_demo(*, keep: bool = False) -> Demo:
+    # DEMO_NOW fixes the clock of the seed and the server, so relative times render the same on any
+    # day (visual checks and screenshots compare text as well as pixels). Validated before anything starts.
+    demo_now = os.environ.get("DEMO_NOW", "").strip()
+    if demo_now:
+        parse_demo_now(demo_now)
+    frozen = bool(demo_now)
     assert_ports_free([DEMO_PORT])
     ensure_spa_built()
 
@@ -329,27 +348,35 @@ def start_demo(*, keep: bool = False, quiet: bool = False) -> Demo:
                 # The poller still runs, but its collectors only find the scratch
                 # HOME's empty credential stores, so the seeded cards stay as seeded.
                 "LOG_LEVEL": "WARNING",
+                **({"DEMO_NOW": demo_now} if demo_now else {}),
             },
         )
         assert_demo_env(env, demo_dir, cwd=run_dir)
         print(f"[demo] scratch dir {demo_dir}")
+        if frozen:
+            print(f"[demo] clock fixed at {demo_now}")
         print("[demo] seeding demo data...")
         subprocess.run(
-            [str(PYTHON), "-m", "scripts.demo.seed_demo"], cwd=run_dir, env=env, check=True
+            _python(["-m", "scripts.demo.seed_demo"], frozen=frozen),
+            cwd=run_dir,
+            env=env,
+            check=True,
         )
         print("[demo] starting the server...")
         server = subprocess.Popen(
-            [
-                str(PYTHON),
-                "-m",
-                "uvicorn",
-                "app.main:app",
-                "--host",
-                "127.0.0.1",
-                "--port",
-                str(DEMO_PORT),
-                "--no-proxy-headers",
-            ],
+            _python(
+                [
+                    "-m",
+                    "uvicorn",
+                    "app.main:app",
+                    "--host",
+                    "127.0.0.1",
+                    "--port",
+                    str(DEMO_PORT),
+                    "--no-proxy-headers",
+                ],
+                frozen=frozen,
+            ),
             cwd=run_dir,
             env=env,
             # The server stays in the demo's own process group on purpose.
@@ -360,7 +387,6 @@ def start_demo(*, keep: bool = False, quiet: bool = False) -> Demo:
             # stdout open, so the supervisor waited for a pipe that never
             # closed and the run never ended. The demo stops the server by
             # name instead; see Demo.stop().
-            stdout=subprocess.DEVNULL if quiet else None,
         )
         url = f"http://127.0.0.1:{DEMO_PORT}"
         _wait_for_http(f"{url}/")
@@ -391,6 +417,7 @@ def main() -> None:
     # below turns into a stopped server.
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     demo = start_demo(keep=args.keep)
+    print(f"DEMO_READY url={demo.url}", flush=True)
     print(f"\n[demo] Runway demo is up: {demo.url}")
     print("[demo] Loopback only, no login. Ctrl-C stops it and deletes all demo data.")
     try:

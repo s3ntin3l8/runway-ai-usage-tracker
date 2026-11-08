@@ -58,16 +58,6 @@ export default tseslint.config(
     },
   },
   {
-    // The screenshot driver is a Node script, but two of its callbacks are
-    // serialised and evaluated *in the page* by Playwright, so they see the
-    // browser's globals. Declared here rather than by giving every script
-    // the browser's globals.
-    files: ['scripts/screenshots.mjs'],
-    languageOptions: {
-      globals: { document: 'readonly' },
-    },
-  },
-  {
     // The test files use `any` for the shapes a mock returns, where the
     // point of the test is the call, not the type. The same convention the
     // Python side follows for `tests/*`. The Playwright specs are tests too.

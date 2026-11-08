@@ -120,9 +120,9 @@ def _heatmap_utc(
             params["until"] = sqlite_utc_timestamp(until)
         where_range = f"AND {lower_sql} {upper_sql}"
     else:
-        # SQLite treats a bound 'now' string the same as the literal, so the
-        # default is byte-identical to the original datetime('now', ...) query.
-        params["anchor"] = now.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S") if now else "now"
+        # The anchor comes from Python's clock, as in the zoned path: the demo fixes that clock
+        # (DEMO_NOW), and SQLite's own 'now' would ignore it. Same second-resolution UTC string.
+        params["anchor"] = (now or datetime.now(UTC)).astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S")
         params["since_clause"] = f"-{days} days"
         where_range = "AND ts >= datetime(:anchor, :since_clause)"
 

@@ -8,8 +8,9 @@ Verifies:
   spring-forward inside the window doesn't smear cells.
 """
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
+import time_machine
 from sqlmodel import Session, SQLModel, create_engine
 from sqlmodel.pool import StaticPool
 
@@ -80,6 +81,19 @@ def test_utc_bucketing_when_tz_missing():
     )
 
     assert _cell(cells, dow=4, hour=14) == 500
+    assert sum(c["tokens"] for c in cells) == 500
+
+
+def test_rolling_window_anchors_on_the_python_clock_when_now_is_not_given():
+    # The demo fixes the clock (DEMO_NOW, scripts/demo/freeze_time.py). SQLite's own 'now' would
+    # ignore that, so the default window has to be computed from Python's clock.
+    s = _session()
+    _add_event(s, "inside", datetime(2026, 5, 7, 14, 30, 0, tzinfo=UTC), tokens=500)
+    _add_event(s, "outside", _NOW - timedelta(days=40), tokens=900)
+
+    with time_machine.travel(_NOW, tick=False):
+        cells = query_heatmap(s, provider_id="anthropic", account_id="user@example.com", days=30)
+
     assert sum(c["tokens"] for c in cells) == 500
 
 

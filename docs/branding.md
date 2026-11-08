@@ -24,7 +24,7 @@ motif), on a premium dark disc.
 | Sidecar app icon | `installer/assets/app.icns` (macOS bundle, 16–1024 incl. @2x), `installer/assets/app.ico` (Windows exe + installer, 16–256) | Packed by `installer/generate_app_icons.py` (Pillow) from `installer/assets/app-icon-1024.png`, which `render-brand-rasters.mjs` renders from `assets/logo.svg`. Referenced by `sidecar_app/spec/{macos,windows}.spec` and `installer/windows/runway-sidecar.nsi`. |
 | macOS DMG window background | `installer/assets/dmg-background{,@2x}.png` | Rendered from the canonical `assets/installer/dmg-background.svg` (760×480, plus 2× for Retina). Icon slots are fixed at (180,320) / (580,320) — keep the SVG and the `create-dmg` coordinates in sync. |
 | Windows installer art | `installer/assets/installer-sidebar.bmp` (164×314 welcome/finish), `installer/assets/installer-header.bmp` (150×57 page header) | Rendered from `assets/installer/nsis-{sidebar,header}.svg`, flattened to 24-bit BMP (the only format NSIS accepts) by `generate_app_icons.py`. |
-| PWA install-dialog screenshots | `webapp/public/screenshots/{dashboard,history,fleet,settings}.png` | Dark copies of `assets/screenshots/*.png`, written by `make screenshots` together with the README set (1440×900, matching the manifest `screenshots` sizes in `webapp/vite.config.ts`). |
+| PWA install-dialog screenshots | `webapp/public/screenshots/{dashboard,history,fleet,settings}-dark-{desktop,mobile}.png` | Dark copies of `docs/screenshots/*.png`, copied by `make screenshots` (`scripts/sync-pwa-screenshots.mjs`) from the list in `webapp/pwa-screenshots.json`, which `webapp/vite.config.ts` puts in the manifest: desktop 2880×1800 (`wide`), mobile 780×1688 (`narrow`). |
 
 ## Regenerating
 
@@ -55,14 +55,14 @@ The README set and the PWA install-dialog copies are not hand-taken. They are
 generated from a throwaway demo instance:
 
 ```sh
-make screenshots                 # README set (dark + light) and the PWA manifest copies
+make screenshots                 # README set (dark + light, desktop + mobile) and the PWA manifest copies
 make screenshots-landing OUT=…   # landing-page stills and a short loop
-make screenshots-audit AUDIT=…   # phone + tablet stills of every page, for an audit
+make screenshots-audit AUDIT=…   # desktop, tablet and phone stills of every page, for an audit
 ```
 
 `webapp/e2e/screenshot.py` is the standalone Playwright helper for visual QA of
-the v3 webapp during development; `make screenshots` instead drives
-`webapp/scripts/screenshots.mjs` against a demo instance. Both run against
+the v3 webapp during development; `make screenshots` instead runs visual-kit
+(`visual/scenes.json`) against a demo instance. Both run against
 synthetic data only — see [`demo.md`](demo.md) for the isolation rules, and
 [`frontend.md`](frontend.md) for the app the screenshots show.
 

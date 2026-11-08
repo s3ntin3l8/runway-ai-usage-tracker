@@ -8,7 +8,7 @@
 
 Upgrading from the previous major version? See the [v3 migration notes](docs/migration-v3.md).
 
-![Runway Dashboard](assets/screenshots/dashboard.png)
+![Runway Dashboard](docs/screenshots/dashboard-dark-desktop.png)
 
 <p align="center"><sub>Dark theme shown. Light theme follows your OS preference or Settings → Display.</sub></p>
 
@@ -16,27 +16,27 @@ Upgrading from the previous major version? See the [v3 migration notes](docs/mig
 
 <table>
 <tr>
-<td width="50%"><a href="assets/screenshots/provider.png"><img src="assets/screenshots/provider.png" alt="Per-provider detail page — Overview tab" /></a></td>
-<td width="50%"><a href="assets/screenshots/provider-activity.png"><img src="assets/screenshots/provider-activity.png" alt="Provider Activity tab scoped to a past month via the time-range picker" /></a></td>
+<td width="50%"><a href="docs/screenshots/provider-dark-desktop.png"><img src="docs/screenshots/provider-dark-desktop.png" alt="Per-provider detail page — Overview tab" /></a></td>
+<td width="50%"><a href="docs/screenshots/provider-activity-dark-desktop.png"><img src="docs/screenshots/provider-activity-dark-desktop.png" alt="Provider Activity tab: tokens per day, token composition and tokens by model" /></a></td>
 </tr>
 <tr>
-<td align="center"><sub><b>Provider detail page</b> — gauges, current-window forecast, per-model & per-window donuts, recent sessions <br/><a href="assets/screenshots/provider-light.png">(light)</a></sub></td>
-<td align="center"><sub><b>Time range picker</b> — Overview / Activity / Cost / Events / Sessions scope to a rolling window, a calendar month, or a custom span (token trend, composition, heatmap, sessions) <br/><a href="assets/screenshots/provider-activity-light.png">(light)</a></sub></td>
+<td align="center"><sub><b>Provider detail page</b> — usage windows with pace and projection, the current window's forecast, per-model donut <br/><a href="docs/screenshots/provider-light-desktop.png">(light)</a></sub></td>
+<td align="center"><sub><b>Activity</b> — daily tokens, composition and the per-model split; the time-range picker scopes Overview / Activity / Cost / Events / Sessions to a rolling window, a calendar month, or a custom span <br/><a href="docs/screenshots/provider-activity-light-desktop.png">(light)</a></sub></td>
 </tr>
 <tr>
-<td width="50%"><a href="assets/screenshots/history.png"><img src="assets/screenshots/history.png" alt="History view with multi-series chart, forecast overlay, and burn-rate stats" /></a></td>
-<td width="50%"><a href="assets/screenshots/settings.png"><img src="assets/screenshots/settings.png" alt="Settings panel with provider config, credentials, alerts, audit log" /></a></td>
+<td width="50%"><a href="docs/screenshots/history-dark-desktop.png"><img src="docs/screenshots/history-dark-desktop.png" alt="History view with multi-series chart, forecast overlay, and burn-rate stats" /></a></td>
+<td width="50%"><a href="docs/screenshots/settings-dark-desktop.png"><img src="docs/screenshots/settings-dark-desktop.png" alt="Settings panel with provider config, credentials, alerts, audit log" /></a></td>
 </tr>
 <tr>
-<td align="center"><sub><b>History</b> — % used / tokens / cost across windows with forecast overlay <br/><a href="assets/screenshots/history-light.png">(light)</a></sub></td>
-<td align="center"><sub><b>Settings</b> — provider toggles, poll intervals, credentials, alerts, audit log, data health, version <br/><a href="assets/screenshots/settings-light.png">(light)</a></sub></td>
+<td align="center"><sub><b>History</b> — % used / tokens / cost across windows with forecast overlay <br/><a href="docs/screenshots/history-light-desktop.png">(light)</a></sub></td>
+<td align="center"><sub><b>Settings</b> — provider toggles, poll intervals, credentials, alerts, audit log, data health, version <br/><a href="docs/screenshots/settings-light-desktop.png">(light)</a></sub></td>
 </tr>
 <tr>
-<td width="50%"><a href="assets/screenshots/fleet.png"><img src="assets/screenshots/fleet.png" alt="Fleet view showing sidecar registry" /></a></td>
-<td width="50%"><a href="assets/screenshots/dashboard-light.png"><img src="assets/screenshots/dashboard-light.png" alt="Dashboard in light theme" /></a></td>
+<td width="50%"><a href="docs/screenshots/fleet-dark-desktop.png"><img src="docs/screenshots/fleet-dark-desktop.png" alt="Fleet view showing sidecar registry" /></a></td>
+<td width="50%"><a href="docs/screenshots/dashboard-light-desktop.png"><img src="docs/screenshots/dashboard-light-desktop.png" alt="Dashboard in light theme" /></a></td>
 </tr>
 <tr>
-<td align="center"><sub><b>Fleet</b> — sidecar registry with version, OS, ingest count, pause/resume, keep-alive, and untagged credentials to map <br/><a href="assets/screenshots/fleet-light.png">(light)</a></sub></td>
+<td align="center"><sub><b>Fleet</b> — sidecar registry with version, OS, ingest count, pause/resume, keep-alive, and untagged credentials to map <br/><a href="docs/screenshots/fleet-light-desktop.png">(light)</a></sub></td>
 <td align="center"><sub><b>Light theme</b> — the dashboard following your OS preference or Settings → Display</sub></td>
 </tr>
 </table>
@@ -111,8 +111,10 @@ Runway includes a `Makefile` to automate common tasks. Run `make help` for the f
 | `make web-lint` | Lint the frontend (eslint) — required by the pre-commit gate |
 | `make logo` | Regenerate every brand surface (favicon, PWA icons, sidecar tray) from the canonical `assets/logo.svg` — see [Branding](docs/branding.md) |
 | `make demo` | Throwaway demo with synthetic data on 127.0.0.1:3965; nothing from your `.env`, `~/.config/runway` or HOME is read, and Ctrl-C deletes it |
-| `make screenshots` | Regenerate `assets/screenshots/` (dark + light) and the PWA manifest copies from that demo |
-| `make screenshots-landing OUT=…` | 2x stills and a short loop (needs `ffmpeg`) for the project landing page |
+| `make screenshots` | Regenerate `docs/screenshots/` (dark + light, desktop + mobile) and the PWA install-dialog copies in `webapp/public/screenshots/` from that demo (Docker; [visual-kit](https://github.com/s3ntin3l8/visual-kit)) |
+| `make screenshots-landing OUT=…` | 2x stills and a short loop for the project landing page |
+| `make visual-check ROUTES=…` | Before/after screenshots of the pages a UI change touches, against the merge base (`REPEAT=2` also proves the capture is deterministic) |
+| `make visual-baseline` | Regenerate the committed baselines in `visual/baselines/` |
 | `make secrets` | Scan for secrets against `.secrets.baseline` |
 | `make secrets-baseline` | Regenerate `.secrets.baseline` after vetting new detections |
 | `make test-unit` | Run only the unit tests |

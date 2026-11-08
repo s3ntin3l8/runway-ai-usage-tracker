@@ -95,7 +95,7 @@ Captures are taken from an isolated demo instance, never from a live one:
 make screenshots-audit AUDIT=2026-10-webapp-ui-ux
 ```
 
-writes the phone and tablet captures of every page into
+writes the desktop, tablet and phone captures of every page into
 `docs/audit/assets/2026-10-webapp-ui-ux/`. The `AUDIT` value is the report's
 slug — the same one its file name uses. Nothing outside that folder is
 touched.

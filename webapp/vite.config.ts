@@ -3,9 +3,14 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import { VitePWA } from 'vite-plugin-pwa';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const devHost = process.env.VITE_HOST ?? '127.0.0.1';
+// The manifest's install-dialog screenshots; the sync script reads the same file.
+const pwaScreenshots = JSON.parse(
+  readFileSync(fileURLToPath(new URL('./pwa-screenshots.json', import.meta.url)), 'utf8'),
+);
 
 export default defineConfig({
   plugins: [
@@ -81,39 +86,9 @@ export default defineConfig({
           { name: 'Fleet', short_name: 'Fleet', url: '/fleet' },
           { name: 'Settings', short_name: 'Settings', url: '/settings' },
         ],
-        // Desktop ("wide") install-dialog previews. These mirror a subset of
-        // assets/screenshots/ (copied into public/screenshots/). We have no
-        // narrow/mobile captures, so the mobile install dialog won't show them.
-        screenshots: [
-          {
-            src: 'screenshots/dashboard.png',
-            sizes: '1440x900',
-            type: 'image/png',
-            form_factor: 'wide',
-            label: 'Dashboard',
-          },
-          {
-            src: 'screenshots/history.png',
-            sizes: '1440x900',
-            type: 'image/png',
-            form_factor: 'wide',
-            label: 'Usage history',
-          },
-          {
-            src: 'screenshots/fleet.png',
-            sizes: '1440x900',
-            type: 'image/png',
-            form_factor: 'wide',
-            label: 'Fleet management',
-          },
-          {
-            src: 'screenshots/settings.png',
-            sizes: '1440x900',
-            type: 'image/png',
-            form_factor: 'wide',
-            label: 'Settings',
-          },
-        ],
+        // Install-dialog previews, listed in pwa-screenshots.json. `make screenshots` renders the images into
+        // docs/screenshots/ and scripts/sync-pwa-screenshots.mjs copies exactly these into public/screenshots/.
+        screenshots: pwaScreenshots,
       },
       injectManifest: {
         globPatterns: ['**/*.{js,css,html,svg,png,ico,woff2}'],

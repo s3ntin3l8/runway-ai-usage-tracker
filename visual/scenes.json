@@ -1,0 +1,79 @@
+{
+  "$schema": "https://raw.githubusercontent.com/s3ntin3l8/visual-kit/main/schema/scenes.schema.json",
+  "demo": {
+    "start": "make demo",
+    "url": "http://127.0.0.1:3965",
+    "readyOutput": "DEMO_READY",
+    "startTimeoutSec": 600,
+    "env": {
+      "DEMO_NOW": "2026-10-15T10:00:00Z"
+    }
+  },
+  "baseDeps": [".venv", "webapp/node_modules"],
+  "cacheKeyFiles": [
+    "requirements.txt",
+    "requirements-dev.txt",
+    "requirements-shared.txt",
+    "requirements-test.txt",
+    "requirements-lint.txt",
+    "webapp/package-lock.json",
+    ".github/visual-setup.sh"
+  ],
+  "baseHarness": ["scripts/demo"],
+  "clock": "2026-10-15T10:00:00Z",
+  "scenes": [
+    {
+      "name": "dashboard",
+      "path": "/",
+      "tags": ["presentation", "check", "audit"],
+      "baseline": true
+    },
+    {
+      "name": "provider",
+      "path": "/provider/anthropic",
+      "tags": ["presentation", "check", "audit"],
+      "baseline": true
+    },
+    {
+      "name": "provider-activity",
+      "path": "/provider/anthropic",
+      "tags": ["presentation", "check", "audit"],
+      "steps": [{ "click": "role=tab[name=\"Activity\"]" }]
+    },
+    {
+      "name": "history",
+      "path": "/history",
+      "tags": ["presentation", "check", "audit"],
+      "baseline": true,
+      "maxDiffPixels": 50
+    },
+    {
+      "name": "fleet",
+      "path": "/fleet",
+      "tags": ["presentation", "check", "audit"]
+    },
+    {
+      "name": "settings",
+      "path": "/settings",
+      "tags": ["presentation", "check", "audit"]
+    },
+    {
+      "name": "provider-tabs",
+      "path": "/provider/anthropic",
+      "tags": ["presentation"],
+      "stills": false,
+      "loop": { "tailSec": 1.5 },
+      "steps": [
+        { "wait": 1600 },
+        { "click": "role=tab[name=\"Activity\"]" },
+        { "wait": 1800 },
+        { "click": "role=tab[name=\"Sessions\"]" },
+        { "wait": 1800 },
+        { "click": "role=tab[name=\"Cost\"]" },
+        { "wait": 1800 },
+        { "click": "role=tab[name=\"Overview\"]" },
+        { "wait": 1800 }
+      ]
+    }
+  ]
+}

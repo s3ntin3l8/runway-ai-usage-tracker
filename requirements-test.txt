@@ -16,6 +16,9 @@ pytest-timeout==2.4.0
 # keeps every test module inside one worker, so module-scoped fixtures and
 # import-time setup stay together.
 pytest-xdist==3.8.0
+# `scripts/demo/freeze_time.py` (the demo's DEMO_NOW clock) runs the seed and the server under it;
+# `tests/unit/test_demo_freeze_time.py` covers it.
+time-machine==3.6.0
 # `tests/unit/test_sidecar_signatures.py` imports `sigstore` at module level,
 # so the suite cannot even be collected without it.
 sigstore==4.5.1
