@@ -4,34 +4,12 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 
 from tests.macos_cookie_fixtures import approved_keychain_readers  # noqa: F401
 
-__all__ = ["_ok_response", "approved_keychain_readers", "isolate_host_credentials"]
-
-
-def _ok_response(status: int = 200, body: bytes | None = None) -> MagicMock:
-    resp = MagicMock()
-    resp.getcode = MagicMock(return_value=status)
-    if status == 200 and body is not None:
-        resp.read = MagicMock(return_value=body)
-        resp.__enter__ = MagicMock(return_value=resp)
-        resp.__exit__ = MagicMock(return_value=False)
-    else:
-        # For error path, .read() raises HTTPError
-        from urllib import error
-
-        resp.read = MagicMock(
-            side_effect=error.HTTPError(
-                url="x", code=status, msg="err", hdrs={}, fp=MagicMock(read=lambda: b"")
-            )
-        )
-        resp.__enter__ = MagicMock(return_value=resp)
-        resp.__exit__ = MagicMock(return_value=False)
-    return resp
+__all__ = ["approved_keychain_readers", "isolate_host_credentials"]
 
 
 @pytest.fixture(autouse=True)
