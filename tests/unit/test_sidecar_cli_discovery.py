@@ -12,12 +12,12 @@ from unittest.mock import patch
 import pytest
 
 from tests.unit._sidecar_helpers import (
-    _REPO_ROOT,
+    REPO_ROOT,
     isolate_host_credentials,  # noqa: F401 — fixture
 )
 
-if str(_REPO_ROOT / "scripts") not in sys.path:
-    sys.path.insert(0, str(_REPO_ROOT / "scripts"))
+if str(REPO_ROOT / "scripts") not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT / "scripts"))
 import sidecar
 
 
@@ -190,7 +190,7 @@ def test_grok_env_bearer_is_collected_through_dispatcher(monkeypatch):
 
 def test_grok_registries_register_auth_sources_and_no_unused_oauth_parser():
     registry = json.loads(
-        (_REPO_ROOT / "app" / "core" / "registry.json").read_text(encoding="utf-8")
+        (REPO_ROOT / "app" / "core" / "registry.json").read_text(encoding="utf-8")
     )
     for provider in (sidecar.__REGISTRY__["providers"], registry["providers"]):
         rules = provider["xai"]["rules"]
@@ -379,7 +379,7 @@ class TestCustomLoginDirs:
 
     def test_both_registries_list_the_env_dir_paths(self):
         registry = json.loads(
-            (_REPO_ROOT / "app" / "core" / "registry.json").read_text(encoding="utf-8")
+            (REPO_ROOT / "app" / "core" / "registry.json").read_text(encoding="utf-8")
         )
         for providers in (sidecar.__REGISTRY__["providers"], registry["providers"]):
             claude = [p for r in providers["anthropic"]["rules"] for p in r.get("paths", [])]

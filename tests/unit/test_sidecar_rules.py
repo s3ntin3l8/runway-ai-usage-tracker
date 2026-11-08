@@ -13,12 +13,12 @@ from unittest.mock import patch
 import pytest
 
 from tests.unit._sidecar_helpers import (
-    _REPO_ROOT,
+    REPO_ROOT,
     isolate_host_credentials,  # noqa: F401 — fixture
 )
 
-if str(_REPO_ROOT / "scripts") not in sys.path:
-    sys.path.insert(0, str(_REPO_ROOT / "scripts"))
+if str(REPO_ROOT / "scripts") not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT / "scripts"))
 import sidecar
 
 
@@ -36,7 +36,7 @@ class TestOpenCodeCookieRules:
     def test_console_cookie_is_present_in_both_registries(self):
         sidecar_rules = sidecar.__REGISTRY__["providers"]["opencode"]["rules"]
         registry = json.loads(
-            (_REPO_ROOT / "app" / "core" / "registry.json").read_text(encoding="utf-8")
+            (REPO_ROOT / "app" / "core" / "registry.json").read_text(encoding="utf-8")
         )
         config_rules = registry["providers"]["opencode"]["rules"]
 
@@ -66,7 +66,7 @@ class TestGeminiCredentialMapping:
 
     def test_canonical_registry_ships_id_token(self):
         registry = json.loads(
-            (_REPO_ROOT / "app" / "core" / "registry.json").read_text(encoding="utf-8")
+            (REPO_ROOT / "app" / "core" / "registry.json").read_text(encoding="utf-8")
         )
         gemini = registry["providers"]["gemini"]
         mapping = _gemini_file_mapping(gemini["rules"])
@@ -142,7 +142,7 @@ class TestClaudeOAuthCredentialRules:
 
     def test_oauth_creds_path_and_identity_mapping_are_available_in_both_registries(self):
         registry = json.loads(
-            (_REPO_ROOT / "app" / "core" / "registry.json").read_text(encoding="utf-8")
+            (REPO_ROOT / "app" / "core" / "registry.json").read_text(encoding="utf-8")
         )
         for providers in (sidecar.__REGISTRY__["providers"], registry["providers"]):
             rules = providers["anthropic"]["rules"]
@@ -221,7 +221,7 @@ class TestOpenCodeCredentialRules:
 
     def test_canonical_registry_mirrors_sidecar_credential_rules(self):
         registry = json.loads(
-            (_REPO_ROOT / "app" / "core" / "registry.json").read_text(encoding="utf-8")
+            (REPO_ROOT / "app" / "core" / "registry.json").read_text(encoding="utf-8")
         )
         rules = registry["providers"]["opencode"]["rules"]
         file_rule = next(rule for rule in rules if rule.get("type") == "file")
@@ -232,7 +232,7 @@ class TestOpenCodeCredentialRules:
 
     def test_open_code_registries_do_not_emit_sqlite_rolling_usage_cards(self):
         registry = json.loads(
-            (_REPO_ROOT / "app" / "core" / "registry.json").read_text(encoding="utf-8")
+            (REPO_ROOT / "app" / "core" / "registry.json").read_text(encoding="utf-8")
         )
         for providers in (sidecar.__REGISTRY__["providers"], registry["providers"]):
             assert all(rule.get("type") != "sqlite" for rule in providers["opencode"]["rules"])
@@ -283,7 +283,7 @@ class TestDeepSeekCredentialRules:
 
     def test_baked_and_canonical_registries_discover_env_and_auth_json(self):
         registry = json.loads(
-            (_REPO_ROOT / "app" / "core" / "registry.json").read_text(encoding="utf-8")
+            (REPO_ROOT / "app" / "core" / "registry.json").read_text(encoding="utf-8")
         )
         for provider in (sidecar.__REGISTRY__["providers"], registry["providers"]):
             rules = provider["deepseek"]["rules"]
@@ -341,7 +341,7 @@ class TestOpencodeAuthJsonRuleMirrors:
 
     def test_canonical_registry_mirrors_paths_and_mappings(self):
         registry = json.loads(
-            (_REPO_ROOT / "app" / "core" / "registry.json").read_text(encoding="utf-8")
+            (REPO_ROOT / "app" / "core" / "registry.json").read_text(encoding="utf-8")
         )
         for provider_id, sidecar_rules in self._sidecar_rules().items():
             assert provider_id in registry["providers"], f"{provider_id} missing from registry.json"
@@ -377,7 +377,7 @@ class TestOpencodeAuthJsonRuleMirrors:
         """#351: the three sibling keys added by #340 must stay in both registries."""
         for providers in (
             sidecar.__REGISTRY__["providers"],
-            json.loads((_REPO_ROOT / "app" / "core" / "registry.json").read_text(encoding="utf-8"))[
+            json.loads((REPO_ROOT / "app" / "core" / "registry.json").read_text(encoding="utf-8"))[
                 "providers"
             ],
         ):
@@ -392,7 +392,7 @@ class TestOpencodeAuthJsonRuleMirrors:
 class TestXaiCredentialRules:
     def test_baked_and_canonical_registries_map_actual_auth_fields(self):
         registry = json.loads(
-            (_REPO_ROOT / "app" / "core" / "registry.json").read_text(encoding="utf-8")
+            (REPO_ROOT / "app" / "core" / "registry.json").read_text(encoding="utf-8")
         )
         for provider in (sidecar.__REGISTRY__["providers"], registry["providers"]):
             file_rule = next(

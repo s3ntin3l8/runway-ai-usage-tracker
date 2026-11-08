@@ -7,7 +7,9 @@ from pathlib import Path
 
 import pytest
 
-_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+__all__ = ["REPO_ROOT", "_StubCache", "isolate_host_credentials"]
+
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 
 @pytest.fixture(autouse=True)

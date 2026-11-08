@@ -8,12 +8,12 @@ from typing import Any
 from unittest.mock import MagicMock
 
 from tests.unit._sidecar_helpers import (
-    _REPO_ROOT,
+    REPO_ROOT,
     isolate_host_credentials,  # noqa: F401 — fixture
 )
 
-if str(_REPO_ROOT / "scripts") not in sys.path:
-    sys.path.insert(0, str(_REPO_ROOT / "scripts"))
+if str(REPO_ROOT / "scripts") not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT / "scripts"))
 import sidecar
 
 
