@@ -532,3 +532,23 @@ def queue_flush(
         if dir_fd >= 0:
             os.close(dir_fd)
     return count
+
+
+# Re-export surface for ``scripts.sidecar`` (names tests and callers reach as
+# ``sidecar.<name>``). ``_TOKEN_ONLY_UNITS`` is read back through the facade by
+# ``strip_credentials`` and is listed here so it is not reported as unused.
+__all__ = [
+    "_TOKEN_ONLY_UNITS",
+    "_check_queue_snapshot",
+    "_open_queue_file",
+    "_queue_limit_mb",
+    "_queue_names",
+    "_replay_queue_lines",
+    "_sanitize_queue_line",
+    "_secure_queue_dir",
+    "_unlink_queue_file",
+    "queue_flush",
+    "queue_push",
+    "queue_rotate",
+    "strip_credentials",
+]
