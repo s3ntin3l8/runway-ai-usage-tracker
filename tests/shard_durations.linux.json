@@ -224,7 +224,6 @@
     "tests/unit/test_sessions.py": 0.23,
     "tests/unit/test_settings.py": 0.1,
     "tests/unit/test_sibling_keyed_origins.py": 0.34,
-    "tests/unit/test_sidecar.py": 2.06,
     "tests/unit/test_sidecar_autostart.py": 0.19,
     "tests/unit/test_sidecar_config_reload.py": 0.07,
     "tests/unit/test_sidecar_downloads.py": 0.18,

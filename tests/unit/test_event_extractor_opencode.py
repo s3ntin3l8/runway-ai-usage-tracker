@@ -987,7 +987,8 @@ def test_parse_opencode_events_applies_canonical_hint_after_retag():
     ``(minimax, "default")`` and the quota gauge stays orphaned on the
     labeled row.
 
-    Pairs with the events-branch test in ``tests/unit/test_sidecar.py``
+    Pairs with the events-branch test in
+    ``tests/unit/test_sidecar_events.py::test_run_collection_events_use_server_hint_when_local_default``
     that pins the *forwarding* of canonical hints through
     ``_extract_events_for_provider``. This test pins the *consumption*
     inside the extractor itself.
