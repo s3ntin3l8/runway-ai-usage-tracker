@@ -227,7 +227,6 @@
     "tests/unit/test_sidecar.py": 2.06,
     "tests/unit/test_sidecar_autostart.py": 0.19,
     "tests/unit/test_sidecar_config_reload.py": 0.07,
-    "tests/unit/test_sidecar_credentials.py": 0.51,
     "tests/unit/test_sidecar_downloads.py": 0.18,
     "tests/unit/test_sidecar_edge_app_paths.py": 1.37,
     "tests/unit/test_sidecar_keep_alive.py": 1.82,
