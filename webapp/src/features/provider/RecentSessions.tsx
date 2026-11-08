@@ -33,20 +33,35 @@ function SessionCard({
 }) {
   const cachePct = sessionCachePct(s);
   return (
-    <Card>
+    <Card className="min-w-0">
       <CardContent className="flex flex-col gap-3 pt-4">
         <div className="flex items-baseline justify-between gap-2">
           <span className="flex min-w-0 items-baseline gap-2">
-            <span className="font-mono text-xs" title={s.session_id}>
-              {s.session_id.slice(0, 8)}
-            </span>
+            {s.name ? (
+              <span
+                className="flex min-w-0 flex-1 items-baseline gap-2"
+                title={`${s.name} (${s.session_id})`}
+              >
+                {/* Free text, rendered as given (any case or length). */}
+                <span className="min-w-0 truncate text-sm">{s.name}</span>
+                <span className="shrink-0 font-mono text-xs text-fg-subtle">
+                  {s.session_id.slice(0, 8)}
+                </span>
+              </span>
+            ) : (
+              <span className="font-mono text-xs" title={s.session_id}>
+                {s.session_id.slice(0, 8)}
+              </span>
+            )}
             {sidecarName ? (
               <Badge variant="outline" className="shrink-0">
                 {sidecarName}
               </Badge>
             ) : null}
           </span>
-          <span className="text-[11px] text-fg-subtle">ended {timeAgo(s.ts_end)}</span>
+          <span className="shrink-0 text-[11px] whitespace-nowrap text-fg-subtle">
+            ended {timeAgo(s.ts_end)}
+          </span>
         </div>
 
         {(s.models ?? []).length > 0 ? (
@@ -106,7 +121,7 @@ export function RecentSessions({
         {label ? `Recent sessions · ${label}` : 'Recent sessions'}
       </h2>
       {q.isPending ? (
-        <div className="grid gap-4 sm:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
           {[0, 1, 2].map((i) => (
             <Skeleton key={i} className="h-36 w-full" />
           ))}
@@ -116,7 +131,7 @@ export function RecentSessions({
           No sessions yet — session data needs a sidecar feeding events.
         </p>
       ) : (
-        <div className="grid gap-4 sm:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
           {sessions.slice(0, 3).map((s) => (
             <SessionCard
               key={s.session_id}
