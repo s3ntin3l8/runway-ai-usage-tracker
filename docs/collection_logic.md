@@ -306,8 +306,8 @@ their history. The rules are specified in
 `app/services/claude_cloud_bridge_check.py` and `scripts/check_bridge_sessions.py` compare the
 `external_metadata.usage` block of `bridge` list rows with the sums of the same session's local
 events (`provider_id = 'anthropic'`, not `sidecar_id = 'anthropic-cloud'`; `cse_` and `session_`
-ids are the same session). It is an offline, counts-only check of local accuracy: the operator
-supplies the rows, and nothing calls the provider or writes events. Input, cache read and cache
+ids are the same session). It is a counts-only check of local accuracy that writes no events.
+By default it is offline: the operator supplies the rows as a JSON file (`--rows`). Input, cache read and cache
 write are compared; a value unknown on either side is counted as unknown, never as 0 or a
 mismatch. Output is excluded because the assistant `output_tokens` the cloud records are
 placeholders. The block's input exceeds the local input by the side model's (Haiku) input, which
@@ -315,6 +315,21 @@ local transcripts omit, so a small positive input difference is expected, while 
 should match exactly. Most bridge rows carry no block at all (37 of 1,479 in
 [the source-shape evidence](evidence/acceptance/claude-cloud-source-shape-20261029.md)), so this
 is a spot check, not coverage, and does not replace local scraping.
+
+`--live` produces the rows instead of the file: `read_bridge_rows`
+(`app/services/claude_cloud_bridge_rows.py`) pages `GET /v1/code/sessions` with the collector's
+list reader (`read_session_list`), page bound, headers and read-only login handling, and keeps the
+`bridge` rows that carry a usage block, with `null` for any counter the API did not report. Because
+it calls the provider it also requires `--yes-call-provider` and exits non-zero without making a
+request when that is missing; the report is the same counts-only JSON. The script
+enables source controls first, so the token cache hydrates from the durable Claude Code
+contributions in the configured database (read-only, no refresh); with none it exits 3 with
+`source_unavailable`. Bridge rows whose block carries no usable counter are dropped and counted in
+the log, so `without_block` stays 0 in a live report.
+
+```
+python scripts/check_bridge_sessions.py --live --yes-call-provider
+```
 
 ## Which events get a `project_ref`
 

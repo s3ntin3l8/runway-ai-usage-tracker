@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 from urllib.parse import quote
 from uuid import UUID
 
@@ -22,6 +24,7 @@ from app.core.db import engine
 from app.core.encryption import DecryptionError, encryption_service
 from app.models.db import CredentialSource, ProviderConfig, SidecarDevice, SidecarSourceContribution
 from app.services.source_controls import allowed
+from scripts.claude_cloud_list_boundary import SESSION_ID
 from scripts.sidecar_pkg.source_catalog import source_for_origin
 
 # One gate for the whole Claude cloud diagnostic cluster: at most one diagnostic is in
@@ -37,6 +40,20 @@ CLOUD_SIDECAR_ID = "anthropic-cloud"
 
 class ProbeError(Exception):
     """Only internal, fixed outcome categories cross this boundary."""
+
+
+# Usage-block key of each compared counter, as the session list reports it.
+COUNTER_KEYS = {
+    "input": "input_tokens",
+    "output": "output_tokens",
+    "cache_read": "cache_read_tokens",
+    "cache_write": "cache_write_tokens",
+}
+
+
+def count(value: object) -> int | None:
+    """A usage-block counter: a non-negative int below 2**53, else unknown (``None``)."""
+    return value if type(value) is int and 0 <= value < 2**53 else None
 
 
 def strict_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -167,3 +184,84 @@ def _check_authority(
         ):
             raise ProbeError("unsupported_source")
     return config.claude_organization_id if config else None, authority
+
+
+class _ListSource(Protocol):
+    report: dict[str, Any]
+
+    async def get(
+        self, path: str, headers: dict[str, str], params: dict[str, Any] | None = None
+    ) -> Any:
+        """GET ``path`` and return the decoded payload."""
+        raise NotImplementedError
+
+
+@dataclass
+class ListRead:
+    """What paging ``GET /v1/code/sessions`` produced: the kept rows and how the paging ended."""
+
+    rows: list[dict[str, Any]] = field(default_factory=list)
+    pages: int = 0
+    listed: int = 0
+    notes: list[str] = field(default_factory=list)
+
+
+async def read_session_list(
+    attempt: _ListSource,
+    headers: dict[str, str],
+    *,
+    parse_page: Callable[[object, int], tuple[list[dict[str, Any]], str | None]],
+    limit: int,
+    max_pages: int,
+    pause: float,
+    keep: Callable[[dict[str, Any]], bool],
+    into: ListRead | None = None,
+) -> ListRead:
+    """Page the session list and return the raw rows ``keep`` accepts.
+
+    ``parse_page`` is the probe's ``page_with_terminal_omission``, passed in because the probe
+    module imports this one.
+
+    The one list reader of the collector and the bridge check. Every row must carry a well-formed,
+    unique id (a violation is ``unsupported_contract``), whether or not it is kept. Paging ends at
+    the last page, at a repeated cursor (note ``cursor_repeat``) or at ``max_pages`` (note
+    ``max_pages``); a full last page adds the note ``full_last_page``. ``into`` lets a caller keep
+    the counts of a read that raised part-way.
+    """
+    result = into if into is not None else ListRead()
+    listed_ids: set[str] = set()
+    seen: set[str] = set()
+    cursor: str | None = None
+    while True:
+        params: dict[str, Any] = {"limit": limit}
+        if cursor is not None:
+            params["cursor"] = cursor
+        attempt.report["stage"] = "page_get"
+        payload = await attempt.get("/v1/code/sessions", headers, params)
+        attempt.report["stage"] = "page_shape"
+        page, cursor = parse_page(payload, limit)
+        result.pages += 1
+        result.listed += len(page)
+        for row in page:
+            sid = row.get("id")
+            if not isinstance(sid, str) or not SESSION_ID.fullmatch(sid):
+                attempt.report["stage"] = "row_id"
+                raise ProbeError("unsupported_contract")
+            if sid in listed_ids:
+                # One session twice would be read twice; the verifier rejects this too.
+                attempt.report["stage"] = "row_duplicate"
+                raise ProbeError("unsupported_contract")
+            listed_ids.add(sid)
+            if keep(row):
+                result.rows.append(row)
+        if cursor is None:
+            if len(page) == limit:
+                # A full last page is ambiguous: the end of the list, or paging that stopped
+                # emitting cursors. The note lets the cycle log tell the two apart.
+                result.notes.append("full_last_page")
+            return result
+        if cursor in seen or result.pages >= max_pages:
+            result.notes.append("cursor_repeat" if cursor in seen else "max_pages")
+            return result
+        seen.add(cursor)
+        await asyncio.sleep(pause)
