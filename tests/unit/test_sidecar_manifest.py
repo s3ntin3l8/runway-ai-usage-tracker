@@ -11,7 +11,6 @@ from unittest.mock import MagicMock, patch
 
 from tests.unit._sidecar_helpers import (
     REPO_ROOT,
-    _StubCache,
     isolate_host_credentials,  # noqa: F401 — fixture
 )
 
@@ -558,6 +557,23 @@ class TestPostCredentialManifest:
             )
 
         callback.assert_called_once()
+
+
+class _StubCache:
+    """Minimal stand-in for ``CredentialCache`` so the test can stub
+    ``_get_credential_cache`` without dragging in the full cache.
+
+    Only ``is_fresh()`` and ``provider_accounts()`` / ``provider_tag_hints()``
+    are exercised by ``run_collection`` in this test path."""
+
+    def is_fresh(self, *, now=None):
+        return True  # Skip the fetch path; the test supplies its own.
+
+    def provider_accounts(self):
+        return {}
+
+    def provider_tag_hints(self):
+        return {}
 
 
 def test_run_collection_manifest_post_fires_even_when_some_provider_raises(monkeypatch):
