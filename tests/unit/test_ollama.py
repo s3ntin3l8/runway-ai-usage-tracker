@@ -561,7 +561,7 @@ def test_window_type_for(label, days_out, expected):
 
 # ---------------------------------------------------------------------------
 # Bearer /api/usage path (primary strategy when an API key is configured).
-# Mirrors the TestOllamaApiCollector coverage that lives in test_collectors.py
+# Mirrors the TestOllamaApiCollector coverage that previously lived in test_collectors.py
 # in some branches; kept here on PR #340 so the new code path has tests on
 # its own branch (no dependency on a later merge).
 # ---------------------------------------------------------------------------

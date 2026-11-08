@@ -14,7 +14,6 @@ from app.services.collectors.kimi_k2 import KimiK2Collector
 from app.services.collectors.minimax import MiniMaxCollector
 from app.services.collectors.openrouter import OpenRouterCollector
 from app.services.collectors.zai import ZaiCollector
-from tests.unit._collectors_helpers import _gemini_cache_with
 
 
 @pytest.mark.parametrize(
@@ -57,6 +56,18 @@ class TestCredentialAccountSlotLookup:
 
         assert resolved == "api-test-key"
         get_with_metadata.assert_awaited_once_with(provider_id, account_id="default")
+
+
+async def _gemini_cache_with(tokens: dict[str, str] | None = None) -> AsyncMock:
+    """Return an AsyncMock token cache returning the provided tokens."""
+    mock = AsyncMock()
+    mock.get_with_metadata = AsyncMock(
+        return_value=(
+            tokens or {"gemini_refresh_token": "rt"},
+            {"source": "sidecar"},
+        )
+    )
+    return mock
 
 
 class TestGeminiCollector:

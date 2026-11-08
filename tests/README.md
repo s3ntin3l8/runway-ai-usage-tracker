@@ -30,13 +30,13 @@ pytest tests/unit/
 pytest tests/integration/
 
 # Specific test file
-pytest tests/unit/test_collectors.py
+pytest tests/unit/test_collectors_anthropic.py
 
 # Specific test class
-pytest tests/unit/test_collectors.py::TestAnthropicCollector
+pytest tests/unit/test_collectors_anthropic.py::TestAnthropicCollector
 
 # Specific test function
-pytest tests/unit/test_collectors.py::TestAnthropicCollector::test_collect_oauth_success
+pytest tests/unit/test_collectors_anthropic.py::TestAnthropicCollector::test_collect_oauth_success
 ```
 
 ### Run Tests with Coverage Report
@@ -52,7 +52,7 @@ pytest --cov=app --cov-report=html tests/
 
 Unit tests isolate individual components and test them in isolation with mocked dependencies.
 
-- **test_collectors.py**: Tests for the API/OAuth collectors (Claude, Gemini, GitHub Copilot, ChatGPT, DeepSeek, Kimi API, Kimi K2, Kimi Coding, MiniMax, OpenCode, OpenRouter, zAI) — dedicated collectors have their own files (`test_antigravity_collector.py`, `test_collectors_xai.py`, ...)
+- **test_collectors_*.py**: Tests for the API/OAuth collectors split by domain (`test_collectors_anthropic.py`, `test_collectors_api.py`, `test_collectors_github.py`, `test_collectors_kimi.py`, `test_collectors_minimax.py`, `test_collectors_web.py`) — dedicated collectors have their own files (`test_antigravity_collector.py`, `test_collectors_xai.py`, ...)
   - OAuth API success and failure scenarios
   - Fallback logic between primary and secondary sources
   - Token caching and refresh behavior
@@ -196,7 +196,7 @@ async def test_collect_oauth_success(self, mock_http_client, mock_anthropic_oaut
 ### Verbose Output
 
 ```bash
-pytest -vv tests/unit/test_collectors.py::TestAnthropicCollector::test_collect_oauth_success
+pytest -vv tests/unit/test_collectors_anthropic.py::TestAnthropicCollector::test_collect_oauth_success
 ```
 
 ### Stop on First Failure
@@ -295,7 +295,7 @@ pytest
 
 When adding a new collector:
 
-1. Create test class in `tests/unit/test_collectors.py`:
+1. Create test class in `tests/unit/test_collectors_api.py` (or the appropriate domain module):
    ```python
    class TestYourCollector:
        @pytest.mark.asyncio
