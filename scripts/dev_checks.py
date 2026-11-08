@@ -327,9 +327,14 @@ def resolve_generated(
             baseline_regenerator(root)
             _git(root, "add", "--", name)
             result = secrets_checker(root)
-            verdict = "passed" if result == 0 else f"FAILED (exit {result})"
-            print(f"{name}: took main's copy, regenerated; secrets check {verdict}")
-            if result != 0:
+            if result == 0:
+                print(
+                    "detect-secrets baseline: took main's copy, regenerated; secrets check passed"
+                )
+            else:
+                print(
+                    "detect-secrets baseline: took main's copy, regenerated; secrets check FAILED"
+                )
                 status = 1
 
     remaining = unmerged()
