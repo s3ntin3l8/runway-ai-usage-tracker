@@ -25,7 +25,7 @@ dependencies = [
     "certifi==2026.10.23",
     "python-dotenv==1.2.4",
     "aiosqlite==0.22.1",
-    "pydantic==2.14.2",
+    "pydantic==2.14.3",
     "pydantic-settings==2.16.2",
     "keyring==25.7.0",
     "cryptography==50.0.2",
