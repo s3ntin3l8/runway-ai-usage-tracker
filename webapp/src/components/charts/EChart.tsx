@@ -2,8 +2,8 @@
 // option updates, container resize, and dispose. Charts import only from
 // this module so the echarts manualChunk stays a single lazy bundle.
 
-import { useEffect, useRef } from "react";
-import * as echarts from "echarts/core";
+import { useEffect, useRef } from 'react';
+import * as echarts from 'echarts/core';
 import {
   BarChart,
   CustomChart,
@@ -11,7 +11,7 @@ import {
   LineChart,
   PieChart,
   ScatterChart,
-} from "echarts/charts";
+} from 'echarts/charts';
 import {
   DataZoomComponent,
   GridComponent,
@@ -20,10 +20,10 @@ import {
   MarkLineComponent,
   TooltipComponent,
   VisualMapComponent,
-} from "echarts/components";
-import { CanvasRenderer } from "echarts/renderers";
-import type { EChartsCoreOption, ECharts } from "echarts/core";
-import { cn } from "@/lib/cn";
+} from 'echarts/components';
+import { CanvasRenderer } from 'echarts/renderers';
+import type { EChartsCoreOption, ECharts } from 'echarts/core';
+import { cn } from '@/lib/cn';
 
 echarts.use([
   BarChart,
@@ -65,18 +65,10 @@ interface EChartProps {
 // ECharts animates on its own clock, so the stylesheet's reduced-motion rule never reaches a chart: honour the
 // preference here, and a chart is drawn in its final state straight away.
 function prefersReducedMotion(): boolean {
-  return (
-    window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false
-  );
+  return window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
 }
 
-export function EChart({
-  option,
-  className,
-  notMerge = true,
-  onReady,
-  ariaLabel,
-}: EChartProps) {
+export function EChart({ option, className, notMerge = true, onReady, ariaLabel }: EChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<ECharts | null>(null);
   const onReadyRef = useRef(onReady);
@@ -99,19 +91,16 @@ export function EChart({
   }, []);
 
   useEffect(() => {
-    chartRef.current?.setOption(
-      prefersReducedMotion() ? { ...option, animation: false } : option,
-      {
-        notMerge,
-      },
-    );
+    chartRef.current?.setOption(prefersReducedMotion() ? { ...option, animation: false } : option, {
+      notMerge,
+    });
   }, [option, notMerge]);
 
   return (
     <div
       ref={containerRef}
-      className={cn("h-64 w-full", className)}
-      role={ariaLabel ? "img" : undefined}
+      className={cn('h-64 w-full', className)}
+      role={ariaLabel ? 'img' : undefined}
       aria-label={ariaLabel}
     />
   );

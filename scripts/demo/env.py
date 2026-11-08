@@ -31,8 +31,6 @@ PASSTHROUGH = ("PATH", "LANG", "LC_ALL", "TERM", "TZ")
 GENERATED_SECRETS: frozenset[str] = frozenset()
 SECRET_KEY = re.compile(r"(SECRET|PASSWORD|_KEY|_TOKEN)$|ENCRYPTION")
 PATH_KEY = re.compile(r"(_DIR|_PATH|_HOME)$")
-# Path-ish keys that legitimately point outside the scratch dir.
-PATH_ALLOW = frozenset({"PLAYWRIGHT_BROWSERS_PATH", "SCREENSHOTS_OUT_DIR"})
 MUST_BE_INSIDE = ("HOME", "TMPDIR", "RUNWAY_CONFIG_DIR", "XDG_CONFIG_HOME", "XDG_DATA_HOME")
 FORBIDDEN = frozenset({"TRUSTED_PROXY_IPS", "PUBLIC_URL"})
 # The default port of a real local Runway; a demo must never take it.
@@ -82,12 +80,7 @@ def demo_env_problems(env: Mapping[str, str], demo_dir: Path, cwd: Path | None =
             problems.append(f"{key} must not be set in the demo")
         if SECRET_KEY.search(key) and key not in GENERATED_SECRETS:
             problems.append(f"{key} looks like a real secret; the demo never sets it")
-        if (
-            PATH_KEY.search(key)
-            and key not in PATH_ALLOW
-            and os.path.isabs(value)
-            and not _inside(demo_dir, value)
-        ):
+        if PATH_KEY.search(key) and os.path.isabs(value) and not _inside(demo_dir, value):
             problems.append(f"{key}={value} is outside the demo dir")
     for key in MUST_BE_INSIDE:
         if key not in env or not _inside(demo_dir, env[key]):

@@ -120,10 +120,12 @@ procedure (`scripts/action_pins.json`) are in [`CONTRIBUTING.md`](CONTRIBUTING.m
   `visual/scenes.json` (tags `check`, `audit`, `presentation`). After changing the demo or a
   scene, run `make visual-check REPEAT=2` (the launcher recaptures the working tree
   itself): it must report no determinism failure. `baseHarness` renders the base with the
-  head's `scripts/demo` but the merge base's seed (`scripts/demo/seed_demo.py`) and start
-  path (the `demo` target, `requirements*.txt`, `webapp/package-lock.json`), so a PR that
-  changes `scripts/demo` together with any of those can fail to start its base demo, and
-  then every scene reports "new" (the reason is only a stderr line). The same check runs on
+  head's `scripts/demo`, seed (`seed_demo.py`) included, and the merge base's app, `demo`
+  target, `requirements*.txt` and `webapp/package-lock.json`. So a seed edit moves both
+  sides and shows up as no diff in the check (the committed baselines still catch it:
+  `make visual-baseline`), and a PR that changes `scripts/demo` together with the app code
+  it depends on can fail to start its base demo, and then every scene reports "new" (the
+  reason is only a stderr line). The same check runs on
   UI PRs in CI (advisory). Scenes flagged `"baseline": true` also have committed shots in
   `visual/baselines/`: regenerate them in the PR that moves those pages
   (`make visual-baseline`, or comment `/update-baselines` on the PR). The README, PWA and
