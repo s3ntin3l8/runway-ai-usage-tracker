@@ -65,7 +65,7 @@ interface EChartProps {
 // ECharts animates on its own clock, so the stylesheet's reduced-motion rule never reaches a chart: honour the
 // preference here, and a chart is drawn in its final state straight away.
 function prefersReducedMotion(): boolean {
-  return window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+  return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 
 export function EChart({ option, className, notMerge = true, onReady, ariaLabel }: EChartProps) {
