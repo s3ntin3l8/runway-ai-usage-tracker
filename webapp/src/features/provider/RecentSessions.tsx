@@ -33,7 +33,7 @@ function SessionCard({
 }) {
   const cachePct = sessionCachePct(s);
   return (
-    <Card>
+    <Card className="min-w-0">
       <CardContent className="flex flex-col gap-3 pt-4">
         <div className="flex items-baseline justify-between gap-2">
           <span className="flex min-w-0 items-baseline gap-2">
@@ -121,7 +121,7 @@ export function RecentSessions({
         {label ? `Recent sessions · ${label}` : 'Recent sessions'}
       </h2>
       {q.isPending ? (
-        <div className="grid gap-4 md:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
           {[0, 1, 2].map((i) => (
             <Skeleton key={i} className="h-36 w-full" />
           ))}
@@ -131,7 +131,7 @@ export function RecentSessions({
           No sessions yet — session data needs a sidecar feeding events.
         </p>
       ) : (
-        <div className="grid gap-4 md:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
           {sessions.slice(0, 3).map((s) => (
             <SessionCard
               key={s.session_id}
