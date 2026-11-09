@@ -8,6 +8,7 @@ import type { ForecastEntry, ForecastStatus, LimitCard } from '@/api/types';
 import { Badge } from '@/components/ui/Badge';
 import { Countdown } from '@/components/ui/Countdown';
 import { Gauge } from '@/components/ui/Gauge';
+import { UntrackedSpendNote } from '@/components/ui/UntrackedSpendNote';
 import { cn } from '@/lib/cn';
 import { formatPct } from '@/lib/format';
 import { cardHeroLabel, cardPct, cardStale, cardStatus, cardTooltip, chipLabel, quotaUsedLabel, staleTitle, windowLabel } from '@/lib/quota';
@@ -86,6 +87,7 @@ export function QuotaWindowRow({
         className="mt-1.5"
         label={quotaUsedLabel(card)}
       />
+      <UntrackedSpendNote card={card} />
       {cardStale(card) ? (
         <div className="mt-1">
           <Badge variant="outline" className="text-[10px]" title={staleTitle(card)}>

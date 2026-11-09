@@ -216,7 +216,8 @@ export function OverviewTab({ entry, scope }: { entry: FleetEntry; scope: TabSco
   return (
     <div className="flex flex-col gap-4">
       <ProviderKpis entry={entry} scope={scope} excludeCache={excludeCache} />
-      {[entry.critical_gauge, ...entry.secondary_limits]
+      {/* Quota providers show the note under the gauge it explains (QuotaWindowRow). */}
+      {(kind === 'quota' ? [] : [entry.critical_gauge, ...entry.secondary_limits])
         .filter((card) => card.untracked_spend_usd != null)
         .map((card, i) => <UntrackedSpendNote key={i} card={card} />)}
       <ProviderErrorBanner providerId={entry.provider_id} accountId={entry.account_id} />
