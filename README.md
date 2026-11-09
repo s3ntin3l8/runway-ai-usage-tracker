@@ -4,9 +4,9 @@
 
 # Runway — AI Subscription Limits Dashboard
 
-**Runway** is a local-first monitoring tool that tracks remaining capacity and reset timers across your entire generative AI stack — aggregated into a single, clean dashboard with persistent history and fleet management.
+**Runway** is a local-first dashboard that shows how much of your AI subscriptions and API credits you have left, when each limit resets, and where your usage went. It covers Claude, ChatGPT/Codex, Gemini, GitHub Copilot, Kimi, xAI and more in one place, keeps a persistent history, and projects when you will run out.
 
-Upgrading from the previous major version? See the [v3 migration notes](docs/migration-v3.md).
+Upgrading from 2.x? See the [v3 migration notes](docs/migration-v3.md).
 
 ![Runway Dashboard](docs/screenshots/dashboard-dark-desktop.png)
 
@@ -16,246 +16,95 @@ Upgrading from the previous major version? See the [v3 migration notes](docs/mig
 
 <table>
 <tr>
-<td width="50%"><a href="docs/screenshots/provider-dark-desktop.png"><img src="docs/screenshots/provider-dark-desktop.png" alt="Per-provider detail page — Overview tab" /></a></td>
-<td width="50%"><a href="docs/screenshots/provider-activity-dark-desktop.png"><img src="docs/screenshots/provider-activity-dark-desktop.png" alt="Provider Activity tab: tokens per day, token composition and tokens by model" /></a></td>
+<td width="50%"><a href="docs/screenshots/provider-dark-desktop.png"><img src="docs/screenshots/provider-dark-desktop.png" alt="Provider detail page, Overview tab" /></a></td>
+<td width="50%"><a href="docs/screenshots/provider-activity-dark-desktop.png"><img src="docs/screenshots/provider-activity-dark-desktop.png" alt="Provider Activity tab: tokens per day, composition and tokens by model" /></a></td>
 </tr>
 <tr>
-<td align="center"><sub><b>Provider detail page</b> — usage windows with pace and projection, the current window's forecast, per-model donut <br/><a href="docs/screenshots/provider-light-desktop.png">(light)</a></sub></td>
-<td align="center"><sub><b>Activity</b> — daily tokens, composition and the per-model split; the time-range picker scopes Overview / Activity / Cost / Events / Sessions to a rolling window, a calendar month, or a custom span <br/><a href="docs/screenshots/provider-activity-light-desktop.png">(light)</a></sub></td>
+<td align="center"><sub><b>Provider</b> — usage windows with pace and projection, the current window's forecast, per-model split <a href="docs/screenshots/provider-light-desktop.png">(light)</a></sub></td>
+<td align="center"><sub><b>Activity</b> — daily tokens, composition and models for any time range <a href="docs/screenshots/provider-activity-light-desktop.png">(light)</a></sub></td>
 </tr>
 <tr>
-<td width="50%"><a href="docs/screenshots/history-dark-desktop.png"><img src="docs/screenshots/history-dark-desktop.png" alt="History view with multi-series chart, forecast overlay, and burn-rate stats" /></a></td>
-<td width="50%"><a href="docs/screenshots/settings-dark-desktop.png"><img src="docs/screenshots/settings-dark-desktop.png" alt="Settings panel with provider config, credentials, alerts, audit log" /></a></td>
+<td width="50%"><a href="docs/screenshots/history-dark-desktop.png"><img src="docs/screenshots/history-dark-desktop.png" alt="History view with multi-series chart and forecast overlay" /></a></td>
+<td width="50%"><a href="docs/screenshots/settings-dark-desktop.png"><img src="docs/screenshots/settings-dark-desktop.png" alt="Settings: providers, credentials, alerts and more" /></a></td>
 </tr>
 <tr>
-<td align="center"><sub><b>History</b> — % used / tokens / cost across windows with forecast overlay <br/><a href="docs/screenshots/history-light-desktop.png">(light)</a></sub></td>
-<td align="center"><sub><b>Settings</b> — provider toggles, poll intervals, credentials, alerts, audit log, data health, version <br/><a href="docs/screenshots/settings-light-desktop.png">(light)</a></sub></td>
+<td align="center"><sub><b>History</b> — % used, tokens and cost across windows, with a forecast overlay <a href="docs/screenshots/history-light-desktop.png">(light)</a></sub></td>
+<td align="center"><sub><b>Settings</b> — providers, credentials, alerts, display, audit log, data health <a href="docs/screenshots/settings-light-desktop.png">(light)</a></sub></td>
 </tr>
 <tr>
-<td width="50%"><a href="docs/screenshots/fleet-dark-desktop.png"><img src="docs/screenshots/fleet-dark-desktop.png" alt="Fleet view showing sidecar registry" /></a></td>
+<td width="50%"><a href="docs/screenshots/fleet-dark-desktop.png"><img src="docs/screenshots/fleet-dark-desktop.png" alt="Fleet view showing the sidecar registry" /></a></td>
 <td width="50%"><a href="docs/screenshots/dashboard-light-desktop.png"><img src="docs/screenshots/dashboard-light-desktop.png" alt="Dashboard in light theme" /></a></td>
 </tr>
 <tr>
-<td align="center"><sub><b>Fleet</b> — sidecar registry with version, OS, ingest count, pause/resume, keep-alive, and untagged credentials to map <br/><a href="docs/screenshots/fleet-light-desktop.png">(light)</a></sub></td>
-<td align="center"><sub><b>Light theme</b> — the dashboard following your OS preference or Settings → Display</sub></td>
+<td align="center"><sub><b>Fleet</b> — your sidecars, their versions, keep-alive and unmapped credentials <a href="docs/screenshots/fleet-light-desktop.png">(light)</a></sub></td>
+<td align="center"><sub><b>Light theme</b> — the dashboard following your OS preference</sub></td>
 </tr>
 </table>
 
-## Key Features
+## Features
 
-- **16 Providers, 20+ Data Points**: Monitor Claude, Claude Console, Gemini, GitHub Copilot, ChatGPT/Codex, OpenRouter, MiniMax, Ollama, zAI, Kimi, OpenCode, DeepSeek, xAI and Antigravity — see the [provider list](docs/collectors/README.md)
-- **Per-Collector Fallback**: each provider declares its own ordered strategy list; the first that does not error wins (e.g. the official API, then a cookie-based web strategy)
-- **Event-Sourced History**: One immutable row per assistant message in `usage_events` — rollups, windows, and cost are all derived views over the same authoritative log
-- **Smart Caching**: Configurable poll interval (default 15 min; per-provider or global override via Settings) plus a smart-sleep mode that stretches to ~2 hours after 3 consecutive identical polls (≈30 min at the 15-minute base interval; the interval is per-provider overridable)
-- **Instant Serving**: `/limits` reads the `LatestUsage` table — never blocks on collection
-- **Forecast Trajectories**: Theil-Sen regression on quota snapshots projects exhaustion — surfaced on Fleet Commander gauges, the history chart overlay, and the per-provider detail page
-- **Persistent History**: SQLite-backed usage snapshots with 15-minute background polling, hourly resolution on ≤7-day windows
-- **Provider Detail Page**: A deep-linked per-provider view with Overview, Activity (token trend, composition, heatmap, sessions), Events (per-message stream), Forecast, and Cost tabs
-- **Unified Time Range**: One time-range picker (quick ranges for the last 7/14/30/90 days, this/last month, plus a custom From/To span) shared by History, Insights, and every provider-detail tab — deep-linkable via `?range=Nd` or `?range=YYYY-MM-DD_YYYY-MM-DD` (legacy `?period=` values still resolve), with all boundaries on your local timezone; Forecast stays fixed and the Home page keeps its own anchor
-- **Global Insights**: A top-level `/insights` page with cross-provider lifetime totals, cache-hit ratio, busiest day/hour, and Top Models / Projects / Tools rankings
-- **Project & Tool Tracking**: Events capture working directory, project, git branch, and tool names — surfaced as a Sessions project column, sortable session columns (duration / messages / tokens / cost), and the Insights rankings
-- **Provider Sections**: Dashboard cards grouped by provider with context filter pills (Source / Account / Window)
-- **Fleet Management**: Persistent registry of all sidecars with custom names, tags, version reporting, pause/resume controls, per-sidecar keep-alive toggle, activity tracking, and a banner for untagged credentials a sidecar found but you have not yet mapped to an account
-- **Credentials**: Settings → Credentials shows where each account's credentials and data come from, with per-source provenance (which machine, env var, file or cookie), expiry status, and refresh or remove actions per source
-- **Keep-alive**: Opt-in per sidecar (`--keep-alive`, or toggle it on Fleet) — the sidecar renews xAI (Grok), Claude Code, Codex (ChatGPT) and Antigravity (agy) logins itself so they do not lapse while the CLI is idle (not supported by the tray app)
-- **Data Health**: Settings → Data health runs read-only checks over the database (generic account IDs, legacy provider IDs, orphaned credential rows, rollup drift, unpriced models, and more) and offers an in-app fix — preview first, then apply
-- **Sidecar Ingestion**: Push metrics and per-message events from external hosts via `POST /api/v1/fleet/ingest` (HMAC-signed, 600/min/IP rate limit)
-- **Webhook Alerts**: Per-provider/per-account threshold alerts, plus credential alerts when a login expires or is rejected, to Discord or Slack
-- **Audit Log**: Append-only record of admin mutations, viewable from the Settings panel
-- **Build Info**: Settings → About reports the running server version alongside host, encryption, and auth status — plus the commit the build came from, so an `:edge` image can be traced to one exact source tree
-- **Session Auth**: Admin login via an HttpOnly `SameSite=Strict` session cookie with "log out everywhere" revocation; scripts can still use the `X-Admin-Key` header
-- **Installable PWA**: Add Runway to your home screen — app manifest, service worker, offline state banner, and a theme-color that follows the active theme
-- **Display Settings**: Compact mode, 2-column layout, soft chrome — configurable per browser
-- **Resilient Rendering**: Individual API failures show "Error Cards" instead of breaking the dashboard
-- **Docker Ready**: Headless-first architecture for containerized environments with fail-fast multi-host startup gates (`DB_ENCRYPTION_KEY`, `TLS_TERMINATED`, `CORS_ORIGINS`, and `ADMIN_API_KEY` or `TRUSTED_PROXY_IPS`)
+**Limits at a glance**
+- **16 providers** — Claude, Claude Console, ChatGPT/Codex, Gemini, GitHub Copilot, OpenRouter, DeepSeek, MiniMax, Ollama, OpenCode, zAI, Kimi (API, Coding, K2), xAI and Antigravity. See the [provider list](docs/collectors/README.md).
+- **Home dashboard** with an at-risk rail for limits about to run out, provider cards you can drag into your own order, and archived and merged accounts kept out of the way.
+- **Reset timers, pace and forecast** — each window shows how fast you are burning it, and a Theil-Sen projection says when it runs out.
+- **Fallback per provider** — each collector tries its strategies in order (for example the official API, then a web session) and shows an error card instead of breaking the page when all fail.
 
-## Quick Start
+**Usage history**
+- **Per-message history** — every assistant message is stored as an immutable event; windows, rollups and cost are derived from that log, so numbers can be repaired and recomputed.
+- **Provider pages** with Overview, Activity, Sessions, Events, Forecast and Cost tabs, plus a raw upstream capture for debugging.
+- **One time-range picker** — last 24 hours, 7/14/30/90 days, this or last month, or a custom span — shared by History, Insights and the provider tabs, and deep-linkable.
+- **Global Insights** — lifetime totals, cache-hit ratio, busiest day and hour, and rankings of top models, projects, tools, sessions and hosts.
+- **Projects and sessions** — events carry the working directory, project, git branch, tool names and session names from Claude Code, Codex, Antigravity, opencode and MiniMax Code. Claude Code cloud-runner usage is collected too.
 
-- **Python 3.12+** and **Node.js 22.22.2+** with **npm 11.11+** (for the UI build and the frontend test suite) are required. The supported Node versions are `^22.22.2 || ^24.15.0 || >=26.0.0` — npm **rejects** Node 23.x and Node 24.0–24.14. Node 24 ships npm 11.19.
+**Many machines, many logins**
+- **Sidecars** run on each workstation to read local logins and per-message events, then push them to the server. Pair a new one from Fleet with a one-time link.
+- **Fleet** lists every sidecar with version, OS and activity, pause and resume, per-sidecar settings and updates, and a banner for credentials found but not yet mapped to an account.
+- **Credentials** (Settings → Credentials) show where each account's login comes from — which machine, environment variable, file, keychain or cookie — its expiry, and refresh or remove actions.
+- **Keep-alive** (opt-in) renews xAI, Claude Code, Codex and Antigravity logins from the sidecar so they do not lapse while the CLI sits idle. It is not supported by the tray app. Set a fleet-wide default and override it per login.
+
+**Operations**
+- **Alerts** to Discord or Slack when a limit crosses a threshold or a login expires or is rejected.
+- **Data health** scans the database for known inconsistencies and offers a preview-then-apply fix.
+- **Audit log** of admin changes, and **About** with the exact build the server runs.
+- **Secure by default** — local trust on localhost, an admin key with an HttpOnly session cookie elsewhere, SSO via forward-auth, encrypted sensitive metadata, HMAC-signed sidecar ingestion.
+- **Installable PWA**, light and dark themes, compact and two-column layouts.
+
+## Quick start
+
+You need **Python 3.12+** and **Node.js 22.22.2+** with **npm 11.11+**. Node 23.x and 24.0–24.14 are rejected by npm; the supported range is `^22.22.2 || ^24.15.0 || >=26.0.0`.
 
 ```bash
-# 1. Clone and setup (installs venv, dependencies, and git hooks)
-git clone <repository-url> && cd runway
-make install
-
-# 2. Configure (add your API keys)
-cp .env.example .env
-
-# 3. Run the full dev stack — server + Vite frontend + local sidecar (Ctrl-C stops all)
-make dev-all
+git clone https://github.com/s3ntin3l8/runway-ai-usage-tracker && cd runway-ai-usage-tracker
+make install          # venv, dependencies and git hooks
+cp .env.example .env  # add the API keys you have
+make dev-all          # server + frontend + local sidecar (Ctrl-C stops all)
 ```
 
-Access the dev UI at `http://localhost:5173` (Vite hot-reloads the frontend and proxies `/api` to the backend on :8765). Use `make dev` for the server only (no frontend, no cookie/local collectors), or `make run-all` to serve the production-built SPA from the backend at `http://localhost:8765`.
+Open `http://localhost:5173`. `make run-all` serves the built app from the server at `http://localhost:8765`. `make help` lists every target.
 
-> [!TIP]
-> Facing issues with cookie collection or setup? Check the [Troubleshooting Guide](docs/troubleshooting.md).
+**Just looking?** `make demo` starts a throwaway instance with synthetic data on `127.0.0.1:3965`. It reads nothing from your `.env` or home directory and deletes itself on Ctrl-C. See [docs/demo.md](docs/demo.md).
 
-## Development Shortcuts
+### Docker
 
-Runway includes a `Makefile` to automate common tasks. Run `make help` for the full list.
-
-| Command | Description |
-|---------|-------------|
-| `make install` | Setup venv, install Python/Node dependencies, and wire up git hooks |
-| `make dev` | Start the development server with hot-reload (port 8765) |
-| `make dev-all` | Run the full dev stack — server + Vite frontend (:5173) + sidecar (Ctrl-C stops all) |
-| `make run` | Start the production server (serves the built SPA at :8765) |
-| `make run-all` | Build the SPA, then run the production server + sidecar (no hot reload) |
-| `make sidecar` | Run the sidecar agent script |
-| `make test` | Run the test suite (pytest) |
-| `make test-cov` | Run tests with coverage report (`term-missing`) |
-| `make lint` | Run code quality checks (ruff + mypy + pip-audit) |
-| `make format` | Automatically fix linting and formatting issues |
-| `make web` / `make web-dev` | Build the SPA for production (`webapp/dist`) / run the live Vite dev server on :5173 (HMR) |
-| `make web-test` | Run the frontend unit tests (vitest) |
-| `make web-lint` | Lint the frontend (eslint) — required by the pre-commit gate |
-| `make logo` | Regenerate every brand surface (favicon, PWA icons, sidecar tray) from the canonical `assets/logo.svg` — see [Branding](docs/branding.md) |
-| `make demo` | Throwaway demo with synthetic data on 127.0.0.1:3965; nothing from your `.env`, `~/.config/runway` or HOME is read, and Ctrl-C deletes it |
-| `make screenshots` | Regenerate `docs/screenshots/` (dark + light, desktop + mobile) and the PWA install-dialog copies in `webapp/public/screenshots/` from that demo (Docker; [visual-kit](https://github.com/s3ntin3l8/visual-kit)) |
-| `make screenshots-landing OUT=…` | 2x stills and a short loop for the project landing page |
-| `make visual-check ROUTES=…` | Before/after screenshots of the pages a UI change touches, against the merge base (`REPEAT=2` also proves the capture is deterministic) |
-| `make visual-baseline` | Regenerate the committed baselines in `visual/baselines/` |
-| `make secrets` | Scan for secrets against `.secrets.baseline` |
-| `make secrets-baseline` | Regenerate `.secrets.baseline` after vetting new detections |
-| `make test-unit` | Run only the unit tests |
-| `make test-shard` | Run one pytest shard (see `make shard-weights`) |
-| `make shard-weights` | Report the per-shard test weights |
-| `make install-hooks` | Install the git hook that runs the local checks |
-| `make remove-worktree` | Remove a `.wt/` development worktree |
-| `make sidecar-registry` | Regenerate the sidecar's baked credential registry from `app/core/registry.json` |
-| `make clean` | Remove virtual environments and build artifacts |
-
-The demo's isolation is enforced by `scripts/demo/env.py` (tested in
-`tests/unit/test_demo_env.py`):
-
-- A clean environment with only `PATH` and locale inherited.
-- `HOME`, the XDG dirs and `RUNWAY_CONFIG_DIR` all live in one scratch directory.
-- The server runs from a directory without a `.env`.
-- A dedicated loopback port that must be free.
-
-The seeder (`scripts/demo/seed_demo.py`) feeds synthetic provider responses
-through the collectors' own parsers and events through `EventIngestor`, then
-fails if Runway's data-health scan finds anything wrong with the result.
-
-See [`docs/demo.md`](docs/demo.md) for the demo instance in full.
-
-### Docker (Server Runtime)
-
-Use the shipped [`docker-compose.yml`](docker-compose.yml) or the [Traefik stack](docs/deployment.md#docker-behind-traefik). Before starting, copy `.env.example` to `.env` and configure `DB_ENCRYPTION_KEY`, `CORS_ORIGINS`, and either `ADMIN_API_KEY` or a forward-auth proxy with `TRUSTED_PROXY_IPS`. Set `TLS_TERMINATED=1` only when a proxy actually terminates TLS. The [v3 migration guide](docs/migration-v3.md) explains why Docker now requires these settings; the [Deployment Guide](docs/deployment.md#docker) has the startup steps.
+Use the shipped [`docker-compose.yml`](docker-compose.yml) or the [Traefik stack](docs/deployment.md#docker-behind-traefik). Before the first start set `DB_ENCRYPTION_KEY`, `CORS_ORIGINS`, and either `ADMIN_API_KEY` or a forward-auth proxy with `TRUSTED_PROXY_IPS`; `TLS_TERMINATED=1` only when a proxy really terminates TLS. The [deployment guide](docs/deployment.md) has the steps.
 
 > [!IMPORTANT]
-> **Docker runs the server; cookie/local-file collectors still require a sidecar on each workstation.** Containerized environments have no access to native desktop keychains.
-> 1. Collectors requiring browser cookies (Claude, ChatGPT, Ollama, etc.) **must** be configured via Environment Variables or provided via a [sidecar](docs/sidecar.md).
-> 2. Use `DB_ENCRYPTION_KEY` to protect sensitive metadata in your persistent volume.
+> A container cannot see your desktop keychains or browser cookies. Run a [sidecar](docs/sidecar.md) on every workstation you want to monitor, or provide credentials through environment variables or Settings.
 
-Run [sidecar scripts](docs/sidecar.md) on every host you want to monitor.
+### Sidecar installers
 
-### 🔑 Manual Authentication
-If you are running in Docker or a headless environment where browser scraping is impossible, you can manually provide authentication tokens in the **Settings** tab.
+Every [release](https://github.com/s3ntin3l8/runway-ai-usage-tracker/releases) ships a macOS menu-bar app (`.dmg`), a Windows tray installer (`-setup.exe`), a Linux tray app and a headless Linux CLI binary, with `SHA256SUMS.txt` and Sigstore signatures. The Fleet page links the right one for your OS. The desktop apps are not signed with an Apple Developer ID or Windows certificate, so the OS asks once before the first launch: on macOS right-click → **Open**, on Windows **More info** → **Run anyway**. Install, update and verification details are in [docs/sidecar.md](docs/sidecar.md).
 
-- **API Key (Bearer Token)**: Paste the full token (usually starts with `eyJ...`). This takes higher priority than cookies.
-- **Session Cookie**: Provide as a fallback if explicit tokens are not available.
+## Need to know
 
-*Note: For ChatGPT and Claude, we recommend using the Bearer token in the "API Key" field for the most reliable connection.*
+- **Server plus sidecars.** The server collects from APIs, aggregates and serves the dashboard. Everything that touches a workstation — browser cookies, keychains, CLI logins, IDE and log files — runs in a sidecar. See [architecture](docs/architecture.md).
+- **Security defaults.** Runway binds to `127.0.0.1` and trusts localhost. For any other bind set `ADMIN_API_KEY` or put it behind a forward-auth proxy, and never expose it to the internet without a reverse proxy and HTTPS. See [SECURITY](docs/SECURITY.md) and [forward-auth / SSO](docs/forward-auth.md).
+- **Configuration.** [`.env.example`](.env.example) documents every variable and its default; [deployment](docs/deployment.md) explains the ones that decide whether a deployment works.
+- **Stuck?** [Troubleshooting](docs/troubleshooting.md) is organised by symptom.
 
-### Sidecar installers (macOS / Windows / Linux)
+## Documentation
 
-Every [GitHub release](https://github.com/s3ntin3l8/runway-ai-usage-tracker/releases) ships:
-
-- `Runway-Sidecar-macOS-<version>.dmg`: drag-to-Applications installer for the menu-bar app (Apple Silicon)
-- `Runway-Sidecar-Windows-<version>-setup.exe`: per-user installer for the tray app (no admin rights; Start Menu entry, uninstaller, optional start-at-sign-in)
-- `Runway-Sidecar-Linux-<version>.tar.gz`: desktop tray app (needs AppIndicator/GTK + DBus)
-- `Runway-Sidecar-Linux-CLI-<version>.tar.gz`: headless single-file binary for servers, Docker, and CI agents (no Python or GUI required)
-
-It also ships portable `.zip` builds for macOS/Windows, which the in-app self-updater uses, plus `SHA256SUMS.txt` and Sigstore signatures for verification. The **Fleet** page of the dashboard links the right installer for your OS. Numbered `beta` prereleases are available from Fleet; the rolling `edge` prerelease is rebuilt when a push to `main` changes sidecar or installer files.
-
-The desktop apps are not signed with an Apple Developer ID / Windows code-signing certificate, so the OS asks once before the first launch:
-
-- **macOS** (*"Apple could not verify this app…"*): right-click **Runway Sidecar** in Applications → **Open** → **Open**. On macOS 15+, use *System Settings → Privacy & Security → Open Anyway*.
-- **Windows** (SmartScreen: *"Windows protected your PC"*): click **More info** → **Run anyway**.
-
-See [docs/sidecar.md](docs/sidecar.md) for install, uninstall, silent-install and verification details.
-
-## Supported Providers
-
-**15 providers** with server-side quota collectors. A sidecar supplies host-local credentials and per-message events where needed.
-
-| Provider | Collection Method | Cards | Env Var | Docs |
-|----------|------------------|-------|---------|------|
-| **Claude** | OAuth → Web API → Local logs | 2-5 | `CLAUDE_CODE_OAUTH_TOKEN` (opt) | [📖](docs/collectors/claude.md) |
-| **Claude Console** | Web API (platform.claude.com session) | 1 | — (sessionKey cookie) | [📖](docs/collectors/claude.md) |
-| **Gemini** | OAuth API + Local logs | 1-7 | `GEMINI_OAUTH_*` (opt) | [📖](docs/collectors/gemini.md) |
-| **GitHub Copilot** | REST API | 2 | `GITHUB_TOKEN` | [📖](docs/collectors/github.md) |
-| **ChatGPT** | OAuth API → Chrome cookie → Local logs | 1 | `CHATGPT_OAUTH_TOKEN` (opt) | [📖](docs/collectors/chatgpt.md) |
-| **OpenRouter** | REST API (Credits) | 1 | `OPENROUTER_API_KEY` | [📖](docs/collectors/openrouter.md) |
-| **DeepSeek** | REST API (Balance) | 1 | `DEEPSEEK_API_KEY` | [📖](docs/collectors/deepseek.md) |
-| **MiniMax** | REST API (Coding Plan) | 2 | `MINIMAX_API_KEY` | [📖](docs/collectors/minimax.md) |
-| **Ollama** | Web API (Cloud) + Session cookie | 2 | `OLLAMA_SESSION_TOKEN` (opt) | [📖](docs/collectors/ollama.md) |
-| **OpenCode** | Web API → Local DB → Sidecar | 3 | — (Chrome cookie) | [📖](docs/collectors/opencode.md) |
-| **zAI** | REST API (Quota) | 1 | `ZAI_API_KEY` | [📖](docs/collectors/zai.md) |
-| **Kimi API** | REST API (Balance) | 1 | `KIMI_API_KEY` | [📖](docs/collectors/kimi_api.md) |
-| **Kimi Coding** | REST API (IDE Quotas) | 2-4 | `KIMI_CODE_API_KEY` / CLI auto / `KIMI_AUTH_TOKEN` (legacy) | [📖](docs/collectors/kimi_coding.md) |
-| **Kimi K2** | REST API (Credits) | 1 | `KIMI_K2_API_KEY` | [📖](docs/collectors/kimi_k2.md) |
-| **xAI (Grok)** | CLI chat proxy (subscription + on-demand) | 1-2 | `GROK_OAUTH_TOKEN` (opt) | [📖](docs/collectors/xai.md) |
-| **Antigravity** | Cloud Code Assist API; local conversation events via sidecar | 4 | — (agy OAuth token) | [📖](docs/collectors/antigravity.md) |
-
-For Antigravity on a remote host, the sidecar sends the agy OAuth token to the server for quota collection and extracts local conversation events. On the same host, the server can read the token file directly.
-
-**Env Var Legend:** (opt) = Optional, has fallback | — = Detected automatically
-
-## Architecture
-
-Runway is always **server + sidecar(s)**. Two orthogonal axes vary: the server can run as Python (`make dev-all` / `make run`) or in Docker, and you can run one sidecar locally or N sidecars across remote hosts. All cookie, IDE, and local-file detection lives in the sidecar; the server handles API/web collection, aggregation, and the dashboard.
-
-- **[Architecture and the data model](docs/architecture.md)** — the event-sourced tables, the ingest path, and the service modules.
-- **[Collection logic](docs/collection_logic.md)** — how a collector turns a response into a card.
-- **[Deployment guide](docs/deployment.md)** — the per-provider compatibility matrix and Docker Compose examples.
-
-## API Reference
-
-All routes are mounted under `/api/v1/`. See **[docs/api-reference.md](docs/api-reference.md)** for the full route inventory (usage, fleet/ingestion, system, auth) and the `LimitCard` response payload schema. The **[fleet protocol](docs/fleet-protocol.md)** describes the sidecar↔server protocol in one place.
-
-## UI/UX Audit
-
-The dashboard was audited for accessibility, mobile ergonomics and data honesty. See **[docs/audit/2026-10-webapp-ui-ux.md](docs/audit/2026-10-webapp-ui-ux.md)** for the findings, what was fixed, and the deferred backlog. The audit has two permanent guardrails in the test suite: an axe-core check over the main surfaces and a WCAG contrast check over the theme tokens.
-
-## Configuration
-
-Runway's environment variables are documented in **[.env.example](.env.example)**, which is the single source of truth for every supported variable, its default and an explanation.
-
-The ones that decide whether a deployment works:
-
-| Variable | Purpose |
-|---|---|
-| `RUNWAY_CONFIG_DIR` | Override the platform-specific configuration directory (database, metrics, OAuth tokens). |
-| `ADMIN_API_KEY` | Protects the dashboard and the admin API. Unset by default (local-first, single-user); remote access then shows a login screen. |
-| `DB_ENCRYPTION_KEY` | Fernet key for sensitive metadata in SQLite. Unset = plaintext (acceptable locally). Back it up with the database. |
-| `TLS_TERMINATED` | Asserts TLS is terminated upstream. **Required** when `APP_HOST` is not localhost. |
-| `CORS_ORIGINS` | Comma-separated origin allow-list. **Required** when `APP_HOST` is not localhost. |
-| `TRUSTED_PROXY_IPS` | Reverse-proxy IPs allowed to assert identity via a forward-auth header. Without it those headers are forgeable and bypass `ADMIN_API_KEY`. |
-| `INGEST_API_KEY` | HMAC secret shared between the server and its sidecars. |
-| `LOG_FORMAT` | `plain` (default) or `json`. |
-| `TZ` | IANA timezone for dashboard display (e.g. `Europe/Berlin`). The browser auto-detects when unset. |
-
-See **[docs/SECURITY.md](docs/SECURITY.md)** for the full trust model and the multi-host startup gates.
-
-## Network Access
-
-By default, Runway binds to `127.0.0.1` (local only). To access from other devices on your network:
-
-1. Set `APP_HOST=0.0.0.0` in `.env`
-2. Restart Runway
-3. Access via `http://<your-ip>:8765`
-
-## Authentication & Security
-
-Runway provides a flexible, multi-layered security model:
-
-- **Local Trust**: When accessing Runway from `127.0.0.1` (localhost), authentication is automated. You will jump straight to the dashboard even if an `ADMIN_API_KEY` is set.
-- **Login Screen**: For remote access or Docker deployments, setting `ADMIN_API_KEY` in your `.env` triggers a dedicated **Login Portal**. Enter the key once, and it's exchanged for an HttpOnly session cookie — never stored in `localStorage`.
-- **Forward-Auth / SSO (Proxy)**: If you offload authentication to a reverse proxy (Authentik, Authelia, oauth2-proxy, Cloudflare Access, …), Runway automatically trusts and bypasses the login screen once `TRUSTED_PROXY_IPS` is set — configurable header names and an optional group/user allow-list mean the admin key never needs to be entered in the browser at all. See the [Forward-Auth / SSO guide](docs/forward-auth.md) for a full Authentik + Traefik walkthrough, including production hardening (bypassing SSO for sidecar ingestion and static assets) and troubleshooting.
-
-⚠️ **Public Internet**: Never expose Runway directly to the public internet without a reverse proxy (Nginx/Traefik) and HTTPS.
+[docs/README.md](docs/README.md) indexes everything: deployment, sidecar, API reference, per-provider collector docs, security, and contributor guides. To contribute, start with [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
@@ -265,5 +114,3 @@ This program is free software: you can redistribute it and/or modify it under
 the terms of the GNU Affero General Public License as published by the Free
 Software Foundation, either version 3 of the License, or (at your option) any
 later version (SPDX: `AGPL-3.0-or-later`). See [LICENSE](LICENSE).
-
-*Last updated: 2026-10-25*

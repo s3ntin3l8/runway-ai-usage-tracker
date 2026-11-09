@@ -40,7 +40,7 @@ make run                    # server only (serves webapp/dist)
 make sidecar                # in a second shell, or run via a process manager
 ```
 
-Defaults: server binds `127.0.0.1:8765`. Set `APP_HOST=0.0.0.0` in `.env` for LAN access.
+Defaults: the server binds `127.0.0.1:8765` and trusts requests from localhost. To reach it from other devices, set `APP_HOST=0.0.0.0` in `.env` and restart — but a non-local bind turns on the startup gates in [Configuration](#configuration) (`DB_ENCRYPTION_KEY`, `TLS_TERMINATED`, `CORS_ORIGINS`, and `ADMIN_API_KEY` or `TRUSTED_PROXY_IPS`). Then open `http://<your-ip>:8765`. Never expose Runway directly to the internet without a reverse proxy and HTTPS.
 
 ### Docker
 
@@ -222,6 +222,15 @@ The relevant env vars apply to both runtimes:
 | `SESSION_LIFETIME_HOURS` | optional (default `12`) | Admin session-cookie lifetime for a normal login |
 | `SESSION_REMEMBER_DAYS` | optional (default `30`) | Session lifetime when the login uses "remember me" |
 | `RUNWAY_BUILD_SHA` | optional | The commit this build came from, shown in Settings → About. The official Docker image bakes it in at build time; set it by hand for a source or pip install |
+
+### Providing credentials by hand
+
+In Docker or on a headless host no browser or keychain is available, so a provider's login has to arrive another way: an environment variable from the table above, a [sidecar](sidecar.md) on a workstation, or a value you enter yourself under **Settings → Providers** (add a provider, or open an existing account).
+
+- **API key** — paste the provider's key or bearer token (for ChatGPT and Claude, the full token that usually starts with `eyJ…`). This takes priority over a cookie.
+- **Session cookie** — a fallback for providers that offer no token. It expires with the browser session, so expect to renew it.
+
+**Settings → Credentials** then shows where each account's login comes from and when it expires.
 
 ### Provider limits and overrides
 

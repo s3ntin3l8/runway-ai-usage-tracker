@@ -28,7 +28,8 @@ private pipes or the OS keychain; the evidence deliberately records only the
 
 That property is what makes them safe to keep in the repository, and it is why
 they are archived rather than deleted: several back **still-open** trackers
-(#526, #548, #672, #750, #764) and are the evidence trail for them.
+(#526, #548, #750, #764) and are the evidence trail for them. A record whose
+issue has closed and that nothing cites is removed; git history keeps it.
 
 They are **append-only**. Nothing here is edited after the fact; a newer run
 produces a newer file.
@@ -39,15 +40,13 @@ produces a newer file.
 
 | File | Issue | Subject |
 |---|---|---|
-| [`claude-credential-inventory-663.md`](acceptance/claude-credential-inventory-663.md) / [`.json`](acceptance/claude-credential-inventory-663.json) | #663 | Inventory of Claude credential sources found on a real macOS host |
-| [`claude-console-native-investigation-666.md`](acceptance/claude-console-native-investigation-666.md) / [`.json`](acceptance/claude-console-native-investigation-666.json) | #666 | Native investigation of the Claude Console credential path |
 | [`claude-cloud-accounting-669.md`](acceptance/claude-cloud-accounting-669.md) | #669 | Offline accounting audit of the Claude cloud usage interface |
 | [`claude-cloud-verification-669.md`](acceptance/claude-cloud-verification-669.md) | #669 | Live-verification gates for the cloud accounting audit |
 | [`claude-cloud-mapped-fixture-669-20261026.md`](acceptance/claude-cloud-mapped-fixture-669-20261026.md) / [`.json`](acceptance/claude-cloud-mapped-fixture-669-20261026.json) / [observations](acceptance/claude-cloud-mapped-fixture-669-20261026-observations.json) | #669, #992, #993 | One mapped Desktop Code fixture: input/cache parity passed; output, coverage and provenance remain unverified |
 | [`claude-cloud-source-shape-20261029.md`](acceptance/claude-cloud-source-shape-20261029.md) / [`.json`](acceptance/claude-cloud-source-shape-20261029.json) | #669, #993 | Structure-only capture of real cloud-runner list rows and three event histories: fields available (repo, branches, per-message model/usage, cwd), the three usage sources and why they disagree |
+| [`claude-cloud-accounting-capture-20261029.json`](acceptance/claude-cloud-accounting-capture-20261029.json) | #669 | Raw structure-only capture behind the source-shape report |
 | [`claude-automatic-native-acceptance-671.json`](acceptance/claude-automatic-native-acceptance-671.json) / [`.md`](acceptance/claude-automatic-native-acceptance-671.md) | #671 | Acceptance of automatic native credential discovery |
 | [`claude-native-macos-acceptance-672.json`](acceptance/claude-native-macos-acceptance-672.json) / [`.md`](acceptance/claude-native-macos-acceptance-672.md) | #672 | Acceptance for the remaining macOS Claude credential sources |
-| [`claude-native-oauth-acceptance-679.json`](acceptance/claude-native-oauth-acceptance-679.json) / [`.md`](acceptance/claude-native-oauth-acceptance-679.md) | #679 | Acceptance of the Claude Desktop OAuth path |
 
 ### Keychain safety, isolation and renewal
 
