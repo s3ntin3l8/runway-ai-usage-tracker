@@ -81,7 +81,7 @@ def test_cross_origin_and_bad_host_are_inert(client):
 @pytest.mark.parametrize(
     "body,status",
     [
-        (b"x" * 9000, 413),
+        pytest.param(b"x" * 9000, 413, id="oversized-body"),
         (b"invalid", 422),
         (b'{"source_id":"one","source_id":"private"}', 422),
     ],
