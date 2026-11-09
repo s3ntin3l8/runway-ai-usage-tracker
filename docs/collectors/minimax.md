@@ -15,7 +15,7 @@ Server collector for the MiniMax coding-plan quota (5-hour and weekly windows). 
   card.
 - **Labels:** `data_source: "api"`; `input_source` is `config` (Settings or a manually pasted
   credential), `sidecar` (credential pushed by a sidecar) or `server` (`MINIMAX_API_KEY` env,
-  default account only). Values are defined in [statistics.md](../statistics.md). The card
+  default account only). Values are defined in [Card provenance labels](../collection_logic.md#card-provenance-labels). The card
   `detail` ends in `[API]` or `[App]` according to the credential kind.
 - **Two credential kinds** reach this collector and each needs its own host (see below).
 

@@ -6,7 +6,7 @@ Google Gemini CLI quota from Google Cloud Code, plus per-message usage events th
 
 ## At a glance
 
-- **Strategies** (`STRATEGIES` in `gemini.py`): `api` only, run on the server. No enrichment strategy is declared; token breakdowns arrive as sidecar usage events (see [Strategy Types](../collection_logic.md#strategy-types)).
+- **Strategies** (`STRATEGIES` in `gemini.py`): `api` only, run on the server. No enrichment strategy is declared; token breakdowns arrive as sidecar usage events (see [Card provenance labels](../collection_logic.md#card-provenance-labels)).
 - **Cards:** one per model class the quota response reports (`Gemini Flash`, `Gemini Pro`, `Gemini Flash Lite`, or the raw model id), deduplicated per class, preferring the bucket that carries concrete numbers. Percent-only buckets use `unit_type: percent`; buckets with a limit use the token type.
 - **Labels:** `data_source=api`; `input_source` is `sidecar` or `config` by where the OAuth bundle came from.
 

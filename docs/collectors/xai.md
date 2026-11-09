@@ -8,7 +8,7 @@ Credit balance and on-demand usage of the consumer Grok subscription through xAI
 
 - **Strategy:** `api` only (OAuth bearer against the CLI chat proxy).
 - **Cards:** one credits card, `weekly` or `monthly` according to the billing response's `currentPeriod.type` (anything unrecognised is `monthly`), plus an optional USD on-demand card when `onDemandCap` is non-zero. The tier badge comes from a best-effort `/v1/settings` call.
-- **Labels:** `data_source: api`; `input_source` is `sidecar`, `config` (pasted bearer) or `server` (environment variable). See [architecture.md](../architecture.md#standard-definitions).
+- **Labels:** `data_source: api`; `input_source` is `sidecar`, `config` (pasted bearer) or `server` (environment variable). See [Card provenance labels](../collection_logic.md#card-provenance-labels).
 
 ## Credentials
 

@@ -15,7 +15,7 @@ Quota gauges for the Antigravity CLI (`agy`) from Google's Cloud Code Assist API
 | Claude and GPT models | `frontier` | weekly, 5-hour (`session`) |
 | Gemini 4 Argon (paid Pro and Ultra plans) | `argon` | weekly |
 
-- **Labels:** `data_source: api`; `input_source` follows where the cached token came from (normally `sidecar`). See [architecture.md](../architecture.md#standard-definitions).
+- **Labels:** `data_source: api`; `input_source` follows where the cached token came from (normally `sidecar`). See [Card provenance labels](../collection_logic.md#card-provenance-labels).
 - Each card has `pct_used = round((1 - remainingFraction) * 100, 4)`, `reset_at` from `resetTime`, and `quota_pool_id = "antigravity:<variant>:<window>"`.
 
 ## Credentials

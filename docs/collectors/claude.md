@@ -17,7 +17,7 @@ Cards: `Session` (5h, `session`), `Weekly` (7d, `weekly`), per-model weekly wind
 
 **`anthropic_console`** (display name Claude Console). One strategy, `web`, one `Balance` card (`window_type: rolling`, `data_source=web`, `input_source=config`), polled every 15 minutes.
 
-The sidecar adds `data_source=local`, `input_source=sidecar` data: the statusline file (below) and per-message events. See [Strategy Types](../collection_logic.md#strategy-types) for how primary and enrichment data merge.
+The sidecar adds `data_source=local`, `input_source=sidecar` data: the statusline file (below) and per-message events. See [Card provenance labels](../collection_logic.md#card-provenance-labels) for how primary and enrichment data merge.
 
 ## Credentials
 

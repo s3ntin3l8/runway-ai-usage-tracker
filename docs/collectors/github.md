@@ -8,7 +8,7 @@ GitHub Copilot quota. One endpoint returns the plan and either quota snapshots (
 
 - **Strategies:** `api` only (`copilot_internal/user`); there is no fallback endpoint. Results are cached for 5 minutes.
 - **Cards:** one per quota the plan reports, variant `Copilot` service: `Completions` and `Chat` (free plan, from `limited_user_quotas` against `monthly_quotas`), or `Premium Interactions`, `Chat`, `Completions`, `Included Credits` from `quota_snapshots` (metrics with `has_quota: false` are skipped). Snapshot cards are `window_type: monthly`, `unit_type: requests`. A free-plan quota without a known total shows no percentage rather than inventing one.
-- **Labels:** `data_source=api`; `input_source` is `config`, `server` or `sidecar` by where the token came from. See [Strategy Types](../collection_logic.md#strategy-types).
+- **Labels:** `data_source=api`; `input_source` is `config`, `server` or `sidecar` by where the token came from. See [Card provenance labels](../collection_logic.md#card-provenance-labels).
 - **Account identity:** an account is keyed by its GitHub login (`/user` returns `login` for every token type and it never changes), never by email, which is only the display label. The server host's `git config user.email` and `gh` login are not consulted: they identify the host, not the token.
 
 ## Credentials

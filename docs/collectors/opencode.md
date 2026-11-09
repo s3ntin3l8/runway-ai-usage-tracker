@@ -9,7 +9,7 @@ Quota cards for the OpenCode Go subscription (server), plus per-message usage ev
 - **Strategies** (in order): `api` (OpenCode API key, bearer) then `web` (console session cookies).
 - **Cards:** up to three per account, all USD: `session` (5h rolling), `weekly` (7d) and `monthly` (30d). Default limits when the API omits one: $12 / $30 / $60.
 - **Labels:** the bearer endpoint is `data_source: api`, the cookie endpoint is `web`. `input_source` is `config` (key or cookies pasted in Settings), `sidecar` (discovered locally) or `server` (environment variable).
-- Strategy and label semantics: [collection_logic.md](../collection_logic.md) and [architecture.md](../architecture.md#standard-definitions).
+- Strategy and label semantics: [collection_logic.md](../collection_logic.md) and [Card provenance labels](../collection_logic.md#card-provenance-labels).
 
 ## Credentials
 
@@ -71,7 +71,7 @@ The sidecar reads per-message events and session titles from `opencode.db` (read
 - **Event id:** the message row id, so ids and watermarks survive the v1 to v2 migration without re-ingest.
 - **Streaming rows:** a v2 row with no completion or error time (or a running compaction) is held back, with everything after it, until it settles. After an hour it is treated as abandoned (crashed process) and skipped. A compaction with no cost and no tokens yields no event.
 - **Provider id:** OpenCode's `providerID` maps to a Runway provider: `opencode-go` to `opencode`, `opencode` to `opencode-free`, `opencode-zen`, `open-design-byok` to `opencode-byok`, `openrouter` to `opencode-openrouter`, `ollama-cloud` to `opencode-ollama`, any other id to `opencode-<id>`. A backend Runway collects directly (for example xai) is retagged onto that provider, and a gateway-tagged message with an OpenRouter-only model id folds onto `openrouter`.
-- **Session names:** the sidecar reads `session_v2.title` (v2, which wins even when blank) or `session.title` (v1) for sessions that have assistant messages. See [Session names from the sidecar](../collection_logic.md#session-names-from-the-sidecar).
+- **Session names:** the sidecar reads `session_v2.title` (v2, which wins even when blank) or `session.title` (v1) for sessions that have assistant messages. See [Session names from the sidecar](../collection_logic.md#session-names).
 - **Repair:** `scripts/reclassify_opencode_providers.py` re-applies the provider mapping to already ingested events and reads both layouts.
 
 ## Troubleshooting

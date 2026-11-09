@@ -8,7 +8,7 @@ ChatGPT Codex quota (the 5-hour and weekly Codex windows) from `wham/usage`, plu
 
 - **Strategies** (`STRATEGIES` in `chatgpt.py`): `web` only (Web API), run on the server.
 - **Cards:** one per window present in `rate_limit`: `primary_window` and `secondary_window`. Each is classified by its own `limit_window_seconds` (not by plan), so a 5h window becomes `session` and a 7d window `weekly`; a window with no duration falls back to `monthly`. Free/Go plans that report one window get one card; Plus/Pro typically get two. Service name `ChatGPT`, variant `Codex`.
-- **Labels:** `data_source=api` for a bearer token, `web` for a cookie exchange; `input_source` is `config`, `server` or `sidecar` depending on where the credential came from. See [Strategy Types](../collection_logic.md#strategy-types).
+- **Labels:** `data_source=api` for a bearer token, `web` for a cookie exchange; `input_source` is `config`, `server` or `sidecar` depending on where the credential came from. See [Card provenance labels](../collection_logic.md#card-provenance-labels).
 
 ## Credentials
 

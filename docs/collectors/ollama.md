@@ -20,7 +20,7 @@ a browser session cookie.
     labels such as `Free usage` count only when no reset time is shown.
 - **Labels:** `api` cards have `data_source: "api"`, `web` cards `"web"`. `input_source` is
   `config` (saved in Settings), `sidecar` (pushed) or `server` (env var). Values are defined in
-  [statistics.md](../statistics.md).
+  [Card provenance labels](../collection_logic.md#card-provenance-labels).
 - The `allowance` and `credits` variants are separate pools because the card unit changed from
   percent to currency; `merge_card_json` freezes the quota fields of a stored card whose unit
   differs, and a separate pool lets the stale card be reconciled away.
