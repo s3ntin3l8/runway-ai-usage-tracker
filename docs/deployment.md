@@ -245,7 +245,6 @@ These tune the collectors rather than the deployment. All are optional.
 | `ZAI_API_HOST` | Override the zAI API host |
 | `ZAI_QUOTA_URL` | Override the zAI quota endpoint |
 | `OPENCODE_GO_API_KEY` | API key for the OpenCode Go service |
-| `OPENCODE_WORKSPACE_ID` | Workspace id used for OpenCode requests |
 | `BROWSER_PREFERENCE` | Order of browsers to search for cookies. Options: `safari`, `chrome`, `chromium`, `edge`, `firefox` |
 
 ### Runtime and storage
