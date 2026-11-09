@@ -63,3 +63,17 @@ def test_an_explicit_id_keeps_an_oversized_value_collectable(tmp_path):
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "test_case[oversized]" in result.stdout
+
+
+def test_the_limit_is_one_hundred_characters(tmp_path):
+    source = (
+        "import pytest\n\n"
+        '@pytest.mark.parametrize("body", ["x" * {length}])\n'
+        "def test_case(body):\n"
+        "    pass\n"
+    )
+    at_limit = _collect(tmp_path, source.format(length=100))
+    assert at_limit.returncode == 0, at_limit.stdout + at_limit.stderr
+    over_limit = _collect(tmp_path, source.format(length=101))
+    assert over_limit.returncode != 0
+    assert "too long for an auto-generated ID" in over_limit.stdout + over_limit.stderr
