@@ -1404,3 +1404,47 @@ class TestOllamaSettingsEnrichment:
         cards, requested, _ = await self._run(self._page("x"), cookie=None)
         assert requested == [OllamaCollector.BALANCE_URL]
         assert cards[0]["tier"] == "pro"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["http_500", "timeout"])
+async def test_api_key_with_a_failing_balance_call_is_not_told_to_add_a_key(failure):
+    """An account that already has a key must not get "Add an Ollama API key".
+
+    The balance call fails for another reason (a 500, a timeout) and the cookie
+    fallback then reads the Usage page: the card stays a parse error.
+    """
+    collector = OllamaCollector(account_id="acc_test")
+    page = _make_response({})
+    page.text = SETTINGS_FIXTURE.read_text(encoding="utf-8")
+
+    async def fake_http(client, method, url, **kwargs):
+        if url == OllamaCollector.BALANCE_URL:
+            if failure == "timeout":
+                raise httpx.TimeoutException("slow")
+            return _make_response({}, 500)
+        return page
+
+    with (
+        patch.object(collector, "_get_api_key", new=AsyncMock(return_value="k")),
+        patch.object(
+            collector, "_get_cookie_header", new=AsyncMock(return_value="session=abc.def-123")
+        ),
+        patch("app.services.collectors.ollama.http_request_with_retry", new=fake_http),
+    ):
+        assert await collector._get_ollama_api(MagicMock()) == []
+        assert await collector._get_ollama_web(MagicMock()) == []
+        cards = await collector._error_handler()
+
+    assert collector._last_error_reason == "missing_data"
+    assert cards[0]["error_type"] == "parse_error"
+    assert cards[0]["detail"] != OllamaCollector.ERROR_MESSAGES["usage_not_on_page"]
+
+
+def test_usage_page_marker_accepts_either_quote_style():
+    collector = OllamaCollector()
+
+    for html in ('<div id="free-plan-models">x</div>', "<div id='free-plan-models'>x</div>"):
+        assert collector._parse_html(html) == []
+        assert collector._last_error_reason == "usage_not_on_page"
+        collector._last_error_reason = "unknown"

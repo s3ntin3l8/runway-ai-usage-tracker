@@ -132,7 +132,7 @@ class OllamaCollector(BaseCollector):
     # The redesigned, signed-in "Usage" page loads its figures through a script
     # (`data-usage-async`) and shows the free-usage model list in
     # `#free-plan-models`, but carries no allowance meter, plan badge or email.
-    RE_USAGE_PAGE = re.compile(r'data-usage-async|id="free-plan-models"', re.IGNORECASE)
+    RE_USAGE_PAGE = re.compile(r"data-usage-async|id=[\"']free-plan-models[\"']", re.IGNORECASE)
 
     # Patterns for detecting logged-out state (case-insensitive)
     RE_SIGN_IN_HEADING = re.compile(r"sign in to ollama|log in to ollama", re.IGNORECASE)
@@ -211,6 +211,9 @@ class OllamaCollector(BaseCollector):
         self._last_error_reason: str = "unknown"
         self.current_input_source: str = "server"
         self._no_monthly_cap = False
+        # Set when an API key was found this collection: advice to "add an API key"
+        # would then be wrong, whatever the balance call did.
+        self._api_key_seen = False
 
     def _is_error_result(self, results: list[dict[str, Any]]) -> bool:
         """Treat an API-confirmed no-cap response as a successful empty result."""
@@ -226,6 +229,7 @@ class OllamaCollector(BaseCollector):
     async def collect(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Clear per-collection state before trying the configured strategies."""
         self._no_monthly_cap = False
+        self._api_key_seen = False
         return await super().collect(client)
 
     async def is_configured(self) -> bool:
@@ -245,6 +249,7 @@ class OllamaCollector(BaseCollector):
         """Reset collector state between collection runs."""
         self._last_error_reason = "unknown"
         self._no_monthly_cap = False
+        self._api_key_seen = False
 
     def _set_error_reason(self, reason: str) -> None:
         """Keep the most specific auth diagnosis across API and web fallback."""
@@ -372,6 +377,7 @@ class OllamaCollector(BaseCollector):
         api_key = await self._get_api_key()
         if not api_key:
             return []  # No API key — base collector falls through to ``web``.
+        self._api_key_seen = True
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Accept": "application/json",
@@ -861,10 +867,12 @@ class OllamaCollector(BaseCollector):
 
         blocks = self._get_usage_blocks(html, now)
         if not blocks:
-            if self.RE_USAGE_PAGE.search(html):
+            if self.RE_USAGE_PAGE.search(html) and not self._api_key_seen:
                 # A signed-in page that simply no longer carries the allowance:
                 # not a parse failure of a known layout, and the cookie cannot
-                # fix it. Only the API key reads the quota now.
+                # fix it; the API key reads the quota. With a key already
+                # configured the advice would be wrong (the balance call failed
+                # for another reason), so that case stays a parse failure.
                 logger.debug("Ollama: settings page shows no allowance meter")
                 self._set_error_reason("usage_not_on_page")
                 return []
