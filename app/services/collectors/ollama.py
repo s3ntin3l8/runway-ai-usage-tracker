@@ -230,6 +230,7 @@ class OllamaCollector(BaseCollector):
     async def collect(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Clear per-collection state before trying the configured strategies."""
         self._no_monthly_cap = False
+        self._api_key_configured = False
         return await super().collect(client)
 
     async def is_configured(self) -> bool:
@@ -249,6 +250,7 @@ class OllamaCollector(BaseCollector):
         """Reset collector state between collection runs."""
         self._last_error_reason = "unknown"
         self._no_monthly_cap = False
+        self._api_key_configured = False
 
     def _set_error_reason(self, reason: str) -> None:
         """Keep the most specific auth diagnosis across API and web fallback."""
