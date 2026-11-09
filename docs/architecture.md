@@ -55,7 +55,7 @@ and `db_claude_cloud.py`; `app/models/db.py` re-exports them.
 | `latest_usage` | Live gauge cards (`pct_used`, `limit_value`, `reset_at`), merged by `merge_card_json` in `app/services/accumulator.py`. |
 | `latest_usage_contributions` | Per-source last-good payload behind a merged card, so one producer cannot retire another's. See [reconciliation](collection_logic.md#current-card-reconciliation). |
 | `quota_snapshots` | Append-only `pct_used` / `reset_at` series; backs the history chart and the Theil-Sen forecast. |
-| `provider_pricing` | Time-versioned per-model prices used by `cost_calculator.py`, so historical cost is stable across price changes. |
+| `provider_pricing` | Time-versioned per-model prices used by `cost_calculator.py`, so historical cost is stable across price changes. A row may carry a time-of-day schedule (`rate_schedule`, `rate_schedule_multiplier`; windows in `pricing_schedule.py`, UTC): inside the window every rate is multiplied, outside it the base rates apply. DeepSeek direct (2x peak) and Ollama `deepseek-v4*` (0.5x off-peak) use it; CN holidays are not modelled, so DeepSeek peak is slightly overcounted on those days. The Python calculator and `maintenance/sql_cost.py` apply the same window; re-cost history with the Data Health `stale_priced_models` fix. |
 | `session_names` | Display name per `(provider_id, session_id, kind)`; `agent` for a user-set name, `generated` for a tool's. Free text, never logged. |
 | `pending_usage_events` | Events held back until an account is assigned. |
 

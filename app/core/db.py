@@ -368,6 +368,9 @@ _DEFERRED_COLUMNS: list[tuple[str, str, str]] = [
     ("provider_pricing", "long_cache_read_per_mtok", "FLOAT"),
     ("provider_pricing", "long_cache_create_per_mtok", "FLOAT"),
     ("provider_pricing", "long_cache_create_1h_per_mtok", "FLOAT"),
+    # Optional time-of-day schedule (NULL = flat rates); see ProviderPricing.
+    ("provider_pricing", "rate_schedule", "VARCHAR"),
+    ("provider_pricing", "rate_schedule_multiplier", "FLOAT"),
     # Per-account webhook scoping: NULL = applies to all accounts (legacy rows).
     ("webhook_configs", "account_id", "VARCHAR"),
     # Opt-in (default on) for credential-health (expired/invalid) alerts,

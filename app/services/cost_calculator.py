@@ -13,6 +13,7 @@ from sqlmodel import Session, func, select
 
 from app.models.db import ProviderPricing
 from app.services.model_normalization import is_free_tier_model_id
+from app.services.pricing_schedule import schedule_multiplier
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +62,8 @@ class PricingRowSnapshot:
     long_cache_read_per_mtok: float | None = None
     long_cache_create_per_mtok: float | None = None
     long_cache_create_1h_per_mtok: float | None = None
+    rate_schedule: str | None = None
+    rate_schedule_multiplier: float | None = None
 
 
 class PricingIndex:
@@ -92,6 +95,8 @@ class PricingIndex:
             ProviderPricing.long_cache_read_per_mtok,
             ProviderPricing.long_cache_create_per_mtok,
             ProviderPricing.long_cache_create_1h_per_mtok,
+            ProviderPricing.rate_schedule,
+            ProviderPricing.rate_schedule_multiplier,
         )
         statement = select(*columns)  # type: ignore[call-overload]
         if providers:
@@ -389,6 +394,16 @@ def compute_event_cost_breakdown(  # noqa: PLR0913 — one param per priced toke
             rate_5m = row.long_cache_create_per_mtok
         if row.long_cache_create_1h_per_mtok is not None:
             rate_1h_row = row.long_cache_create_1h_per_mtok
+
+    # Time-of-day schedule (DeepSeek peak, Ollama off-peak): scales every
+    # rate when the event's UTC timestamp is inside the row's window.
+    factor = schedule_multiplier(row, ts)
+    if factor != 1.0:
+        rate_in *= factor
+        rate_out *= factor
+        rate_read *= factor
+        rate_5m *= factor
+        rate_1h_row *= factor
 
     split_total = tokens_cache_create_1h + tokens_cache_create_5m
     if split_total:
