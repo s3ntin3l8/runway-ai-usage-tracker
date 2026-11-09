@@ -39,8 +39,7 @@ run it. This index covers everything else.
 | Document | What it covers |
 |---|---|
 | [architecture.md](architecture.md) | The event-sourced data model, the ingest path, the service modules and the collectors. |
-| [collection_logic.md](collection_logic.md) | How a collector turns a response into a card: strategies, enrichment, reconciliation. |
-| [statistics.md](statistics.md) | The `data_source` / `input_source` values every card carries. **The source of truth for those values.** |
+| [collection_logic.md](collection_logic.md) | How a collector turns a response into a card: strategies, the `data_source` / `input_source` labels (the source of truth for those values), reconciliation, project and session labels. |
 | [api-reference.md](api-reference.md) | Every `/api/v1` route, its auth, and the `LimitCard` schema. |
 | [fleet-protocol.md](fleet-protocol.md) | The sidecar↔server protocol: ingest auth, pairing, credential manifests, remote control. |
 | [claude-cloud-event-contract.md](claude-cloud-event-contract.md) | The specification the Claude cloud-runner collector is built against. |
