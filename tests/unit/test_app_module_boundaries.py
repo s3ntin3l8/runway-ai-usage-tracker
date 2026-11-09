@@ -5,6 +5,10 @@ at the import statement: a refactor on one side silently changes the other side.
 Members another module needs are published under a public name, and a module that
 other packages import has a public name too. The Claude cloud cluster has its own
 narrower guard (``test_claude_cloud_module_boundaries.py``).
+
+Ruff's ``TID252`` only bans relative imports from *parent* modules, so
+``from . import _x`` passes lint; ``private_imports`` is the only thing that
+catches it and must not be dropped as redundant with the lint rule.
 """
 
 import ast
@@ -109,7 +113,7 @@ def string_private_reads(tree: ast.Module) -> list[str]:
     return found
 
 
-# (file, "name.attr"): reads that are not another app module's private member.
+# (file, "name.attr" or "getattr(..., '_name')"): reads that are not another app module's private member.
 ALLOWED = {
     ("app/core/log_redaction.py", "parts._replace"),  # namedtuple API
     ("app/services/queries/chart_bars.py", "row._mapping"),  # SQLAlchemy Row API
@@ -127,7 +131,7 @@ def test_module_reads_no_private_member_of_another_module(path: Path):
     tree = ast.parse(path.read_text())
     imported = private_imports(tree, list(path.relative_to(ROOT).with_suffix("").parts[:-1]))
     assert not imported, f"{rel} imports the private {imported}"
-    dynamic = string_private_reads(tree)
+    dynamic = [d for d in string_private_reads(tree) if (rel, d) not in ALLOWED]
     assert not dynamic, f"{rel} reads the private {dynamic}"
     own = declaring_classes(tree)
     read = [

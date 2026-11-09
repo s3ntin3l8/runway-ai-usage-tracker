@@ -47,7 +47,9 @@ try:
     from app.services.collectors.anthropic_common import ANTHROPIC_WINDOW_NAME_MAP  # noqa: E402
 except (
     ModuleNotFoundError
-):  # visual-check renders the merge base with this seed; it predates the rename
+) as missing:  # visual-check renders the merge base with this seed; it predates the rename
+    if missing.name != "app.services.collectors.anthropic_common":
+        raise
     from app.services.collectors._anthropic_common import (  # type: ignore[import-not-found,no-redef]  # noqa: E402
         ANTHROPIC_WINDOW_NAME_MAP,
     )
