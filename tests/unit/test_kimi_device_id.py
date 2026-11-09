@@ -20,7 +20,18 @@ def _jwt(exp):
     return f"e30.{encoded}.sig"
 
 
-@pytest.mark.parametrize("value", [None, "", " \n", "bad\x00id", "bad\tid", "café", "x" * 257])
+@pytest.mark.parametrize(
+    "value",
+    [
+        None,
+        "",
+        " \n",
+        "bad\x00id",
+        "bad\tid",
+        "café",
+        pytest.param("x" * 257, id="oversized-value"),
+    ],
+)
 def test_device_id_rejects_invalid_values(value):
     assert normalize_device_id(value) is None
 
@@ -71,7 +82,9 @@ def test_sidecar_reads_device_read_only_and_forwards_it_only_with_cli_tokens(tmp
     assert "cli_device_id" not in cards[0]["metadata"]
 
 
-@pytest.mark.parametrize("contents", [b"x" * 259, b"\xff", b"bad\nid"])
+@pytest.mark.parametrize(
+    "contents", [pytest.param(b"x" * 259, id="oversized-file"), b"\xff", b"bad\nid"]
+)
 def test_sidecar_omits_invalid_device_file(tmp_path, contents):
     credentials = tmp_path / "credentials"
     credentials.mkdir()

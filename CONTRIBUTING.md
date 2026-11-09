@@ -21,7 +21,7 @@ python scripts/dev_checks.py gate
 
 Individual commands are `lint`, `mypy`, `unit`, `test`, `web-lint`, `web-test`,
 `install-hooks`, `install-python`, `gate`, `test-shard`, `record-shard-weights`,
-`test-windows` and `remove-worktree`; the
+`test-windows`, `resolve-generated` and `remove-worktree`; the
 same runner also works on Linux and macOS. It uses this checkout's `.venv`,
 sets UTF-8 mode for Python child processes, installs the lockfile dependency
 graph with `npm ci`, and gives pytest fresh owned home, config, app-data and
@@ -86,7 +86,8 @@ A shard owns whole test modules, never part of one. The plan is balanced by
 measured per-module runtime (`tests/shard_durations.<platform>.json`, one table
 per platform), so re-measure it with `make shard-weights` after the suite's shape
 changes materially - that command runs the full suite once and rewrites the
-table for the platform it ran on. The Windows table is what the native Windows
+table for the platform it ran on. If the baseline or a table conflicts in a
+rebase or merge, run `make resolve-generated` (see `AGENTS.md`). The Windows table is what the native Windows
 shards are planned with; measure it on Windows, not on Linux.
 
 One Windows-native trap catches every test that talks to a local HTTP server.

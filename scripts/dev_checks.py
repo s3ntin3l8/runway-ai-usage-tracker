@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import fnmatch
+import json
 import os
 import shutil
 import subprocess
 import sys
 import tempfile
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -24,6 +26,7 @@ from scripts.pytest_shard import (  # noqa: E402
     shard_files,
     suite_files,
     weights_path,
+    write_weight_payload,
     write_weights,
 )
 
@@ -213,7 +216,156 @@ TASKS_WITHOUT_VENV = {
     "web-test",
     "web-lint",
     "remove-worktree",
+    "resolve-generated",
 }
+
+BASELINE = ".secrets.baseline"
+SECRETS_BATCH = 200  # paths per check_secrets.py call (Win32 command-line limit)
+SHARD_TABLE_GLOB = "tests/shard_durations.*.json"
+
+
+def _git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", *args],
+        cwd=root,
+        env=without_git_env(),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def _git_path_exists(root: Path, name: str) -> bool:
+    completed = _git(root, "rev-parse", "--git-path", name)
+    if completed.returncode != 0:
+        return False
+    path = Path(completed.stdout.strip())
+    return (path if path.is_absolute() else root / path).exists()
+
+
+def regenerate_baseline(root: Path) -> None:
+    """Regenerate ``.secrets.baseline`` -- what ``make secrets-baseline`` runs."""
+    scripts = "Scripts" if os.name == "nt" else "bin"
+    binary = (
+        root / ".venv" / scripts / ("detect-secrets.exe" if os.name == "nt" else "detect-secrets")
+    )
+    subprocess.run(
+        [str(binary), "scan", "--baseline", BASELINE],
+        cwd=root,
+        env=without_git_env(),
+        check=True,
+    )
+
+
+def check_secrets(root: Path) -> int:
+    """Run the secrets gate the way ``make secrets`` does; returns its exit code."""
+    tracked = _git(root, "ls-files", "-z").stdout.split("\0")
+    names = [name for name in tracked if name]
+    # Batch the paths: one command line holding every tracked file exceeds the
+    # Win32 CreateProcess limit (32,767 chars) on native Windows.
+    status = 0
+    for start in range(0, len(names), SECRETS_BATCH):
+        status = max(
+            status,
+            subprocess.run(
+                [
+                    str(venv_python()),
+                    "scripts/check_secrets.py",
+                    "--baseline",
+                    BASELINE,
+                    *names[start : start + SECRETS_BATCH],
+                ],
+                cwd=root,
+                env=without_git_env(),
+                check=False,
+            ).returncode,
+        )
+    return status
+
+
+def prune_shard_table(path: Path, root: Path) -> int:
+    """Drop entries whose module is gone, keeping the header; returns how many."""
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    files = payload.get("files", {})
+    kept = {name: secs for name, secs in files.items() if (root / name).exists()}
+    payload["files"] = kept
+    write_weight_payload(path, payload)
+    return len(files) - len(kept)
+
+
+def _label(name: str) -> str:
+    """Display name for a conflicted path, chosen from constants.
+
+    The baseline's name is never echoed (CodeQL treats it as a secret source);
+    other paths are re-emitted as the matching literal or the tracked path.
+    """
+    if name == BASELINE:
+        return "detect-secrets baseline"
+    return name
+
+
+def resolve_generated(
+    root: Path,
+    *,
+    baseline_regenerator: Callable[[Path], object] = regenerate_baseline,
+    secrets_checker: Callable[[Path], int] = check_secrets,
+) -> int:
+    """Resolve the generated files left conflicted by a rebase or a merge.
+
+    Only ``.secrets.baseline`` and the shard-duration tables are touched; any
+    other unmerged file is listed and left alone. Never commits or continues.
+    """
+    if _git_path_exists(root, "rebase-merge") or _git_path_exists(root, "rebase-apply"):
+        # While rebasing, HEAD is the branch being rebuilt onto main: main is "ours".
+        side, cont = "--ours", "git rebase --continue"
+    elif _git_path_exists(root, "MERGE_HEAD"):
+        # In a merge of main into the branch, main is "theirs".
+        side, cont = "--theirs", "git commit"
+    else:
+        print("resolve-generated: no rebase or merge in progress; nothing changed")
+        return 1
+
+    def unmerged() -> list[str]:
+        out = _git(root, "diff", "--name-only", "--diff-filter=U").stdout
+        return [line for line in out.splitlines() if line]
+
+    status = 0
+    for name in unmerged():
+        is_table = fnmatch.fnmatchcase(name, SHARD_TABLE_GLOB)
+        if name != BASELINE and not is_table:
+            continue
+        taken = _git(root, "checkout", side, "--", name)
+        if taken.returncode != 0:
+            print(f"{_label(name)}: could not take main's copy (git checkout failed)")
+            status = 1
+            continue
+        if is_table:
+            dropped = prune_shard_table(root / name, root)
+            _git(root, "add", "--", name)
+            print(
+                f"{_label(name)}: took main's copy, dropped {dropped} entries for deleted modules"
+            )
+        else:
+            baseline_regenerator(root)
+            _git(root, "add", "--", name)
+            result = secrets_checker(root)
+            if result == 0:
+                print(
+                    "detect-secrets baseline: took main's copy, regenerated; secrets check passed"
+                )
+            else:
+                print(
+                    "detect-secrets baseline: took main's copy, regenerated; secrets check FAILED"
+                )
+                status = 1
+
+    remaining = unmerged()
+    if remaining:
+        print("Still unmerged, resolve by hand: " + ", ".join(_label(n) for n in remaining))
+        return 1
+    if status == 0:
+        print(f"Generated files resolved; continue with: {cont}")
+    return status
 
 
 def check(
@@ -225,6 +377,8 @@ def check(
     jobs: int = 0,
     requirements_set: str = "all",
 ) -> int:
+    if task == "resolve-generated":
+        return resolve_generated(ROOT)
     interpreter = venv_python()
     if task not in TASKS_WITHOUT_VENV and not interpreter.is_file():
         raise RuntimeError("Run python scripts/dev_checks.py install first to create .venv")
@@ -386,6 +540,7 @@ def main() -> int:
             "web-test",
             "gate",
             "record-shard-weights",
+            "resolve-generated",
         ),
     )
     # The shard id and count come from the command line locally and from the

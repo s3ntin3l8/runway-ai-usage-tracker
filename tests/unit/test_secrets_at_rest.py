@@ -149,6 +149,15 @@ def test_failed_replay_rewrites_the_entry_without_its_credentials(queue_dirs, mo
         f"key {KEY}",
         f"opaque {OPAQUE}",
     ],
+    ids=[
+        "validation-error-input-value",
+        "bearer-header",
+        "json-access-token",
+        "cookie-session",
+        "jwt",
+        "key",
+        "opaque",
+    ],
 )
 def test_redact_log_text_scrubs_credential_shapes(line):
     out = sidecar.redact_log_text(line)
@@ -195,6 +204,7 @@ def test_redact_log_text_scrubs_short_secrets_by_name(line):
 @pytest.mark.parametrize(
     "line",
     ["a" * 20000, "x" * 20000 + " token ", "a-" * 10000, "token" * 5000],
+    ids=["one-long-word", "long-word-then-keyword", "repeated-dash-word", "repeated-keyword"],
 )
 def test_redaction_is_fast_on_hostile_lines(line):
     """The patterns run on every log record; they must not backtrack quadratically."""
