@@ -53,6 +53,17 @@ server answer `provider:ollama#<fingerprint>`. Cookie candidates keep plain orig
 | `api` fallback | `GET https://ollama.com/api/usage` | Only on 404/405 from `/api/balance`, and only its legacy `limits.monthly.usage` shape; its spend report is ignored because spend comes from the CLI via the sidecar |
 | `web` | `GET https://ollama.com/settings` | Parses each `data-usage-track` meter's `aria-label` (percent used) and nearby `data-time` (reset); legacy `Session usage` / `Weekly usage` blocks are still read. The plan tier comes from the `Included usage` (legacy `Cloud Usage`) badge |
 
+**Plan tier.** The `api` allowance card derives `tier` from `included.allowance_usd`: $60 is
+`pro`, $300 `max`, $1000 `team`, up to $10 `free`; any other amount keeps `cloud`. The table
+(`_PLAN_ALLOWANCE_USD`) mirrors <https://ollama.com/pricing> as checked 2026-11-09.
+
+**Free-model list (optional, cookie-backed).** When a session cookie is also available, the
+`api` strategy fetches `https://ollama.com/settings` in the same collection and adds the models
+from the `#free-plan-models` element to the allowance card as `free_models` ("Free usage
+applies to: …" in the UI). A plan badge found on that page overrides the derived tier. A
+failed, non-200 or signed-out fetch is logged at debug and the card is returned without the
+list. Hosts without a cookie keep the tier but get no list, and never request the settings page.
+
 A 401/403 from the balance call sets an "API key was rejected" error reason; an unparseable
 body is treated as missing data. The cards link to `https://ollama.com/settings/billing`
 (`api`) or `https://ollama.com/settings` (`web`).

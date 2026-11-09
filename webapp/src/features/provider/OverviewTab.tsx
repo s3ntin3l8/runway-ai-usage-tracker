@@ -1,4 +1,5 @@
 import { CreditBreakdown } from '@/components/ui/CreditBreakdown';
+import { FreeModels } from '@/components/ui/FreeModels';
 // Overview: "how am I doing right now?" — a KPI strip, any anomaly/error
 // alerts, the quota-window gauges, and a compact fill trajectory for the
 // critical window so the answer to "am I on pace?" is visible without a tab
@@ -230,6 +231,8 @@ export function OverviewTab({ entry, scope }: { entry: FleetEntry; scope: TabSco
           </CardContent>
         </Card>
       ) : null}
+
+      <FreeModels models={entry.critical_gauge.free_models} />
 
       {kind === 'quota' && (
         <>

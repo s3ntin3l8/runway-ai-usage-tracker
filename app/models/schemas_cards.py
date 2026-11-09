@@ -32,6 +32,8 @@ class LimitCard(BaseModel):
     unit_type: str = "generic"  # "currency", "tokens", "requests", "minutes", "percent", "generic"
     currency: str | None = None  # "USD", "EUR", "CNY", etc.
     credit_breakdown: list[CreditBalanceComponent] | None = None
+    # Cloud models the free usage allowance applies to (Ollama settings page)
+    free_models: list[str] | None = None
     # ISO 8601 timestamp for hover tooltip with absolute time
     reset_at: str | None = None
     # Data collection mechanism (how)

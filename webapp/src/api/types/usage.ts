@@ -46,6 +46,7 @@ export interface LimitCard {
   unit_type?: string; // "currency" | "tokens" | "requests" | "minutes" | "percent" | "generic"
   currency?: string | null;
   credit_breakdown?: CreditBalanceComponent[] | null;
+  free_models?: string[] | null;
   reset_at?: string | null;
   data_source?: string;
   input_source?: string;

@@ -50,6 +50,22 @@ from app.services.token_cache import token_cache
 logger = logging.getLogger(__name__)
 
 
+# Monthly included allowance (USD) -> plan tier, from https://ollama.com/pricing
+# (checked 2026-11-09). Any allowance below the Pro amount is the free plan;
+# an amount that matches nothing keeps the generic "cloud" tier.
+_FREE_ALLOWANCE_MAX_USD = 10.0
+_PLAN_ALLOWANCE_USD: dict[float, str] = {60.0: "pro", 300.0: "max", 1000.0: "team"}
+
+
+def _tier_from_allowance(allowance: float) -> str:
+    for amount, tier in _PLAN_ALLOWANCE_USD.items():
+        if math.isclose(allowance, amount, abs_tol=0.005):
+            return tier
+    if 0 < allowance <= _FREE_ALLOWANCE_MAX_USD:
+        return "free"
+    return "cloud"
+
+
 def _to_float(value: Any) -> float | None:
     """Parse an upstream number, rejecting NaN, infinity and non-numeric input."""
     if isinstance(value, bool) or not isinstance(value, (int, float, str)):
@@ -88,6 +104,10 @@ class OllamaCollector(BaseCollector):
         r"(?:Cloud Usage|Included usage)\s*</span>\s*<span[^>]*>([^<]+)</span\s*>"
     )
     RE_PLAN_NAME_FALLBACK = re.compile(r"<span[^>]*capitalize[^>]*>([^<]+)</span\s*>")
+    RE_FREE_MODELS_BLOCK = re.compile(
+        r'id="free-plan-models"[^>]*>(.*?)</div\s*>', re.IGNORECASE | re.DOTALL
+    )
+    RE_LIBRARY_LINK = re.compile(r'<a[^>]*href="/library/[^"]*"[^>]*>([^<]+)</a\s*>')
     RE_EMAIL = re.compile(r'id="header-email"[^>]*>([^<]+)<')
     RE_PERCENT_USED = re.compile(r"([0-9]+(?:\.[0-9]+)?)\s*%\s*used", re.IGNORECASE)
     RE_PERCENT_REMAINING = re.compile(r"([0-9]+(?:\.[0-9]+)?)\s*%\s*remaining", re.IGNORECASE)
@@ -380,7 +400,74 @@ class OllamaCollector(BaseCollector):
         if not isinstance(body, dict):
             self._set_error_reason("missing_data")
             return []
-        return self._build_cards_from_api_balance(body)
+        cards = self._build_cards_from_api_balance(body)
+        allowance_card = next((c for c in cards if c.get("variant") == "allowance"), None)
+        if allowance_card is not None:
+            await self._enrich_from_settings_page(client, allowance_card)
+        return cards
+
+    async def _enrich_from_settings_page(
+        self, client: httpx.AsyncClient, card: dict[str, Any]
+    ) -> None:
+        """Add the free-model list and plan badge from ``/settings`` (cookie only).
+
+        Best effort: any failure leaves ``card`` untouched.
+        """
+        # _get_cookie_header sets current_input_source to the cookie's origin;
+        # the card describes the API key's, so restore it afterwards.
+        api_source = getattr(self, "current_input_source", "unknown")
+        try:
+            cookie_header = await self._get_cookie_header()
+        except Exception as exc:
+            logger.debug("Ollama settings cookie lookup failed: %s", scrub_log(str(exc)))
+            cookie_header = None
+        finally:
+            self.current_input_source = api_source
+        if not cookie_header or not self._validate_cookie_header(cookie_header):
+            return
+        try:
+            resp = await http_request_with_retry(
+                client,
+                "GET",
+                self.target_url,
+                headers={**self.STATIC_HEADERS, "Cookie": cookie_header},
+                timeout=self.TIMEOUT_SECONDS,
+                follow_redirects=True,
+            )
+            if resp.status_code != 200:
+                logger.debug("Ollama settings fetch returned %s", resp.status_code)
+                return
+            html = resp.text
+            if self._looks_signed_out(html):
+                logger.debug("Ollama settings page is signed out; skipping free-model list")
+                return
+            models = self._parse_free_models(html)
+            plan = self._parse_plan_name(html)
+        except Exception as exc:
+            logger.debug("Ollama settings enrichment failed: %s", scrub_log(str(exc)))
+            return
+        if models:
+            card["free_models"] = models
+        if plan:
+            card["tier"] = plan.lower()
+
+    def _parse_free_models(self, html: str) -> list[str]:
+        """Model names from the ``#free-plan-models`` element of the settings page."""
+        match = self.RE_FREE_MODELS_BLOCK.search(html)
+        if not match:
+            return []
+        names = [n.strip() for n in self.RE_LIBRARY_LINK.findall(match.group(1))]
+        return list(dict.fromkeys(n for n in names if n))
+
+    def _parse_plan_name(self, html: str) -> str | None:
+        heading_idx = html.find("Cloud Usage")
+        if heading_idx == -1:
+            heading_idx = html.find("Included usage")
+        if heading_idx == -1:
+            return None
+        window = html[heading_idx : heading_idx + self.WINDOW_PLAN]
+        m = self.RE_PLAN_NAME.search(window) or self.RE_PLAN_NAME_FALLBACK.search(window)
+        return m.group(1).strip() if m else None
 
     async def _get_ollama_usage_legacy(
         self, client: httpx.AsyncClient, headers: dict[str, str]
@@ -528,7 +615,7 @@ class OllamaCollector(BaseCollector):
                 # A new pool lets the stale one be reconciled away instead.
                 "variant": "allowance",
                 "provider_id": "ollama",
-                "tier": "cloud",
+                "tier": _tier_from_allowance(allowance),
                 "data_source": self.DATA_SOURCE_API,
                 "input_source": getattr(self, "current_input_source", "unknown"),
                 "usage_url": "https://ollama.com/settings/billing",
