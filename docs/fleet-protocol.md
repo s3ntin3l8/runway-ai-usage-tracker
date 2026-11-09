@@ -32,8 +32,9 @@ receipt. Reusing the same envelope returns **409** (`replayed_request`), and
 the receipt holds neither the request body nor reusable signature material.
 Every retry must therefore sign a fresh timestamp.
 
-Signed requests are accepted on `POST /ingest`, `POST /credentials/manifest`,
-`POST /source-sync` and `GET /config`. `GET /config` is also served unsigned to
+The shared key signs `POST /ingest`, `POST /credentials/manifest` and
+`GET /config`; `POST /source-sync` accepts a device signature only (the server
+answers `403` to a caller with no device id). `GET /config` is also served unsigned to
 anyone, rate-limited (`60/minute`), as the redacted enabled/strategies view
 unless the caller signs it with the ingest key or the server is bound to
 loopback. Every other fleet route is admin-authenticated, or open by design
