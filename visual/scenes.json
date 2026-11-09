@@ -35,6 +35,11 @@
       "baseline": true
     },
     {
+      "name": "provider-ollama",
+      "path": "/provider/ollama",
+      "tags": ["check", "audit"]
+    },
+    {
       "name": "provider-activity",
       "path": "/provider/anthropic",
       "tags": ["presentation", "check", "audit"],

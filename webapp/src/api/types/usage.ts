@@ -47,6 +47,7 @@ export interface LimitCard {
   currency?: string | null;
   credit_breakdown?: CreditBalanceComponent[] | null;
   free_models?: string[] | null;
+  untracked_spend_usd?: number | null; // allowance spend no tracked event explains (Ollama)
   reset_at?: string | null;
   data_source?: string;
   input_source?: string;

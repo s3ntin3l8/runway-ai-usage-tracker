@@ -34,6 +34,9 @@ class LimitCard(BaseModel):
     credit_breakdown: list[CreditBalanceComponent] | None = None
     # Cloud models the free usage allowance applies to (Ollama settings page)
     free_models: list[str] | None = None
+    # Allowance spend (USD) that no tracked usage event explains; set by the
+    # fleet view for Ollama's allowance card, None when not measurable/small.
+    untracked_spend_usd: float | None = None
     # ISO 8601 timestamp for hover tooltip with absolute time
     reset_at: str | None = None
     # Data collection mechanism (how)
