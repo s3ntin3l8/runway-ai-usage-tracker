@@ -1,0 +1,27 @@
+<!--
+  Server-rendered part of https://ollama.com/settings (the "Usage" page),
+  captured 2026-11-09 from a logged-in free-plan account and trimmed to the
+  elements the collector can read without running the page's script.
+  Sanitized: no account data. Relevant to #708.
+
+  The page loads its usage figures asynchronously (data-usage-async), so the
+  raw response carries no usage meter, plan badge or account-email element.
+  The one stable anchor for the free-usage model list is the element with id
+  free-plan-models.
+-->
+<html>
+  <body>
+    <main>
+      <header class="flex flex-wrap items-center gap-x-4 gap-y-3">
+        <h1 class="text-heading font-semibold">Usage</h1>
+        <div class="ml-auto flex flex-wrap items-center gap-2">
+          <span class="text-ui font-semibold">November 2026</span>
+        </div>
+      </header>
+
+      <div id="free-plan-models" class="mt-6 rounded-xl bg-fill px-4 py-3 text-ui text-secondary">
+        Free usage covers <a href="/library/beam" class="text-ink underline-offset-4 hover:underline">beam</a>, <a href="/library/gemma4:31b" class="text-ink underline-offset-4 hover:underline">gemma4:31b</a>, <a href="/library/gpt-oss:120b" class="text-ink underline-offset-4 hover:underline">gpt-oss:120b</a>, <a href="/library/gpt-oss:20b" class="text-ink underline-offset-4 hover:underline">gpt-oss:20b</a>, <a href="/library/nemotron-3-super" class="text-ink underline-offset-4 hover:underline">nemotron-3-super</a>, <a href="/library/nemotron-3-ultra" class="text-ink underline-offset-4 hover:underline">nemotron-3-ultra</a>. <a href="/upgrade" class="text-ink underline underline-offset-4">Upgrade</a> to use any cloud model.
+      </div>
+    </main>
+  </body>
+</html>

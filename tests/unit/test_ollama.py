@@ -1,4 +1,6 @@
+import re
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -1215,3 +1217,60 @@ def test_the_page_email_is_reported_as_verified_identity(ollama_html):
     collector._parse_html(ollama_html)
 
     assert collector.verified_identity == "user@example.com"
+
+
+# --- ollama.com/settings fixture (#1287) -----------------------------------
+
+SETTINGS_FIXTURE = Path(__file__).parent.parent / "fixtures" / "ollama-settings-included-usage.html"
+
+_FREE_MODELS = (
+    "beam",
+    "gemma4:31b",
+    "gpt-oss:120b",
+    "gpt-oss:20b",
+    "nemotron-3-super",
+    "nemotron-3-ultra",
+)
+
+
+def test_settings_fixture_carries_the_free_model_list():
+    """The captured page names the free-usage models in a stable, server-rendered element.
+
+    This anchors the free-model-list parser tracked in #708: the list sits in
+    ``<div id="free-plan-models">`` as one link per model, in the sentence
+    "Free usage covers a, b, c. Upgrade to use any cloud model."
+    """
+    html = SETTINGS_FIXTURE.read_text(encoding="utf-8")
+
+    block = re.search(r'<div id="free-plan-models"[^>]*>(.*?)</div>', html, re.DOTALL)
+    assert block is not None
+    assert "Free usage covers" in block.group(1)
+    models = re.findall(r'<a href="/library/([^"]+)"', block.group(1))
+    assert tuple(models) == _FREE_MODELS
+
+
+def test_settings_fixture_holds_no_account_data():
+    html = SETTINGS_FIXTURE.read_text(encoding="utf-8")
+
+    assert re.search(r"\S+@\S+\.\S+", html) is None
+    assert "mailto:" not in html
+    assert "header-email" not in html
+    assert "<script" not in html.lower()
+
+
+def test_live_settings_page_yields_no_legacy_meter_cards():
+    """Records the page drift found while capturing the fixture (#1287).
+
+    The live page loads its usage figures asynchronously, so the raw response
+    has no usage meter, plan badge or account-email element: ``_parse_html``
+    finds no cards, and the page does not look signed out either, so the web
+    strategy degrades to "missing data" rather than an auth error. If Ollama
+    renders the meter server-side again, this fails and the fixture should be
+    recaptured.
+    """
+    html = SETTINGS_FIXTURE.read_text(encoding="utf-8")
+    collector = OllamaCollector()
+
+    assert collector._looks_signed_out(html) is False
+    assert collector._parse_html(html) == []
+    assert collector._last_error_reason == "missing_data"
