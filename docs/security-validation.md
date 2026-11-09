@@ -34,8 +34,8 @@ npm --prefix webapp run test:security
 ```
 
 In CI the matrix runs in Microsoft's Playwright image, pinned to the digest
-`sha256:47b510dd9230bf0b9bfc9b20102241e577ea7a99334ab4c3ca19f19770e9b8ea` of
-`mcr.microsoft.com/playwright:v1.64.1-noble`: the browsers and the system
+`sha256:6e3fb709361521eb27161606e6da6d2674e5e89fa16516cb37d6fdd91372273d` of
+`mcr.microsoft.com/playwright:v1.65.0-noble`: the browsers and the system
 libraries they need are baked into the image, so the job runs no apt
 transaction and downloads no browser. The tag follows the locked
 `playwright-core` version in `webapp/package-lock.json`, and
@@ -49,7 +49,7 @@ Playwright bump with:
 
 ```bash
 curl -s -H 'Accept: application/vnd.oci.image.index.v1+json' \
-  https://mcr.microsoft.com/v2/playwright/manifests/v1.64.1-noble -D - -o /dev/null | grep -i docker-content-digest
+  https://mcr.microsoft.com/v2/playwright/manifests/v1.65.0-noble -D - -o /dev/null | grep -i docker-content-digest
 ```
 
 Two things about that image are worth knowing before the job goes red again. It
