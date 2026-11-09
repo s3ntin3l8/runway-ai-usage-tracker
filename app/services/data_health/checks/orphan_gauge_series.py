@@ -18,7 +18,6 @@ from sqlalchemy import func, union_all
 from sqlmodel import Session, col, select
 
 from app.models.db import LatestUsage, ProviderConfig, QuotaSnapshot, UsageEvent
-from app.services.data_health._provider_accounts import candidate_targets
 from app.services.data_health.base import (
     AsyncHook,
     Check,
@@ -30,6 +29,7 @@ from app.services.data_health.base import (
     ParamSpec,
     Severity,
 )
+from app.services.data_health.provider_accounts import candidate_targets
 from app.services.maintenance.account_merge import (
     delete_gauge_series,
     merge_gauge_series,

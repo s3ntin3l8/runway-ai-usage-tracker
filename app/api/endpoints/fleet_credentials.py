@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import or_
 from sqlmodel import Session, col, select
 
-from app.api.endpoints.fleet_shared import _account_tag_hints_for_providers, _validation_summary
+from app.api.endpoints.fleet_shared import account_tag_hints_for_providers, validation_summary
 from app.core.db import get_session
 from app.core.rate_limit import limiter
 from app.core.security import require_admin_key, validate_ingest_auth
@@ -460,7 +460,7 @@ async def post_credential_manifest(
     try:
         payload = CredentialManifestRequest.model_validate_json(body_bytes)
     except Exception as exc:
-        detail = _validation_summary(exc)
+        detail = validation_summary(exc)
         logger.debug("manifest: invalid body: %s", detail)
         raise HTTPException(status_code=400, detail=f"Invalid manifest: {detail}") from None
 
@@ -603,7 +603,7 @@ async def post_credential_manifest(
     )
     await _retire_missing_claude_sources(session, payload)
 
-    resolved = _account_tag_hints_for_providers(
+    resolved = account_tag_hints_for_providers(
         session, candidate_pids, sidecar_id=payload.sidecar_id, include_parked=False
     )
     # The answer for a provider is *complete*: an empty bucket says "this
@@ -811,14 +811,14 @@ async def post_credential_tag(
         await token_cache.move_source(
             body.provider_id, previous_account_id, target_account_id, source_id
         )
-        old_preferences = manager._credential_source_preferences.get(
+        old_preferences = manager.credential_source_preferences.get(
             (body.provider_id, previous_account_id)
         )
         if old_preferences is not None:
             old_preferences.pop(source_id, None)
-        manager._credential_source_preferences.setdefault(
-            (body.provider_id, target_account_id), {}
-        )[source_id] = (enabled, priority)
+        manager.credential_source_preferences.setdefault((body.provider_id, target_account_id), {})[
+            source_id
+        ] = (enabled, priority)
 
     audit_log.record(
         session,
@@ -941,7 +941,7 @@ def visible_pending_rows(session: Session) -> list[PendingCredentialTag]:
     visible: list[PendingCredentialTag] = []
     for sc_id, sc_rows in by_sidecar.items():
         pids = sorted({r.provider_id for r in sc_rows})
-        hints = _account_tag_hints_for_providers(session, pids, sidecar_id=sc_id)
+        hints = account_tag_hints_for_providers(session, pids, sidecar_id=sc_id)
         visible.extend(
             r for r in sc_rows if r.credential_origin not in hints.get(r.provider_id, {})
         )
@@ -1154,7 +1154,7 @@ async def select_claude_source_organization(
     _current_row, current = await _pending_claude_source(session, body.provider_id, source_id)
     if current["tokens"] != candidate["tokens"]:
         raise HTTPException(status_code=409, detail="Claude source changed; retry")
-    promoted = await manager._promote_source_identity(
+    promoted = await manager.promote_source_identity(
         body.provider_id,
         "default",
         source_id,

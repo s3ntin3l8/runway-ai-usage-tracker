@@ -442,7 +442,7 @@ def test_chatgpt_codex_variants_price_from_seeded_rows():
 
     Regression guard: before full Codex slug preservation, all of these
     normalized to the bare "codex" bucket and priced via that seeded row.
-    None of them end in a bare digit, so _VERSION_SUFFIX never fires for
+    None of them end in a bare digit, so VERSION_SUFFIX never fires for
     them — they only stay priced because pricing_seed.py now seeds each
     slug explicitly (inheriting the published gpt-5.3-codex rate).
     """
@@ -531,7 +531,7 @@ def test_unseeded_variant_falls_back_via_segment_trim():
         "tokens_reasoning": 0,
     }
     # "widget-9-turbo" has no row of its own and doesn't end in a bare digit
-    # (_VERSION_SUFFIX doesn't fire), but trims in one hyphen-segment step to
+    # (VERSION_SUFFIX doesn't fire), but trims in one hyphen-segment step to
     # the seeded "widget-9".
     trimmed = compute_event_cost(
         s, provider_id="zztest", model_id="widget-9-turbo", ts=ts, **common
@@ -758,7 +758,7 @@ def test_free_tier_model_ids_are_never_priced_at_a_paid_sibling():
 def test_free_tier_guard_covers_the_version_strip_path():
     """The free-tier guard sits ahead of the version-strip fallback too.
 
-    "openrouter/free/gpt-4" ends in a digit, so _VERSION_SUFFIX strips it to
+    "openrouter/free/gpt-4" ends in a digit, so VERSION_SUFFIX strips it to
     "openrouter/free/gpt" — a path that ran before the guard and could have
     reached a paid row. No seeded row matches it today, so nothing bills
     either way; the test pins the invariant rather than a current value.

@@ -39,7 +39,7 @@ class OriginDisplay:
 # leading "." stripped, so ``~/.codex/auth.json``, ``~/.config/codex/auth.json``,
 # ``AppData\Roaming\codex\auth.json`` and ``~/Library/Application Support/codex/auth.json``
 # all match ``codex/auth.json``. Paths come from app/core/registry.json and the sidecar overlay.
-_FILE_APPS: tuple[tuple[tuple[str, ...], str], ...] = (
+FILE_APPS: tuple[tuple[tuple[str, ...], str], ...] = (
     (("codex", "auth.json"), "Codex CLI"),
     (("opencode", "auth.json"), "OpenCode"),
     (("claude", "credentials.json"), "Claude Code"),
@@ -71,12 +71,12 @@ _FILE_APPS: tuple[tuple[tuple[str, ...], str], ...] = (
 # credential in the macOS login Keychain and in the Windows Credential Manager.
 # "git:https://github.com" is the Windows Credential Manager target Git
 # Credential Manager writes its GitHub login to.
-_KEYCHAIN_ENTRY_APPS: dict[str, str] = {
+KEYCHAIN_ENTRY_APPS: dict[str, str] = {
     "gemini:antigravity": "Antigravity CLI",
     "git:https://github.com": "Git Credential Manager",
 }
 
-_LOGIN_HINTS = {
+LOGIN_HINTS = {
     "Claude Desktop": "sign in again in Claude Desktop",
     "Codex CLI": "run `codex login`",
     "OpenCode": "run `opencode auth login`",
@@ -94,24 +94,24 @@ _LOGIN_HINTS = {
 
 def login_hint(app: str | None) -> str | None:
     """How to re-authenticate the tool that owns a credential file, if we know."""
-    return _LOGIN_HINTS.get(app) if app else None
+    return LOGIN_HINTS.get(app) if app else None
 
 
-def _segments(path: str) -> list[str]:
+def segments(path: str) -> list[str]:
     return [seg for seg in path.replace("\\", "/").split("/") if seg]
 
 
-def _app_for_path(path: str) -> str | None:
-    segs = [seg.lower().removeprefix(".") for seg in _segments(path)]
+def app_for_path(path: str) -> str | None:
+    segs = [seg.lower().removeprefix(".") for seg in segments(path)]
     if len(segs) >= 3 and segs[-3:-1] == ["kimi-code", "credentials"]:
         return "Kimi Code"
-    for tail, app in _FILE_APPS:
+    for tail, app in FILE_APPS:
         if len(segs) >= len(tail) and tuple(segs[-len(tail) :]) == tail:
             return app
     return None
 
 
-_HOME_PREFIXES = (
+HOME_PREFIXES = (
     re.compile(r"^/var/home/[^/]+(?=/|$)"),
     re.compile(r"^/mnt/[a-z]/Users/[^/]+(?=/|$)", re.IGNORECASE),
     re.compile(r"^/home/[^/]+(?=/|$)"),
@@ -121,8 +121,8 @@ _HOME_PREFIXES = (
 )
 
 
-def _collapse_home(path: str) -> str:
-    for pattern in _HOME_PREFIXES:
+def collapse_home(path: str) -> str:
+    for pattern in HOME_PREFIXES:
         if pattern.match(path):
             return pattern.sub("~", path, count=1)
     return path
@@ -148,12 +148,12 @@ def describe_origin_full(origin: str | None) -> OriginDisplay:
         raw = value.split(":", 1)[1].split("#", 1)[0]
         raw = re.sub(r"^/{2,}(?:localhost)?(?=/)", "", raw)  # file:///home/u -> /home/u
         raw = re.sub(r"^/(?=[A-Za-z]:)", "", raw)  # file:///C:/Users -> C:/Users
-        segs = _segments(raw)
+        segs = segments(raw)
         return OriginDisplay(
             "file",
             segs[-1] if segs else "Credential file",
-            app=_app_for_path(raw),
-            path=_collapse_home(raw) if raw else None,
+            app=app_for_path(raw),
+            path=collapse_home(raw) if raw else None,
         )
     if value.startswith("cookie:"):
         # Native acceptance covers these clients (#672); optional browser labels
@@ -177,7 +177,7 @@ def describe_origin_full(origin: str | None) -> OriginDisplay:
         if service.startswith("Claude Desktop/oauth/"):
             # The label names the app, so the composition never repeats it.
             return OriginDisplay("keychain", "Claude Desktop OAuth", app="Claude Desktop")
-        app = _KEYCHAIN_ENTRY_APPS.get(service) or (
+        app = KEYCHAIN_ENTRY_APPS.get(service) or (
             "Claude Code" if service.startswith("Claude Code") else None
         )
         # The app name already identifies the entry ("Claude Code - Keychain
@@ -202,7 +202,7 @@ def describe_origin(origin: str | None) -> tuple[str, str]:
 # Browsers whose cookie jar a sidecar can read. A cookie origin names the jar it
 # came from ("cookie:opencode/Chrome/Profile 1/Cookies"); the generic one
 # ("cookie:opencode/session") does not, and then only the site is known.
-_BROWSER_TOKENS = (
+BROWSER_TOKENS = (
     "chrome",
     "chromium",
     "firefox",
@@ -217,7 +217,7 @@ _BROWSER_TOKENS = (
 )
 
 
-def _is_cookie_store(part: str) -> bool:
+def is_cookie_store(part: str) -> bool:
     """Whether a path segment names the store itself rather than a profile.
 
     Chromium keeps the cookie file in a ``Network`` folder on some platforms
@@ -248,10 +248,10 @@ def cookie_origin_detail(origin: str | None) -> str | None:
         return None
     for index, part in enumerate(parts[1:], start=1):
         lowered = part.lower()
-        if not any(token in lowered for token in _BROWSER_TOKENS):
+        if not any(token in lowered for token in BROWSER_TOKENS):
             continue
         following = parts[index + 1] if index + 1 < len(parts) else None
-        profile = following if following and not _is_cookie_store(following) else None
+        profile = following if following and not is_cookie_store(following) else None
         return " · ".join([part, profile]) if profile else part
     return None
 
@@ -587,7 +587,7 @@ def prune_server_sources(session: Session, provider_id: str, keep_source_ids: se
 
 
 # File labels the server may still own: Runway's own UI-written GitHub OAuth token.
-_RUNWAY_MANAGED_FILE_LABELS = frozenset({"github_oauth.json"})
+RUNWAY_MANAGED_FILE_LABELS = frozenset({"github_oauth.json"})
 
 
 @dataclass(frozen=True)
@@ -611,7 +611,7 @@ def prune_unmanaged_server_file_sources(session: Session) -> FileSourcePruneResu
         select(CredentialSource).where(col(CredentialSource.source_id).like("server:%"))
     ).all():
         parts = row.source_id.split(":", 3)
-        if len(parts) == 4 and parts[2] == "file" and parts[3] not in _RUNWAY_MANAGED_FILE_LABELS:
+        if len(parts) == 4 and parts[2] == "file" and parts[3] not in RUNWAY_MANAGED_FILE_LABELS:
             session.delete(row)
             removed += 1
             providers.add(row.provider_id)

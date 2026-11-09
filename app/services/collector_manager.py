@@ -97,8 +97,8 @@ class CollectorManager(CollectorFailover, CollectorClaudeIdentity):
         # Active collectors keyed by "provider_id:account_id"
         self.smart_collectors: dict[str, SmartCollector] = {}
         self._client = None
-        self._last_sync_time: float = 0.0
-        self._credential_source_preferences: dict[tuple[str, str], dict[str, tuple[bool, int]]] = {}
+        self.last_sync_time: float = 0.0
+        self.credential_source_preferences: dict[tuple[str, str], dict[str, tuple[bool, int]]] = {}
         # (provider, account) -> source_id -> (last health, next_retry_at): what failover needs
         # to push a rejected credential behind working ones and rest it between retries.
         self._credential_source_state: dict[
@@ -114,7 +114,7 @@ class CollectorManager(CollectorFailover, CollectorClaudeIdentity):
             f"CollectorManager initialized with {len(self.collector_registry)} registered providers"
         )
 
-    async def _sync_collectors(  # noqa: PLR0915 — known-debt: smart-collector lifecycle, refactor tracked separately
+    async def sync_collectors(  # noqa: PLR0915 — known-debt: smart-collector lifecycle, refactor tracked separately
         self, *, force: bool = False
     ):
         """Synchronize active SmartCollectors with discovered accounts.
@@ -124,12 +124,12 @@ class CollectorManager(CollectorFailover, CollectorClaudeIdentity):
         pass ``force=True`` so an enable/disable takes effect immediately
         instead of waiting out the throttle.
         """
-        if not force and time.time() - self._last_sync_time < 60.0:
+        if not force and time.time() - self.last_sync_time < 60.0:
             return
         async with self._sync_lock:
             # Re-check inside lock to avoid double-sync when multiple requests
             # are waiting on the lock simultaneously.
-            if not force and time.time() - self._last_sync_time < 60.0:
+            if not force and time.time() - self.last_sync_time < 60.0:
                 return
             # Load DB provider configs: provider_id -> account_id -> ProviderConfig
             # We use a nested map to handle multi-account overrides correctly.
@@ -193,7 +193,7 @@ class CollectorManager(CollectorFailover, CollectorClaudeIdentity):
                 if accounts
                 and not any(cfg.enabled and not cfg.archived for cfg in accounts.values())
             }
-            self._credential_source_preferences = source_preferences
+            self.credential_source_preferences = source_preferences
             self._credential_source_state = source_state
             await self.reconcile_token_cache_from_durable_tags()
 
@@ -250,7 +250,7 @@ class CollectorManager(CollectorFailover, CollectorClaudeIdentity):
                         sc.collector.account_label = db_label
                     # Propagate updated strategy config
                     new_strategies = db_cfg.strategies if db_cfg else None
-                    if sc.collector._user_strategies != new_strategies:
+                    if sc.collector.user_strategies != new_strategies:
                         sc.collector.apply_strategy_config(new_strategies)
 
             # 2. Discover active dynamic collectors from TokenCache
@@ -372,7 +372,7 @@ class CollectorManager(CollectorFailover, CollectorClaudeIdentity):
                             sc.collector.account_label = final_label
                         # Propagate updated strategy config
                         new_strategies = db_cfg.strategies if db_cfg else None
-                        if sc.collector._user_strategies != new_strategies:
+                        if sc.collector.user_strategies != new_strategies:
                             sc.collector.apply_strategy_config(new_strategies)
 
             # 3. Prune collectors whose accounts disappeared from the token cache
@@ -384,7 +384,7 @@ class CollectorManager(CollectorFailover, CollectorClaudeIdentity):
             for key in stale_keys:
                 logger.info(f"Removing stale collector for {key}")
                 self.smart_collectors.pop(key, None)
-            self._last_sync_time = time.time()
+            self.last_sync_time = time.time()
 
     async def _get_client(self) -> httpx.AsyncClient:
         """Get or create a persistent httpx client."""
@@ -531,7 +531,7 @@ class CollectorManager(CollectorFailover, CollectorClaudeIdentity):
     async def _do_collect(self) -> list[dict[str, Any]]:
         """Execute one collection cycle across all active collectors."""
         # Ensure we have collectors for all current accounts
-        await self._sync_collectors()
+        await self.sync_collectors()
 
         client = await self._get_client()
 
@@ -816,7 +816,7 @@ class CollectorManager(CollectorFailover, CollectorClaudeIdentity):
         )
 
     @staticmethod
-    def _awaiting_machine_renewal(
+    def awaiting_machine_renewal(
         provider_id: str, candidate: dict[str, Any], all_candidates: list[dict[str, Any]]
     ) -> bool:
         """An expired rotating-provider login that a machine's CLI owns and will renew."""
@@ -836,7 +836,7 @@ class CollectorManager(CollectorFailover, CollectorClaudeIdentity):
 
         Dates the bearer the collector is about to send, via the shared
         ``exp_from_tokens`` resolver (access JWT ``exp`` first, then a stored
-        ``expiry_date``) — the same clock ``_awaiting_machine_renewal`` trusts.
+        ``expiry_date``) — the same clock ``awaiting_machine_renewal`` trusts.
         A bundle with nothing parseable counts as live: an opaque token may be
         perfectly good, and demoting it on a guess would reorder credentials on
         no evidence.
@@ -1045,11 +1045,11 @@ class CollectorManager(CollectorFailover, CollectorClaudeIdentity):
                 **({"expected_generation": generation} if generation is not None else {}),
             ):
                 continue
-            old_preferences = self._credential_source_preferences.get((pid, old_account_id))
+            old_preferences = self.credential_source_preferences.get((pid, old_account_id))
             if old_preferences is not None:
                 old_preferences.pop(candidate_id, None)
             if preference is not None:
-                self._credential_source_preferences.setdefault((pid, target), {})[candidate_id] = (
+                self.credential_source_preferences.setdefault((pid, target), {})[candidate_id] = (
                     preference
                 )
         return len(moves)
@@ -1079,7 +1079,7 @@ class CollectorManager(CollectorFailover, CollectorClaudeIdentity):
             )
             # ``account_id`` is what the collector was keyed on *before* it ran. A
             # successful identity-pending verification promotes its source to the
-            # resolved account mid-attempt (``_promote_source_identity``), so the row
+            # resolved account mid-attempt (``promote_source_identity``), so the row
             # no longer lives under the pre-run id. A source_id names one credential,
             # so fall back to wherever it is now rather than dropping the update.
             missing = set(updates) - {row.source_id for row in rows}
@@ -1141,7 +1141,7 @@ class CollectorManager(CollectorFailover, CollectorClaudeIdentity):
 
         return results
 
-    def _create_collector(self, provider_id: str) -> Any:
+    def create_collector(self, provider_id: str) -> Any:
         """Instantiate a one-off collector for *provider_id* (not added to smart_collectors).
 
         Used by the debug endpoint to run a collector that is not currently active.
@@ -1157,13 +1157,13 @@ class CollectorManager(CollectorFailover, CollectorClaudeIdentity):
         self, provider_id: str, account_id: str, preferences: dict[str, tuple[bool, int]]
     ) -> None:
         """Replace the in-memory source preferences for one account."""
-        self._credential_source_preferences[(provider_id, account_id)] = preferences
+        self.credential_source_preferences[(provider_id, account_id)] = preferences
 
     def set_credential_source_preference(
         self, provider_id: str, account_id: str, source_id: str, enabled: bool, priority: int
     ) -> None:
         """Set one source's in-memory (enabled, priority) without touching its siblings."""
-        self._credential_source_preferences.setdefault((provider_id, account_id), {})[source_id] = (
+        self.credential_source_preferences.setdefault((provider_id, account_id), {})[source_id] = (
             enabled,
             priority,
         )
@@ -1172,13 +1172,13 @@ class CollectorManager(CollectorFailover, CollectorClaudeIdentity):
         self, provider_id: str, account_id: str, source_id: str
     ) -> None:
         """Forget one source's in-memory preference (its row is gone)."""
-        preferences = self._credential_source_preferences.get((provider_id, account_id))
+        preferences = self.credential_source_preferences.get((provider_id, account_id))
         if preferences is not None:
             preferences.pop(source_id, None)
 
     def clear_credential_source_preferences(self, provider_id: str, account_id: str) -> None:
         """Drop the in-memory source preferences for one account."""
-        self._credential_source_preferences.pop((provider_id, account_id), None)
+        self.credential_source_preferences.pop((provider_id, account_id), None)
 
     async def reset_collector(self, provider_id: str, account_id: str | None = None):
         """Reset internal state for specific collector(s)."""

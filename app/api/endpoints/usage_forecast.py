@@ -6,7 +6,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Query, Request
 from sqlmodel import Session, select
 
-from app.api.endpoints._shared import _FORECAST_CACHE_TTL, _normalize_filter
+from app.api.endpoints.shared import FORECAST_CACHE_TTL, normalize_filter
 from app.core.cache import cache_get, cache_set
 from app.core.db import get_session
 from app.core.rate_limit import limiter
@@ -44,13 +44,13 @@ async def get_usage_forecast(
     work, offloaded to a worker thread via `asyncio.to_thread` (see
     `fetch_fleet_view` for why); the rare bootstrap fallback below is real
     async I/O and stays on the event loop. Response is cached (keyed by every
-    query param) for `_FORECAST_CACHE_TTL` — quota_snapshots only gains new
+    query param) for `FORECAST_CACHE_TTL` — quota_snapshots only gains new
     rows on a poll cycle, so the forecast can't meaningfully change faster
     than that.
     """
-    provider_id = _normalize_filter(provider_id)
-    account_id = _normalize_filter(account_id)
-    window_type = _normalize_filter(window_type)
+    provider_id = normalize_filter(provider_id)
+    account_id = normalize_filter(account_id)
+    window_type = normalize_filter(window_type)
     cache_key = f"forecast:{provider_id}:{account_id}:{window_type}:{include_series}"
     cached = cache_get(cache_key)
     if cached is not None:
@@ -85,7 +85,7 @@ async def get_usage_forecast(
             results = await manager.collect_all()
 
     result = await asyncio.to_thread(_compute_forecast_response, results, session, include_series)
-    cache_set(cache_key, result, _FORECAST_CACHE_TTL)
+    cache_set(cache_key, result, FORECAST_CACHE_TTL)
     return result
 
 

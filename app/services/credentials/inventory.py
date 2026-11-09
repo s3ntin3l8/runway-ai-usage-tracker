@@ -71,11 +71,11 @@ from app.services.token_health import (
     is_flagged,
     is_redundancy_sibling,
 )
-from app.services.token_refresher import _REFRESH_ENDPOINTS, ROTATING_REFRESH_PROVIDERS
+from app.services.token_refresher import REFRESH_ENDPOINTS, ROTATING_REFRESH_PROVIDERS
 
 # Best → worst. An account is as healthy as its best enabled source: a working
 # credential beside a dead one means collection still works.
-_STATUS_RANK = {
+STATUS_RANK = {
     "valid": 0,
     "expiring": 1,
     "unknown": 2,
@@ -85,7 +85,7 @@ _STATUS_RANK = {
     "invalid": 6,
 }
 
-_TAG_MAPPING = {
+TAG_MAPPING = {
     "operator": "operator",
     "identity_claim": "claim",
     "identity_verification": "verified",
@@ -93,13 +93,13 @@ _TAG_MAPPING = {
 }
 
 
-def _iso(value: datetime | None) -> str | None:
+def iso(value: datetime | None) -> str | None:
     if value is None:
         return None
     return (value if value.tzinfo else value.replace(tzinfo=UTC)).isoformat()
 
 
-def _load_token_types(row: CredentialSource) -> list[str]:
+def load_token_types(row: CredentialSource) -> list[str]:
     try:
         parsed = json.loads(row.token_types_json or "[]")
     except (TypeError, ValueError):
@@ -108,7 +108,7 @@ def _load_token_types(row: CredentialSource) -> list[str]:
     return [t for t in parsed if isinstance(t, str)] if isinstance(parsed, list) else []
 
 
-def _resolve_tag(
+def resolve_tag(
     tags: dict[tuple[str, str], list[CredentialTag]], row: CredentialSource
 ) -> CredentialTag | None:
     """Machine-scoped tag first, then the deployment-wide one (same as the read path)."""
@@ -123,11 +123,11 @@ def _resolve_tag(
     return None
 
 
-def _mapping(
+def credential_mapping(
     row: CredentialSource, tag: CredentialTag | None, identity_pending: bool
 ) -> tuple[str, str | None]:
     if tag is not None:
-        return _TAG_MAPPING.get(tag.set_by, "operator"), (
+        return TAG_MAPPING.get(tag.set_by, "operator"), (
             "machine" if tag.sidecar_id else "all_machines"
         )
     if is_server_source_id(row.source_id):
@@ -139,7 +139,7 @@ def _mapping(
     return "local", None
 
 
-def _data_path(session: Session) -> dict[tuple[str, str], tuple[str | None, str | None]]:
+def data_path_by_account(session: Session) -> dict[tuple[str, str], tuple[str | None, str | None]]:
     """``(provider, account) → (data_source, input_source)`` from the freshest quota card.
 
     ``latest_usage`` has one row per (provider, account, window, variant, model), so the
@@ -181,7 +181,7 @@ def _data_path(session: Session) -> dict[tuple[str, str], tuple[str | None, str 
     return out
 
 
-def _scan_server_credentials() -> tuple[dict[str, list[dict[str, Any]]], set[str]]:
+def scan_server_credentials() -> tuple[dict[str, list[dict[str, Any]]], set[str]]:
     """Env/file credentials the server host finds right now, per provider.
 
     Returns ``(found, scanned)``: ``scanned`` is every provider whose rules were read
@@ -215,7 +215,7 @@ def _scan_server_credentials() -> tuple[dict[str, list[dict[str, Any]]], set[str
     return found, scanned
 
 
-def _apply_server_expiry(
+def apply_server_expiry(
     view: CredentialSourceView,
     origin: dict[str, Any],
     now: float,
@@ -251,11 +251,11 @@ def _apply_server_expiry(
     view.rejected = rejected
 
 
-def _machine_label(view: CredentialSourceView) -> str:
+def machine_label(view: CredentialSourceView) -> str:
     return view.machine_name or view.machine_id or ""
 
 
-def _mark_shared(
+def mark_shared(
     accounts: dict[tuple[str, str], list[CredentialSourceView]],
     fingerprints: dict[tuple[str, str], str],
 ) -> None:
@@ -277,11 +277,11 @@ def _mark_shared(
             continue
         for view in group:
             peers = [other for other in group if other.machine_id != view.machine_id]
-            view.shared_with = sorted({_machine_label(p) for p in peers})
-            view.shared_with_stale = sorted({_machine_label(p) for p in peers if p.machine_stale})
+            view.shared_with = sorted({machine_label(p) for p in peers})
+            view.shared_with_stale = sorted({machine_label(p) for p in peers if p.machine_stale})
 
 
-def _mark_redundant(views: list[CredentialSourceView]) -> None:
+def mark_redundant(views: list[CredentialSourceView]) -> None:
     """Flag expired, unrefreshable credentials that another healthy one can stand in for.
 
     Same rule as Token Health's ``redundant`` (see ``is_redundancy_sibling``): a pasted key or
@@ -309,9 +309,9 @@ def _mark_redundant(views: list[CredentialSourceView]) -> None:
         )
 
 
-def _unused_reason(configs: list[ProviderConfig], origin: dict[str, Any]) -> str | None:
+def unused_reason(configs: list[ProviderConfig], origin: dict[str, Any]) -> str | None:
     """Why the server would not use ``origin`` — mirrors when the default collector runs
-    (``CollectorManager._sync_collectors``) and what ``get_credentials`` prefers."""
+    (``CollectorManager.sync_collectors``) and what ``get_credentials`` prefers."""
     if configs:
         if not any(c.enabled and not c.archived for c in configs):
             return "provider_disabled"
@@ -354,7 +354,7 @@ async def build_inventory() -> CredentialInventory:  # noqa: PLR0915 — one joi
             )
         rule_count = len(session.exec(select(CredentialTag)).all())
         pending_usage = len(session.exec(select(PendingUsageEvent)).all())
-        data_path = _data_path(session)
+        data_path = data_path_by_account(session)
         # The accounts that were merged away, and where each of them went.
         # They hold no credential, so they are not among the accounts above —
         # this is what says where the account went.
@@ -435,7 +435,7 @@ async def build_inventory() -> CredentialInventory:  # noqa: PLR0915 — one joi
             token_types = list(tokens)
             exp = IdentityExtractor.exp_from_tokens(tokens)
         else:
-            token_types = _load_token_types(row)
+            token_types = load_token_types(row)
             if not token_types and row.source_id.startswith("config:"):
                 token_types = ["api_key"]
             exp = row.credential_expires_at.timestamp() if row.credential_expires_at else None
@@ -454,7 +454,7 @@ async def build_inventory() -> CredentialInventory:  # noqa: PLR0915 — one joi
             machine_sourced and rollable and row.provider_id in ROTATING_REFRESH_PROVIDERS
         )
         server_refreshable = (
-            rollable and row.provider_id in _REFRESH_ENDPOINTS and not machine_renewed
+            rollable and row.provider_id in REFRESH_ENDPOINTS and not machine_renewed
         )
         refreshed_by = "machine" if machine_renewed else "server" if server_refreshable else None
         keep_alive: str | None = None
@@ -486,7 +486,7 @@ async def build_inventory() -> CredentialInventory:  # noqa: PLR0915 — one joi
         # Only a machine-reported credential can be "waiting for an account": an env var or
         # pasted key on the ``default`` account is that deployment's real account.
         identity_pending = machine_sourced and row.account_id in ("default", row.source_id)
-        mapping, scope = _mapping(row, _resolve_tag(tags, row), identity_pending)
+        mapping, scope = credential_mapping(row, resolve_tag(tags, row), identity_pending)
         described = describe_origin_full(row.credential_origin)
         origin_type, label = described.kind, described.label
         if not machine_sourced:
@@ -557,19 +557,19 @@ async def build_inventory() -> CredentialInventory:  # noqa: PLR0915 — one joi
                 priority=row.priority,
                 live=bundle is not None,
                 health=effective_health(row),
-                last_seen=_iso(row.last_seen),
-                last_attempt_at=_iso(row.last_attempt_at),
-                last_success_at=_iso(row.last_success_at),
+                last_seen=iso(row.last_seen),
+                last_attempt_at=iso(row.last_attempt_at),
+                last_success_at=iso(row.last_success_at),
                 last_error=row.last_error,
             )
         )
 
-    _mark_shared(accounts, fingerprints)
+    mark_shared(accounts, fingerprints)
 
     # Server env/file credentials: the read-time scan is authoritative. It adds credentials
     # that are present but never registered (no collection has used them), says why one
     # isn't being used, and hides a registered row whose env var / file has gone away.
-    server_found, server_scanned = await asyncio.to_thread(_scan_server_credentials)
+    server_found, server_scanned = await asyncio.to_thread(scan_server_credentials)
     present = {
         (provider_id, server_source_id(provider_id, o["source_type"], o["label"])): o
         for provider_id, origins in server_found.items()
@@ -583,10 +583,10 @@ async def build_inventory() -> CredentialInventory:  # noqa: PLR0915 — one joi
                 origin = present.get((view.provider_id, view.source_id))
                 if origin is None:
                     continue  # the env var / file is gone: a ghost row
-                view.unused_reason = _unused_reason(
+                view.unused_reason = unused_reason(
                     configs_by_provider.get(view.provider_id, []), origin
                 )
-                _apply_server_expiry(
+                apply_server_expiry(
                     view,
                     origin,
                     now,
@@ -609,11 +609,11 @@ async def build_inventory() -> CredentialInventory:  # noqa: PLR0915 — one joi
             mapping="server",
             status="unknown",
             token_types=origin["keys"],
-            unused_reason=_unused_reason(configs_by_provider.get(provider_id, []), origin),
+            unused_reason=unused_reason(configs_by_provider.get(provider_id, []), origin),
         )
         # A rejected unscoped credential is flagged under ``default``; the server's own
         # env/file credential is that account's, exactly as Token Health's ``server`` row.
-        _apply_server_expiry(
+        apply_server_expiry(
             view,
             origin,
             now,
@@ -623,7 +623,7 @@ async def build_inventory() -> CredentialInventory:  # noqa: PLR0915 — one joi
         )
         accounts.setdefault((provider_id, "default"), []).append(view)
     accounts = {key: views for key, views in accounts.items() if views}
-    _mark_redundant([view for views in accounts.values() for view in views])
+    mark_redundant([view for views in accounts.values() for view in views])
 
     by_provider: dict[str, list[CredentialAccountView]] = {}
     for (provider_id, account_id), views in accounts.items():
@@ -634,9 +634,9 @@ async def build_inventory() -> CredentialInventory:  # noqa: PLR0915 — one joi
             active.is_active = True
         # Active first, then healthy ones, then dead ones; newest report first within a tier.
         views.sort(key=lambda v: v.last_seen or "", reverse=True)
-        views.sort(key=lambda v: (not v.is_active, _STATUS_RANK.get(v.status, 2)))
+        views.sort(key=lambda v: (not v.is_active, STATUS_RANK.get(v.status, 2)))
         enabled = [v for v in views if v.enabled] or views
-        best = min(enabled, key=lambda v: _STATUS_RANK.get(v.status, 2)).status
+        best = min(enabled, key=lambda v: STATUS_RANK.get(v.status, 2)).status
         data_source, input_source = data_path.get((provider_id, account_id), (None, None))
         by_provider.setdefault(provider_id, []).append(
             CredentialAccountView(
@@ -672,7 +672,7 @@ async def build_inventory() -> CredentialInventory:  # noqa: PLR0915 — one joi
             ),
             machine_id=sidecar_id,
             name=machine_name(sidecar_id) or sidecar_id,
-            last_seen=_iso(machines[sidecar_id].last_seen) if sidecar_id in machines else None,
+            last_seen=iso(machines[sidecar_id].last_seen) if sidecar_id in machines else None,
             credential_count=counts.get(sidecar_id, 0),
             unmapped_count=pending_by_sidecar.get(sidecar_id, 0),
             stale=is_stale(sidecar_id),

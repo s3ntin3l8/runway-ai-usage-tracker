@@ -14,7 +14,7 @@ import pytest
 from sqlmodel import Session, SQLModel, create_engine
 
 from app.models.db import QuotaSnapshot, UsageEvent, UsagePeriodRollup
-from app.services.queries._shared import sqlite_utc_timestamp
+from app.services.queries.shared import sqlite_utc_timestamp
 from app.services.queries.snapshots import query_chart
 
 

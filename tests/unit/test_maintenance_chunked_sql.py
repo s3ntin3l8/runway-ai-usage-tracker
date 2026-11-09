@@ -1,4 +1,4 @@
-"""Tests for app/services/maintenance/_chunked_sql.py — the batching
+"""Tests for app/services/maintenance/chunked_sql.py — the batching
 helper the writer-lock-sensitive fixers (legacy_retag, event_reassign) rely
 on to never commit more than one batch's worth of work at a time.
 """
@@ -14,12 +14,12 @@ from sqlmodel import Session, SQLModel, col, create_engine, select
 from sqlmodel.pool import StaticPool
 
 from app.models.db import UsageEvent
-from app.services.maintenance._chunked_sql import (
+from app.services.maintenance.chunked_sql import (
     _next_batch_ids,
     chunked_delete,
     chunked_update,
 )
-from app.services.maintenance._retry import _is_sqlite_locked_or_busy
+from app.services.maintenance.retry import is_sqlite_locked_or_busy
 
 
 def _session() -> Session:
@@ -296,11 +296,11 @@ def test_is_sqlite_locked_or_busy_discriminates_error_origin():
         {"id": "busy"},
         Exception("no such table: usage_events"),
     )
-    assert not _is_sqlite_locked_or_busy(unrelated_exc)
+    assert not is_sqlite_locked_or_busy(unrelated_exc)
 
     # Real lock error
     lock_exc = OperationalError("UPDATE ...", {}, Exception("database is locked"))
-    assert _is_sqlite_locked_or_busy(lock_exc)
+    assert is_sqlite_locked_or_busy(lock_exc)
 
 
 def test_is_sqlite_locked_or_busy_handles_extended_codes_and_names():
@@ -313,19 +313,19 @@ def test_is_sqlite_locked_or_busy_handles_extended_codes_and_names():
 
     # 517 = SQLITE_BUSY_SNAPSHOT (517 & 0xFF == 5)
     exc_snapshot = OperationalError("SELECT ...", {}, FakeOrigError(517, "SQLITE_BUSY_SNAPSHOT"))
-    assert _is_sqlite_locked_or_busy(exc_snapshot)
+    assert is_sqlite_locked_or_busy(exc_snapshot)
 
     # 261 = SQLITE_BUSY_RECOVERY (261 & 0xFF == 5)
     exc_recovery = OperationalError("SELECT ...", {}, FakeOrigError(261, "SQLITE_BUSY_RECOVERY"))
-    assert _is_sqlite_locked_or_busy(exc_recovery)
+    assert is_sqlite_locked_or_busy(exc_recovery)
 
     # 262 = SQLITE_LOCKED_SHAREDCACHE (262 & 0xFF == 6)
     exc_shared = OperationalError("SELECT ...", {}, FakeOrigError(262, "SQLITE_LOCKED_SHAREDCACHE"))
-    assert _is_sqlite_locked_or_busy(exc_shared)
+    assert is_sqlite_locked_or_busy(exc_shared)
 
     # Unrelated code: 1 = SQLITE_ERROR
     exc_other = OperationalError("SELECT ...", {}, FakeOrigError(1, "SQLITE_ERROR"))
-    assert not _is_sqlite_locked_or_busy(exc_other)
+    assert not is_sqlite_locked_or_busy(exc_other)
 
 
 def test_chunked_operations_validate_retry_knobs():
@@ -363,7 +363,7 @@ def test_lock_retry_logs_measured_wait_without_sql_or_params(caplog):
     import logging
     from unittest.mock import MagicMock, patch
 
-    from app.services.maintenance._retry import _retry_on_lock
+    from app.services.maintenance.retry import retry_on_lock
 
     def always_locked():
         raise OperationalError(
@@ -373,12 +373,12 @@ def test_lock_retry_logs_measured_wait_without_sql_or_params(caplog):
     # Clock reads come in (start, end) pairs per attempt: gaps 12.5, 1.0, 0.25.
     clock = iter([100.0, 112.5, 200.0, 201.0, 300.0, 300.25])
     with (
-        caplog.at_level(logging.WARNING, logger="app.services.maintenance._retry"),
-        patch("app.services.maintenance._retry.time.sleep"),
-        patch("app.services.maintenance._retry.time.monotonic", side_effect=lambda: next(clock)),
+        caplog.at_level(logging.WARNING, logger="app.services.maintenance.retry"),
+        patch("app.services.maintenance.retry.time.sleep"),
+        patch("app.services.maintenance.retry.time.monotonic", side_effect=lambda: next(clock)),
         pytest.raises(OperationalError),
     ):
-        _retry_on_lock(
+        retry_on_lock(
             always_locked,
             session=MagicMock(),
             action_desc="my repair",

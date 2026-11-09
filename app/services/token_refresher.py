@@ -21,14 +21,14 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 
-_REFRESH_ENDPOINTS: dict[str, str] = {
+REFRESH_ENDPOINTS: dict[str, str] = {
     "anthropic": "https://platform.claude.com/v1/oauth/token",
     "gemini": "https://oauth2.googleapis.com/token",
     "chatgpt": "https://auth.openai.com/oauth/token",
     "xai": "https://auth.x.ai/oauth2/token",
 }
 
-_PROVIDER_CLIENT_IDS: dict[str, str] = {
+PROVIDER_CLIENT_IDS: dict[str, str] = {
     "anthropic": "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
     "gemini": "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com",
     "chatgpt": "app_EMoamEEZ73f0CkXaXp7hrann",
@@ -39,7 +39,7 @@ _PROVIDER_CLIENT_IDS: dict[str, str] = {
 # `client_secret` for the refresh_token grant on these too, and the CLI ships
 # it embedded in its binary (public by necessity). Sourced from
 # github.com/google-gemini/gemini-cli packages/core/src/code_assist/oauth2.ts.
-_GEMINI_CLI_CLIENT_SECRET = "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"
+GEMINI_CLI_CLIENT_SECRET = "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"
 
 
 # Anthropic refresh shape (issue #577): a JSON body and no header but Content-Type plus a neutral
@@ -48,7 +48,7 @@ _GEMINI_CLI_CLIENT_SECRET = "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"
 ANTHROPIC_REFRESH_USER_AGENT = "runway-ai-usage-tracker"
 
 
-def _anthropic_refresh_request(
+def anthropic_refresh_request(
     refresh_token: str, tokens: dict[str, Any]
 ) -> tuple[dict[str, str], dict[str, str]]:
     """``(json_body, headers)`` for an Anthropic refresh, shaped exactly like Claude Code's own.
@@ -93,7 +93,7 @@ async def refresh_oauth_token(provider: str, tokens: dict[str, str]) -> dict[str
             response body (redacted) is logged at WARNING before re-raising,
             because the OAuth error code it carries is the whole diagnosis.
     """
-    endpoint = _REFRESH_ENDPOINTS.get(provider)
+    endpoint = REFRESH_ENDPOINTS.get(provider)
     if not endpoint:
         raise ValueError(f"No refresh endpoint known for provider: {provider}")
 
@@ -111,7 +111,7 @@ async def refresh_oauth_token(provider: str, tokens: dict[str, str]) -> dict[str
     # Provider-specific extra params
     json_body: dict[str, str] | None = None
     if provider == "anthropic":
-        json_body, anthropic_headers = _anthropic_refresh_request(refresh_val, tokens)
+        json_body, anthropic_headers = anthropic_refresh_request(refresh_val, tokens)
     elif provider == "gemini":
         gem_client_id: str | None = tokens.get("client_id") or settings.GEMINI_OAUTH_CLIENT_ID
         # Gemini CLI tokens carry the client_id as the JWT `aud` claim, then
@@ -119,21 +119,21 @@ async def refresh_oauth_token(provider: str, tokens: dict[str, str]) -> dict[str
         if not gem_client_id and tokens.get("id_token"):
             gem_client_id = IdentityExtractor.get_client_id_from_jwt(tokens["id_token"])
         if not gem_client_id:
-            gem_client_id = _PROVIDER_CLIENT_IDS.get("gemini") or None
+            gem_client_id = PROVIDER_CLIENT_IDS.get("gemini") or None
         if gem_client_id:
             payload["client_id"] = gem_client_id
         client_secret = (
             tokens.get("client_secret")
             or settings.GEMINI_OAUTH_CLIENT_SECRET
-            or _GEMINI_CLI_CLIENT_SECRET
+            or GEMINI_CLI_CLIENT_SECRET
         )
         if client_secret:
             payload["client_secret"] = client_secret
     elif provider == "chatgpt":
-        payload["client_id"] = _PROVIDER_CLIENT_IDS.get("chatgpt", "")
+        payload["client_id"] = PROVIDER_CLIENT_IDS.get("chatgpt", "")
         payload["scope"] = "openid profile email"
     elif provider == "xai":
-        payload["client_id"] = tokens.get("client_id") or _PROVIDER_CLIENT_IDS.get("xai", "")
+        payload["client_id"] = tokens.get("client_id") or PROVIDER_CLIENT_IDS.get("xai", "")
 
     headers = {
         "Accept": "application/json",

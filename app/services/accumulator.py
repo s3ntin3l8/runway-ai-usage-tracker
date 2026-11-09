@@ -10,17 +10,17 @@ from app.core.date_utils import parse_iso8601_utc
 from app.core.utils import is_error_card_dict
 from app.services import accumulator_upsert
 from app.services.latest_usage_contributions import (
-    _upsert_contribution,
     backfill_latest_usage_contributions,
     mark_latest_usage_source_stale,
     prune_orphan_latest_usage_contributions,
     reconcile_latest_usage_snapshot,
+    upsert_contribution,
 )
 
 # Re-exported so existing imports and patches of app.services.accumulator
 # keep resolving the moved contribution helpers.
 __all__ = [
-    "_upsert_contribution",
+    "upsert_contribution",
     "backfill_latest_usage_contributions",
     "evict_orphan_error_rows",
     "mark_latest_usage_source_stale",
@@ -38,13 +38,13 @@ logger = logging.getLogger(__name__)
 # accumulator during application startup does not eagerly register DB models.
 
 
-def _source_id(provider_id: str, sidecar_id: str) -> str:
+def contribution_source_id(provider_id: str, sidecar_id: str) -> str:
     return (
         f"sidecar:{sidecar_id}:{provider_id}" if sidecar_id != "local" else f"server:{provider_id}"
     )
 
 
-def _parse_source_id(source_id: str) -> tuple[str, str, str]:
+def parse_source_id(source_id: str) -> tuple[str, str, str]:
     """Return (producer kind, producer scope, provider id)."""
     parts = source_id.split(":", 2)
     if len(parts) == 2 and parts[0] == "server":
@@ -180,7 +180,7 @@ def merge_card_json(existing: str | None, incoming: dict) -> str:
     return json.dumps(merged)
 
 
-def _is_error_card(card_json: str | None) -> bool:
+def is_error_card_json(card_json: str | None) -> bool:
     try:
         data = json.loads(card_json or "{}")
     except (json.JSONDecodeError, TypeError):
@@ -203,7 +203,7 @@ def upsert_latest_usage(
 
     Includes:
     - resolve_account_id canonicalisation
-    - window-close detection (_maybe_close_previous_window)
+    - window-close detection (maybe_close_previous_window)
     - stale raw-account-id row eviction
     - begin_nested savepoint so a single bad card can't abort the caller's
       transaction
@@ -334,7 +334,7 @@ def evict_orphan_error_rows(session: Session) -> int:
         healthy_accounts: set[tuple[str, str]] = set()
         slot_has_real_account: set[tuple[str, str, str, str]] = set()
         for row in all_rows:
-            if not _is_error_card(row.card_json):
+            if not is_error_card_json(row.card_json):
                 healthy_accounts.add((row.provider_id, row.account_id))
                 if row.account_id != "default":
                     slot_has_real_account.add(
@@ -343,7 +343,7 @@ def evict_orphan_error_rows(session: Session) -> int:
 
         to_delete = []
         for row in all_rows:
-            if not _is_error_card(row.card_json):
+            if not is_error_card_json(row.card_json):
                 continue
             pid, aid = row.provider_id, row.account_id
             slot = (pid, row.window_type, row.variant, row.model_id)

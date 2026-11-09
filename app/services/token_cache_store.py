@@ -13,12 +13,12 @@ from app.core.utils import IdentityExtractor, has_refresh_credential, scrub_log
 from app.services.account_identity import canonical_account_id
 from app.services.probe_mode import is_probing
 from app.services.token_cache_sources import (
-    _CLI_FAMILY_KEYS,
-    _OAUTH_CREDENTIAL_KEYS,
-    _active_source,
-    _credential_expiry,
-    _merge_cli_family,
-    _resolve_source,
+    CLI_FAMILY_KEYS,
+    OAUTH_CREDENTIAL_KEYS,
+    active_source,
+    credential_expiry,
+    merge_cli_family,
+    resolve_source,
 )
 
 logger = logging.getLogger(__name__)
@@ -73,7 +73,7 @@ class TokenCacheStore:
             return canonical_account_id(account_id or "default")
         if "cli_device_id" in tokens and not tokens.get("cli_access_token"):
             tokens = {key: value for key, value in tokens.items() if key != "cli_device_id"}
-        selection = _active_source.get()
+        selection = active_source.get()
         if source_id is None and selection and selection[0] == provider:
             source_id = selection[2]
 
@@ -104,7 +104,7 @@ class TokenCacheStore:
                     from app.services.source_controls import replace_cached_source
 
                     replacement = {**previous[0], **tokens}
-                    if not self._is_staler(tokens, previous[0]):
+                    if not self.is_staler(tokens, previous[0]):
                         replace_cached_source(
                             provider, source_id, account_id, previous[0], replacement
                         )
@@ -118,16 +118,16 @@ class TokenCacheStore:
                 )
                 previous = source_accounts.get(source_id)
                 stored_tokens = dict(previous[0]) if previous else {}
-                if previous and self._is_staler(tokens, stored_tokens):
+                if previous and self.is_staler(tokens, stored_tokens):
                     for key, value in tokens.items():
-                        if key not in _OAUTH_CREDENTIAL_KEYS and key not in stored_tokens:
+                        if key not in OAUTH_CREDENTIAL_KEYS and key not in stored_tokens:
                             stored_tokens[key] = value
                     if tokens.get("refresh_token"):
                         stored_tokens["refresh_token"] = tokens["refresh_token"]
                     if tokens.get("xai_refresh") and "xai_refresh" not in stored_tokens:
                         stored_tokens["xai_refresh"] = tokens["xai_refresh"]
                 else:
-                    _merge_cli_family(stored_tokens, tokens, prefer_incoming=True)
+                    merge_cli_family(stored_tokens, tokens, prefer_incoming=True)
                     stored_tokens.update(tokens)
                 metadata = dict(previous[1]) if previous else {}
                 metadata.update(source_metadata or {})
@@ -145,7 +145,7 @@ class TokenCacheStore:
                 self._token_timestamps[provider] = {}
 
             existing = self._cache[provider].get(account_id)
-            if existing is not None and self._is_staler(tokens, existing[0]):
+            if existing is not None and self.is_staler(tokens, existing[0]):
                 # A staler credential must not downgrade a fresher cached one — a
                 # sidecar re-pushing its local (expired) access token would
                 # otherwise clobber the server-refreshed token every cycle. Keep
@@ -158,7 +158,7 @@ class TokenCacheStore:
                 # CLI OAuth token) pushed for this same account.
                 for key, value in tokens.items():
                     self._mark_token_seen(provider, account_id, key)
-                    if key not in _OAUTH_CREDENTIAL_KEYS:
+                    if key not in OAUTH_CREDENTIAL_KEYS:
                         if key not in kept_tokens:
                             kept_tokens[key] = value
                 if tokens.get("refresh_token"):
@@ -168,7 +168,7 @@ class TokenCacheStore:
                 if account_label and not kept_meta.get("account_label"):
                     kept_meta["account_label"] = account_label
                 if source:
-                    kept_meta["source"] = _resolve_source(source, kept_meta.get("source"))
+                    kept_meta["source"] = resolve_source(source, kept_meta.get("source"))
                 self._cache[provider][account_id] = (kept_tokens, kept_meta, time.time())
                 logger.info(
                     "Kept fresher cached token for provider %s (ignored staler push)",
@@ -181,16 +181,16 @@ class TokenCacheStore:
             # sidecar origin recorded by a previous push. A truthy incoming value
             # still wins (fresher push from another sidecar, a `source="config"`
             # store, etc.), except that an explicit dashboard origin is never
-            # downgraded by a sidecar/server push (`_resolve_source`).
+            # downgraded by a sidecar/server push (`resolve_source`).
             prev_meta = existing[1] if existing is not None else {}
             stored_tokens = dict(existing[0]) if existing is not None else {}
-            _merge_cli_family(stored_tokens, tokens, prefer_incoming=True)
+            merge_cli_family(stored_tokens, tokens, prefer_incoming=True)
             stored_tokens.update(tokens)
             for key in tokens:
                 self._mark_token_seen(provider, account_id, key)
             metadata = {
                 "account_label": account_label or prev_meta.get("account_label"),
-                "source": _resolve_source(source, prev_meta.get("source")),
+                "source": resolve_source(source, prev_meta.get("source")),
                 "identity_pending": bool(
                     (source_metadata or {}).get(
                         "identity_pending", prev_meta.get("identity_pending", False)
@@ -233,7 +233,7 @@ class TokenCacheStore:
         )
 
     @staticmethod
-    def _is_staler(incoming: dict[str, str], existing: dict[str, str]) -> bool:
+    def is_staler(incoming: dict[str, str], existing: dict[str, str]) -> bool:
         """True when *incoming* should not be allowed to replace *existing*.
 
         A spent incoming access token is maximally stale only while the cached
@@ -257,8 +257,8 @@ class TokenCacheStore:
         and the normal overwrite wins.
         """
         now = time.time()
-        inc_exp = _credential_expiry(incoming)
-        exist_exp = _credential_expiry(existing)
+        inc_exp = credential_expiry(incoming)
+        exist_exp = credential_expiry(existing)
         if inc_exp is not None and inc_exp < now:
             if exist_exp is None or exist_exp >= now:
                 return True
@@ -300,7 +300,7 @@ class TokenCacheStore:
                     # For shared account aggregates, remove only OAuth fields
                     # whose values still match the source being retired.
                     retire_all_oauth = account_id == source_id
-                    oauth_keys = _OAUTH_CREDENTIAL_KEYS | {"access_token"}
+                    oauth_keys = OAUTH_CREDENTIAL_KEYS | {"access_token"}
                     keys_to_remove = {
                         key
                         for key in oauth_keys
@@ -312,7 +312,7 @@ class TokenCacheStore:
                         )
                     }
                     if "cli_access_token" in keys_to_remove:
-                        keys_to_remove.update(_CLI_FAMILY_KEYS)
+                        keys_to_remove.update(CLI_FAMILY_KEYS)
                     # `tokens` aliases the live dict in `aggregate`; pop in
                     # place before reassigning the tuple.
                     for key in keys_to_remove:
@@ -409,18 +409,18 @@ class TokenCacheStore:
         if existing_target:
             target_tokens, target_metadata, target_timestamp = existing_target
             merged_tokens = dict(target_tokens)
-            from_oauth_is_staler = self._is_staler(tokens, target_tokens)
-            _merge_cli_family(merged_tokens, tokens, prefer_incoming=not from_oauth_is_staler)
+            from_oauth_is_staler = self.is_staler(tokens, target_tokens)
+            merge_cli_family(merged_tokens, tokens, prefer_incoming=not from_oauth_is_staler)
             for key, value in tokens.items():
-                if key in _CLI_FAMILY_KEYS:
+                if key in CLI_FAMILY_KEYS:
                     continue
                 if key in merged_tokens:
-                    if key in _OAUTH_CREDENTIAL_KEYS and self._is_staler(
+                    if key in OAUTH_CREDENTIAL_KEYS and self.is_staler(
                         {key: merged_tokens[key]}, {key: value}
                     ):
                         merged_tokens[key] = value
                     continue
-                if from_oauth_is_staler and key in _OAUTH_CREDENTIAL_KEYS:
+                if from_oauth_is_staler and key in OAUTH_CREDENTIAL_KEYS:
                     continue
                 merged_tokens[key] = value
             # Existing target metadata wins on collisions, preserving its
@@ -438,24 +438,24 @@ class TokenCacheStore:
             if target_aggregate is None:
                 self._cache[provider][to_id] = old_aggregate
             else:
-                _merge_cli_family(
+                merge_cli_family(
                     target_aggregate[0],
                     old_aggregate[0],
-                    prefer_incoming=not self._is_staler(old_aggregate[0], target_aggregate[0]),
+                    prefer_incoming=not self.is_staler(old_aggregate[0], target_aggregate[0]),
                 )
                 for key, value in old_aggregate[0].items():
-                    if key in _CLI_FAMILY_KEYS:
+                    if key in CLI_FAMILY_KEYS:
                         continue
                     if key in target_aggregate[0]:
                         # Keep the better known-expiry OAuth value when a
                         # stale target survived an earlier legacy migration.
-                        if key in _OAUTH_CREDENTIAL_KEYS and self._is_staler(
+                        if key in OAUTH_CREDENTIAL_KEYS and self.is_staler(
                             {key: target_aggregate[0][key]}, {key: value}
                         ):
                             target_aggregate[0][key] = value
                             self._mark_token_seen(provider, to_id, key)
                         continue
-                    if self._is_staler({key: value}, target_aggregate[0]):
+                    if self.is_staler({key: value}, target_aggregate[0]):
                         # Use the target's full expiry context, not just the
                         # missing key, so another OAuth field can veto it.
                         # Opaque non-OAuth keys have no expiry to compare and pass.
@@ -479,13 +479,13 @@ class TokenCacheStore:
                     timestamp,
                 )
             else:
-                prefer_cli = not self._is_staler(tokens, target_aggregate[0])
-                _merge_cli_family(target_aggregate[0], tokens, prefer_incoming=prefer_cli)
+                prefer_cli = not self.is_staler(tokens, target_aggregate[0])
+                merge_cli_family(target_aggregate[0], tokens, prefer_incoming=prefer_cli)
                 target_aggregate[0].update(
-                    {key: value for key, value in tokens.items() if key not in _CLI_FAMILY_KEYS}
+                    {key: value for key, value in tokens.items() if key not in CLI_FAMILY_KEYS}
                 )
                 for key in tokens:
-                    if key not in _CLI_FAMILY_KEYS or prefer_cli:
+                    if key not in CLI_FAMILY_KEYS or prefer_cli:
                         self._mark_token_seen(provider, to_id, key)
         return True
 
@@ -500,7 +500,7 @@ class TokenCacheStore:
                 return
             tokens, metadata, timestamp = entry
             if "cli_access_token" in token_types:
-                token_types = token_types | _CLI_FAMILY_KEYS
+                token_types = token_types | CLI_FAMILY_KEYS
             for token_type in token_types:
                 tokens.pop(token_type, None)
             if tokens:
@@ -581,7 +581,7 @@ class TokenCacheStore:
                     exp = IdentityExtractor.exp_from_tokens(tokens)
                     if exp is None or exp >= now:
                         continue
-                    dead = (_OAUTH_CREDENTIAL_KEYS | {"access_token"}) & tokens.keys()
+                    dead = (OAUTH_CREDENTIAL_KEYS | {"access_token"}) & tokens.keys()
                     if not dead or dead == tokens.keys():
                         # Nothing else to keep: retain the sole expired entry
                         # as evidence for Token Health.

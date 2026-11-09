@@ -61,7 +61,7 @@ KNOWN_BUNDLED_APP_MODULES = frozenset(
         "app.core.net",
         "app.core.strings",
         "app.core.utils",
-        "app.models._datetime",
+        "app.models.utc_datetime",
         "app.models.builder",
         "app.models.db",
         "app.models.schemas",

@@ -48,7 +48,7 @@ class DeepSeekCollector(BaseCollector):
                 "deepseek", account_id=credential_account_id
             )
             if db_key:
-                self._current_input_source = "config"
+                self.current_input_source = "config"
                 return db_key
 
             cache_data = await token_cache.get_with_metadata(
@@ -63,7 +63,7 @@ class DeepSeekCollector(BaseCollector):
                 cached_key = tokens.get("api_key") or tokens.get("oauth_token")
                 if cached_key:
                     source = metadata.get("source") or "sidecar"
-                    self._current_input_source = (
+                    self.current_input_source = (
                         "config" if source in ("config", "manual_config") else "sidecar"
                     )
                     return cached_key
@@ -79,12 +79,12 @@ class DeepSeekCollector(BaseCollector):
         if credential_account_id is None:
             db_key = credential_provider.get_provider_api_key("deepseek", account_id="default")
             if db_key:
-                self._current_input_source = "config"
+                self.current_input_source = "config"
                 return db_key
 
         key = settings.DEEPSEEK_API_KEY or None
         if key:
-            self._current_input_source = "server"
+            self.current_input_source = "server"
         return key
 
     async def is_configured(self) -> bool:
@@ -185,7 +185,7 @@ class DeepSeekCollector(BaseCollector):
                 "currency": currency,
                 "data_source": self.DATA_SOURCE_API,
                 "usage_url": "https://platform.deepseek.com/usage",
-                "input_source": getattr(self, "_current_input_source", "unknown"),
+                "input_source": getattr(self, "current_input_source", "unknown"),
                 "updated_at": datetime.now(UTC).isoformat(),
             }
         ]

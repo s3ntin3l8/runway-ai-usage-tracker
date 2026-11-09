@@ -11,7 +11,7 @@ The collector's two state tables are deliberately left alone. They are create-on
 once the replacement is in place, and clearing them while the first collector is still scheduled would
 reset its delta baseline and bill every session again.
 
-Every write is chunked and committed per batch (`_chunked_sql`). The rollups are then rebuilt from the
+Every write is chunked and committed per batch (`chunked_sql`). The rollups are then rebuilt from the
 events that remain, *whether or not this run deleted anything*, so a run that died between the delete and
 the repair is finished by applying again. Closed windows are rebuilt only for the accounts and time
 range of the events this run removed: a window replay drops any window that cannot be rebuilt from
@@ -30,7 +30,7 @@ from sqlmodel import Session, col, select
 
 from app.core.date_utils import parse_iso8601_utc
 from app.models.db import UsageEvent, UsagePeriodRollup, UsageWindow
-from app.services.maintenance._chunked_sql import chunked_delete
+from app.services.maintenance.chunked_sql import chunked_delete
 from app.services.maintenance.rollups import rebuild_rollups_for_pairs
 from app.services.maintenance.windows import rebuild_windows_overlapping
 

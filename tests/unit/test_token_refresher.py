@@ -9,8 +9,8 @@ import httpx
 import pytest
 
 from app.services.token_refresher import (
-    _PROVIDER_CLIENT_IDS,
     ANTHROPIC_REFRESH_USER_AGENT,
+    PROVIDER_CLIENT_IDS,
     refresh_oauth_token,
 )
 
@@ -147,7 +147,7 @@ class TestRefreshOAuthTokenAnthropic:
         If you change one, change both."""
         from scripts.sidecar_pkg import anthropic_renewer
 
-        assert _PROVIDER_CLIENT_IDS["anthropic"] == anthropic_renewer.CLIENT_ID
+        assert PROVIDER_CLIENT_IDS["anthropic"] == anthropic_renewer.CLIENT_ID
 
     async def test_sets_oauth_token_from_access_token(self):
         body = {"access_token": "brand_new_token"}

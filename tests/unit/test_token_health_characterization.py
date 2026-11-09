@@ -185,7 +185,7 @@ async def test_world_row_fields_beyond_status(monkeypatch):
     ) == sorted(
         [
             # Legacy synthetic ids (`unassigned:`, `config:`, `config-cookie:`, `server`) are
-            # what alerts' `_underlying_account` and the webhook scope fallback key on.
+            # what alerts' `underlying_account` and the webhook scope fallback key on.
             (
                 "anthropic",
                 "unassigned:sidecar:pending",

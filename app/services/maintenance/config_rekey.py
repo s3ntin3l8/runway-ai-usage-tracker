@@ -406,7 +406,7 @@ def _make_token_cache_move_hook(
         try:
             from app.services.collector_manager import manager
 
-            await manager._sync_collectors(force=True)
+            await manager.sync_collectors(force=True)
         except Exception as exc:  # noqa: BLE001 — mutation already succeeded
             logger.warning(
                 "Failed to trigger collector sync after rekeying %s/%s -> %s: %s",

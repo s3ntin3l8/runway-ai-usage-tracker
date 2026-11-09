@@ -31,9 +31,7 @@ class GeminiOAuthMixin(OAuthBaseCollector):
             return None
         tokens, metadata = cache_data
         source = metadata.get("source") or "sidecar"
-        self._current_input_source = (
-            "config" if source in ("config", "manual_config") else "sidecar"
-        )
+        self.current_input_source = "config" if source in ("config", "manual_config") else "sidecar"
         # Inherit account identity from cache metadata (extracted from the
         # sidecar-shipped id_token) so emitted cards carry the correct
         # email and resolve to the canonical account_id instead of
@@ -43,7 +41,7 @@ class GeminiOAuthMixin(OAuthBaseCollector):
             self.account_label = cached_label
         return tokens.get("oauth_token")
 
-    async def _is_token_expired(self) -> bool:
+    async def is_token_expired(self) -> bool:
         """Whether the cached Gemini access token is past its known expiry.
 
         Expiry comes from the cached ``expiry_date`` (epoch ms) or the token's own ``exp``
@@ -76,7 +74,7 @@ class GeminiOAuthMixin(OAuthBaseCollector):
 
         # Auto-discover client_id: env var → bundle → id_token aud claim →
         # well-known Gemini CLI client_id (last-resort, matches CLI defaults).
-        from app.services.token_refresher import _GEMINI_CLI_CLIENT_SECRET, _PROVIDER_CLIENT_IDS
+        from app.services.token_refresher import GEMINI_CLI_CLIENT_SECRET, PROVIDER_CLIENT_IDS
 
         client_id = settings.GEMINI_OAUTH_CLIENT_ID
         if not client_id:
@@ -89,7 +87,7 @@ class GeminiOAuthMixin(OAuthBaseCollector):
                 logger.info(f"Auto-discovered Gemini Client ID: {client_id[:10]}...")
 
         if not client_id:
-            client_id = _PROVIDER_CLIENT_IDS.get("gemini")
+            client_id = PROVIDER_CLIENT_IDS.get("gemini")
 
         if not client_id:
             logger.warning("Gemini Client ID missing (set GEMINI_OAUTH_CLIENT_ID)")
@@ -98,7 +96,7 @@ class GeminiOAuthMixin(OAuthBaseCollector):
         client_secret = (
             creds.get("client_secret")
             or settings.GEMINI_OAUTH_CLIENT_SECRET
-            or _GEMINI_CLI_CLIENT_SECRET
+            or GEMINI_CLI_CLIENT_SECRET
         )
 
         try:

@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING
 from sqlmodel import Session
 
 from app.models.schemas import ForecastEntry, ForecastResponse, LimitCard
-from app.services.forecast_shared import LIMIT_PCT, MIN_BUCKETS_FOR_TREND, _NowState, _Projection
+from app.services.forecast_shared import LIMIT_PCT, MIN_BUCKETS_FOR_TREND, NowState, Projection
 
 if TYPE_CHECKING:
     from app.services.forecast_trend import TrendFit
@@ -85,9 +85,9 @@ def _make_entry(  # noqa: PLR0913
     window_start: datetime,
     samples_used: int,
     confidence: float,
-    now_state: _NowState,
+    now_state: NowState,
     limit_value: float,
-    projection: _Projection = _Projection(),
+    projection: Projection = Projection(),
     slope: float | None = None,
     method: str = "theil_sen",
     series: list[dict[str, float | str]] | None = None,
@@ -142,7 +142,7 @@ def _build_forecast_entry(  # noqa: PLR0913
     window_start: datetime,
     confidence: float,
     samples_used: int,
-    now_state: _NowState,
+    now_state: NowState,
     fit: TrendFit | None,
     series_data: _SeriesData,
     total_window_secs: float,
@@ -152,11 +152,11 @@ def _build_forecast_entry(  # noqa: PLR0913
 ) -> ForecastEntry:
     """Apply the shared classification + clamp + hit-at pipeline."""
     from app.services.forecast_trend import (
-        _classify_status,
-        _compute_hit_at,
-        _floor_projection,
-        _is_coarse_quantized,
-        _now_pct_floor_status,
+        classify_status,
+        compute_hit_at,
+        floor_projection,
+        is_coarse_quantized,
+        now_pct_floor_status,
     )
 
     series_payload = _build_series_payload(series_data, window_start) if include_series else None
@@ -165,9 +165,9 @@ def _build_forecast_entry(  # noqa: PLR0913
     # A card already near its limit is critical regardless of trend shape. This
     # floor runs before the coarse / insufficient short-circuits so a spike that
     # plateaus high never reads "Trend unavailable" or "Won't exhaust".
-    floor_status = _now_pct_floor_status(now_state.pct)
+    floor_status = now_pct_floor_status(now_state.pct)
 
-    if _is_coarse_quantized(ys):
+    if is_coarse_quantized(ys):
         return _make_entry(
             card=card,
             status=floor_status or "low_resolution",
@@ -177,9 +177,9 @@ def _build_forecast_entry(  # noqa: PLR0913
             now_state=now_state,
             limit_value=limit_value,
             projection=(
-                _floor_projection(floor_status, now_state, limit_value)
+                floor_projection(floor_status, now_state, limit_value)
                 if floor_status
-                else _Projection()
+                else Projection()
             ),
             series=series_payload,
         )
@@ -194,9 +194,9 @@ def _build_forecast_entry(  # noqa: PLR0913
             now_state=now_state,
             limit_value=limit_value,
             projection=(
-                _floor_projection(floor_status, now_state, limit_value)
+                floor_projection(floor_status, now_state, limit_value)
                 if floor_status
-                else _Projection()
+                else Projection()
             ),
             series=series_payload,
         )
@@ -210,7 +210,7 @@ def _build_forecast_entry(  # noqa: PLR0913
     projected_pct = max(anchor_pct + fit.slope * remaining_from_now, anchor_pct)
     projected_used = projected_pct / LIMIT_PCT * limit_value
 
-    hit_at = _compute_hit_at(
+    hit_at = compute_hit_at(
         fit=fit,
         now=now,
         now_pct=now_pct,
@@ -218,7 +218,7 @@ def _build_forecast_entry(  # noqa: PLR0913
         total_window_secs=total_window_secs,
     )
 
-    status = _classify_status(
+    status = classify_status(
         now_pct=now_pct,
         projected_pct=projected_pct,
         projected_pct_raw=projected_pct_raw,
@@ -233,17 +233,17 @@ def _build_forecast_entry(  # noqa: PLR0913
         status = floor_status
 
     if status == "exhausted":
-        projection = _Projection(used=limit_value, pct=LIMIT_PCT)
+        projection = Projection(used=limit_value, pct=LIMIT_PCT)
     elif status == "near_limit":
-        projection = _Projection(used=now_state.used, pct=now_pct)
+        projection = Projection(used=now_state.used, pct=now_pct)
     elif status == "stable":
-        projection = _Projection(used=projected_used, pct=now_pct)
+        projection = Projection(used=projected_used, pct=now_pct)
     elif status == "decelerating":
-        projection = _Projection(used=now_state.used, pct=now_pct)
+        projection = Projection(used=now_state.used, pct=now_pct)
     elif status == "risk":
-        projection = _Projection(used=limit_value, pct=LIMIT_PCT, hit_at=hit_at)
+        projection = Projection(used=limit_value, pct=LIMIT_PCT, hit_at=hit_at)
     else:  # warn | ok
-        projection = _Projection(used=projected_used, pct=projected_pct)
+        projection = Projection(used=projected_used, pct=projected_pct)
 
     return _make_entry(
         card=card,
@@ -424,7 +424,7 @@ def _compute_quota_forecast(  # noqa: PLR0912
     include_series: bool = False,
 ) -> ForecastEntry | None:
     """Forecast quota % usage from historical pct_used snapshots."""
-    from app.services.forecast_trend import _fit_trend
+    from app.services.forecast_trend import fit_trend
 
     result = _resolve_window(card, now)
     if result is None:
@@ -434,7 +434,7 @@ def _compute_quota_forecast(  # noqa: PLR0912
 
     now_pct = _derive_now_pct(card)
     limit_value = card.limit_value or LIMIT_PCT
-    now_state = _NowState(used=card.used_value, pct=now_pct)
+    now_state = NowState(used=card.used_value, pct=now_pct)
 
     bucket_secs = _forecast_bucket_seconds(card.window_type)
     variant = card.variant or ""
@@ -477,7 +477,7 @@ def _compute_quota_forecast(  # noqa: PLR0912
         confidence=confidence,
         samples_used=len(buckets),
         now_state=now_state,
-        fit=_fit_trend(xs, ys),
+        fit=fit_trend(xs, ys),
         series_data=_SeriesData(xs=xs, ys=ys),
         total_window_secs=total_window_secs,
         now=now,
@@ -595,12 +595,12 @@ _TREND_EXPORTS = frozenset(
         "STABLE_PCT_EPSILON",
         "WARN_PCT",
         "TrendFit",
-        "_classify_status",
-        "_compute_hit_at",
-        "_fit_trend",
-        "_floor_projection",
-        "_is_coarse_quantized",
-        "_now_pct_floor_status",
+        "classify_status",
+        "compute_hit_at",
+        "fit_trend",
+        "floor_projection",
+        "is_coarse_quantized",
+        "now_pct_floor_status",
     }
 )
 

@@ -118,7 +118,7 @@ class TestCollectorManagerInitialization:
         monkeypatch.setattr("app.core.db.engine", engine)
         monkeypatch.setenv("GITHUB_TOKEN", "ghp_test")  # pragma: allowlist secret
         # Hermetic: ignore whatever gh / config files exist on the machine running the tests.
-        monkeypatch.setattr("app.services.credentials.provider._expand_rule_paths", lambda _p: [])
+        monkeypatch.setattr("app.services.credentials.provider.expand_rule_paths", lambda _p: [])
 
         manager._record_server_sources("github", "s3ntin3l8", "healthy")
 
@@ -176,7 +176,7 @@ class TestCollectorManagerInitialization:
         )
         SQLModel.metadata.create_all(engine)
         monkeypatch.setattr("app.core.db.engine", engine)
-        monkeypatch.setattr("app.services.credentials.provider._expand_rule_paths", lambda _p: [])
+        monkeypatch.setattr("app.services.credentials.provider.expand_rule_paths", lambda _p: [])
         monkeypatch.setenv("GITHUB_TOKEN", "ghp_test")  # pragma: allowlist secret
         manager._record_server_sources("github", "s3ntin3l8", "healthy")
 
@@ -234,7 +234,7 @@ class TestCollectorManagerInitialization:
         )
         SQLModel.metadata.create_all(engine)
         monkeypatch.setattr("app.core.db.engine", engine)
-        monkeypatch.setattr("app.services.credentials.provider._expand_rule_paths", lambda _p: [])
+        monkeypatch.setattr("app.services.credentials.provider.expand_rule_paths", lambda _p: [])
         monkeypatch.setenv("GITHUB_TOKEN", "ghp_test")  # pragma: allowlist secret
 
         manager._record_server_sources("github", "s3ntin3l8", None)

@@ -18,8 +18,8 @@ from sqlmodel.pool import StaticPool
 from app.models.db import ProviderConfig, ProviderPricing, UsageEvent, UsagePeriodRollup
 from app.services.cost_calculator import resolve_price_row
 from app.services.maintenance import argon_retag
-from app.services.maintenance._retry import LockRetryProfile
 from app.services.maintenance.argon_retag import apply_argon_retag, plan_argon_retag
+from app.services.maintenance.retry import LockRetryProfile
 from app.services.model_normalization import (
     ARGON_MODEL_ID,
     normalize_ag_model,

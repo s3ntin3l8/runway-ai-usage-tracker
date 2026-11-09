@@ -430,7 +430,7 @@ async def test_overlapping_polls_do_not_double_deliver(engine):
     on the same event loop. Without `_check_lock`, both cycles can read the
     dedup row as absent before either writes it, and both deliver the
     webhook. Two independent Sessions on a shared engine + `asyncio.gather`
-    reproduces the real interleaving; mocking `_post_payload` to actually
+    reproduces the real interleaving; mocking `post_payload` to actually
     `await asyncio.sleep(0)` opens the same race window a real HTTP POST
     would.
     """
@@ -451,7 +451,7 @@ async def test_overlapping_polls_do_not_double_deliver(engine):
                 "app.services.credential_alerts.token_health_service.get_health",
                 new=AsyncMock(return_value=rows),
             ),
-            patch("app.services.credential_alerts._post_payload", new=post_mock),
+            patch("app.services.credential_alerts.post_payload", new=post_mock),
         ):
             await asyncio.gather(
                 check_credential_alerts(session_a),
@@ -506,9 +506,9 @@ def test_commit_step_recovers_from_a_dedup_race(session):
 
 
 def test_credential_discord_payload_shape():
-    from app.services.webhooks import _credential_discord_payload
+    from app.services.webhooks import credential_discord_payload
 
-    payload = _credential_discord_payload(
+    payload = credential_discord_payload(
         "anthropic", "alice@example.com", "alice@example.com", "invalid", "sidecar1"
     )
     embed = payload["embeds"][0]
@@ -523,9 +523,9 @@ def test_credential_discord_payload_shape():
 
 
 def test_credential_slack_payload_shape():
-    from app.services.webhooks import _credential_slack_payload
+    from app.services.webhooks import credential_slack_payload
 
-    payload = _credential_slack_payload("anthropic", None, "acct1", "expired", None)
+    payload = credential_slack_payload("anthropic", None, "acct1", "expired", None)
     header = payload["blocks"][0]
     assert header["text"]["text"] == "Credential expired"
     context_text = " ".join(e["text"] for e in payload["blocks"][1]["elements"])

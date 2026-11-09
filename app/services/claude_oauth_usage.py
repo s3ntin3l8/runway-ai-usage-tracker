@@ -25,7 +25,7 @@ from app.core.utils import (
     human_delta,
 )
 from app.services.billing_type import UNKNOWN, BillingType, detect_billing_type
-from app.services.collectors._anthropic_common import (
+from app.services.collectors.anthropic_common import (
     ANTHROPIC_WINDOW_NAME_MAP,
     anthropic_limits_from,
     anthropic_model_id_for,

@@ -5,7 +5,7 @@ from sqlalchemy import Index, UniqueConstraint, text
 from sqlmodel import Field, SQLModel
 
 from app.core.encryption import encryption_service
-from app.models._datetime import UTCDateTime
+from app.models.utc_datetime import UTCDateTime
 
 
 class ProviderConfig(SQLModel, table=True):  # type: ignore[call-arg]

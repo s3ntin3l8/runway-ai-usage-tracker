@@ -15,8 +15,8 @@ from sqlmodel import Session, SQLModel
 
 logger = logging.getLogger(__name__)
 
-_MAX_RETRIES = 5
-_INITIAL_BACKOFF = 0.05
+MAX_RETRIES = 5
+INITIAL_BACKOFF = 0.05
 
 
 @dataclass(frozen=True)
@@ -34,7 +34,7 @@ class LockRetryProfile:
 
 #: The default patience: enough for a momentary lock, not enough to hold a
 #: repair up. The CLI scripts use it — they run against a stopped server.
-DEFAULT_LOCK_PROFILE = LockRetryProfile(max_retries=_MAX_RETRIES, initial_backoff=_INITIAL_BACKOFF)
+DEFAULT_LOCK_PROFILE = LockRetryProfile(max_retries=MAX_RETRIES, initial_backoff=INITIAL_BACKOFF)
 
 #: The Data Health applies run against a live, writing server, where a lock is
 #: a busy moment rather than a fault. They wait much longer before giving up —
@@ -44,7 +44,7 @@ DEFAULT_LOCK_PROFILE = LockRetryProfile(max_retries=_MAX_RETRIES, initial_backof
 DATA_HEALTH_LOCK_PROFILE = LockRetryProfile(max_retries=6, initial_backoff=2.0)
 
 
-def _is_sqlite_locked_or_busy(exc: OperationalError) -> bool:
+def is_sqlite_locked_or_busy(exc: OperationalError) -> bool:
     """True if `exc` represents SQLite SQLITE_BUSY or SQLITE_LOCKED contention.
 
     Inspects `exc.orig` for the driver-level error name/code first to prevent false
@@ -68,13 +68,13 @@ def _is_sqlite_locked_or_busy(exc: OperationalError) -> bool:
     return "database is locked" in msg or "database is busy" in msg
 
 
-def _retry_on_lock[T](
+def retry_on_lock[T](
     fn: Callable[[], T],
     *,
     session: Session,
     action_desc: str,
-    max_retries: int = _MAX_RETRIES,
-    initial_backoff: float = _INITIAL_BACKOFF,
+    max_retries: int = MAX_RETRIES,
+    initial_backoff: float = INITIAL_BACKOFF,
 ) -> T:
     """Execute `fn`, rolling back and retrying with exponential backoff on SQLite lock contention."""
     if max_retries <= 0:
@@ -93,7 +93,7 @@ def _retry_on_lock[T](
             # read->write escalation) reads as ~0s here, which is the
             # momentary-vs-stuck signal.
             waited = time.monotonic() - started
-            if not _is_sqlite_locked_or_busy(exc):
+            if not is_sqlite_locked_or_busy(exc):
                 raise
             blocked_total += waited
             # Log only the operation's name and the timings: never `exc`, whose
@@ -144,7 +144,7 @@ def commit_batch(
         session.execute(update(model), values)
         session.commit()
 
-    _retry_on_lock(
+    retry_on_lock(
         _write,
         session=session,
         action_desc=action_desc,

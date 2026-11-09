@@ -162,7 +162,7 @@ def test_the_plain_fallback_respects_machine_scope(session):
 
 def test_the_inventory_resolves_a_legacy_tag_for_a_keyed_origin():
     from app.models.db import CredentialTag
-    from app.services.credential_inventory import _resolve_tag
+    from app.services.credential_inventory import resolve_tag
 
     keyed = keyed_credential_origin("env:ZAI_API_KEY", "0123456789ab")
     legacy = CredentialTag(
@@ -182,8 +182,8 @@ def test_the_inventory_resolves_a_legacy_tag_for_a_keyed_origin():
         sidecar_id="laptop",
     )
 
-    assert _resolve_tag({("zai", "env:ZAI_API_KEY"): [legacy]}, row) is legacy
-    assert _resolve_tag({}, row) is None
+    assert resolve_tag({("zai", "env:ZAI_API_KEY"): [legacy]}, row) is legacy
+    assert resolve_tag({}, row) is None
 
 
 # --- retiring the superseded row -------------------------------------------------------------

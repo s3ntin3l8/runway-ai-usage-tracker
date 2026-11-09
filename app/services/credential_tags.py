@@ -7,7 +7,7 @@ from app.services.credentials.pending_tags import (
     retry_backoff,
 )
 from app.services.credentials.tags import (
-    _QUOTA_PREVIEW_FIELDS,
+    QUOTA_PREVIEW_FIELDS,
     CredentialTagRepo,
     ParkedMapping,
     archived_account_pairs,
@@ -19,7 +19,7 @@ from app.services.credentials.tags import (
 )
 
 __all__ = [
-    "_QUOTA_PREVIEW_FIELDS",
+    "QUOTA_PREVIEW_FIELDS",
     "safe_quota_preview",
     "live_sidecar_ids",
     "origin_candidates",

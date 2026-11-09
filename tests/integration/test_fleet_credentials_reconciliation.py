@@ -163,7 +163,7 @@ def test_ingest_retires_earlier_fingerprints_of_a_rotating_xai_login(
     }, "earlier fingerprints on this machine are retired, another machine's is untouched"
     successor = rows[sidecar_source_id("laptop", new)]
     assert (successor.enabled, successor.priority) == (False, 4)
-    prefs = manager._credential_source_preferences[("xai", "grok@example.com")]
+    prefs = manager.credential_source_preferences[("xai", "grok@example.com")]
     assert sidecar_source_id("laptop", old) not in prefs
     assert sidecar_source_id("laptop", older) not in prefs
     tags = {(t.set_by, t.credential_origin) for t in session.exec(select(CredentialTag)).all()}
@@ -356,7 +356,7 @@ def test_the_keyed_row_inherits_enabled_and_priority_from_the_row_it_replaces(
         )
     ).one()
     assert (new.enabled, new.priority) == (False, 7)
-    prefs = manager._credential_source_preferences[("zai", "alice@example.com")]
+    prefs = manager.credential_source_preferences[("zai", "alice@example.com")]
     assert prefs[new.source_id] == (False, 7)
     assert old.source_id not in prefs
 

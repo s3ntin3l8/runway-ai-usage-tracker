@@ -61,7 +61,7 @@ def canonicalize_account(
 ) -> _PreparedLatestUsage:
     """Resolve the account and the fields the later steps read."""
     from app.services.account_identity import resolve_account_id
-    from app.services.accumulator import _source_id
+    from app.services.accumulator import contribution_source_id
 
     canonical_account_id = resolve_account_id(card.provider_id, card.account_id, card.account_label)
     # A card may claim an account that was merged away: the account — and the
@@ -69,7 +69,7 @@ def canonicalize_account(
     # must not bring the retired account back.
     canonical_account_id = resolve_merged_account(session, card.provider_id, canonical_account_id)
     sidecar_id = sidecar_id_override or card.sidecar_id or "local"
-    contribution_source_id = source_id or _source_id(card.provider_id, sidecar_id)
+    slot_source_id = source_id or contribution_source_id(card.provider_id, sidecar_id)
     variant = card.variant or "default"
     model_id = card.model_id or ""
     incoming_partial = card.model_dump(exclude_none=True)
@@ -86,7 +86,7 @@ def canonicalize_account(
         card=card,
         canonical_account_id=canonical_account_id,
         sidecar_id=sidecar_id,
-        contribution_source_id=contribution_source_id,
+        contribution_source_id=slot_source_id,
         variant=variant,
         model_id=model_id,
         incoming_partial=incoming_partial,
@@ -100,7 +100,7 @@ def error_card_is_suppressed(session: Session, prepared: _PreparedLatestUsage) -
         return False
 
     from app.models.db import LatestUsage
-    from app.services.accumulator import _is_error_card
+    from app.services.accumulator import is_error_card_json
 
     card = prepared.card
     canonical_account_id = prepared.canonical_account_id
@@ -116,7 +116,7 @@ def error_card_is_suppressed(session: Session, prepared: _PreparedLatestUsage) -
                 LatestUsage.account_id == canonical_account_id,
             )
         ).all()
-        if any(not _is_error_card(r.card_json) for r in same_account_rows):
+        if any(not is_error_card_json(r.card_json) for r in same_account_rows):
             logger.debug(
                 "Skipping error card for %s/%s — healthy row exists",
                 card.provider_id,
@@ -165,11 +165,11 @@ def close_previous_window(
     The private window-closer helper stays imported inside this function, the
     same way upsert_latest_usage imported it, so it is not published here.
     """
-    from app.services.window_closer import _maybe_close_previous_window
+    from app.services.window_closer import maybe_close_previous_window
 
     try:
         new_reset_dt = parse_iso8601_utc(card.reset_at)
-        _maybe_close_previous_window(
+        maybe_close_previous_window(
             session,
             existing=existing,
             provider_id=card.provider_id,
@@ -284,20 +284,20 @@ def write_contribution(session: Session, prepared: _PreparedLatestUsage) -> None
         return
     # Patch target is app.services.accumulator._upsert_contribution. Import it
     # here so the lookup happens at call time, after a test replaces the name.
-    from app.services.accumulator import _upsert_contribution
-    from app.services.latest_usage_contributions import _rebuild_latest_usage_slot
+    from app.services.accumulator import upsert_contribution
+    from app.services.latest_usage_contributions import rebuild_latest_usage_slot
 
     card = prepared.card
     canonical_account_id = prepared.canonical_account_id
     try:
-        _upsert_contribution(
+        upsert_contribution(
             session,
             source_id=prepared.contribution_source_id,
             card=card,
             account_id=canonical_account_id,
             card_json=prepared.incoming_partial,
         )
-        _rebuild_latest_usage_slot(
+        rebuild_latest_usage_slot(
             session,
             provider_id=card.provider_id,
             account_id=canonical_account_id,
@@ -353,7 +353,7 @@ def evict_superseded_error_rows(session: Session, prepared: _PreparedLatestUsage
         return
 
     from app.models.db import LatestUsage
-    from app.services.accumulator import _is_error_card
+    from app.services.accumulator import is_error_card_json
 
     card = prepared.card
     canonical_account_id = prepared.canonical_account_id
@@ -377,7 +377,7 @@ def evict_superseded_error_rows(session: Session, prepared: _PreparedLatestUsage
                 )
             ).all()
             for row in same_account_errors:
-                if _is_error_card(row.card_json):
+                if is_error_card_json(row.card_json):
                     session.delete(row)
 
             if canonical_account_id != "default":
@@ -391,7 +391,7 @@ def evict_superseded_error_rows(session: Session, prepared: _PreparedLatestUsage
                     )
                 ).all()
                 for row in slot_default_errors:
-                    if _is_error_card(row.card_json):
+                    if is_error_card_json(row.card_json):
                         session.delete(row)
     except Exception as e:
         logger.warning(

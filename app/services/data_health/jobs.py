@@ -33,7 +33,7 @@ from app.core.log_redaction import scrub_pii
 from app.services import audit_log
 from app.services.data_health.base import AsyncHook, Check, CheckReport, FixResult
 from app.services.data_health.registry import REGISTRY, get_check
-from app.services.maintenance._retry import _is_sqlite_locked_or_busy
+from app.services.maintenance.retry import is_sqlite_locked_or_busy
 
 logger = logging.getLogger(__name__)
 
@@ -91,7 +91,7 @@ def _classify(exc: Exception) -> tuple[ErrorKind, str]:
         # An empty refusal is still a refusal: the generic sentence is the
         # floor, so the dialog never shows an empty reason.
         return "unknown", _safe_detail(exc, limit=_MESSAGE_LIMIT) or _UNKNOWN_MESSAGE
-    if isinstance(exc, OperationalError) and _is_sqlite_locked_or_busy(exc):
+    if isinstance(exc, OperationalError) and is_sqlite_locked_or_busy(exc):
         return "db_busy", _DB_BUSY_MESSAGE
     return "unknown", _UNKNOWN_MESSAGE
 

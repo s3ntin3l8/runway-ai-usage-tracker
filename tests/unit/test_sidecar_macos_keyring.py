@@ -206,7 +206,7 @@ class TestMacosKeychainRule:
 
     def test_the_expiry_is_stamped_as_ms_epoch(self):
         """agy's access token carries no JWT exp claim, so expiry_date (the
-        freshness signal token_cache._is_staler needs) comes from token.expiry."""
+        freshness signal token_cache.is_staler needs) comes from token.expiry."""
         expires_at = _in_an_hour()
         cards, _read = self._collect(_envelope(_document(expires_at)))
         token_cards = [card for card in cards if card.get("remaining") == "Token"]

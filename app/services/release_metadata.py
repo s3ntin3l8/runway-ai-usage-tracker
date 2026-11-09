@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 
-_BETA_TAG_RE = re.compile(r"^v\d+\.\d+\.\d+-beta\.\d+$")
+BETA_TAG_RE = re.compile(r"^v\d+\.\d+\.\d+-beta\.\d+$")
 
 
 def normalize_version(version: str) -> str:
@@ -25,7 +25,7 @@ def latest_beta_release(releases: object) -> dict | None:
         for release in releases
         if isinstance(release, dict)
         and release.get("prerelease") is True
-        and _BETA_TAG_RE.fullmatch(str(release.get("tag_name") or ""))
+        and BETA_TAG_RE.fullmatch(str(release.get("tag_name") or ""))
     ]
     if not candidates:
         return None

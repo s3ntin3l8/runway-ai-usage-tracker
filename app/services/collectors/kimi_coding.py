@@ -141,7 +141,7 @@ class KimiCodingCollector(BaseCollector):
     # ------------------------------------------------------------------
 
     async def collect(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
-        strategies = self._resolve_strategies()
+        strategies = self.resolve_strategies()
         if not strategies:
             return await super().collect(client)
 
@@ -462,10 +462,10 @@ class KimiCodingCollector(BaseCollector):
         if email and "@" in email:
             # Adopt the email only when no explicit user label is set — same
             # guard as BaseCollector._tag_results — and keep the cache in sync.
-            explicit = self._account_label_cache and self._account_label_cache.lower() != "default"
+            explicit = self.account_label_cache and self.account_label_cache.lower() != "default"
             if not explicit:
                 self.account_label = email
-                self._account_label_cache = email
+                self.account_label_cache = email
 
         tier = str(me.get("user_level_name") or "").strip()
         if tier:

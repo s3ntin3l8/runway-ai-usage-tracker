@@ -137,7 +137,7 @@ async def check_and_fire(cards: list[LimitCard], session: Session) -> None:
                     matched = [
                         c
                         for c in matched
-                        if _scope_matches(
+                        if scope_matches(
                             config,
                             config.provider_id,
                             resolve_account_id(config.provider_id, c.account_id, c.account_label),
@@ -174,7 +174,7 @@ async def check_and_fire(cards: list[LimitCard], session: Session) -> None:
                 elif breaching and config.last_fired_at is None:
                     card, used_pct = max(breaching, key=lambda x: x[1])
                     try:
-                        await _fire_webhook(client, config, card, used_pct)
+                        await fire_webhook(client, config, card, used_pct)
                         config.last_fired_at = datetime.now(UTC)
                         session.add(config)
                     except Exception as e:
@@ -183,7 +183,7 @@ async def check_and_fire(cards: list[LimitCard], session: Session) -> None:
         session.commit()
 
 
-def _scope_matches(
+def scope_matches(
     config: WebhookConfig,
     provider_id: str,
     resolved_account_id: str,
@@ -208,7 +208,7 @@ def _scope_matches(
     return scope == resolved_account_id
 
 
-async def _post_payload(client: httpx.AsyncClient, config: WebhookConfig, payload: dict) -> None:
+async def post_payload(client: httpx.AsyncClient, config: WebhookConfig, payload: dict) -> None:
     """Validate the URL (defense in depth) and POST *payload*; raises on failure."""
     # Defense in depth: rows created before validate_webhook_url was added
     # could still hold loopback/metadata URLs. Re-check before each call.
@@ -217,7 +217,7 @@ async def _post_payload(client: httpx.AsyncClient, config: WebhookConfig, payloa
     response.raise_for_status()
 
 
-async def _fire_webhook(
+async def fire_webhook(
     client: httpx.AsyncClient,
     config: WebhookConfig,
     card: LimitCard,
@@ -228,7 +228,7 @@ async def _fire_webhook(
         payload = _discord_payload(card, used_pct, config.threshold_pct)
     else:
         payload = _slack_payload(card, used_pct, config.threshold_pct)
-    await _post_payload(client, config, payload)
+    await post_payload(client, config, payload)
     logger.info(f"Webhook fired: {config.provider_id} @ {used_pct:.1f}% (config {config.id})")
 
 
@@ -300,7 +300,7 @@ def _credential_title(status: str) -> str:
     )
 
 
-def _credential_discord_payload(
+def credential_discord_payload(
     provider_id: str,
     account_label: str | None,
     account_id: str,
@@ -325,7 +325,7 @@ def _credential_discord_payload(
     }
 
 
-def _credential_slack_payload(
+def credential_slack_payload(
     provider_id: str,
     account_label: str | None,
     account_id: str,

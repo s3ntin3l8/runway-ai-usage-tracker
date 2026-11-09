@@ -8,7 +8,7 @@ from sqlalchemy import func
 from sqlmodel import Session, select
 
 from app.models.db import UsageEvent
-from app.services.queries._shared import _parse_ts
+from app.services.queries.shared import parse_ts
 
 # ---------------------------------------------------------------------------
 # 7.1  query_events
@@ -116,4 +116,4 @@ def event_time_range(
         stmt = stmt.where(UsageEvent.sidecar_id == sidecar_id)
     row = session.exec(stmt).one()
     # SQLite returns aggregate datetimes as strings; normalize to datetime.
-    return _parse_ts(row[0]), _parse_ts(row[1])
+    return parse_ts(row[0]), parse_ts(row[1])

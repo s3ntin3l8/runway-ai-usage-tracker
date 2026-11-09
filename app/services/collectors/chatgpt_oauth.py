@@ -30,11 +30,11 @@ class ChatGPTWebOAuthMixin:
             # A bearer minted from one source's cookie must never serve another source.
             and getattr(self, "_refreshed_for", None) == pinned
         ):
-            self._current_input_source = getattr(self, "_refreshed_input_source", "unknown")
+            self.current_input_source = getattr(self, "_refreshed_input_source", "unknown")
             return {
                 "token": self._refreshed_token,
                 "source": self.DATA_SOURCE_WEB,
-                "input_source": self._current_input_source,
+                "input_source": self.current_input_source,
             }
 
         # Priority 1 & 2: Env var or Settings (Centralized in CredentialProvider)
@@ -54,7 +54,7 @@ class ChatGPTWebOAuthMixin:
             # by that machine's CLI (see refresh_policy), and other server-owned logins are
             # the auto-refresher's.
             input_source = getattr(auth_data, "sources", {}).get("access_token", "server")
-            self._current_input_source = input_source
+            self.current_input_source = input_source
             return {
                 "token": token,
                 "account_id": account_id,
@@ -107,7 +107,7 @@ class ChatGPTWebOAuthMixin:
                     )
 
             if session_token:
-                self._current_input_source = input_source
+                self.current_input_source = input_source
                 if client:
                     # Refresh Bearer token using session cookie
                     oai_sc = tokens.get("cookie_oai-sc") if token_metadata else None
@@ -147,7 +147,7 @@ class ChatGPTWebOAuthMixin:
                 oai_sc = tokens.get("cookie_oai-sc")
                 source_meta = metadata.get("source") or "sidecar"
                 input_source = "config" if source_meta in ("config", "manual_config") else "sidecar"
-                self._current_input_source = input_source
+                self.current_input_source = input_source
                 if client:
                     refreshed = await self._refresh_access_token(
                         client, session_token, oai_sc=oai_sc

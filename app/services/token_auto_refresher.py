@@ -5,7 +5,7 @@ Periodically scans the in-memory token cache and proactively calls
 TOKEN_AUTO_REFRESH_THRESHOLD_SECONDS. Independent of collector polls, so the
 Token Health UI never reports "expired" for a token we could have rolled.
 
-Only refreshes tokens for providers in `_REFRESH_ENDPOINTS` whose cache entry
+Only refreshes tokens for providers in `REFRESH_ENDPOINTS` whose cache entry
 carries a `refresh_token`. Opaque tokens (no parseable JWT exp) and
 config-sourced API keys are left untouched.
 """
@@ -20,7 +20,7 @@ from app.services.account_identity import canonical_account_id
 from app.services.credential_tags import archived_account_pairs_from_configs
 from app.services.token_cache import server_may_refresh, token_cache
 from app.services.token_refresher import (
-    _REFRESH_ENDPOINTS,
+    REFRESH_ENDPOINTS,
     refresh_oauth_token,
 )
 
@@ -149,7 +149,7 @@ class TokenAutoRefresher:
             if (provider, canonical_account_id(account_id)) in retired_accounts:
                 logger.debug(f"Not refreshing {provider}/{account_id}: the account is retired")
                 continue
-            if provider not in _REFRESH_ENDPOINTS:
+            if provider not in REFRESH_ENDPOINTS:
                 continue
 
             cached = await token_cache.get_with_metadata(provider, account_id)

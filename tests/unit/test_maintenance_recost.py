@@ -12,8 +12,8 @@ from sqlmodel.pool import StaticPool
 
 from app.models.db import ProviderConfig, ProviderPricing, UsageEvent, UsagePeriodRollup
 from app.services.maintenance import recost
-from app.services.maintenance._retry import LockRetryProfile
 from app.services.maintenance.recost import RecostChange, apply_recost, plan_recost
+from app.services.maintenance.retry import LockRetryProfile
 from tests.unit.lock_contention import lock_batches_after, lock_every_batch
 
 

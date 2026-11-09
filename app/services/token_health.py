@@ -28,21 +28,21 @@ from app.services.token_health_status import (
     FAILING_MAX_AGE_SECS,
     FAILING_MIN_DURATION_SECS,
     SOURCE_STALE_SECS,
-    _apply_invalid,
-    _build_accounts_by_provider,
-    _classify_status,
-    _is_stale_source,
-    _is_synthetic,
-    _redundancy_sibling,
-    _underlying_account,
-    _utc,
     apply_failure,
+    apply_invalid,
     apply_rejection,
+    build_accounts_by_provider,
+    classify_status,
     credential_status,
     is_durably_rejected,
     is_failing,
     is_flagged,
     is_redundancy_sibling,
+    is_stale_source,
+    is_synthetic,
+    redundancy_sibling,
+    underlying_account,
+    utc,
 )
 
 # Public status rules live in ``token_health_status`` and are re-exported here so
@@ -54,16 +54,16 @@ __all__ = [
     "FAILING_MIN_DURATION_SECS",
     "SOURCE_STALE_SECS",
     "TokenHealthService",
-    "_apply_invalid",
-    "_build_accounts_by_provider",
-    "_classify_status",
+    "apply_invalid",
+    "build_accounts_by_provider",
+    "classify_status",
     "_collect_server_credentials",
-    "_is_stale_source",
-    "_is_synthetic",
-    "_redundancy_sibling",
+    "is_stale_source",
+    "is_synthetic",
+    "redundancy_sibling",
     "_scan_server_credentials",
-    "_underlying_account",
-    "_utc",
+    "underlying_account",
+    "utc",
     "apply_failure",
     "apply_rejection",
     "credential_status",
@@ -187,7 +187,7 @@ class TokenHealthService:
         """Return a health record for each known credential."""
         stats = await token_cache.get_all_stats()
         claude_sources = pending_claude_sources(
-            await token_cache._get_source_credentials("anthropic")
+            await token_cache.get_source_credentials("anthropic")
         )
         sidecar_names, durable_sources = _load_sidecar_context()
         # Two readers, one query: the retired accounts (a retired account holds

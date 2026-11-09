@@ -83,7 +83,7 @@ class AnthropicCollector(
             if token:
                 # Store source for card labeling
                 source = metadata.get("source") or "sidecar"
-                self._current_input_source = (
+                self.current_input_source = (
                     "config" if source in ("config", "manual_config") else "sidecar"
                 )
                 return token
@@ -96,7 +96,7 @@ class AnthropicCollector(
         tokens = token_cache.current_source_tokens("anthropic", self.account_id or "default")
         return IdentityExtractor.exp_from_tokens(tokens) if tokens else None
 
-    async def _is_token_expired(self) -> bool:
+    async def is_token_expired(self) -> bool:
         """Check if the pinned source bundle's token is expired.
 
         Only a pinned bundle's expiry is enforced here; an unpinned cached token is

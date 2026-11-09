@@ -35,7 +35,7 @@ _ENABLED = False
 SnapshotCache = dict[str, tuple[str, dict[str, Any]]]
 
 
-def _withdraw(session: Session, device_id: str, source_id: str) -> None:
+def withdraw(session: Session, device_id: str, source_id: str) -> None:
     for row in session.exec(
         select(SidecarSourceContribution).where(
             SidecarSourceContribution.device_id == device_id,
@@ -89,7 +89,7 @@ def apply_report(
     if not report.read:
         row.revoked_through = max(row.revoked_through, report.generation)
         if changed or row.revoked_through != previous_tombstone:
-            _withdraw(session, device_id, report.source_id)
+            withdraw(session, device_id, report.source_id)
     elif changed:
         bump(session)
     session.add(row)
@@ -196,7 +196,7 @@ def save_contribution(
         if (
             isinstance(previous, dict)
             and isinstance(previous.get("tokens"), dict)
-            and TokenCache._is_staler(tokens, previous["tokens"])
+            and TokenCache.is_staler(tokens, previous["tokens"])
         ):
             return row
     row.scraper_id, row.generation, row.account_id = scraper_id, generation, account_id

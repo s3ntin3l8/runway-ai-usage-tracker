@@ -739,7 +739,7 @@ class TestGetXaiApi:
             side_effect=fake_get_token,
         ):
             # ``c.collect`` is the public entry; runs through
-            # ``_resolve_strategies`` -> ``_primary_strategy`` -> ``_get_xai_api``
+            # ``resolve_strategies`` -> ``_primary_strategy`` -> ``_get_xai_api``
             # which short-circuits on the expired JWT, then
             # ``_is_error_result`` -> True -> ``_error_handler``.
             cards = await c.collect(MagicMock())

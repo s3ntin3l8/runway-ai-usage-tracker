@@ -147,7 +147,7 @@ rollups/windows) lives in `app/services/maintenance/`.
 
 The shape is **not** uniform. Most repairs expose a `plan_*`/`apply_*` pair,
 but only **6 of the 18** modules use the shared chunked helpers
-(`_chunked_sql.py`'s id-cursor `chunked_update`/`chunked_delete`), so a large
+(`chunked_sql.py`'s id-cursor `chunked_update`/`chunked_delete`), so a large
 repair does not hold SQLite's writer lock for one giant transaction.
 `account_merge` exposes `plan_merge_gauge_series` but the apply side is
 `merge_gauge_series`, and `event_cost`, `legacy_providers`, `rollups` and

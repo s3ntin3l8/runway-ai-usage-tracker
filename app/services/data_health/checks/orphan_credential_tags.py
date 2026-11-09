@@ -18,7 +18,6 @@ from sqlmodel import Session, col, select
 
 from app.models.db import CredentialTag, ProviderConfig
 from app.services.credential_tags import CredentialTagRepo
-from app.services.data_health._provider_accounts import candidate_targets
 from app.services.data_health.base import (
     AsyncHook,
     Check,
@@ -30,6 +29,7 @@ from app.services.data_health.base import (
     ParamSpec,
     Severity,
 )
+from app.services.data_health.provider_accounts import candidate_targets
 
 
 def _has_default_config(session: Session, provider_id: str) -> bool:

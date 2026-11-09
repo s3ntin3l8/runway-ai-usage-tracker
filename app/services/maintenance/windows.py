@@ -17,7 +17,7 @@ from datetime import datetime
 from sqlmodel import Session, delete, select
 
 from app.models.db import UsageWindow
-from app.services.maintenance._retry import _INITIAL_BACKOFF, _MAX_RETRIES, _retry_on_lock
+from app.services.maintenance.retry import INITIAL_BACKOFF, MAX_RETRIES, retry_on_lock
 from app.services.window_closer import close_window
 
 _WindowKey = tuple[str, str, str, datetime, datetime, str, str]
@@ -49,8 +49,8 @@ def _replay(
     session: Session,
     index: dict[_WindowKey, _WindowMeta],
     *,
-    max_retries: int = _MAX_RETRIES,
-    initial_backoff: float = _INITIAL_BACKOFF,
+    max_retries: int = MAX_RETRIES,
+    initial_backoff: float = INITIAL_BACKOFF,
 ) -> None:
     for (pid, aid, wtype, start, end, series_model_id, series_variant), (lv, pu) in index.items():
 
@@ -71,7 +71,7 @@ def _replay(
             session.commit()
             session.expunge_all()
 
-        _retry_on_lock(
+        retry_on_lock(
             _close_single,
             session=session,
             action_desc=f"rebuild window {pid}/{aid} {wtype} {start}",
@@ -94,8 +94,8 @@ def rebuild_windows_for_providers(
     session: Session,
     providers: list[str] | None,
     *,
-    max_retries: int = _MAX_RETRIES,
-    initial_backoff: float = _INITIAL_BACKOFF,
+    max_retries: int = MAX_RETRIES,
+    initial_backoff: float = INITIAL_BACKOFF,
 ) -> int:
     """Rebuild every closed window for the given providers (`None` = all).
 
@@ -116,7 +116,7 @@ def rebuild_windows_for_providers(
         session.exec(del_stmt)  # type: ignore[call-overload]
         session.commit()
 
-    _retry_on_lock(
+    retry_on_lock(
         _delete,
         session=session,
         action_desc="delete provider windows for rebuild",
@@ -135,8 +135,8 @@ def rebuild_windows_overlapping(
     account_ids: list[str],
     ts_min: datetime,
     ts_max: datetime,
-    max_retries: int = _MAX_RETRIES,
-    initial_backoff: float = _INITIAL_BACKOFF,
+    max_retries: int = MAX_RETRIES,
+    initial_backoff: float = INITIAL_BACKOFF,
 ) -> int:
     """Rebuild only the closed windows overlapping `[ts_min, ts_max]` for one
     provider across the given accounts (e.g. a source and a target account
@@ -160,7 +160,7 @@ def rebuild_windows_overlapping(
         session.exec(del_stmt)  # type: ignore[call-overload]
         session.commit()
 
-    _retry_on_lock(
+    retry_on_lock(
         _delete,
         session=session,
         action_desc="delete overlapping windows for rebuild",

@@ -267,7 +267,7 @@ class GeminiApiMixin:
                         "model_id": model_class,
                         "unit_type": token_type if quota_limit is not None else "percent",
                         "data_source": self.DATA_SOURCE_API,
-                        "input_source": getattr(self, "_current_input_source", "unknown"),
+                        "input_source": getattr(self, "current_input_source", "unknown"),
                         "tier": tier,
                         "usage_url": "https://one.google.com/settings",
                         "updated_at": datetime.now(UTC).isoformat(),

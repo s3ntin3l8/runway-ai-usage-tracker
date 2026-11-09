@@ -4,7 +4,7 @@ When the poller receives a card whose reset_at is strictly later than the
 existing LatestUsage row's reset_at, the previous window should be closed
 by calling close_window() and writing rows to usage_windows.
 
-Tests exercise the helper _maybe_close_previous_window() directly rather than
+Tests exercise the helper maybe_close_previous_window() directly rather than
 driving the full poll_now() async path, which would require mocking collectors.
 """
 
@@ -16,7 +16,7 @@ from sqlmodel.pool import StaticPool
 
 from app.models.db import LatestUsage, UsageEvent, UsageWindow
 from app.services.pricing_seed import seed_pricing_table
-from app.services.window_closer import _maybe_close_previous_window
+from app.services.window_closer import maybe_close_previous_window
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -108,7 +108,7 @@ def test_window_close_triggered_when_reset_at_advances():
     _add_event(s, "e2", mid, tokens_input=50, tokens_output=80, cost_usd=0.005)
 
     # Call the helper with the new reset_at
-    _maybe_close_previous_window(
+    maybe_close_previous_window(
         s,
         existing=existing,
         provider_id="anthropic",
@@ -147,7 +147,7 @@ def test_window_close_not_triggered_when_reset_at_unchanged():
     mid = datetime(2026, 5, 8, 12, 0, 0, tzinfo=UTC)
     _add_event(s, "e1", mid, tokens_input=100, tokens_output=200, cost_usd=0.01)
 
-    _maybe_close_previous_window(
+    maybe_close_previous_window(
         s,
         existing=existing,
         provider_id="anthropic",
@@ -176,7 +176,7 @@ def test_window_close_not_triggered_on_subduration_reset_jitter():
 
     # ~0.7s later — jitter, not a 7-day rollover.
     jittered = _OLD_RESET.replace(microsecond=700_000)
-    _maybe_close_previous_window(
+    maybe_close_previous_window(
         s,
         existing=existing,
         provider_id="anthropic",
@@ -196,7 +196,7 @@ def test_window_close_not_triggered_when_no_existing_row():
     mid = datetime(2026, 5, 8, 12, 0, 0, tzinfo=UTC)
     _add_event(s, "e1", mid, tokens_input=100, tokens_output=200, cost_usd=0.01)
 
-    _maybe_close_previous_window(
+    maybe_close_previous_window(
         s,
         existing=None,
         provider_id="anthropic",
@@ -227,7 +227,7 @@ def test_window_close_not_triggered_for_unknown_window_type():
     mid = datetime(2026, 5, 8, 12, 0, 0, tzinfo=UTC)
     _add_event(s, "e1", mid, tokens_input=100, tokens_output=200, cost_usd=0.01)
 
-    _maybe_close_previous_window(
+    maybe_close_previous_window(
         s,
         existing=existing,
         provider_id="anthropic",
@@ -249,7 +249,7 @@ def test_window_close_idempotent_on_double_trigger():
     mid = datetime(2026, 5, 8, 12, 0, 0, tzinfo=UTC)
     _add_event(s, "e1", mid, tokens_input=100, tokens_output=200, cost_usd=0.01)
 
-    _maybe_close_previous_window(
+    maybe_close_previous_window(
         s,
         existing=existing,
         provider_id="anthropic",
@@ -259,7 +259,7 @@ def test_window_close_idempotent_on_double_trigger():
     )
     first_count = len(s.exec(select(UsageWindow)).all())
 
-    _maybe_close_previous_window(
+    maybe_close_previous_window(
         s,
         existing=existing,
         provider_id="anthropic",
@@ -290,7 +290,7 @@ def test_window_close_not_triggered_when_card_json_has_no_reset_at():
     s.add(row)
     s.commit()
 
-    _maybe_close_previous_window(
+    maybe_close_previous_window(
         s,
         existing=row,
         provider_id="anthropic",
@@ -319,7 +319,7 @@ def test_window_close_handles_invalid_card_json_gracefully():
     s.add(row)
     s.commit()
 
-    result = _maybe_close_previous_window(
+    result = maybe_close_previous_window(
         s,
         existing=row,
         provider_id="anthropic",

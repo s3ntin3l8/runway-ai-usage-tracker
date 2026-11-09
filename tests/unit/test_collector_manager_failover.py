@@ -64,7 +64,7 @@ class TestCollectorManagerInitialization:
         )
         monkeypatch.setattr("app.services.collector_manager.token_cache.using_source", using_source)
         promote = AsyncMock()
-        monkeypatch.setattr(manager, "_promote_source_identity", promote)
+        monkeypatch.setattr(manager, "promote_source_identity", promote)
 
         result = await manager._collect_with_source_failover("chatgpt:default", MagicMock(), {})
 

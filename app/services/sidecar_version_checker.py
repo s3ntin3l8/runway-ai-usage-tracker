@@ -19,7 +19,7 @@ import logging
 
 import httpx
 
-from app.services.release_metadata import _BETA_TAG_RE, latest_beta_release, normalize_version
+from app.services.release_metadata import BETA_TAG_RE, latest_beta_release, normalize_version
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +45,7 @@ def parse_channel(version: str | None) -> tuple[str, str | None]:
     normalized = normalize_version(version)
     if "+edge." in normalized:
         return "edge", normalized.split("+edge.", 1)[1] or None
-    if _BETA_TAG_RE.fullmatch(f"v{normalized}"):
+    if BETA_TAG_RE.fullmatch(f"v{normalized}"):
         return "beta", None
     return "stable", None
 

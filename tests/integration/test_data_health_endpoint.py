@@ -74,7 +74,7 @@ def session(monkeypatch, tmp_path: Path):
         # would otherwise do real work (the singleton's own lock, a real
         # per-provider network path). Same fakes test_maintenance_config_rekey.py
         # uses for the same hook.
-        fake_manager._sync_collectors = AsyncMock()
+        fake_manager.sync_collectors = AsyncMock()
         app.dependency_overrides[get_session] = lambda: s
         yield s
         app.dependency_overrides.pop(get_session, None)

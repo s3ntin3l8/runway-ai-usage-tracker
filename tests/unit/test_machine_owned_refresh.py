@@ -340,8 +340,8 @@ async def test_an_expired_machine_login_is_skipped_without_calling_the_api(manag
     assert health == {}, "no failure recorded: the row keeps its last real outcome"
     # Nothing ran, so the collector's previous state must not be reported as this poll's:
     # "complete" would reconcile the account's last good cards away.
-    smart._set_collection_state.assert_called_once()
-    assert smart._set_collection_state.call_args.args[0] == "skipped"
+    smart.set_collection_state.assert_called_once()
+    assert smart.set_collection_state.call_args.args[0] == "skipped"
     assert not auth_failures.flagged_accounts("anthropic")
 
 

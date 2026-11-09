@@ -69,11 +69,11 @@ async def _world(monkeypatch) -> None:
     await _add_login_source("gemini", DAVE, "d1", -3600)
     monkeypatch.setattr(credential_inventory, "engine", th.engine)
     monkeypatch.setattr(credential_inventory, "token_cache", th.token_cache)
-    monkeypatch.setattr(credential_inventory, "_scan_server_credentials", lambda: ({}, set()))
+    monkeypatch.setattr(credential_inventory, "scan_server_credentials", lambda: ({}, set()))
 
 
 def _account(provider_account: str) -> str:
-    return canonical_account_id(th._underlying_account(provider_account))
+    return canonical_account_id(th.underlying_account(provider_account))
 
 
 async def _banner_sets() -> tuple[set, set]:
@@ -144,7 +144,7 @@ async def test_a_rejected_server_credential_is_invalid_and_flagged_in_both_views
         "rollable": False,
     }
     monkeypatch.setattr(
-        credential_inventory, "_scan_server_credentials", lambda: ({"github": [origin]}, {"github"})
+        credential_inventory, "scan_server_credentials", lambda: ({"github": [origin]}, {"github"})
     )
 
     health, inventory = await _banner_sets()

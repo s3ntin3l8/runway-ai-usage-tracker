@@ -5,7 +5,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Request
 from sqlmodel import Session, select
 
-from app.api.endpoints._shared import _MONTH_KEY_RE, _local_period_anchors, _month_bounds_utc
+from app.api.endpoints.shared import MONTH_KEY_RE, local_period_anchors, month_bounds_utc
 from app.core.date_utils import parse_iso8601_utc
 from app.core.db import get_session
 from app.core.rate_limit import limiter
@@ -46,7 +46,7 @@ async def get_cumulative_usage(  # noqa: PLR0915 — known-debt: default/month-l
     Requesting a specific month (period_type='month', period_key='YYYY-MM')
     takes a tz-correct path: the month bucket is aggregated live from
     usage_events on the user's local-calendar boundaries (see
-    `_month_bounds_utc`), matching the live current-month gauge. The UTC-keyed
+    `month_bounds_utc`), matching the live current-month gauge. The UTC-keyed
     rollup is intentionally bypassed here because its month boundaries can land
     on the wrong calendar month for users far from UTC. `current_month_key`
     points at the requested month so callers read it the same way as the
@@ -103,7 +103,7 @@ def _get_cumulative_usage_sync(  # noqa: PLR0915 — known-debt: default/month-l
         not is_range_live
         and period_type == "month"
         and bool(period_key)
-        and bool(_MONTH_KEY_RE.match(period_key or ""))
+        and bool(MONTH_KEY_RE.match(period_key or ""))
     )
     # period_type=month with no period_key: current local-tz month only, live —
     # the same live aggregation the default call does for its month bucket, but
@@ -140,7 +140,7 @@ def _get_cumulative_usage_sync(  # noqa: PLR0915 — known-debt: default/month-l
     # lifetime + historical drill-downs stay on the UTC rollup.
     month_live: dict[tuple[str, str], dict[str, Any]] = {}
     if is_default:
-        anchors = _local_period_anchors(resolve_user_tz(session))
+        anchors = local_period_anchors(resolve_user_tz(session))
         current_year = anchors["current_year"]
         current_month = anchors["current_month"]
         # provider_id/account_id must be threaded through here too — every
@@ -181,7 +181,7 @@ def _get_cumulative_usage_sync(  # noqa: PLR0915 — known-debt: default/month-l
         live_month = {}
         live_year = {}
     elif is_month_live:
-        since_utc, until_utc = _month_bounds_utc(resolve_user_tz(session), period_key or "")
+        since_utc, until_utc = month_bounds_utc(resolve_user_tz(session), period_key or "")
         month_live = query_cumulative_live(
             session,
             since=since_utc,
@@ -197,7 +197,7 @@ def _get_cumulative_usage_sync(  # noqa: PLR0915 — known-debt: default/month-l
     elif is_current_month_live:
         # Current local-tz month only, live — no `until` (open-ended, matches
         # "now"). Same anchor the default call uses for its month bucket.
-        anchors = _local_period_anchors(resolve_user_tz(session))
+        anchors = local_period_anchors(resolve_user_tz(session))
         month_live = query_cumulative_live(
             session,
             since=anchors["month_start_utc"],

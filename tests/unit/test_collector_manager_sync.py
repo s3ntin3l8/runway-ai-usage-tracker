@@ -87,7 +87,7 @@ class TestCollectorManagerInitialization:
         monkeypatch.setattr("app.services.collector_manager.token_cache.using_source", using_source)
         promote = AsyncMock()
         persist_preview = MagicMock()
-        monkeypatch.setattr(manager, "_promote_source_identity", promote)
+        monkeypatch.setattr(manager, "promote_source_identity", promote)
         monkeypatch.setattr(manager, "_persist_identity_pending_preview", persist_preview)
         health = {}
 
@@ -227,7 +227,7 @@ class TestCollectorManagerInitialization:
         # Clean state
         manager.smart_collectors = {}
 
-        await manager._sync_collectors()
+        await manager.sync_collectors()
 
         # Check that some default collectors are present
         assert "anthropic:default" in manager.smart_collectors
@@ -239,7 +239,7 @@ class TestCollectorManagerInitialization:
         not to whatever identity the collector resolved for its cards."""
         manager.smart_collectors = {}
 
-        await manager._sync_collectors()
+        await manager.sync_collectors()
 
         for key in ("anthropic:default", "gemini:default", "github:default"):
             if key in manager.smart_collectors:
@@ -253,7 +253,7 @@ class TestCollectorManagerInitialization:
             new_callable=AsyncMock,
             return_value=[("anthropic", "alice@example.com", "Alice")],
         ):
-            await manager._sync_collectors(force=True)
+            await manager.sync_collectors(force=True)
 
         assert "anthropic:default" in manager.smart_collectors
         assert "anthropic:alice@example.com" in manager.smart_collectors
@@ -267,7 +267,7 @@ class TestCollectorManagerInitialization:
                     account_id="alice@example.com",
                     credential_account_id="default",
                     account_label=None,
-                    _user_strategies=None,
+                    user_strategies=None,
                     apply_strategy_config=MagicMock(),
                 )
             )
@@ -291,7 +291,7 @@ class TestCollectorManagerInitialization:
             "app.services.collector_manager.token_cache.get_pending_sources",
             side_effect=pending_sources,
         ):
-            await manager._sync_collectors(force=True)
+            await manager.sync_collectors(force=True)
 
         verifier = manager.smart_collectors["antigravity:default:identity-pending"]
         assert verifier.collector.account_id == "default"
@@ -346,7 +346,7 @@ class TestCollectorManagerInitialization:
         )
         monkeypatch.setattr("app.services.collector_manager.token_cache.using_source", using_source)
         promote = AsyncMock()
-        monkeypatch.setattr(manager, "_promote_source_identity", promote)
+        monkeypatch.setattr(manager, "promote_source_identity", promote)
 
         result = await manager._collect_with_source_failover(
             "antigravity:default:identity-pending", MagicMock(), {}
@@ -382,7 +382,7 @@ class TestCollectorManagerInitialization:
             inner.exec.return_value.first.return_value = None
             session_cls.return_value.__enter__.return_value = inner
 
-            await manager._sync_collectors(force=True)
+            await manager.sync_collectors(force=True)
 
         xai_default = manager.smart_collectors["xai:default"].collector
         assert not xai_default.account_id
@@ -419,7 +419,7 @@ class TestCollectorManagerInitialization:
             inner.exec.return_value.first.return_value = None
             session_cls.return_value.__enter__.return_value = inner
 
-            await manager._sync_collectors(force=True)
+            await manager.sync_collectors(force=True)
 
         default_collector = manager.smart_collectors["kimi_coding:default"].collector
         assert not default_collector.account_id
@@ -442,8 +442,8 @@ class TestCollectorManagerInitialization:
             mock_accounts.return_value = []  # No dynamic accounts
 
             # Reset sync time to bypass throttle
-            manager._last_sync_time = 0
-            await manager._sync_collectors()
+            manager.last_sync_time = 0
+            await manager.sync_collectors()
 
             assert "anthropic:stale-account" not in manager.smart_collectors
             # Defaults should remain
@@ -453,12 +453,12 @@ class TestCollectorManagerInitialization:
     async def test_sync_collectors_force_bypasses_throttle(self, manager):
         """Config mutations pass force=True and must not wait out the 60s throttle."""
         manager.smart_collectors = {}
-        manager._last_sync_time = time.time()  # just synced — throttle would skip
+        manager.last_sync_time = time.time()  # just synced — throttle would skip
 
-        await manager._sync_collectors()  # non-forced → skipped by throttle
+        await manager.sync_collectors()  # non-forced → skipped by throttle
         assert manager.smart_collectors == {}
 
-        await manager._sync_collectors(force=True)
+        await manager.sync_collectors(force=True)
         assert "anthropic:default" in manager.smart_collectors
 
     @pytest.mark.asyncio
@@ -488,7 +488,7 @@ class TestCollectorManagerInitialization:
         ):
             mock_accounts.return_value = []
             inner = MagicMock()
-            # Order inside _sync_collectors: ProviderConfig.all(),
+            # Order inside sync_collectors: ProviderConfig.all(),
             # SystemConfig.first(), LatestUsage.all().
             inner.exec.return_value.all.side_effect = [
                 [_Cfg()],  # ProviderConfig rows
@@ -497,8 +497,8 @@ class TestCollectorManagerInitialization:
             inner.exec.return_value.first.return_value = None  # SystemConfig
             mock_session_cls.return_value.__enter__.return_value = inner
 
-            manager._last_sync_time = 0
-            await manager._sync_collectors(force=True)
+            manager.last_sync_time = 0
+            await manager.sync_collectors(force=True)
 
         assert "anthropic:default" not in manager.smart_collectors
         # Other providers (no config rows) still get their defaults.
@@ -546,8 +546,8 @@ class TestCollectorManagerInitialization:
             inner.exec.return_value.first.return_value = None
             mock_session_cls.return_value.__enter__.return_value = inner
 
-            manager._last_sync_time = 0
-            await manager._sync_collectors(force=True)
+            manager.last_sync_time = 0
+            await manager.sync_collectors(force=True)
 
         bob = manager.smart_collectors["github:bob"]
         carol = manager.smart_collectors["github:carol"]
@@ -588,8 +588,8 @@ class TestCollectorManagerInitialization:
             inner.exec.return_value.first.return_value = None
             mock_session_cls.return_value.__enter__.return_value = inner
 
-            manager._last_sync_time = 0
-            await manager._sync_collectors(force=True)
+            manager.last_sync_time = 0
+            await manager.sync_collectors(force=True)
 
         assert "anthropic:alice@example.com" not in manager.smart_collectors
         assert "anthropic:default" not in manager.smart_collectors
@@ -647,7 +647,7 @@ class TestCollectorManagerInitialization:
             session_cls.return_value.__enter__.return_value = inner
             manager.reconcile_token_cache_from_durable_tags = AsyncMock()
 
-            await manager._sync_collectors(force=True)
+            await manager.sync_collectors(force=True)
 
         assert not any(key.startswith("gemini:") for key in manager.smart_collectors)
 
@@ -663,7 +663,7 @@ class TestCollectorManagerInitialization:
         async def fail(_key, _client):
             raise RuntimeError("upstream unavailable")
 
-        manager._sync_collectors = sync
+        manager.sync_collectors = sync
         manager._get_client = AsyncMock(return_value=MagicMock())
         manager._collect_with_semaphore = fail
 
@@ -685,7 +685,7 @@ class TestCollectorManagerInitialization:
         async def done(_key, _client):
             return []
 
-        manager._sync_collectors = sync
+        manager.sync_collectors = sync
         manager._get_client = AsyncMock(return_value=MagicMock())
         manager._collect_with_semaphore = done
 
@@ -733,8 +733,8 @@ class TestCollectorManagerInitialization:
             inner.exec.return_value.first.return_value = None
             mock_session_cls.return_value.__enter__.return_value = inner
 
-            manager._last_sync_time = 0
-            await manager._sync_collectors(force=True)
+            manager.last_sync_time = 0
+            await manager.sync_collectors(force=True)
 
         assert "anthropic:default" not in manager.smart_collectors
         assert "anthropic:alice@example.com" not in manager.smart_collectors
@@ -834,12 +834,12 @@ async def test_non_claude_promotion_failure_keeps_legacy_collected_cards(
     )
     if promotion_failure == "operator_other":
         assert result == []
-        smart._set_collection_state.assert_called_once_with(
+        smart.set_collection_state.assert_called_once_with(
             "skipped", "credential source assigned to another account"
         )
     else:
         assert result == [{"service_name": "Antigravity", "remaining": 7}]
-        smart._set_collection_state.assert_not_called()
+        smart.set_collection_state.assert_not_called()
     if promotion_failure != "missing_row":
         with Session(engine) as session:
             assert CredentialTagRepo.get(

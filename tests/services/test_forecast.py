@@ -9,9 +9,9 @@ from app.models.db import QuotaSnapshot
 from app.models.schemas import LimitCard
 from app.services.forecast import (
     SnapshotCache,
-    _is_coarse_quantized,
     compute_all_forecasts,
     compute_forecast,
+    is_coarse_quantized,
 )
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -601,12 +601,12 @@ def test_boundary_bucket_parity_between_paths(db_session):
 
 def test_is_coarse_quantized_detects_20pct_steps():
     """Antigravity-style 20% step reporting trips the coarse detector."""
-    assert _is_coarse_quantized([0.0, 0.0, 0.0, 20.0, 20.0, 40.0, 40.0, 60.0]) is True
+    assert is_coarse_quantized([0.0, 0.0, 0.0, 20.0, 20.0, 40.0, 40.0, 60.0]) is True
 
 
 def test_is_coarse_quantized_rejects_smooth_data():
     """A continuously-varying series has more than MAX_UNIQUE_VALS distinct values."""
-    assert _is_coarse_quantized([10.0, 12.0, 15.0, 18.0, 22.0, 28.0, 33.0]) is False
+    assert is_coarse_quantized([10.0, 12.0, 15.0, 18.0, 22.0, 28.0, 33.0]) is False
 
 
 def test_is_coarse_quantized_rejects_steep_monotonic_growth():
@@ -615,22 +615,22 @@ def test_is_coarse_quantized_rejects_steep_monotonic_growth():
     Without the plateau check this series — landing on 20/40/60/80 — would look
     indistinguishable from Antigravity's quantized output.
     """
-    assert _is_coarse_quantized([20.0, 40.0, 60.0, 80.0]) is False
+    assert is_coarse_quantized([20.0, 40.0, 60.0, 80.0]) is False
 
 
 def test_is_coarse_quantized_rejects_too_few_samples():
     """Below MIN_BUCKETS_FOR_TREND, return False — let insufficient_data path take over."""
-    assert _is_coarse_quantized([0.0, 20.0, 40.0]) is False
+    assert is_coarse_quantized([0.0, 20.0, 40.0]) is False
 
 
 def test_is_coarse_quantized_rejects_fine_step_data():
     """Step size below threshold should not trigger (e.g. 1% increments)."""
-    assert _is_coarse_quantized([10.0, 11.0, 12.0, 13.0, 14.0, 15.0]) is False
+    assert is_coarse_quantized([10.0, 11.0, 12.0, 13.0, 14.0, 15.0]) is False
 
 
 def test_is_coarse_quantized_handles_all_zeros():
     """A flat-zero series has only one distinct value, no non-zero gap — return False."""
-    assert _is_coarse_quantized([0.0, 0.0, 0.0, 0.0, 0.0]) is False
+    assert is_coarse_quantized([0.0, 0.0, 0.0, 0.0, 0.0]) is False
 
 
 def test_forecast_marks_coarse_step_data_low_resolution(db_session):
@@ -725,7 +725,7 @@ def test_high_usage_spike_then_plateau_is_near_limit_not_low_resolution(db_sessi
         reset_at=reset_at_dt.isoformat(),
     )
     # Sanity: this shape is exactly what the coarse detector targets.
-    assert _is_coarse_quantized(pct_values) is True
+    assert is_coarse_quantized(pct_values) is True
     result = compute_forecast(card, db_session, now=now)
 
     assert result is not None

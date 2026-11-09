@@ -92,7 +92,7 @@ target-version = "py312"
 
 [tool.ruff.lint]
 # Enable Pyflakes (`F`) and a subset of the pycodestyle (`E`) codes by default.
-select = ["E4", "E7", "E9", "F", "I", "UP", "N", "S", "B", "A", "C4", "DTZ", "SIM", "RET", "ARG", "ERA", "PL"]
+select = ["E4", "E7", "E9", "F", "I", "UP", "N", "S", "B", "A", "C4", "DTZ", "SIM", "RET", "ARG", "ERA", "PL", "TID252"]
 ignore = [
     # PLR0913 (too many arguments) and PLR0915 (too many statements) are now
     # enabled per audit R12 — they reliably catch kitchen-sink functions.

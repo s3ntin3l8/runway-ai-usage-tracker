@@ -977,7 +977,7 @@ async def test_the_oauth_strategy_names_the_organization_not_its_contact():
     from app.services.collectors.anthropic import AnthropicCollector
 
     collector = AnthropicCollector(account_id="default")
-    result = collector._parse_oauth_response(
+    result = collector.parse_oauth_response(
         {"five_hour": {"utilization": 10}},
         name_map={},
         api_account_info={"organization": "Acme", "email": "contact@acme.com"},

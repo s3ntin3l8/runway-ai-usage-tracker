@@ -17,7 +17,7 @@ from app.services.model_normalization import is_free_tier_model_id
 logger = logging.getLogger(__name__)
 
 # Trailing "-<major>(.<minor>...)" version suffix, e.g. "opus-4.8" -> "opus".
-_VERSION_SUFFIX = re.compile(r"-\d+(?:\.\d+)*$")
+VERSION_SUFFIX = re.compile(r"-\d+(?:\.\d+)*$")
 
 # (provider, model) pairs already warned about for the version-suffix fallback,
 # so a busy ingest or a re-cost over thousands of events logs each model once.
@@ -253,7 +253,7 @@ def resolve_price_row(
         # the version suffix and bill at the family rate ("opus"). Providers
         # that price per version (Gemini "pro-2.5", ChatGPT "gpt-5.4-mini")
         # match exactly above and never reach this fallback.
-        family = _VERSION_SUFFIX.sub("", model_id)
+        family = VERSION_SUFFIX.sub("", model_id)
         if family != model_id:
             row = exact_lookup(family)
             if (
@@ -277,7 +277,7 @@ def resolve_price_row(
                 )
     if row is None and not free_tier:
         # Codenamed/unseeded variants ("gpt-5.7-nova") don't end in a bare
-        # digit, so _VERSION_SUFFIX above never fires. Progressively
+        # digit, so VERSION_SUFFIX above never fires. Progressively
         # right-trim "-"-separated segments and retry each ("gpt-5.7-nova" ->
         # "gpt-5.7"; note this cannot cross the dot to reach "gpt-5" — "." is
         # not a segment separator, so a dotted minor version stays intact),

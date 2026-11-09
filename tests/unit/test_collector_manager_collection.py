@@ -36,7 +36,7 @@ class TestCollectorManagerCollection:
             await asyncio.Event().wait()
 
         with (
-            patch.object(manager, "_sync_collectors", new_callable=AsyncMock),
+            patch.object(manager, "sync_collectors", new_callable=AsyncMock),
             patch.object(manager, "_get_client", new_callable=AsyncMock),
             patch.object(manager, "_collect_with_semaphore", side_effect=wait_forever),
             patch(
@@ -70,7 +70,7 @@ class TestCollectorManagerCollection:
         manager.smart_collectors = {"c1:default": mock_sc1, "c2:default": mock_sc2}
 
         # Mock dependencies
-        with patch.object(manager, "_sync_collectors", new_callable=AsyncMock):
+        with patch.object(manager, "sync_collectors", new_callable=AsyncMock):
             # Run collection (external_metric_service removed; all data comes from collectors)
             results = await manager.collect_all()
 
@@ -147,7 +147,7 @@ class TestOutcomeReasons:
             return []
 
         with (
-            patch.object(manager, "_sync_collectors", new_callable=AsyncMock),
+            patch.object(manager, "sync_collectors", new_callable=AsyncMock),
             patch.object(manager, "_get_client", new_callable=AsyncMock),
             patch.object(manager, "_collect_with_semaphore", side_effect=collect),
         ):

@@ -149,7 +149,7 @@ class TestAnthropicCollector:
             # Call the OAuth strategy directly to verify 429 handling
             result = await collector._get_claude_oauth(mock_http_client, "test_token")
             assert result[0].get("error_type") == "rate_limited"
-            assert collector._last_retry_after == 300.0
+            assert collector.last_retry_after == 300.0
 
             # Second direct call - still returns 429 (no proactive backoff)
             result2 = await collector._get_claude_oauth(mock_http_client, "test_token")
@@ -278,7 +278,7 @@ class TestAnthropicCollector:
                     mock_settings.CLAUDE_FREE_LIMIT = 500000
 
                     # Return False for expiration check so we hit the reactive path (401 response)
-                    with patch.object(collector, "_is_token_expired", return_value=False):
+                    with patch.object(collector, "is_token_expired", return_value=False):
                         # Mock refresh token availability (from the token cache)
                         with patch(
                             "app.services.collectors.anthropic_oauth.token_cache.get_token",
@@ -803,13 +803,13 @@ class TestAnthropicCollector:
 
         # 0% used (100% remaining)
         data_zero = {"five_hour": {"utilization": 0.0, "resets_at": "2025-04-07T12:00:00Z"}}
-        result = collector._parse_oauth_response(data_zero, {"five_hour": "Session Window"})
+        result = collector.parse_oauth_response(data_zero, {"five_hour": "Session Window"})
         assert result[0]["remaining"] == "100.0%"
         assert result[0]["health"] == "good"
 
         # 100% used (0% remaining)
         data_full = {"five_hour": {"utilization": 100.0, "resets_at": "2025-04-07T12:00:00Z"}}
-        result = collector._parse_oauth_response(data_full, {"five_hour": "Session Window"})
+        result = collector.parse_oauth_response(data_full, {"five_hour": "Session Window"})
         assert result[0]["remaining"] == "0.0%"
         assert result[0]["health"] == "critical"
 
@@ -818,7 +818,7 @@ class TestAnthropicCollector:
         collector = AnthropicCollector()
 
         data = {"five_hour": {"utilization": 25.0, "resets_at": "invalid-timestamp"}}
-        result = collector._parse_oauth_response(data, {"five_hour": "Session Window"})
+        result = collector.parse_oauth_response(data, {"five_hour": "Session Window"})
 
         # Should not crash, should return card with reset as "—"
         # Returns 2 items: both core keys (Session, Weekly) get default cards when null
@@ -831,12 +831,12 @@ class TestAnthropicCollector:
         collector = AnthropicCollector()
 
         # Empty data - should default to 100% remaining for guaranteed windows
-        result = collector._parse_oauth_response({}, {"five_hour": "Session Window"})
+        result = collector.parse_oauth_response({}, {"five_hour": "Session Window"})
         assert result[0]["remaining"] == "100.0%"
 
         # Data without utilization field - should default to 100% remaining for guaranteed windows
         data_no_util = {"five_hour": {"resets_at": "2025-04-07T12:00:00Z"}}
-        result = collector._parse_oauth_response(data_no_util, {"five_hour": "Session Window"})
+        result = collector.parse_oauth_response(data_no_util, {"five_hour": "Session Window"})
         assert result[0]["remaining"] == "100.0%"
 
     def test_parse_oauth_response_limits_array(self):
@@ -853,7 +853,7 @@ class TestAnthropicCollector:
         collector = AnthropicCollector()
         name_map = {"five_hour": "Session", "seven_day": "Weekly"}
 
-        result = collector._parse_oauth_response(ANTHROPIC_OAUTH_LIMITS_RESPONSE, name_map)
+        result = collector.parse_oauth_response(ANTHROPIC_OAUTH_LIMITS_RESPONSE, name_map)
 
         assert len(result) == 3, (
             f"Expected exactly 3 cards, got {[c['window_type'] for c in result]}"
@@ -929,7 +929,7 @@ class TestAnthropicCollector:
             "limits": [],
         }
 
-        result = collector._parse_oauth_response(data, name_map)
+        result = collector.parse_oauth_response(data, name_map)
 
         assert len(result) == 2
         session_card = next(c for c in result if c["window_type"] == "session")
@@ -978,15 +978,15 @@ class TestAnthropicCollector:
         name_map = {"five_hour": "Session Window"}
         data = {"five_hour": {"utilization": 10.0}}
 
-        result = collector._parse_oauth_response(data, name_map, {"tier": "Max"})
+        result = collector.parse_oauth_response(data, name_map, {"tier": "Max"})
         assert result[0]["tier"] == "Max"
 
         data_with_plan = {"account": {"plan": "plus"}, "five_hour": {"utilization": 10.0}}
-        result = collector._parse_oauth_response(data_with_plan, name_map, None)
+        result = collector.parse_oauth_response(data_with_plan, name_map, None)
         assert result[0]["tier"] == "Plus"
 
         # The org info outranks the usage response.
-        result = collector._parse_oauth_response(data_with_plan, name_map, {"tier": "Team"})
+        result = collector.parse_oauth_response(data_with_plan, name_map, {"tier": "Team"})
         assert result[0]["tier"] == "Team"
 
     @pytest.mark.asyncio

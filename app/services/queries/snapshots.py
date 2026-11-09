@@ -12,8 +12,8 @@ from sqlalchemy import bindparam, text
 from sqlmodel import Session, select
 
 from app.core.date_utils import parse_iso8601_utc
-from app.models._datetime import iso_utc
 from app.models.db import UsageEvent, UsagePeriodRollup, UsageWindow
+from app.models.utc_datetime import iso_utc
 from app.services.queries.windows import query_window_aggregation
 from app.services.window_closer import WINDOW_DURATION
 
@@ -32,7 +32,7 @@ _BUCKET_TIERS: list[tuple[float, int]] = [
 ]
 
 
-def _bucket_seconds_for(days: float) -> int:
+def bucket_seconds_for(days: float) -> int:
     for threshold, secs in _BUCKET_TIERS:
         if days <= threshold:
             return secs
@@ -61,7 +61,7 @@ class _ParsedRow:
     delta: float | None
 
 
-def _parse_sqlite_dt(value: object) -> datetime | None:
+def parse_sqlite_dt(value: object) -> datetime | None:
     """Coerce a value returned from a raw `text()` query into an aware UTC
     datetime. SQLAlchemy auto-decodes datetimes for ORM-mapped columns, but
     raw text queries return SQLite's storage format (TEXT with either 'T' or
@@ -385,7 +385,7 @@ def _build_window_stats_for_rows(
                 UsageWindow.sidecar_id == "",
             )
         ).all():
-            window_end = _parse_sqlite_dt(w.window_end)
+            window_end = parse_sqlite_dt(w.window_end)
             if window_end is None:
                 continue
             tokens = (
@@ -455,7 +455,7 @@ def _build_window_stats_for_rows(
             )
         ).all()
         for ev in events:
-            event_ts = _parse_sqlite_dt(ev.ts)
+            event_ts = parse_sqlite_dt(ev.ts)
             if event_ts is None:
                 continue
             for key, window_start, mid in series_by_account.get(
@@ -597,7 +597,7 @@ def query_snapshots(
     # an aware value on a datetime column.
     since = (datetime.now(UTC) - timedelta(days=days)).replace(tzinfo=None)
     now = datetime.now(UTC)
-    bucket_seconds = _bucket_seconds_for(days)
+    bucket_seconds = bucket_seconds_for(days)
     wt_param = window_type if window_type and window_type != "all" else None
     # Expanding bindparam doesn't accept empty lists. When no filter is active
     # we bind a dummy value and short-circuit via has_provider_filter=0.
@@ -630,8 +630,8 @@ def query_snapshots(
                 account_id=r.account_id,
                 window_type=r.window_type,
                 model_id=r.model_id,
-                ts=_parse_sqlite_dt(r.ts),
-                reset_at=_parse_sqlite_dt(r.reset_at),
+                ts=parse_sqlite_dt(r.ts),
+                reset_at=parse_sqlite_dt(r.reset_at),
                 pct_used=r.pct_used,
                 delta=r.delta,
             )

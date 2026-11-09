@@ -20,7 +20,7 @@ from sqlmodel import Session, col, select, text
 
 from app.models.db import LatestUsage, LatestUsageContribution, QuotaSnapshot
 from app.services.accumulator import merge_card_json
-from app.services.maintenance._chunked_sql import chunked_delete
+from app.services.maintenance.chunked_sql import chunked_delete
 
 # Identity fields carried inside card_json that must NOT leak from the
 # source card into the target card during a quota merge.
@@ -283,7 +283,7 @@ def delete_gauge_series(session: Session, *, provider_id: str, account_id: str) 
     """Drop every latest_usage/quota_snapshots/latest_usage_contributions row for
     (provider_id, account_id) outright — the Data Health `orphan_gauge_series` and
     `misidentified_gauge_series` fixer's "delete" action, for a series with no
-    plausible merge target. Chunked (`_chunked_sql`) — a stray account's
+    plausible merge target. Chunked (`chunked_sql`) — a stray account's
     quota_snapshots history can run into the tens of thousands of rows.
     """
     latest_deleted = chunked_delete(

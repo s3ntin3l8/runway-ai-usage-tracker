@@ -10,9 +10,9 @@ from sqlalchemy import text
 from sqlmodel import Session, select
 
 from app.core.date_utils import parse_iso8601_utc
-from app.models._datetime import iso_utc
 from app.models.db import UsagePeriodRollup
-from app.services.queries._shared import _parse_period_key
+from app.models.utc_datetime import iso_utc
+from app.services.queries.shared import parse_period_key
 
 
 def _card_metadata_lookup(
@@ -234,7 +234,7 @@ def _history_raw_from_rollup(
         used_value = _compute_used_value(meta, token_total, r.cost_usd, unit_type)
 
         # Parse period_key to timestamp
-        ts = _parse_period_key(r.period_key, period_type)
+        ts = parse_period_key(r.period_key, period_type)
         if ts is None:
             continue
 

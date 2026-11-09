@@ -22,7 +22,7 @@ from app.core.date_utils import parse_iso8601_utc
 from app.core.db import configure_sqlite_engine
 from app.models.db import LatestUsage, UsageEvent, UsageWindow
 from app.services.pricing_seed import seed_pricing_table
-from app.services.window_closer import _maybe_close_previous_window, close_window
+from app.services.window_closer import close_window, maybe_close_previous_window
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -523,7 +523,7 @@ def test_maybe_close_ignores_subduration_reset_jitter():
     # ~0.7s later — pure jitter, nowhere near a 7-day rollover.
     jittered = _WINDOW_END.replace(microsecond=700_000)
 
-    inserted = _maybe_close_previous_window(
+    inserted = maybe_close_previous_window(
         s,
         existing=existing,
         provider_id="anthropic",
@@ -544,7 +544,7 @@ def test_maybe_close_archives_on_full_duration_advance():
     # 7 days later — a genuine weekly rollover.
     rolled_over = _WINDOW_END + (datetime(2026, 5, 19, 18, tzinfo=UTC) - _WINDOW_END)
 
-    inserted = _maybe_close_previous_window(
+    inserted = maybe_close_previous_window(
         s,
         existing=existing,
         provider_id="anthropic",
@@ -651,7 +651,7 @@ def test_maybe_close_handles_naive_new_reset_at():
     rolled_over = parse_iso8601_utc(rolled_over_naive)
     assert rolled_over.tzinfo is UTC
 
-    inserted = _maybe_close_previous_window(
+    inserted = maybe_close_previous_window(
         s,
         existing=existing,
         provider_id="anthropic",

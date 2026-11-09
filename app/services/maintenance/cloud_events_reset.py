@@ -28,7 +28,7 @@ from sqlmodel import Session, col, select
 
 from app.models.db import ClaudeCloudSessionCheckpoint, UsageEvent, UsageWindow
 from app.services import claude_cloud_collector
-from app.services.maintenance._chunked_sql import chunked_delete
+from app.services.maintenance.chunked_sql import chunked_delete
 from app.services.maintenance.cloud_coarse_events import (
     PROVIDER_ID,
     derived_pairs,

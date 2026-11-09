@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, field_validator
 from sqlmodel import Session, col, select
 
-from app.api.endpoints.fleet_shared import _account_tag_hints_for_providers
+from app.api.endpoints.fleet_shared import account_tag_hints_for_providers
 from app.core.db import get_session
 from app.core.login_dirs import LOGIN_DIR_KEYS, stored_login_dirs, validate_directories
 from app.core.rate_limit import limiter
@@ -153,7 +153,7 @@ def adopt_legacy_sidecar(
     # collected for one more cycle.
     from app.services.collector_manager import manager
 
-    manager._last_sync_time = 0.0
+    manager.last_sync_time = 0.0
     audit_log.record(
         session,
         request,
@@ -580,7 +580,7 @@ async def get_fleet_config(
     # when local credential discovery doesn't surface an account_id; the
     # hint maps the credential's `origin_descriptor` to a known
     # provider_configs.account_id. Scoped to ?sidecar_id= when given (#319).
-    account_tag_hints = _account_tag_hints_for_providers(
+    account_tag_hints = account_tag_hints_for_providers(
         session,
         list(config["providers"].keys()),
         sidecar_id=sidecar_id,

@@ -91,7 +91,7 @@ async def test_identity_pending_anthropic_source_uses_stable_source_id(cache):
         source_metadata={"identity_pending": True, "sidecar_id": "host-a"},
     )
 
-    rows = await cache._get_source_credentials("anthropic")
+    rows = await cache.get_source_credentials("anthropic")
     assert len(rows) == 1
     assert rows[0]["account_id"] == "sidecar:stable-origin"
 

@@ -11,7 +11,7 @@ from app.core.db import get_session
 from app.core.rate_limit import limiter
 from app.core.security import require_admin_key
 from app.core.utils import scrub_log
-from app.models._datetime import iso_utc
+from app.models.utc_datetime import iso_utc
 from app.services import audit_log, pairing
 from app.services.account_identity import normalize_sidecar_id
 

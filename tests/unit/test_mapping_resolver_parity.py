@@ -24,8 +24,8 @@ RESOLVERS = {
 #: between them means the two sides disagree about whether a credential is
 #: alive — the server would collect with a token the sidecar calls dead.
 EXPIRY_RESOLVERS = {
-    "sidecar": sidecar._expiry_seconds,
-    "server": credential_provider._expiry_seconds,
+    "sidecar": sidecar.expiry_seconds,
+    "server": credential_provider.expiry_seconds,
 }
 
 APPS = {
@@ -250,4 +250,4 @@ def test_expiry_units(name, case_id, raw, expected):
 )
 def test_sidecar_and_server_agree_on_expiry_units(case_id, raw, _expected):
     """The two copies must not drift: they decide the same thing about a credential."""
-    assert sidecar._expiry_seconds(raw) == (credential_provider._expiry_seconds(raw))
+    assert sidecar.expiry_seconds(raw) == (credential_provider.expiry_seconds(raw))

@@ -610,7 +610,7 @@ async def test_overlapping_polls_do_not_double_fire(engine):
     same event loop. Without `_fire_lock`, both cycles can read
     `last_fired_at` as None before either writes it, and both deliver the
     webhook. Two independent Sessions on a shared engine + `asyncio.gather`
-    reproduces the real interleaving; mocking `_post_payload` to actually
+    reproduces the real interleaving; mocking `post_payload` to actually
     `await asyncio.sleep(0)` opens the same race window a real HTTP POST
     would.
     """
@@ -626,7 +626,7 @@ async def test_overlapping_polls_do_not_double_fire(engine):
 
         post_mock = AsyncMock(side_effect=_slow_post)
 
-        with patch("app.services.webhooks._post_payload", new=post_mock):
+        with patch("app.services.webhooks.post_payload", new=post_mock):
             await asyncio.gather(
                 check_and_fire(cards, session_a),
                 check_and_fire(cards, session_b),
@@ -646,21 +646,21 @@ async def test_overlapping_polls_do_not_double_fire(engine):
         assert len(fired_from_b) == 1
 
 
-# --- _scope_matches (shared by check_and_fire and credential_alerts) --------
+# --- scope_matches (shared by check_and_fire and credential_alerts) --------
 
 
 def test_scope_matches_wildcard_matches_any_provider():
-    from app.services.webhooks import _scope_matches
+    from app.services.webhooks import scope_matches
 
     global_cfg = WebhookConfig(
         provider_id="*", account_id=None, threshold_pct=90.0, url="u", channel="discord"
     )
-    assert _scope_matches(global_cfg, "anthropic", "alice@example.com", None)
-    assert _scope_matches(global_cfg, "openai", "bob@example.com", None)
+    assert scope_matches(global_cfg, "anthropic", "alice@example.com", None)
+    assert scope_matches(global_cfg, "openai", "bob@example.com", None)
 
 
 def test_scope_matches_account_scoped_config():
-    from app.services.webhooks import _scope_matches
+    from app.services.webhooks import scope_matches
 
     scoped_cfg = WebhookConfig(
         provider_id="anthropic",
@@ -669,6 +669,6 @@ def test_scope_matches_account_scoped_config():
         url="u",
         channel="discord",
     )
-    assert _scope_matches(scoped_cfg, "anthropic", "alice@example.com", None)
-    assert not _scope_matches(scoped_cfg, "anthropic", "bob@example.com", None)
-    assert not _scope_matches(scoped_cfg, "openai", "alice@example.com", None)
+    assert scope_matches(scoped_cfg, "anthropic", "alice@example.com", None)
+    assert not scope_matches(scoped_cfg, "anthropic", "bob@example.com", None)
+    assert not scope_matches(scoped_cfg, "openai", "alice@example.com", None)

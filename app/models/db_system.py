@@ -3,7 +3,7 @@ from datetime import UTC, date, datetime
 from sqlalchemy import Index, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
-from app.models._datetime import UTCDateTime
+from app.models.utc_datetime import UTCDateTime
 
 
 class WebhookConfig(SQLModel, table=True):  # type: ignore[call-arg]

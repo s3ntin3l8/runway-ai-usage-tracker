@@ -17,7 +17,7 @@ from app.services.claude_oauth_usage import (
     oauth_organization_name,
     oauth_usage_cards,
 )
-from app.services.collectors._anthropic_common import (
+from app.services.collectors.anthropic_common import (
     ANTHROPIC_WINDOW_NAME_MAP,
 )
 from app.services.collectors.oauth_base import OAuthBaseCollector
@@ -73,11 +73,11 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
             logger.info("Not refreshing a Claude login that a machine's CLI owns")
             return None
 
-        from app.services.token_refresher import _anthropic_refresh_request
+        from app.services.token_refresher import anthropic_refresh_request
 
         # Same shape as Claude Code's own request (and as ``refresh_oauth_token``): anything else
         # is throttled with a 429. Refresh tokens are single-use, so never retry blindly.
-        body, headers = _anthropic_refresh_request(refresh_token, {})
+        body, headers = anthropic_refresh_request(refresh_token, {})
 
         try:
             resp = await http_request_with_retry(
@@ -166,9 +166,9 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
             if exc.error_type == "rate_limited":
                 # The strategy backs off through SmartCollector; the token
                 # refreshes near its expiry instead.
-                self._last_retry_after = exc.retry_after or 300
+                self.last_retry_after = exc.retry_after or 300
                 logger.warning(
-                    f"Anthropic API still rate limited. Retry-After: {self._last_retry_after}s"
+                    f"Anthropic API still rate limited. Retry-After: {self.last_retry_after}s"
                 )
                 return [error_card("Claude Pro", "🟠", exc.message, error_type="rate_limited")]
             if exc.error_type == "unsupported_credential":
@@ -212,7 +212,7 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
                 logger.debug(f"Failed to fetch Anthropic organization info: {e}")
 
         try:
-            cards = self._parse_oauth_response(data, name_map, api_account_info)
+            cards = self.parse_oauth_response(data, name_map, api_account_info)
         except (ValueError, TypeError, AttributeError, KeyError):
             # A corrupt quota is an error, not a missing one. The account
             # published something the collector cannot read, so the card says
@@ -271,7 +271,7 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
         """Extract account identity string from the organization info or OAuth API response."""
         return oauth_identity_string(data)
 
-    def _parse_oauth_response(
+    def parse_oauth_response(
         self,
         data: dict[str, Any],
         name_map: dict[str, str],
@@ -287,7 +287,7 @@ class AnthropicOAuthMixin(OAuthBaseCollector):
             name_map,
             api_account_info,
             data_source=self.DATA_SOURCE_API,
-            input_source=getattr(self, "_current_input_source", "unknown"),
+            input_source=getattr(self, "current_input_source", "unknown"),
         )
         name_str = oauth_organization_name(data, api_account_info)
         if name_str and is_placeholder_label(self.account_label):

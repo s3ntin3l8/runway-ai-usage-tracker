@@ -4,12 +4,12 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from app.api.endpoints._shared import (
-    _FLEET_CACHE_KEY,
-    _FLEET_CACHE_TTL,
-    _USAGE_SOURCES_CACHE_KEY,
-    _USAGE_SOURCES_CACHE_TTL,
-    _local_period_anchors,
+from app.api.endpoints.shared import (
+    FLEET_CACHE_KEY,
+    FLEET_CACHE_TTL,
+    USAGE_SOURCES_CACHE_KEY,
+    USAGE_SOURCES_CACHE_TTL,
+    local_period_anchors,
 )
 
 if TYPE_CHECKING:
@@ -57,7 +57,7 @@ async def get_usage_sources(
     ``source_apps`` — several apps share one provider, so the provider id
     alone can't say which app spent the quota.
     """
-    cached = cache_get(_USAGE_SOURCES_CACHE_KEY)
+    cached = cache_get(USAGE_SOURCES_CACHE_KEY)
     if cached is not None:
         return cached
     from app.models.db import UsageEvent
@@ -78,7 +78,7 @@ async def get_usage_sources(
         "sidecar_ids": [str(sidecar_id) for sidecar_id in ids if sidecar_id],
         "source_apps": [str(app) for app in apps if app],
     }
-    cache_set(_USAGE_SOURCES_CACHE_KEY, result, _USAGE_SOURCES_CACHE_TTL)
+    cache_set(USAGE_SOURCES_CACHE_KEY, result, USAGE_SOURCES_CACHE_TTL)
     return result
 
 
@@ -133,15 +133,15 @@ async def fetch_fleet_view(
     FastAPI only threadpools `def` routes, never `async def` ones calling
     sync code inline).
 
-    Response is cached for `_FLEET_CACHE_TTL` seconds — matches the client's
+    Response is cached for `FLEET_CACHE_TTL` seconds — matches the client's
     own 30s poll cadence, so a full recompute only happens once per cadence
     instead of once per dashboard load/tab.
     """
-    cached = cache_get(_FLEET_CACHE_KEY)
+    cached = cache_get(FLEET_CACHE_KEY)
     if cached is not None:
         return cached
     result = await asyncio.to_thread(_fetch_fleet_view_sync, session)
-    cache_set(_FLEET_CACHE_KEY, result, _FLEET_CACHE_TTL)
+    cache_set(FLEET_CACHE_KEY, result, FLEET_CACHE_TTL)
     return result
 
 
@@ -296,7 +296,7 @@ def _fetch_fleet_view_sync(session: Session) -> dict[str, Any]:
     # from usage_events. The UTC-keyed rollup lags the local month boundary
     # (e.g. until 02:00 in Berlin summer), so a live range scan keeps the split
     # aligned with the "This period" gauge.
-    month_start_utc = _local_period_anchors(resolve_user_tz(session))["month_start_utc"]
+    month_start_utc = local_period_anchors(resolve_user_tz(session))["month_start_utc"]
     live_month = query_cumulative_live(session, since=month_start_utc)
     contrib: dict[tuple[str, str], dict[str, dict[str, float]]] = {
         ident: bucket["by_sidecar"] for ident, bucket in live_month.items() if bucket["by_sidecar"]

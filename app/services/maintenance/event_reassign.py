@@ -21,7 +21,7 @@ from sqlalchemy import ColumnElement, func
 from sqlmodel import Session, col, select
 
 from app.models.db import UsageEvent
-from app.services.maintenance._chunked_sql import chunked_update
+from app.services.maintenance.chunked_sql import chunked_update
 from app.services.maintenance.windows import rebuild_windows_overlapping
 from app.services.period_rollups import rebuild_rollups_for_pairs
 
@@ -104,7 +104,7 @@ def apply_reassign_default(
     replaying a subtract/re-add per event) and any closed windows overlapping
     the moved events' timestamp range for either account.
 
-    The retag itself is chunked (`_chunked_sql`) — a stale account like
+    The retag itself is chunked (`chunked_sql`) — a stale account like
     minimax's `default` can carry ~19.5k events, and this must never hold
     SQLite's writer lock for one giant transaction.
 

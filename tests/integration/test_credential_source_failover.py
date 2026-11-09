@@ -389,7 +389,7 @@ async def test_collector_returns_empty_when_every_source_is_disabled(monkeypatch
     )
     collector = _CredentialProbeCollector(cache)
     manager = CollectorManager()
-    manager._credential_source_preferences[("openrouter", "alice@example.com")] = {
+    manager.credential_source_preferences[("openrouter", "alice@example.com")] = {
         "disabled-source": (False, 0)
     }
     monkeypatch.setattr("app.services.collector_manager.token_cache", cache)
@@ -494,7 +494,7 @@ async def test_verified_sidecar_identity_promotes_only_its_source(monkeypatch):
 
     monkeypatch.setattr(cache, "move_source", heartbeat_before_cache_move)
 
-    await manager._promote_source_identity(
+    await manager.promote_source_identity(
         "antigravity", "default", source_id, "S3ntin3l8@gmail.com"
     )
 
@@ -583,7 +583,7 @@ async def test_promotion_corrects_a_carried_rotation_binding(monkeypatch):
     monkeypatch.setattr("app.services.collector_claude_identity.token_cache", cache)
     manager = CollectorManager()
 
-    await manager._promote_source_identity("antigravity", "default", source_id, "bob@example.com")
+    await manager.promote_source_identity("antigravity", "default", source_id, "bob@example.com")
 
     with Session(engine) as session:
         source = session.exec(
@@ -654,7 +654,7 @@ async def test_promotion_respects_the_operators_own_mapping(monkeypatch):
     monkeypatch.setattr("app.services.collector_claude_identity.token_cache", empty_cache)
     manager = CollectorManager()
 
-    await manager._promote_source_identity("antigravity", "default", source_id, "bob@example.com")
+    await manager.promote_source_identity("antigravity", "default", source_id, "bob@example.com")
 
     with Session(engine) as session:
         source = session.exec(
@@ -805,12 +805,12 @@ async def test_startup_reconciliation_routes_cached_source_from_durable_tag(monk
     monkeypatch.setattr("sqlmodel.Session", Session)
     monkeypatch.setattr("app.services.collector_manager.token_cache", cache)
     manager = CollectorManager()
-    manager._credential_source_preferences[("antigravity", "default")] = {
+    manager.credential_source_preferences[("antigravity", "default")] = {
         source_id: (True, 0),
         configured_source_id: (True, 1),
         unmerged_source_id: (True, 5),
     }
-    manager._credential_source_preferences[("antigravity", "alice@example.com")] = {
+    manager.credential_source_preferences[("antigravity", "alice@example.com")] = {
         "already-configured": (False, 9),
         source_id: (False, 4),
     }
@@ -826,8 +826,8 @@ async def test_startup_reconciliation_routes_cached_source_from_durable_tag(monk
         unmerged_source_id,
     }
     assert all(source["identity_pending"] is False for source in target_sources)
-    assert manager._credential_source_preferences[("antigravity", "default")] == {}
-    assert manager._credential_source_preferences[("antigravity", "alice@example.com")] == {
+    assert manager.credential_source_preferences[("antigravity", "default")] == {}
+    assert manager.credential_source_preferences[("antigravity", "alice@example.com")] == {
         "already-configured": (False, 9),
         source_id: (False, 4),
         configured_source_id: (False, 3),
@@ -965,7 +965,7 @@ async def test_promotion_names_a_discovered_claude_account(monkeypatch):
     monkeypatch.setattr("app.services.collector_claude_identity.token_cache", cache)
     manager = CollectorManager()
 
-    await manager._promote_source_identity(
+    await manager.promote_source_identity(
         "anthropic_console",
         "default",
         source_id,
@@ -1045,7 +1045,7 @@ async def test_promotion_never_overwrites_the_operators_own_account_details(monk
     monkeypatch.setattr("app.services.collector_claude_identity.token_cache", cache)
     manager = CollectorManager()
 
-    await manager._promote_source_identity(
+    await manager.promote_source_identity(
         "anthropic_console",
         "default",
         source_id,
@@ -1121,7 +1121,7 @@ async def test_promotion_names_an_existing_account_nobody_named(monkeypatch):
     monkeypatch.setattr("app.services.collector_claude_identity.token_cache", cache)
     manager = CollectorManager()
 
-    await manager._promote_source_identity(
+    await manager.promote_source_identity(
         "anthropic_console",
         "default",
         source_id,
@@ -1215,7 +1215,7 @@ async def test_promotion_keeps_the_name_the_operator_gave_a_discovered_account(
     monkeypatch.setattr("app.services.collector_claude_identity.token_cache", cache)
     manager = CollectorManager()
 
-    await manager._promote_source_identity(
+    await manager.promote_source_identity(
         "anthropic_console",
         "default",
         source_id,

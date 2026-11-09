@@ -83,7 +83,7 @@ class CollectorClaudeIdentity:
         smart: SmartCollector, reason: str = "credential binding changed during collection"
     ) -> list[dict[str, Any]]:
         """A rejected proof is non-authoritative; a later successful fallback may complete."""
-        smart._set_collection_state("skipped", reason)
+        smart.set_collection_state("skipped", reason)
         return []
 
     @staticmethod
@@ -271,7 +271,7 @@ class CollectorClaudeIdentity:
         return True
 
     @staticmethod
-    def _reset_attempt_identity(collector: Any, account_id: str, default_label: Any) -> None:
+    def reset_attempt_identity(collector: Any, account_id: str, default_label: Any) -> None:
         """Clear what a previous source attempt taught the shared collector instance."""
         if account_id == "default":
             # Collectors can mutate account_id after an API response. Reset before each source
@@ -281,7 +281,7 @@ class CollectorClaudeIdentity:
             collector.account_label = default_label
             # The label cache is the other half of that memory: a name one
             # attempt proved must not be stamped on the next attempt's card.
-            collector._account_label_cache = default_label
+            collector.account_label_cache = default_label
         if hasattr(collector, "credential_account_id"):
             collector.credential_account_id = account_id
         # Proof from one source's response must never be read as another's.
@@ -452,7 +452,7 @@ class CollectorClaudeIdentity:
             session.commit()
         return True
 
-    async def _promote_source_identity(
+    async def promote_source_identity(
         self,
         provider_id: str,
         old_account_id: str,

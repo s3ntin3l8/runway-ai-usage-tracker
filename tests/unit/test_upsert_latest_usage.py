@@ -11,9 +11,9 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 from app.models.db import LatestUsage, LatestUsageContribution
 from app.services.accumulator import (
-    _parse_source_id,
     evict_orphan_error_rows,
     mark_latest_usage_source_stale,
+    parse_source_id,
     reconcile_latest_usage_snapshot,
     upsert_latest_usage,
 )
@@ -347,7 +347,7 @@ def test_contribution_write_failure_is_logged(session: Session, monkeypatch, cap
     def fail_contribution_write(*args, **kwargs):
         raise RuntimeError("database unavailable")
 
-    monkeypatch.setattr("app.services.accumulator._upsert_contribution", fail_contribution_write)
+    monkeypatch.setattr("app.services.accumulator.upsert_contribution", fail_contribution_write)
     with caplog.at_level(logging.WARNING, logger="app.services.accumulator"):
         upsert_latest_usage(session, _success_card(), source_id="server:chatgpt")
 
@@ -357,8 +357,8 @@ def test_contribution_write_failure_is_logged(session: Session, monkeypatch, cap
 
 
 def test_source_id_parser_extracts_producer_and_provider():
-    assert _parse_source_id("server:chatgpt") == ("server", "local", "chatgpt")
-    assert _parse_source_id("sidecar:host-a:anthropic") == (
+    assert parse_source_id("server:chatgpt") == ("server", "local", "chatgpt")
+    assert parse_source_id("sidecar:host-a:anthropic") == (
         "sidecar",
         "host-a",
         "anthropic",

@@ -16,7 +16,7 @@ from zoneinfo import ZoneInfo
 from sqlmodel import Session, SQLModel, create_engine
 from sqlmodel.pool import StaticPool
 
-from app.api.endpoints.usage import _local_period_anchors
+from app.api.endpoints.usage import local_period_anchors
 from app.core.utils import resolve_user_tz
 from app.models.db import SystemConfig, UsageEvent
 from app.services.queries import query_cumulative_live
@@ -132,12 +132,12 @@ def test_resolve_user_tz_invalid_falls_back_to_utc(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# _local_period_anchors — the boundary computation
+# local_period_anchors — the boundary computation
 # ---------------------------------------------------------------------------
 
 
 def test_anchors_berlin_rolls_over_at_local_midnight():
-    a = _local_period_anchors(ZoneInfo("Europe/Berlin"), now=_BERLIN_BOUNDARY_UTC)
+    a = local_period_anchors(ZoneInfo("Europe/Berlin"), now=_BERLIN_BOUNDARY_UTC)
     # It is already June 1 in Berlin even though it is still May 31 in UTC.
     assert a["current_month"] == "2026-06"
     assert a["current_year"] == "2026"
@@ -148,7 +148,7 @@ def test_anchors_berlin_rolls_over_at_local_midnight():
 
 
 def test_anchors_utc_still_in_may_at_same_instant():
-    a = _local_period_anchors(ZoneInfo("UTC"), now=_BERLIN_BOUNDARY_UTC)
+    a = local_period_anchors(ZoneInfo("UTC"), now=_BERLIN_BOUNDARY_UTC)
     assert a["current_month"] == "2026-05"
     assert a["month_start_utc"] == datetime(2026, 5, 1, 0, 0, tzinfo=UTC)
 
@@ -163,7 +163,7 @@ def test_live_month_counts_post_local_midnight_activity():
     land in the new local month. The UTC rollup would have left it in May."""
     session = _session()
     tz = ZoneInfo("Europe/Berlin")
-    anchors = _local_period_anchors(tz, now=_BERLIN_BOUNDARY_UTC)
+    anchors = local_period_anchors(tz, now=_BERLIN_BOUNDARY_UTC)
     month_start = anchors["month_start_utc"]
 
     # Before the local month → excluded.

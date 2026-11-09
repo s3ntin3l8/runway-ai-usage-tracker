@@ -433,7 +433,7 @@ def test_server_credential_scan_finds_the_decrypted_github_token(
         lambda _name: github_file.parent,
     )
     monkeypatch.setattr(
-        "app.services.credentials.provider._expand_rule_paths", lambda paths: [str(github_file)]
+        "app.services.credentials.provider.expand_rule_paths", lambda paths: [str(github_file)]
     )
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
 
@@ -457,7 +457,7 @@ def test_an_undecryptable_github_token_is_skipped_not_returned_as_ciphertext(
         lambda _name: github_file.parent,
     )
     monkeypatch.setattr(
-        "app.services.credentials.provider._expand_rule_paths", lambda paths: [str(github_file)]
+        "app.services.credentials.provider.expand_rule_paths", lambda paths: [str(github_file)]
     )
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
 
@@ -481,7 +481,7 @@ def test_ciphertext_is_never_used_as_a_token_once_the_key_is_gone(
         lambda _name: github_file.parent,
     )
     monkeypatch.setattr(
-        "app.services.credentials.provider._expand_rule_paths", lambda paths: [str(github_file)]
+        "app.services.credentials.provider.expand_rule_paths", lambda paths: [str(github_file)]
     )
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
 

@@ -587,7 +587,7 @@ class TestChatGPTTokenStamp:
 
 class TestAntigravityTokenExpiry:
     """agy's opaque access token carries no JWT exp claim, so `expiry_date`
-    (the freshness signal token_cache._is_staler needs) must be derived from
+    (the freshness signal token_cache.is_staler needs) must be derived from
     the token file's ISO8601 `token.expiry` field.
 
     Without this, an expired local agy token from one sidecar silently

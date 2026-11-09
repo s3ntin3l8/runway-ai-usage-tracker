@@ -175,7 +175,7 @@ def test_the_oauth_cards_are_read_by_the_same_rule_everywhere():
     """One rule decides a model: the detector, wherever the cards came from."""
     from app.services.billing_type import UNKNOWN, detect_billing_type
     from app.services.claude_oauth_usage import billing_model_from_oauth_cards
-    from app.services.collectors._anthropic_common import ANTHROPIC_WINDOW_NAME_MAP
+    from app.services.collectors.anthropic_common import ANTHROPIC_WINDOW_NAME_MAP
 
     cards = [
         {"unit_type": "currency", "currency": "USD"},
@@ -242,7 +242,7 @@ def test_a_balance_only_response_proves_no_model():
         billing_model_from_oauth_cards,
         oauth_usage_cards,
     )
-    from app.services.collectors._anthropic_common import ANTHROPIC_WINDOW_NAME_MAP
+    from app.services.collectors.anthropic_common import ANTHROPIC_WINDOW_NAME_MAP
 
     cards = oauth_usage_cards(
         {"current_balance": 42.0},
@@ -269,7 +269,7 @@ def test_a_published_quota_window_still_proves_a_subscription():
         billing_model_from_oauth_cards,
         oauth_usage_cards,
     )
-    from app.services.collectors._anthropic_common import ANTHROPIC_WINDOW_NAME_MAP
+    from app.services.collectors.anthropic_common import ANTHROPIC_WINDOW_NAME_MAP
 
     cards = oauth_usage_cards(
         {"five_hour": {"utilization": 25.0}},
@@ -292,7 +292,7 @@ def test_the_published_limits_still_prove_a_subscription():
         billing_model_from_oauth_cards,
         oauth_usage_cards,
     )
-    from app.services.collectors._anthropic_common import ANTHROPIC_WINDOW_NAME_MAP
+    from app.services.collectors.anthropic_common import ANTHROPIC_WINDOW_NAME_MAP
 
     cards = oauth_usage_cards(
         {
@@ -371,7 +371,7 @@ def test_a_window_with_no_usable_number_proves_nothing():
         billing_model_from_oauth_cards,
         oauth_usage_cards,
     )
-    from app.services.collectors._anthropic_common import ANTHROPIC_WINDOW_NAME_MAP
+    from app.services.collectors.anthropic_common import ANTHROPIC_WINDOW_NAME_MAP
 
     for payload in ({"five_hour": {}}, {"five_hour": {"utilization": None}}):
         cards = oauth_usage_cards(
@@ -395,7 +395,7 @@ def test_a_window_published_as_percent_used_still_proves_a_subscription():
         billing_model_from_oauth_cards,
         oauth_usage_cards,
     )
-    from app.services.collectors._anthropic_common import ANTHROPIC_WINDOW_NAME_MAP
+    from app.services.collectors.anthropic_common import ANTHROPIC_WINDOW_NAME_MAP
 
     cards = oauth_usage_cards(
         {"five_hour": {"percentUsed": 41}},
@@ -415,7 +415,7 @@ def test_a_malformed_number_is_an_error_not_a_placeholder():
     import math
 
     from app.services.claude_oauth_usage import oauth_usage_cards
-    from app.services.collectors._anthropic_common import ANTHROPIC_WINDOW_NAME_MAP
+    from app.services.collectors.anthropic_common import ANTHROPIC_WINDOW_NAME_MAP
 
     # A non-numeric value raises, exactly as it did before: the collector
     # turns it into an error card.
@@ -447,7 +447,7 @@ def test_a_limits_entry_with_no_number_proves_nothing():
         billing_model_from_oauth_cards,
         oauth_usage_cards,
     )
-    from app.services.collectors._anthropic_common import ANTHROPIC_WINDOW_NAME_MAP
+    from app.services.collectors.anthropic_common import ANTHROPIC_WINDOW_NAME_MAP
 
     cards = oauth_usage_cards(
         {
@@ -489,7 +489,7 @@ def test_a_web_window_with_no_usable_number_decides_nothing():
 def test_a_boolean_percentage_is_refused_not_read_as_one_percent():
     """``float(True)`` is 1.0, so a boolean would invent a percentage."""
     from app.services.claude_oauth_usage import oauth_usage_cards
-    from app.services.collectors._anthropic_common import (
+    from app.services.collectors.anthropic_common import (
         ANTHROPIC_WINDOW_NAME_MAP,
         anthropic_published_percent,
     )
@@ -512,7 +512,7 @@ def test_a_boolean_percentage_is_refused_not_read_as_one_percent():
 def test_a_boolean_in_a_limits_entry_is_refused():
     """The limits[] path reads its percentage through the same rule."""
     from app.services.claude_oauth_usage import oauth_usage_cards
-    from app.services.collectors._anthropic_common import ANTHROPIC_WINDOW_NAME_MAP
+    from app.services.collectors.anthropic_common import ANTHROPIC_WINDOW_NAME_MAP
 
     with pytest.raises(ValueError):
         oauth_usage_cards(
@@ -576,8 +576,8 @@ async def test_a_boolean_decides_no_model_on_any_path():
 def test_a_boolean_money_field_is_refused():
     """A boolean is not a balance or a limit either."""
     from app.services.claude_oauth_usage import oauth_usage_cards
-    from app.services.collectors._anthropic_common import ANTHROPIC_WINDOW_NAME_MAP
     from app.services.collectors.anthropic import AnthropicCollector
+    from app.services.collectors.anthropic_common import ANTHROPIC_WINDOW_NAME_MAP
 
     # A balance the account did not publish is no balance: the card is skipped
     # rather than invented as $1.00.

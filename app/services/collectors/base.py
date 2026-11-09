@@ -173,12 +173,12 @@ class BaseCollector(ABC):
         """
         self.account_id = account_id
         self.account_label = account_label
-        self._current_input_source: str = self.INPUT_SOURCE_SERVER  # Default for static ENV configs
+        self.current_input_source: str = self.INPUT_SOURCE_SERVER  # Default for static ENV configs
         # In-memory cache for discovered account labels to avoid redundant regex processing
-        self._account_label_cache: str | None = account_label
+        self.account_label_cache: str | None = account_label
         # User-supplied strategy ordering/toggles (list of {"id": str, "enabled": bool}).
         # None = use default STRATEGIES ordering with all enabled.
-        self._user_strategies: list[dict] | None = None
+        self.user_strategies: list[dict] | None = None
         # Default timeout for network requests (can be overridden by subclasses)
         self.timeout: float = 10.0
 
@@ -187,16 +187,16 @@ class BaseCollector(ABC):
         Accept a user-supplied strategy ordering/enable list from the DB.
         Each entry: {"id": "web", "enabled": True}
         """
-        self._user_strategies = strategies
+        self.user_strategies = strategies
 
-    def _get_strategy_options(self, strategy_id: str) -> dict:
+    def get_strategy_options(self, strategy_id: str) -> dict:
         """Get options for a strategy, or empty dict if not specified."""
         entry = self.STRATEGIES.get(strategy_id)
         if entry and len(entry) == 3:
             return entry[2]
         return {}
 
-    def _resolve_strategies(
+    def resolve_strategies(
         self,
     ) -> list[tuple[Callable[[httpx.AsyncClient], Awaitable[list[dict[str, Any]]]], str]]:
         """
@@ -212,11 +212,11 @@ class BaseCollector(ABC):
             return []
 
         # Build ordered list from STRATEGIES, respecting user overrides
-        if self._user_strategies:
+        if self.user_strategies:
             # User has a custom ordering: iterate in their order, respecting enabled flag
-            ordered_ids = [s["id"] for s in self._user_strategies if s.get("enabled", True)]
+            ordered_ids = [s["id"] for s in self.user_strategies if s.get("enabled", True)]
             # Append any strategies not mentioned by the user (new ones added after config)
-            known_ids = {s["id"] for s in self._user_strategies}
+            known_ids = {s["id"] for s in self.user_strategies}
             for s_id in self.STRATEGIES:
                 if s_id not in known_ids:
                     ordered_ids.append(s_id)
@@ -292,7 +292,7 @@ class BaseCollector(ABC):
         and merge their data into primary results instead of replacing them.
         """
         try:
-            dynamic_strategies = self._resolve_strategies()
+            dynamic_strategies = self.resolve_strategies()
             best_error_card = None
 
             def update_best_error(error_results):
@@ -316,7 +316,7 @@ class BaseCollector(ABC):
                 enrich_strategies = []
 
                 for strategy, s_id in dynamic_strategies:
-                    opts = self._get_strategy_options(s_id)
+                    opts = self.get_strategy_options(s_id)
                     if opts.get("enrich"):
                         enrich_strategies.append((strategy, s_id))
                     else:
@@ -517,7 +517,7 @@ class BaseCollector(ABC):
         under that other account, so the account's own id is the safe name then.
         A name that keys the card where it already belongs is kept.
         """
-        label = self.account_label or self._account_label_cache
+        label = self.account_label or self.account_label_cache
         account_id = self.account_id
         if not label:
             # A credential-derived id is not a display name: the dashboard
@@ -548,7 +548,7 @@ class BaseCollector(ABC):
         # Phase 0C: Auto-discover account label from detail if not already set by user
         # Avoid running discovery if a custom label is already present or cached.
         if is_placeholder_label(self.account_label) and is_placeholder_label(
-            self._account_label_cache
+            self.account_label_cache
         ):
             discovered_label = None
             for card in results:
@@ -580,7 +580,7 @@ class BaseCollector(ABC):
                     break
 
             if discovered_label:
-                self._account_label_cache = discovered_label
+                self.account_label_cache = discovered_label
                 self.account_label = discovered_label
 
         # 2. Tag cards
@@ -617,7 +617,7 @@ class BaseCollector(ABC):
 
             # Tag input source (origin of credentials)
             if "input_source" not in card_data or card_data.get("input_source") == "unknown":
-                card_data["input_source"] = getattr(self, "_current_input_source", "unknown")
+                card_data["input_source"] = getattr(self, "current_input_source", "unknown")
 
             # Phase 1: Ensure timestamps are timezone-aware ISO strings
             now_iso = datetime.now(UTC).isoformat()

@@ -93,7 +93,7 @@ def inventory_session_fixture(session: Session, monkeypatch):
     from app.services.credentials import inventory as credential_inventory
 
     monkeypatch.setattr(credential_inventory, "engine", session.get_bind())
-    monkeypatch.setattr(credential_inventory, "_scan_server_credentials", lambda: ({}, set()))
+    monkeypatch.setattr(credential_inventory, "scan_server_credentials", lambda: ({}, set()))
     return session
 
 

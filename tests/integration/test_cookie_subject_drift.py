@@ -221,7 +221,7 @@ def test_a_subject_seen_for_one_source_attempt_is_never_read_as_the_next_ones():
     collector.verified_subject = "user-of-source-a"
     collector.verified_identity = "a@example.com"
 
-    CollectorManager._reset_attempt_identity(collector, "default", None)
+    CollectorManager.reset_attempt_identity(collector, "default", None)
 
     assert collector.verified_subject is None and collector.verified_identity is None
 

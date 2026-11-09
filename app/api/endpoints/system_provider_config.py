@@ -652,7 +652,7 @@ async def update_credential_sources(
     )
     session.commit()
     manager.set_credential_source_preferences(provider_id, account_id, source_preferences)
-    manager._last_sync_time = 0.0
+    manager.last_sync_time = 0.0
     try:
         await manager.reset_collector(provider_id, account_id)
     except Exception:
@@ -827,7 +827,7 @@ async def delete_provider_config_for_account(
     # any background error so the user's mutation still succeeds even
     # if the sync itself flakes).
     try:
-        await manager._sync_collectors(force=True)
+        await manager.sync_collectors(force=True)
     except Exception as e:
         logger.warning(
             f"Failed to trigger sync after provider_config delete for "
@@ -1566,7 +1566,7 @@ async def _apply_provider_config_update(  # noqa: PLR0915 — known-debt: per-fi
     # this provider (every account disabled / archived) so we don't refresh
     # cards for a provider the user just turned off.
     try:
-        await manager._sync_collectors(force=True)
+        await manager.sync_collectors(force=True)
         if any(key.startswith(f"{provider_id}:") for key in manager.smart_collectors):
             await manager.collect_one(provider_id)
     except Exception as e:

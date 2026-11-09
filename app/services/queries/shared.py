@@ -1,4 +1,4 @@
-"""Shared helpers — _parse_ts and _parse_period_key are needed by
+"""Shared helpers — parse_ts and parse_period_key are needed by
 more than one query module."""
 
 import logging
@@ -17,7 +17,7 @@ class RankedRows:
     total: int
 
 
-def _parse_ts(value: str | datetime | None) -> datetime | None:
+def parse_ts(value: str | datetime | None) -> datetime | None:
     """Parse a timestamp from either a string or datetime object returned by SQLite."""
     if value is None:
         return None
@@ -49,7 +49,7 @@ def sqlite_utc_timestamp(value: datetime) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _parse_period_key(key: str, period_type: str) -> datetime | None:
+def parse_period_key(key: str, period_type: str) -> datetime | None:
     """Parse a period_key into a UTC datetime."""
     try:
         if period_type == "hour":

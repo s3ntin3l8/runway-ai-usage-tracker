@@ -1,7 +1,7 @@
 """Helpers shared by two or more fleet endpoint modules.
 
 Kept apart from the domain modules so neither has to import the other:
-``_validation_summary`` serves the ingest and credential routes, and the
+``validation_summary`` serves the ingest and credential routes, and the
 account-tag hints serve the credential routes and ``/fleet/config``.
 """
 
@@ -22,7 +22,7 @@ from app.services.credential_tags import CredentialTagRepo, ParkedMapping, live_
 logger = logging.getLogger(__name__)
 
 
-def _validation_summary(exc: Exception) -> str:
+def validation_summary(exc: Exception) -> str:
     """Field paths and error types only, never the offending values.
 
     A Pydantic error's default text echoes the rejected input, and on the ingest
@@ -103,7 +103,7 @@ def _fingerprinted_credential_hints(
     return out
 
 
-def _account_tag_hints_for_providers(
+def account_tag_hints_for_providers(
     session: Session,
     providers: list[str],
     *,
@@ -206,7 +206,7 @@ def _account_tag_hints_for_providers(
 
 
 __all__ = [
-    "_account_tag_hints_for_providers",
+    "account_tag_hints_for_providers",
     "_fingerprinted_credential_hints",
-    "_validation_summary",
+    "validation_summary",
 ]

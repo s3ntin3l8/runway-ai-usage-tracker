@@ -371,7 +371,7 @@ async def test_get_cookie_header_wraps_bare_db_value():
             header = await collector._get_cookie_header()
 
     assert header == "session=bare-value-123; __Secure-session=bare-value-123"
-    assert collector._current_input_source == "config"
+    assert collector.current_input_source == "config"
     assert collector._validate_cookie_header(header) is True
 
 
@@ -387,7 +387,7 @@ async def test_get_cookie_header_wraps_env_token():
             header = await collector._get_cookie_header()
 
     assert header == "session=env-value; __Secure-session=env-value"
-    assert collector._current_input_source == "server"
+    assert collector.current_input_source == "server"
 
 
 @pytest.mark.asyncio
@@ -412,7 +412,7 @@ async def test_get_cookie_header_sidecar_key_fallback():
                 header = await collector._get_cookie_header()
 
     assert header == "session=sidecar-value; __Secure-session=sidecar-value"
-    assert collector._current_input_source == "sidecar"
+    assert collector.current_input_source == "sidecar"
 
     with patch(
         "app.services.collectors.ollama.credential_provider.get_provider_session_cookie",
@@ -628,7 +628,7 @@ class TestOllamaApiCollector:
             patch("app.services.collectors.ollama.settings.OLLAMA_API_KEY", "server-key"),
         ):
             assert await collector._get_api_key() == "server-key"
-        assert collector._current_input_source == "server"
+        assert collector.current_input_source == "server"
 
     @pytest.mark.asyncio
     async def test_api_key_cache_uses_credential_scope_after_identity_promotion(self):
@@ -691,14 +691,14 @@ class TestOllamaApiCollector:
             ),
         ):
             assert await collector._get_api_key() == "saved-key"
-        assert collector._current_input_source == "config"
+        assert collector.current_input_source == "config"
 
     @pytest.mark.asyncio
     async def test_api_strategy_emits_monthly_allowance_card(self):
         collector = OllamaCollector(account_id="acc_test")
         # Stale label from a prior poll cycle must not survive when
         # get_with_metadata returns None (PR #340 review, finding 4).
-        collector._current_input_source = "sidecar"
+        collector.current_input_source = "sidecar"
 
         async def fake_get_token(*args, **kwargs):
             return ({"api_key": "test-key"}, {"source": "sidecar-host"})  # pragma: allowlist secret
@@ -737,7 +737,7 @@ class TestOllamaApiCollector:
         assert card["is_unlimited"] is False
         assert card["reset_at"] == "2026-11-12T06:45:12+00:00"
         assert card["detail"].startswith("$0.50 of $2.50 used")
-        assert collector._current_input_source == "sidecar"
+        assert collector.current_input_source == "sidecar"
         # The quota lives on /api/balance — /api/usage is a spend report.
         assert http_mock.await_args.args[2] == OllamaCollector.BALANCE_URL
 
@@ -823,7 +823,7 @@ class TestOllamaApiCollector:
 
         assert len(cards) == 1
         assert cards[0]["input_source"] == expected
-        assert collector._current_input_source == expected
+        assert collector.current_input_source == expected
 
     @pytest.mark.asyncio
     async def test_api_strategy_no_key_returns_empty_for_fallback(self):

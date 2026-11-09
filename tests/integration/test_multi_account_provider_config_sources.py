@@ -130,7 +130,7 @@ def test_credential_source_preferences_are_host_scoped_unless_all_machines(
 ):
     from app.services.collector_manager import manager
 
-    monkeypatch.setattr(manager, "_credential_source_preferences", {})
+    monkeypatch.setattr(manager, "credential_source_preferences", {})
     origin = "path:~/.config/provider/auth.json"
     session.add_all(
         [
@@ -173,7 +173,7 @@ def test_credential_source_preferences_are_host_scoped_unless_all_machines(
     }
     response = client.patch(endpoint, json=payload)
     assert response.status_code == 200, response.text
-    assert manager._credential_source_preferences[("openrouter", "alice@example.com")] == {
+    assert manager.credential_source_preferences[("openrouter", "alice@example.com")] == {
         "host-a-source": (False, 3),
         "host-b-source": (True, 1),
     }
@@ -192,7 +192,7 @@ def test_credential_source_preferences_are_host_scoped_unless_all_machines(
     }
     response = client.patch(endpoint, json=all_machines_payload)
     assert response.status_code == 200, response.text
-    assert manager._credential_source_preferences[("openrouter", "alice@example.com")] == {
+    assert manager.credential_source_preferences[("openrouter", "alice@example.com")] == {
         "host-a-source": (False, 3),
         "host-b-source": (True, 1),
     }

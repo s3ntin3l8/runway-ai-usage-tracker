@@ -6,7 +6,7 @@ described stops being reported (a file rule dropped from the sidecar, a machine
 retired, a CLI logged out) nothing deletes the rule; it just sits in the Rules tab.
 
 What counts as a *match* is exactly what attribution uses: every machine-reported
-`credential_sources` row is resolved with `credential_inventory._resolve_tag` (exact
+`credential_sources` row is resolved with `credential_inventory.resolve_tag` (exact
 origin, then its plain form; a machine-scoped rule beats an all-machines one), and the
 winning rule is "used" at that row's `last_seen`. A rule shadowed everywhere by
 machine-scoped rules is therefore unused too. A plain origin join would be wrong for
@@ -50,7 +50,7 @@ from sqlmodel import Session, col, select
 
 from app.models.db import CredentialSource, CredentialTag, SidecarRegistry
 from app.services.account_identity import split_keyed_origin
-from app.services.credential_inventory import _resolve_tag
+from app.services.credential_inventory import resolve_tag
 from app.services.credential_sources import SUPERSEDING_KEYED_PROVIDERS
 from app.services.credential_tags import live_sidecar_ids
 from app.services.maintenance.stale_credential_sources import STALE_AFTER
@@ -117,7 +117,7 @@ def rule_usage(session: Session) -> dict[int, datetime]:
     for row in rows:
         if row.source_id.startswith("config:") or row.source_type == "server":
             continue
-        winner = _resolve_tag(tags, row)
+        winner = resolve_tag(tags, row)
         if winner is None or winner.id is None:
             continue
         seen = _aware(row.last_seen)
@@ -183,7 +183,7 @@ def _decide(
     if any(t.sidecar_id == tag.sidecar_id for t in tags.get((tag.provider_id, new_origin), [])):
         return "delete"
     for row in replacement:
-        winner = _resolve_tag(tags, row)
+        winner = resolve_tag(tags, row)
         if winner is None or winner.account_id != tag.account_id:
             return "move"
     return "delete"

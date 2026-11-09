@@ -33,7 +33,7 @@ def queue_command(
         bump(session)
     elif action == "revoke":
         row.revoked_through = max(row.revoked_through, row.generation)
-        _withdraw(session, device_id, source_id)
+        withdraw(session, device_id, source_id)
     elif action == "dismiss":
         descriptor = catalog().get(source_id)
         row.dismissed_revision = descriptor.revision if descriptor else row.revision
@@ -128,4 +128,4 @@ def prune_commands(session: Session, device_id: str) -> None:
 
 # Bound after the command functions are defined. Importing source_controls at
 # module top cycles: it re-exports this module once its own primitives exist.
-from app.services.source_controls import _withdraw
+from app.services.source_controls import withdraw

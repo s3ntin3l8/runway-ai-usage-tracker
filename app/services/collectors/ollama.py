@@ -180,7 +180,7 @@ class OllamaCollector(BaseCollector):
         self.target_url = "https://ollama.com/settings"
         self.labels = ["Session usage", "Hourly usage", "Weekly usage"]
         self._last_error_reason: str = "unknown"
-        self._current_input_source: str = "server"
+        self.current_input_source: str = "server"
         self._no_monthly_cap = False
 
     def _is_error_result(self, results: list[dict[str, Any]]) -> bool:
@@ -246,35 +246,35 @@ class OllamaCollector(BaseCollector):
 
     async def _get_api_key(self) -> str | None:
         """Resolve config, sidecar, then server environment credentials."""
-        self._current_input_source = "unknown"
+        self.current_input_source = "unknown"
         key = credential_provider.get_provider_api_key(
             "ollama", account_id=self.credential_account_id
         )
         if key:
-            self._current_input_source = "config"
+            self.current_input_source = "config"
             return key.strip()
         cached = await token_cache.get_with_metadata(
             "ollama", account_id=self.credential_account_id
         )
         if cached and cached[0].get("api_key"):
-            self._current_input_source = (
+            self.current_input_source = (
                 "config" if cached[1].get("source") in ("config", "manual_config") else "sidecar"
             )
             return cached[0]["api_key"].strip()
         if self.credential_account_id == "default" and settings.OLLAMA_API_KEY:
-            self._current_input_source = "server"
+            self.current_input_source = "server"
             return settings.OLLAMA_API_KEY.strip()
         return None
 
     async def _get_cookie_header(self) -> str | None:
         """Combine session cookies (including chunked ones) into a header string."""
         # 1. DB-stored session cookie (manual override set via settings UI)
-        self._current_input_source = "unknown"
+        self.current_input_source = "unknown"
         db_token = credential_provider.get_provider_session_cookie(
             "ollama", account_id=self.credential_account_id
         )
         if db_token:
-            self._current_input_source = "config"
+            self.current_input_source = "config"
             return self._wrap_cookie(db_token.strip())
 
         # 2. Sidecar-pushed cookie via token cache (browser scraping moved to sidecar)
@@ -286,7 +286,7 @@ class OllamaCollector(BaseCollector):
         cookie = (tokens.get("session_cookie") or tokens.get("cookie_session")) if tokens else None
         if cookie:
             source = cached[1].get("source") if cached else None
-            self._current_input_source = (
+            self.current_input_source = (
                 "config" if source in ("config", "manual_config") else "sidecar"
             )
             return self._wrap_cookie(cookie.strip())
@@ -294,7 +294,7 @@ class OllamaCollector(BaseCollector):
         # 3. Server environment is the default-account fallback.
         env_token = settings.OLLAMA_SESSION_TOKEN
         if env_token and self.credential_account_id == "default":
-            self._current_input_source = "server"
+            self.current_input_source = "server"
             return self._wrap_cookie(env_token.strip())
 
         return None
@@ -530,7 +530,7 @@ class OllamaCollector(BaseCollector):
                 "provider_id": "ollama",
                 "tier": "cloud",
                 "data_source": self.DATA_SOURCE_API,
-                "input_source": getattr(self, "_current_input_source", "unknown"),
+                "input_source": getattr(self, "current_input_source", "unknown"),
                 "usage_url": "https://ollama.com/settings/billing",
                 "updated_at": now.isoformat(),
             }
@@ -582,7 +582,7 @@ class OllamaCollector(BaseCollector):
                     "provider_id": "ollama",
                     "tier": "cloud",
                     "data_source": self.DATA_SOURCE_API,
-                    "input_source": getattr(self, "_current_input_source", "unknown"),
+                    "input_source": getattr(self, "current_input_source", "unknown"),
                     "usage_url": "https://ollama.com/settings/billing",
                     "updated_at": now.isoformat(),
                 }
@@ -618,7 +618,7 @@ class OllamaCollector(BaseCollector):
             "provider_id": "ollama",
             "tier": "cloud",
             "data_source": self.DATA_SOURCE_API,
-            "input_source": getattr(self, "_current_input_source", "unknown"),
+            "input_source": getattr(self, "current_input_source", "unknown"),
             "usage_url": "https://ollama.com/settings/billing",
             "updated_at": now.isoformat(),
         }
@@ -700,7 +700,7 @@ class OllamaCollector(BaseCollector):
             "provider_id": "ollama",
             "tier": "cloud",
             "data_source": self.DATA_SOURCE_API,
-            "input_source": getattr(self, "_current_input_source", "unknown"),
+            "input_source": getattr(self, "current_input_source", "unknown"),
             "usage_url": "https://ollama.com/settings/billing",
             "updated_at": now_iso,
         }
@@ -1007,7 +1007,7 @@ class OllamaCollector(BaseCollector):
             "reset_at": resets_at.isoformat() if resets_at else None,
             "account_label": email,
             "data_source": self.DATA_SOURCE_WEB,
-            "input_source": getattr(self, "_current_input_source", "unknown"),
+            "input_source": getattr(self, "current_input_source", "unknown"),
             "tier": plan.lower() if plan else "free",
             "usage_url": self.target_url,
             "updated_at": now.isoformat(),

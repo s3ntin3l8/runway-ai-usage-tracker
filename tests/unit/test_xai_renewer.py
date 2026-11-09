@@ -69,8 +69,8 @@ def _respond(monkeypatch, data=None, error=None):
 
 
 def test_constants_match_the_server_refresher():
-    assert token_refresher._REFRESH_ENDPOINTS["xai"] == xai_renewer.TOKEN_ENDPOINT
-    assert token_refresher._PROVIDER_CLIENT_IDS["xai"] == xai_renewer.CLIENT_ID
+    assert token_refresher.REFRESH_ENDPOINTS["xai"] == xai_renewer.TOKEN_ENDPOINT
+    assert token_refresher.PROVIDER_CLIENT_IDS["xai"] == xai_renewer.CLIENT_ID
 
 
 class TestDue:

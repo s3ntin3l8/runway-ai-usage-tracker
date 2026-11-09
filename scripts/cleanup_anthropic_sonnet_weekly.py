@@ -9,7 +9,7 @@ window (API key ``seven_day_sonnet``) is gone — only the aggregate ``weekly``
 API stopped emitting ``seven_day_sonnet`` around 2026-06-30.
 
 The collector no longer produces the Sonnet Weekly card (see
-app/services/collectors/_anthropic_common.py and anthropic_oauth.py's core_keys),
+app/services/collectors/anthropic_common.py and anthropic_oauth.py's core_keys),
 but latest_usage is a derived live-gauge table that is never auto-pruned: the row
 persisted from the last poll before the fix stays until it is deleted. That row
 is provider_id="anthropic", window_type="weekly", model_id="sonnet". This script

@@ -101,7 +101,7 @@ Re-tag events and rows under the right provider or model.
 The scripts are thin wrappers. The repair logic is in
 `app/services/maintenance/`, and each module there exposes a `plan_*` (preview)
 and an `apply_*` (write) pair. Some modules use the shared chunked-SQL helpers
-in `app/services/maintenance/_chunked_sql.py` so a large repair does not hold
+in `app/services/maintenance/chunked_sql.py` so a large repair does not hold
 one transaction open for the whole table; others implement their own plan and
 apply.
 

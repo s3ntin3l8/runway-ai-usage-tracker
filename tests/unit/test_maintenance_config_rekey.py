@@ -249,7 +249,7 @@ def test_the_returned_hook_moves_the_token_cache_entry():
         patch("app.services.token_cache.token_cache", fake_cache),
         patch("app.services.collector_manager.manager") as fake_manager,
     ):
-        fake_manager._sync_collectors = AsyncMock()
+        fake_manager.sync_collectors = AsyncMock()
         import asyncio
 
         asyncio.run(_run_hook(hooks[0]))
@@ -258,7 +258,7 @@ def test_the_returned_hook_moves_the_token_cache_entry():
     store_kwargs = fake_cache.store.call_args.kwargs
     assert store_kwargs["account_id"] == "alice@example.com"
     fake_cache.remove.assert_awaited_once_with("minimax", "default")
-    fake_manager._sync_collectors.assert_awaited_once_with(force=True)
+    fake_manager.sync_collectors.assert_awaited_once_with(force=True)
 
 
 def test_archive_hook_removes_source_cache_without_overwriting_target():
@@ -279,7 +279,7 @@ def test_archive_hook_removes_source_cache_without_overwriting_target():
         patch("app.services.token_cache.token_cache", fake_cache),
         patch("app.services.collector_manager.manager") as fake_manager,
     ):
-        fake_manager._sync_collectors = AsyncMock()
+        fake_manager.sync_collectors = AsyncMock()
         import asyncio
 
         asyncio.run(_run_hook(hooks[0]))
@@ -302,7 +302,7 @@ def test_the_returned_hook_tolerates_no_cached_tokens():
         patch("app.services.token_cache.token_cache", fake_cache),
         patch("app.services.collector_manager.manager") as fake_manager,
     ):
-        fake_manager._sync_collectors = AsyncMock()
+        fake_manager.sync_collectors = AsyncMock()
         import asyncio
 
         asyncio.run(_run_hook(hooks[0]))
