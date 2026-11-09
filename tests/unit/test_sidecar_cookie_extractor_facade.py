@@ -13,14 +13,18 @@ from scripts.sidecar_pkg import cookie_extractor
 
 def test_patched_platform_reaches_decrypt(monkeypatch):
     class FakePlatform:
-        @staticmethod
-        def system():
-            return "Windows"
+        def __init__(self, name):
+            self._name = name
 
-    # On the real (non-Windows) platform bytes decode directly; the Windows branch
-    # has no ``ctypes.windll`` here and returns None, so None proves the patch landed.
+        def system(self):
+            return self._name
+
+    # Both steps run under a patched platform so the result never depends on the
+    # real host. Linux: bytes decode directly. Windows: DPAPI rejects b"abc" (or
+    # ``ctypes.windll`` is absent), so None proves the facade's patch landed.
+    monkeypatch.setattr(sidecar, "platform", FakePlatform("Linux"))
     assert sidecar.decrypt_chromium_cookie(b"abc") == "abc"
-    monkeypatch.setattr(sidecar, "platform", FakePlatform())
+    monkeypatch.setattr(sidecar, "platform", FakePlatform("Windows"))
     assert sidecar.decrypt_chromium_cookie(b"abc") is None
 
 
