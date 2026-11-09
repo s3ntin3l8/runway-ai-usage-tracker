@@ -412,7 +412,7 @@
       "api_key_label": "Ollama Cloud API Key (api)",
       "api_key_help": "Used with https://ollama.com/api/balance to read the monthly allowance (quota) and its reset.",
       "session_cookie_label": "Web Session (web)",
-      "session_cookie_help": "Paste the __Secure-session (or session) cookie value, or the full Cookie header, from ollama.com/settings",
+      "session_cookie_help": "Optional. Paste the __Secure-session (or session) cookie value, or the full Cookie header, from ollama.com/settings. It adds the free-usage model list; the quota itself needs the API key, because the settings page no longer shows the allowance.",
       "rules": [
         {
           "type": "file",

@@ -51,7 +51,7 @@ server answer `provider:ollama#<fingerprint>`. Cookie candidates keep plain orig
 |---|---|---|
 | `api` | `GET https://ollama.com/api/balance`, `Authorization: Bearer <key>` | Quota source. `included.balance_usd`, `included.allowance_usd` and `included.period` give the allowance card; `included.session` / `included.weekly` (`remaining_percent`, `resets_at`) give legacy cards |
 | `api` fallback | `GET https://ollama.com/api/usage` | Only on 404/405 from `/api/balance`, and only its legacy `limits.monthly.usage` shape; its spend report is ignored because spend comes from the CLI via the sidecar |
-| `web` | `GET https://ollama.com/settings` | Parses each `data-usage-track` meter's `aria-label` (percent used) and nearby `data-time` (reset); legacy `Session usage` / `Weekly usage` blocks are still read. The plan tier comes from the `Included usage` (legacy `Cloud Usage`) badge |
+| `web` | `GET https://ollama.com/settings` | Parses each `data-usage-track` meter's `aria-label` (percent used) and nearby `data-time` (reset); legacy `Session usage` / `Weekly usage` blocks are still read. The plan tier comes from the `Included usage` (legacy `Cloud Usage`) badge. **As of the redesigned Usage page (captured 2026-11-09) the signed-in page carries none of these:** its figures load through a script, the raw response has no meter, plan badge or account email, and `/settings/billing` shows no allowance either. The strategy then returns no cards and the account gets the specific error below (the meters are still parsed if the markup returns, e.g. on paid plans) |
 
 **Plan tier.** The `api` allowance card derives `tier` from `included.allowance_usd`: $60 is
 `pro`, $300 `max`, $1000 `team`, up to $10 `free`; any other amount keeps `cloud`. The table
@@ -108,9 +108,10 @@ every event costs $0.
 | Symptom | Fix |
 |---|---|
 | "API key detected" in the cookie field | An `sk-…` key was pasted where the session cookie belongs. Use the key field, or paste the cookie (below). |
-| "API key was rejected" | The key is invalid or revoked; replace it in Settings, or remove it so the cookie path is used. |
+| "API key was rejected" | The key is invalid or revoked; replace it in Settings. Removing it does not help: the cookie path no longer reads the quota (see below). |
 | Card is empty or the `web` path fails | The cookie is expired or the page redirected to sign-in. Capture a fresh cookie (below). |
-| Unexpected balance shape | Anything other than the shapes above is malformed quota data; collection falls back to `web`, which needs a cookie. |
+| "Add an Ollama API key for the quota" | A cookie-only account: the signed-in settings page no longer shows the allowance (`usage_not_on_page`, error type `missing_config`). Add an Ollama API key in Settings; the quota then comes from `/api/balance`. The cookie stays useful only for the free-usage model list. |
+| Unexpected balance shape | Anything other than the shapes above is malformed quota data; collection falls back to `web`, which needs a cookie and, on the current settings page, finds no allowance (see the row above). |
 
 Getting the cookie: sign in at `https://ollama.com/settings`, open DevTools, Network tab,
 refresh, select the `settings` request and copy the `Cookie` request header (or just the

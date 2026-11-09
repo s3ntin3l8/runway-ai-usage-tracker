@@ -129,6 +129,11 @@ class OllamaCollector(BaseCollector):
     # Vague plan-name keywords only apply when no concrete reset is available.
     WINDOW_TYPE_WEAK_KEYWORDS = (("free", "monthly"),)
 
+    # The redesigned, signed-in "Usage" page loads its figures through a script
+    # (`data-usage-async`) and shows the free-usage model list in
+    # `#free-plan-models`, but carries no allowance meter, plan badge or email.
+    RE_USAGE_PAGE = re.compile(r'data-usage-async|id="free-plan-models"', re.IGNORECASE)
+
     # Patterns for detecting logged-out state (case-insensitive)
     RE_SIGN_IN_HEADING = re.compile(r"sign in to ollama|log in to ollama", re.IGNORECASE)
     RE_AUTH_FORM = re.compile(
@@ -158,12 +163,16 @@ class OllamaCollector(BaseCollector):
         "invalid_api_key": "auth_failed",  # pragma: allowlist secret
         "not_logged_in": "auth_required",
         "missing_data": "parse_error",
+        "usage_not_on_page": "missing_config",
         "invalid_credential_type": "invalid_config",
     }
     ERROR_MESSAGES = {
         "invalid_api_key": "Ollama API key was rejected. Check or replace the key in provider settings.",  # pragma: allowlist secret
         "not_logged_in": "Not logged in. Please log in at ollama.com",
         "missing_data": "Could not parse usage data",
+        # Error-card detail is cut at 40 characters: keep this short and put the
+        # reason (the settings page no longer shows the allowance) in the docs.
+        "usage_not_on_page": "Add an Ollama API key for the quota",
         "invalid_credential_type": "API Key detected. Quota tracking requires a Session Cookie (ollama_session).",
     }
 
@@ -242,9 +251,10 @@ class OllamaCollector(BaseCollector):
         priority = {
             "unknown": 0,
             "missing_data": 1,
-            "not_logged_in": 2,
-            "invalid_credential_type": 3,
-            "invalid_api_key": 4,
+            "usage_not_on_page": 2,
+            "not_logged_in": 3,
+            "invalid_credential_type": 4,
+            "invalid_api_key": 5,
         }
         if priority.get(reason, 0) >= priority.get(self._last_error_reason, 0):
             self._last_error_reason = reason
@@ -851,6 +861,13 @@ class OllamaCollector(BaseCollector):
 
         blocks = self._get_usage_blocks(html, now)
         if not blocks:
+            if self.RE_USAGE_PAGE.search(html):
+                # A signed-in page that simply no longer carries the allowance:
+                # not a parse failure of a known layout, and the cookie cannot
+                # fix it. Only the API key reads the quota now.
+                logger.debug("Ollama: settings page shows no allowance meter")
+                self._set_error_reason("usage_not_on_page")
+                return []
             logger.debug("Ollama: no usage data found in response")
             self._set_error_reason("missing_data")
             return []

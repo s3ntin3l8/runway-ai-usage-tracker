@@ -1259,22 +1259,55 @@ def test_settings_fixture_holds_no_account_data():
     assert "<script" not in html.lower()
 
 
-def test_live_settings_page_yields_no_legacy_meter_cards():
-    """Records the page drift found while capturing the fixture (#1287).
+def test_live_settings_page_reports_that_the_allowance_is_not_on_the_page():
+    """The signed-in Usage page (#1287) carries no allowance meter (#1296).
 
-    The live page loads its usage figures asynchronously, so the raw response
-    has no usage meter, plan badge or account-email element: ``_parse_html``
-    finds no cards, and the page does not look signed out either, so the web
-    strategy degrades to "missing data" rather than an auth error. If Ollama
-    renders the meter server-side again, this fails and the fixture should be
-    recaptured.
+    Its figures load through a script, so the raw response has no usage meter,
+    plan badge or account-email element. That is a page that no longer shows the
+    quota, not a layout the parser failed to read, so the reason says so. If
+    Ollama renders the meter server-side again this fails: recapture the fixture.
     """
     html = SETTINGS_FIXTURE.read_text(encoding="utf-8")
     collector = OllamaCollector()
 
     assert collector._looks_signed_out(html) is False
     assert collector._parse_html(html) == []
+    assert collector._last_error_reason == "usage_not_on_page"
+
+
+def test_a_blank_signed_in_page_stays_a_parse_failure():
+    """Only the known Usage page gets the specific reason; anything else is a parse error."""
+    collector = OllamaCollector()
+
+    assert collector._parse_html("<html><body><p>Settings</p></body></html>") == []
     assert collector._last_error_reason == "missing_data"
+
+
+@pytest.mark.asyncio
+async def test_cookie_only_account_gets_a_specific_error_card_not_a_parse_error():
+    """Entry point: cookie only, no API key, the live page -> the web strategy and the
+    error handler end in a ``missing_config`` card that points at the API key."""
+    collector = OllamaCollector(account_id="acc_test")
+    resp = _make_response({})
+    resp.text = SETTINGS_FIXTURE.read_text(encoding="utf-8")
+
+    with (
+        patch.object(
+            collector, "_get_cookie_header", new=AsyncMock(return_value="session=abc.def-123")
+        ),
+        patch(
+            "app.services.collectors.ollama.http_request_with_retry",
+            new=AsyncMock(return_value=resp),
+        ),
+    ):
+        assert await collector._get_ollama_web(MagicMock()) == []
+        cards = await collector._error_handler()
+
+    assert len(cards) == 1
+    assert cards[0]["error_type"] == "missing_config"
+    assert cards[0]["detail"] == OllamaCollector.ERROR_MESSAGES["usage_not_on_page"]
+    assert "API key" in cards[0]["detail"]
+    assert "Could not parse usage data" not in cards[0]["detail"]
 
 
 SETTINGS_FIXTURE = Path(__file__).parent.parent / "fixtures" / "ollama-settings-included-usage.html"
