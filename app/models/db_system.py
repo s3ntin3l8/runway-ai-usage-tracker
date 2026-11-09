@@ -147,6 +147,11 @@ class ProviderPricing(SQLModel, table=True):  # type: ignore[call-arg]
     long_cache_read_per_mtok: float | None = None
     long_cache_create_per_mtok: float | None = None
     long_cache_create_1h_per_mtok: float | None = None
+    # Optional time-of-day schedule (see app/services/pricing_schedule.py): while
+    # the event's UTC ts is inside the named schedule's window every rate above
+    # is multiplied by rate_schedule_multiplier. NULL = flat rates.
+    rate_schedule: str | None = None
+    rate_schedule_multiplier: float | None = None
     notes: str | None = None
 
 

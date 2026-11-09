@@ -14,6 +14,7 @@ from sqlmodel import col
 
 from app.models.db import UsageEvent
 from app.services.cost_calculator import PricingRow
+from app.services.pricing_schedule import schedule_factor_sql
 
 
 def sql_cost(row: PricingRow) -> Any:
@@ -59,7 +60,7 @@ def sql_cost(row: PricingRow) -> Any:
         ),
         else_=UsageEvent.tokens_cache_create,
     )
-    return (
+    total = (
         UsageEvent.tokens_input * rate(row.input_per_mtok, row.long_input_per_mtok)
         + (UsageEvent.tokens_output + UsageEvent.tokens_reasoning)
         * rate(row.output_per_mtok, row.long_output_per_mtok)
@@ -67,3 +68,7 @@ def sql_cost(row: PricingRow) -> Any:
         + UsageEvent.tokens_cache_create_1h * rate(rate_1h_std, rate_1h_long)
         + cache_5m_tokens * rate(rate_5m_std, rate_5m_long)
     ) / 1_000_000
+    # Time-of-day schedule: the row's multiplier while the event's UTC ts is in
+    # the window — the SQL twin of the factor compute_event_cost_breakdown applies.
+    factor = schedule_factor_sql(row, UsageEvent.ts)
+    return total if factor is None else total * factor

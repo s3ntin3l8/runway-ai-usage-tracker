@@ -1154,10 +1154,13 @@ PRICING_SEED: list[dict] = [
     # _OC_CANONICAL_MAP "deepseek" entry). OpenCode-routed deepseek models on
     # the Go subscription stay on provider_id="opencode" and are priced by the
     # separate opencode rows at the end of this list.
-    # - OFF-PEAK rates are seeded: DeepSeek charges 2x during peak hours
-    #   (01:00-04:00 & 06:00-10:00 UTC, Mon-Fri excl. CN holidays), but
-    #   provider_pricing has no time-of-day column (same class of limitation
-    #   as Gemini's >200K tier). Peak-hour events undercount 2x.
+    # - Base rows hold the OFF-PEAK rates; DeepSeek charges 2x during peak
+    #   (01:00-04:00 & 06:00-10:00 UTC, Mon-Fri), so each row carries
+    #   rate_schedule="deepseek_peak" with a 2.0 multiplier (source: the
+    #   pricing page above, checked 2026-11-09; window in
+    #   pricing_schedule.SCHEDULES). The page excludes CN holidays from peak;
+    #   no holiday calendar is modelled, so those few weekdays are billed at
+    #   the peak rate (a small overcount).
     # - cache_read_per_mtok = the "cache hit" input rate; the "cache miss"
     #   rate is input_per_mtok.
     # - cache_create_per_mtok = input rate: DeepSeek uses implicit caching
@@ -1179,7 +1182,9 @@ PRICING_SEED: list[dict] = [
         "output_per_mtok": 0.60,
         "cache_read_per_mtok": 0.003,
         "cache_create_per_mtok": 0.15,
-        "notes": "DeepSeek-V4.1-Flash (legacy name deepseek-v4-flash), off-peak",
+        "rate_schedule": "deepseek_peak",
+        "rate_schedule_multiplier": 2.0,
+        "notes": "DeepSeek-V4.1-Flash (legacy name deepseek-v4-flash), off-peak base, 2x peak",
     },
     {
         "provider_id": "deepseek",
@@ -1189,7 +1194,9 @@ PRICING_SEED: list[dict] = [
         "output_per_mtok": 0.60,
         "cache_read_per_mtok": 0.003,
         "cache_create_per_mtok": 0.15,
-        "notes": "DeepSeek-V4.1-Flash (canonical API model name), off-peak",
+        "rate_schedule": "deepseek_peak",
+        "rate_schedule_multiplier": 2.0,
+        "notes": "DeepSeek-V4.1-Flash (canonical API model name), off-peak base, 2x peak",
     },
     {
         "provider_id": "deepseek",
@@ -1199,6 +1206,8 @@ PRICING_SEED: list[dict] = [
         "output_per_mtok": 0.60,
         "cache_read_per_mtok": 0.003,
         "cache_create_per_mtok": 0.15,
+        "rate_schedule": "deepseek_peak",
+        "rate_schedule_multiplier": 2.0,
         "notes": "DeepSeek-V4.1-Flash — dotted id the segment-trim fallback "
         "cannot reach, seeded explicitly",
     },
@@ -1210,7 +1219,9 @@ PRICING_SEED: list[dict] = [
         "output_per_mtok": 1.98,
         "cache_read_per_mtok": 0.022,
         "cache_create_per_mtok": 0.66,
-        "notes": "DeepSeek-V4-Pro-0813, off-peak",
+        "rate_schedule": "deepseek_peak",
+        "rate_schedule_multiplier": 2.0,
+        "notes": "DeepSeek-V4-Pro-0813, off-peak base, 2x peak",
     },
     # ── OpenCode-routed DeepSeek / MiniMax / Kimi ─────────────────────────────────────────────
     # OpenCode Zen list prices (https://opencode.ai/v2/docs/console/models,
@@ -1300,10 +1311,11 @@ PRICING_SEED: list[dict] = [
     # is retagged to it by the extractor's _OC_CANONICAL_MAP. Ollama bills
     # tokens at each model's rate against the dollar allowance, so a priced
     # event equals what it took from the allowance.
-    # - PEAK rates only: deepseek-v4.1-flash and deepseek-v4-pro are half
-    #   price off-peak (outside 12:00-18:00 UTC on weekdays, and all weekend).
-    #   provider_pricing has no time-of-day column, so off-peak events are
-    #   OVERCOUNTED 2x. The time-of-day mechanism is a separate issue.
+    # - deepseek-v4.1-flash and deepseek-v4-pro are half price off-peak
+    #   (outside 12:00-18:00 UTC on weekdays, and all weekend). The base row
+    #   holds the standard rate and carries rate_schedule="ollama_offpeak"
+    #   with a 0.5 multiplier (source: the pricing page above, checked
+    #   2026-11-09; window in pricing_schedule.SCHEDULES).
     # - cache_create_per_mtok = input rate: Ollama reports no cache-write
     #   token field, so a hypothetical write is priced at the input rate
     #   (same rationale as the deepseek rows).
@@ -1341,7 +1353,9 @@ PRICING_SEED: list[dict] = [
         "output_per_mtok": 1.20,
         "cache_read_per_mtok": 0.006,
         "cache_create_per_mtok": 0.30,
-        "notes": "Ollama Cloud deepseek-v4.1-flash — peak rate (off-peak is half price; overcounted off-peak)",
+        "rate_schedule": "ollama_offpeak",
+        "rate_schedule_multiplier": 0.5,
+        "notes": "Ollama Cloud deepseek-v4.1-flash — standard rate, half price off-peak",
     },
     {
         "provider_id": "ollama",
@@ -1351,7 +1365,9 @@ PRICING_SEED: list[dict] = [
         "output_per_mtok": 3.96,
         "cache_read_per_mtok": 0.044,
         "cache_create_per_mtok": 1.32,
-        "notes": "Ollama Cloud deepseek-v4-pro — peak rate (off-peak is half price; overcounted off-peak)",
+        "rate_schedule": "ollama_offpeak",
+        "rate_schedule_multiplier": 0.5,
+        "notes": "Ollama Cloud deepseek-v4-pro — standard rate, half price off-peak",
     },
     {
         "provider_id": "ollama",
@@ -1538,6 +1554,8 @@ PRICING_SEED: list[dict] = [
 
 _SONNET_55_OLD_CACHE_READ = 0.20
 
+_SCHEDULE_COLUMNS = ("rate_schedule", "rate_schedule_multiplier")
+
 _LONG_TIER_COLUMNS = (
     "long_prompt_threshold_tokens",
     "long_input_per_mtok",
@@ -1601,6 +1619,12 @@ def seed_pricing_table(session: Session) -> list[tuple[str, str]]:
                 for name in _LONG_TIER_COLUMNS:
                     setattr(exists, name, row[name])
                 session.add(exists)
+            # Time-of-day schedule postdates these rows: backfill it in place,
+            # only while the row has none (a hand-set schedule is kept).
+            if row.get("rate_schedule") and exists.rate_schedule is None:
+                for name in _SCHEDULE_COLUMNS:
+                    setattr(exists, name, row.get(name))
+                session.add(exists)
             seed_create = row.get("cache_create_per_mtok", 0.0)
             if exists.cache_create_per_mtok == 0.0 and seed_create:
                 exists.cache_create_per_mtok = seed_create
@@ -1617,6 +1641,7 @@ def seed_pricing_table(session: Session) -> list[tuple[str, str]]:
                 cache_create_per_mtok=row["cache_create_per_mtok"],
                 cache_create_1h_per_mtok=row.get("cache_create_1h_per_mtok", 0.0),
                 **{name: row.get(name) for name in _LONG_TIER_COLUMNS},
+                **{name: row.get(name) for name in _SCHEDULE_COLUMNS},
                 notes=row.get("notes"),
             )
         )
