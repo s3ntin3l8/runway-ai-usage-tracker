@@ -63,8 +63,21 @@ Ollama usage driven through OpenCode is folded into these cards instead of appea
 separate `opencode-ollama` provider. In the OpenCode extractor, events with
 `providerID: "ollama-cloud"` are retagged to `provider_id="ollama"` through the shared
 canonical map (`scripts/sidecar_pkg/canonical_providers.py`) and their logged $0 cost is
-dropped. The seed has no Ollama price rows, so folded events are priced at $0 today. Details
-are in [opencode.md](opencode.md).
+dropped; the server reprices them from the seed. `app/services/pricing_seed.py` carries a
+`provider_id="ollama"` row for every model on <https://ollama.com/pricing> (input / cached
+input / output per 1M tokens), so a priced event equals what it took from the allowance.
+Details are in [opencode.md](opencode.md). Notes:
+
+- Tagged ids (`gemma4:31b`) resolve to the untagged row (`gemma4`); ids that carry their own
+  tag (`gpt-oss:20b`, `gpt-oss:120b`) match their own rows.
+- Only the standard (peak) rate is seeded. `deepseek-v4.1-flash` and `deepseek-v4-pro` are
+  half price off-peak (outside 12:00-18:00 UTC on weekdays, and all weekend), so events in
+  those hours are overcounted 2x until a time-of-day mechanism exists.
+- `clef` publishes only an input rate; output and cache are seeded as 0.
+- Models with no row (e.g. `web_search`, which has no token rate) stay at $0 and are listed
+  by the Data Health unpriced-models check.
+- Existing $0 Ollama events are re-costed when new rows are seeded (and by the Data Health
+  fixer / `scripts/recost_events.py`); re-running is a no-op.
 
 ## Troubleshooting
 
