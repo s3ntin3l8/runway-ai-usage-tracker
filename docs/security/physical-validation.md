@@ -1,15 +1,12 @@
-# Physical security acceptance — issue #603
+# Physical security acceptance
 
-Status: **physical macOS execution pending**. The actual Authentik/Traefik TLS
-matrix and recorded Windows native/Chrome/Edge runs are complete for their stated
-configurations and limitations. The [macOS build A record](evidence/603-macos-2026-10-15/README.md)
-preserves the starting signed payloads; capture is not physical acceptance.
-Automated browser/proxy and frozen verifier checks complement the recorded
-physical results. Windows evidence: [genuine native cycles](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/603#issuecomment-6144591960),
-[reconciliation and recovery](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/603#issuecomment-6150006342),
-and [public-origin Chrome/Edge LNA](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/603#issuecomment-6134442120).
-Record failures and unavailable cases honestly; #603 stays open
-until the required matrix passes or a tracked limitation is explicitly agreed.
+The runbook for the checks automation cannot make: native installation, update,
+restart and rollback on real Windows and macOS machines, browser boundaries on
+real browsers, and a real identity provider in front of Runway. Automated
+browser/proxy checks and the frozen verifier ([`../security-validation.md`](../security-validation.md))
+complement these; they do not replace them. Record failures and unavailable
+cases honestly: a blank result is pending, not passing. Completed runs are
+filed under [`../evidence/security/`](../evidence/README.md).
 
 ## Record and isolate
 
@@ -73,15 +70,15 @@ update/restart sequence above. Use Python 3.12 and the repository's sidecar extr
 
 ## Physical browser boundaries
 
-The [Windows helper guide](windows-browser-helper.md) describes isolated trusted
+The [Windows helper guide](../evidence/windows-browser-helper.md) describes isolated trusted
 TLS direct probes, separate matching-port HTTP rebinding fixtures, scoped real
 DNS resolver setup, body-free exports, source restrictions and teardown. Helper
 readiness and DNS diagnostics are not physical browser acceptance.
 
 Use Edge/Chrome on Windows, and Safari, Chrome and Firefox on macOS.
 
-Windows Firefox is [explicitly excluded by the operator](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/603#issuecomment-6147075608),
-not passed; record macOS browser availability separately.
+Windows Firefox is out of scope: record it as excluded, never as passed. Record
+macOS browser availability separately.
 Test dashboard and sidecar settings independently. Record Local Network Access
 prompts and permission denied/granted states where the browser supports them.
 
@@ -123,12 +120,9 @@ prompts and permission denied/granted states where the browser supports them.
 
 ## Actual Authentik + Traefik over TLS
 
-The [2026-10-12 execution record](evidence/603-authentik-traefik-2026-10-12/README.md)
-contains the completed actual Authentik/Traefik TLS matrix on an isolated synthetic
-application, including sanitized configuration, results, immediate-peer logs and
-teardown. Recorded Windows execution is linked from #603; the remaining physical macOS
-installation and browser acceptance stays pending. The Windows full-gate follow-up
-is complete through #631 (closing #621), with its explicit privilege/platform skips.
+The completed run is the [Authentik/Traefik execution record](../evidence/security/603-authentik-traefik-2026-10-12/README.md):
+an isolated synthetic application with sanitized configuration, results,
+immediate-peer logs and teardown.
 
 Create a separate Runway test hostname, Authentik application and Proxy Provider
 in forward-auth single-application mode, reusing your existing Traefik installation.
@@ -157,13 +151,63 @@ the gate and preserve the signature headers/body through Traefik. Do not bypass
 SSO for general admin/private routes. Test the configured policy using the real
 outpost, not a proxy that asserts a hardcoded test identity.
 
-## Evidence and closure
+## Recording results
 
-Attach sanitized results and logs to #603, link the tooling PR, and record newly
-found defects in linked issues with reproductions. Do not close #603 when this
-runbook is merged. Close only after all required native, browser and SSO cases pass
-or a separately tracked limitation is explicitly agreed. Suggested record:
+Attach sanitized results and logs to the validation record, and file newly
+found defects as issues with reproductions. A run is complete only when all
+required native, browser and SSO cases pass or a limitation is explicitly
+agreed and tracked. Suggested record shape:
 
 ```json
 {"case":"windows-installer-update","status":"pending","expected":"signed B starts; config preserved","actual":null,"os":null,"browser":null,"commit":null,"asset_sha256":null,"operator":null,"tested_at":null,"evidence":[]}
 ```
+
+## Release acceptance
+
+Image promotion and sidecar signing are separate acceptance boundaries. An image
+scan must describe the exact published digest, and a frozen verifier must accept
+the actual captured portable release bytes, not only a synthetic signed fixture.
+Neither replaces the physical checks above.
+
+### Portable release capture and frozen validation
+
+Dispatch **Frozen Verifier** on the trusted source branch with `release-tag` set
+to a versioned release such as `v3.1.0`; rolling `edge` is deliberately
+unsupported. The capture job requires Linux CLI, Linux desktop, Windows ZIP and
+macOS ZIP, each with a checksum and modern Sigstore bundle. It records the
+release ID, tag commit, asset IDs, sizes, GitHub digests when supplied and
+locally computed SHA-256 hashes, checks checksums, runs the production updater
+verifier on all four payloads, then rechecks tag and asset identity for
+replacement during capture.
+
+The native frozen matrix uses that single asset set and invokes the normal
+`--verify-update` diagnostic in each frozen binary with an isolated config
+directory. A valid archive must pass; tampered bytes, missing or malformed
+bundles and oversized archives must refuse with the expected exit code and
+diagnostic. Nothing is installed or extracted. Sigstore trust refresh needs
+network access, and a failure never permits a checksum fallback or a weakened
+signing identity.
+
+`captured-release-updates` and `frozen-verifier-*` artifacts retain manifests and
+results for 90 days; keep a durable copy if the evidence is needed longer. A
+successful run, the source commit and the capture manifest hashes are the record.
+Locally:
+
+```bash
+python -m scripts.capture_release_updates --release-tag v3.1.0 --output /tmp/release-capture
+python -m scripts.security_packaging_smoke --binary dist/runway-sidecar-cli \
+  --release-dir /tmp/release-capture --platform Linux-CLI --report /tmp/linux-cli.json
+```
+
+Without release inputs, PR checks use the real signed fixture. An explicit
+`--payload`/`--bundle` pair is also supported for packaging diagnostics.
+
+### Published image
+
+Record the published index and both architecture digests, raw SBOM/report
+artifacts, database identity and scan time, the exact reviewed exceptions, and
+the signing and promotion steps. Independently verify the public index signature
+against the Docker publishing workflow identity (see [`../SECURITY.md`](../SECURITY.md))
+and confirm the public versioned tag resolves to the audited index.
+Source-only or candidate-only validation does not establish replacement of
+released bytes. The recorded scan is in [`image-remediation.md`](image-remediation.md).

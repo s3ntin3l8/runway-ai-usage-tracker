@@ -16,28 +16,19 @@ How the Runway Sidecar is built, packaged, signed and updated. For how to
 
 ## Make targets
 
+`make sidecar` runs the sidecar agent from source; it does not package anything.
+The packaging targets are:
+
 | Target | Host | Output |
 |---|---|---|
-| `make sidecar-app` | macOS only | `dist/Runway Sidecar.app` — PyInstaller bundle, ad-hoc signed and verified |
-| `make sidecar-dmg` | macOS only | `dist/Runway-Sidecar-macOS-dev.dmg` — drag-to-Applications image |
-| `make sidecar-installer` | any | `dist/Runway-Sidecar-Windows-<version>-setup.exe` — NSIS installer |
-| `make sidecar` | any | `make sidecar-app` + `make sidecar-dmg` |
+| `make sidecar-app` | macOS only | `dist/Runway Sidecar.app`, PyInstaller bundle, ad-hoc signed and verified |
+| `make sidecar-dmg` | macOS only | `dist/Runway-Sidecar-macOS-dev.dmg` (builds `sidecar-app` first) |
+| `make sidecar-installer` | any | `dist/Runway-Sidecar-Windows-<version>-setup.exe`, compiled from `dist/RunwaySidecar.exe` |
 
-`make sidecar-app` refuses to run off macOS:
-
-```
-sidecar-app needs macOS
-```
-
-`make sidecar-installer` refuses to run without a Windows binary already built:
-
-```
-dist/RunwaySidecar.exe missing — build it on Windows with pyinstaller sidecar_app/spec/windows.spec
-```
-
-The NSIS installer is compiled from the **packaged** `dist/RunwaySidecar.exe`,
-not from Python source — so the Windows binary must be built on Windows first
-(or copied into `dist/` from a Windows build).
+`sidecar-app` exits with `sidecar-app needs macOS` elsewhere. `sidecar-installer`
+exits with a message when `dist/RunwaySidecar.exe` is missing: build it on
+Windows first with `pyinstaller sidecar_app/spec/windows.spec`, or copy it into
+`dist/`.
 
 ## PyInstaller specs
 
@@ -54,9 +45,8 @@ console mode.
 `linux.spec` and `linux-cli.spec` are separate because the CLI must not link a
 GUI toolkit: it runs on headless servers and inside slim containers.
 
-The tray specs bundle the Python runtime, so the resulting binary is large
-(current signed edge payloads are 38–93 MB depending on platform — see the
-update budgets below).
+The tray specs bundle the Python runtime, so the binaries are large; see the
+update budgets below.
 
 ## Release asset naming
 
@@ -70,7 +60,7 @@ hand. Every release publishes:
 | Linux (tray) | — | `Runway-Sidecar-Linux-<label>.tar.gz` |
 | Linux (CLI) | — | `Runway-Sidecar-Linux-CLI-<label>.tar.gz` |
 
-`<label>` is the release tag: `v3.0.0-beta.14` for a numbered release, `edge`
+`<label>` is the release tag: `v3.1.0` or `v3.1.0-beta.2` for a numbered release, `edge`
 for the rolling prerelease. Each asset also ships a sibling `<asset>.sha256`,
 and each release ships one `SHA256SUMS.txt` covering all of them.
 
@@ -98,15 +88,8 @@ verifier and exact identity** the updater uses (`scripts/sidecar_pkg/signatures.
 Older legacy bundles fail closed — a checksum cannot substitute for a valid
 signature.
 
-Verify a downloaded asset by hand:
-
-```bash
-cosign verify-blob \
-  --bundle Runway-Sidecar-macOS-v2.13.0.dmg.sigstore.json \
-  --certificate-identity https://github.com/s3ntin3l8/runway-ai-usage-tracker/.github/workflows/sidecar-build.yml@refs/heads/main \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  Runway-Sidecar-macOS-v2.13.0.dmg
-```
+Verifying a downloaded asset by hand (`cosign verify-blob` against this
+identity) is documented in [`SECURITY.md`](SECURITY.md).
 
 A read-only packaging check, without installing anything:
 
@@ -122,18 +105,15 @@ certificate either. Each OS therefore asks once on first launch. See
 ## Update resource budgets
 
 Portable update archives are limited to **256 MiB**, signature bundles to **1 MiB**,
-checksum responses to **4 KiB**, and release metadata to **4 MiB**. Current signed
-edge payloads measured on 2026-10-10 are Linux CLI 52,153,543 bytes, Linux tray
-59,861,976 bytes, Windows 38,049,361 bytes, and macOS 92,751,463 bytes. Archives
-therefore have nearly three times the largest current package's size in headroom.
+checksum responses to **4 KiB**, and release metadata to **4 MiB**
+(`scripts/sidecar_pkg/update_limits.py`).
 
 Actual bytes are counted even if Content-Length is absent or incorrect. Overflow
 is a permanent failure: the response closes, temporary bytes are removed, and the
 installed copy/rollback slot remain unchanged. There is no operator override.
 Local archives are rejected before hashing when oversized. Release packaging
 checks the same archive/bundle budgets so legitimate packages cannot silently
-outgrow the updater. A future budget increase must update the documented limits
-and ship through a reviewed change. Signature verification remains mandatory.
+outgrow the updater. Signature verification remains mandatory.
 
 ## Self-update mechanics
 
@@ -145,8 +125,8 @@ Self-update only works for the packaged (PyInstaller) binaries. **From-source
 runs and Docker containers are notify-only** — update them with `git pull` or
 by re-pulling the image.
 
-Full user-facing detail, including the systemd restart behaviour and the
-`_MEI*` temp-directory cleanup, is in [`sidecar.md`](sidecar.md#updates).
+The user-facing steps are in [`sidecar.md`](sidecar.md#updates); the update
+mechanics live in `scripts/sidecar_pkg/self_update*.py`.
 
 ## Related
 

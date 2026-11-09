@@ -71,57 +71,33 @@ Two more guards apply:
 
 ## What gets seeded
 
-`scripts/demo/seed_demo.py` writes a synthetic dataset into the scratch
-database. It refuses to run against any database other than the scratch one.
+`scripts/demo/seed_demo.py` writes a synthetic dataset (Anthropic, ChatGPT,
+Gemini, GitHub, OpenCode and Ollama accounts) into the scratch database and
+refuses to run against any other database. The data is generated relative to
+*now* from a fixed random seed, so a capture looks current and repeated runs
+produce the same shapes.
 
-The data is generated relative to *now* from a fixed random seed, so a capture
-always looks current and repeated runs produce the same shapes.
-
-| Provider | Cards | Notes |
-|---|---|---|
-| Anthropic | `anthropic_cards()` | Claude subscription quotas |
-| ChatGPT | `chatgpt_cards()` | |
-| Gemini | `gemini_cards()` | |
-| GitHub | `github_cards()` | Copilot quotas |
-| OpenCode | `opencode_cards()` | |
-| Ollama | `ollama_cards()` | |
-
-Every seeded account also gets a `ProviderConfig` row, because Runway's
-data-health checks flag gauge data that has no configuration behind it.
-
-Usage events go through Runway's own code paths wherever they exist: limit
-cards come from each collector's own parse function fed a synthetic provider
-response, and usage events go through the `EventIngestor`, which prices them and
-maintains the period rollups. Past quota windows are closed with
-`close_window`. Two synthetic sidecars are registered in the fleet registry
-(`demo-mbp`, `demo-workstation`) so the fleet view is not empty.
+Limit cards come from each collector's own parse function fed a synthetic
+provider response; usage events go through the `EventIngestor`, which prices
+them and maintains the rollups; past quota windows are closed with
+`close_window`. Every account gets a `ProviderConfig` row so data-health checks
+do not flag it, and two synthetic sidecars (`demo-mbp`, `demo-workstation`) are
+registered so the fleet view is not empty.
 
 ## Lifecycle
 
-`start_demo()` in `scripts/demo/instance.py` is the whole lifecycle:
+`start_demo()` in `scripts/demo/instance.py` asserts the port is free, builds
+the SPA if `webapp/dist` is missing or stale, creates a locked scratch
+directory with the isolated environment, seeds it, starts the server and waits
+for HTTP. `make demo` then prints `DEMO_READY url=…`, the line visual-kit waits
+for. `Demo.stop()` terminates the server and deletes the scratch directory
+(`keep=True` keeps it for inspection).
 
-1. Assert the port is free.
-2. Build the SPA if `webapp/dist` is missing or older than its sources
-   (`ensure_spa_built()`).
-3. Create a `mkdtemp` scratch directory, lock it, and build the isolated
-   environment. The lock is held for as long as the demo runs, so a later
-   demo can tell a live scratch dir from a leftover one.
-4. Seed the database.
-5. Start the server in the demo's own process group and wait for it to answer
-   HTTP. `make demo` then prints `DEMO_READY url=…`, the line visual-kit waits for.
-
-With `DEMO_NOW` set (an ISO date-time, e.g. `2026-10-15T10:00:00Z`; a bare date
-is refused), steps 4 and 5 run through `scripts/demo/freeze_time.py`, which starts
-the clock of the seed and the server at that instant with `time-machine`. It keeps
-ticking from there, so timeouts and the rate limiter still behave. Relative times
-("resets in 1h 25m") and forecasts then read the same on any day.
-
-`Demo.stop()` terminates the server by name — the server shares the demo's
-process group rather than leading one of its own, so a supervisor that
-stops the demo takes the server with it — then deletes the scratch
-directory. Pass `keep=True` to keep it for inspection; the printed path is
-where it landed, and the dir says so itself, so the next demo's sweep leaves
-it alone.
+With `DEMO_NOW` set (an ISO date-time such as `2026-10-15T10:00:00Z`; a bare
+date is refused), the seed and the server run through
+`scripts/demo/freeze_time.py`, which starts their clock at that instant with
+`time-machine`. It keeps ticking from there, so timeouts and the rate limiter
+still behave, and relative times ("resets in 1h 25m") read the same on any day.
 
 ## Related Files
 
@@ -170,10 +146,6 @@ The **baselines** (`dashboard`, `provider` and `history`, in `visual/baselines/`
 are committed so a reviewer sees the visual change in the pull request. Comment
 `/update-baselines` on a PR (write access, same-repository branch) and CI
 regenerates them and pushes one commit; or run `make visual-baseline` and commit.
-
-`visual/baselines/provenance.json` records a hash of the viewport configuration, which the
-secret scanner reads as a high-entropy string; it is listed in `.secrets.baseline`. If a change to
-`viewports` in `visual/scenes.json` changes the hash, run `make secrets-baseline` and commit it.
 
 Two things keep the committed images from going stale: the **visual check** runs
 on UI pull requests and posts its report as a comment (advisory), and

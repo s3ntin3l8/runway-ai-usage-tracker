@@ -1,113 +1,60 @@
 # Troubleshooting
 
-## Chrome Cookie Decryption Fails (App-Bound Encryption)
+Find the symptom, then the fix. Sidecar setup lives in [sidecar.md](sidecar.md).
+The sidecar log is `~/.config/runway/sidecar/sidecar.log` (Windows:
+`%APPDATA%\runway\sidecar\sidecar.log`); the tray's **View Logs** opens it, and a
+Fleet card's **Logs** shows it remotely. To get more detail, raise the log level
+from the card's Settings dialog or set `"log_level": "DEBUG"` in `config.json`
+(there is no `--verbose` flag).
 
-Chrome 127+ and Edge 127+ enforce **App-Bound Encryption (ABE)**, which ties the cookie
-decryption key cryptographically to the browser's own app bundle. This means external
-tools — including Runway — can no longer decrypt Chrome/Edge cookies using the standard
-macOS Keychain or Windows DPAPI mechanism.
+## The sidecar is not collecting
 
-**How to tell if ABE is the cause:**
-
-Run the sidecar with verbose logging and trigger a collection:
+Run one cycle and read the output:
 
 ```bash
-python3 scripts/sidecar.py --run-once
+python3 scripts/sidecar.py --run-once       # or runway-sidecar-cli --run-once
 ```
 
-A working browser cookie path produces a line like `[<provider>] cookie '<name>' found on <domain>`. If that line is absent for the providers you expect (Claude, ChatGPT, Ollama, OpenCode, Kimi Coding) **and** you are logged into them in Chrome/Edge 127+, ABE is the most likely cause. Cross-check by logging into the same provider in Safari (macOS) or Firefox (Linux/Windows) and re-running — if the cookie is then found, ABE was blocking decryption.
+There is no per-provider selector flag. Enable or disable providers in the
+dashboard's Fleet settings. If a provider is on but empty, check that its login
+exists on the sidecar's machine and under the user the sidecar runs as: a
+service does not see your shell environment (use the `claude_config_dirs` /
+`codex_home` config keys or Fleet's **Login directories**).
 
----
+## Pushes fail
 
-### ✅ Recommended Workarounds
+- Reach the server from the sidecar machine: `curl http://server:8765/api/v1/system/health`.
+- Check `api_url` and `api_key` in `config.json`, or re-pair ([sidecar.md](sidecar.md#pair-with-a-server)).
+- A 400 about the timestamp means the machine's clock is more than five minutes behind (or one minute ahead of) the server.
+- Look in `queue/` beside the config: queued files mean the server was unreachable and will be replayed.
+- Pairing refused, or a paired Mac keeps its Keychain credentials back, behind a forward-auth proxy: [Forward-Auth](forward-auth.md#verify-the-bypass).
 
-#### macOS — Use Safari (easiest)
+## `CERTIFICATE_VERIFY_FAILED`
 
-Safari cookies are stored in a binary format with **no encryption** — Runway reads them
-directly. Simply log into the provider in Safari and Runway will pick up the session
-automatically. No configuration needed.
+The sidecar could not verify the server's TLS certificate. Give it your CA
+chain (`ca_bundle` or `RUNWAY_CA_BUNDLE`), or as a last resort on a trusted
+network disable verification. See
+[sidecar.md](sidecar.md#tls--certificate-errors-certificate_verify_failed) and
+[deployment.md](deployment.md).
 
-Supported providers with Safari fallback: Claude, OpenCode, ChatGPT, Kimi, Ollama.
+## The daemon will not start
 
-#### Windows / Linux — Use Firefox (easiest)
+The PID file `sidecar.pid` beside the config prevents a second daemon. If the
+previous one crashed, make sure no sidecar process is running, then delete the
+PID file and start again.
 
-Firefox stores cookies in an **unencrypted SQLite database**, which Runway can read
-directly. Log into the provider in Firefox and Runway will use that session.
+## A self-update fails
 
-> **Note**: Edge is subject to the same ABE restrictions as Chrome (identical Chromium
-> codebase). Firefox is the recommended alternative on Windows.
+The checksum and Sigstore signature are mandatory; a mismatch, a missing
+bundle or a trust or network failure leaves the installed copy unchanged. If
+the install directory is not writable the update is skipped (install the DMG
+or setup.exe manually). `--verify-update ARCHIVE --bundle BUNDLE` checks an
+archive without installing it, and `--rollback` restores the previous build.
 
----
+## A provider has no data and the browser cookie cannot be read
 
-### ⚙️ Alternative: Use Environment Variables
-
-For a config-first approach, set the session token directly. This also works in Docker.
-
-| Provider | Environment Variable |
-|----------|---------------------|
-| Claude (OAuth) | `CLAUDE_CODE_OAUTH_TOKEN` |
-| ChatGPT | `CHATGPT_OAUTH_TOKEN` |
-| Ollama | `OLLAMA_SESSION_TOKEN` |
-| Kimi Coding | `KIMI_CODE_API_KEY` (preferred) or `KIMI_AUTH_TOKEN` |
-
-To find your token: open DevTools in any browser → Application → Cookies → copy the
-relevant cookie value for the provider's domain.
-
----
-
-### 🔧 Dev-Only: Disable ABE Temporarily
-
-> ⚠️ **Security risk.** Only do this in a trusted local dev environment. Re-enable
-> immediately after extracting cookies. Fully quit and relaunch the browser after
-> any change.
-
-#### macOS
-
-> ❌ **Does not work on Chrome/Edge 127+ on macOS.**
->
-> The `ApplicationBoundEncryptionEnabled` preference is a **Windows-only enterprise policy**.
-> On macOS, Chrome accepts the value silently but its cookie encryption ignores it entirely.
-> There is currently no supported way to disable macOS cookie encryption from outside
-> Chrome's process for Chrome 127+.
-
-If you need Chrome specifically, the only options are:
-- Use environment variables (see above)
-- Use a different browser (Safari is the recommended macOS alternative)
-
-#### Windows
-
-> ⚠️ Requires an **elevated (Administrator) command prompt**.
-
-On Windows, ABE is enforced by the Chrome Elevation Service (`elevation_service.exe`,
-runs as SYSTEM). Disabling it requires writing a Group Policy key to `HKLM`, which
-needs admin rights.
-
-**Chrome:**
-```bat
-:: Disable
-reg add "HKLM\SOFTWARE\Policies\Google\Chrome" /v ApplicationBoundEncryptionEnabled /t REG_DWORD /d 0 /f
-
-:: Re-enable when done
-reg delete "HKLM\SOFTWARE\Policies\Google\Chrome" /v ApplicationBoundEncryptionEnabled /f
-```
-
-**Edge:**
-```bat
-:: Disable
-reg add "HKLM\SOFTWARE\Policies\Microsoft\Edge" /v ApplicationBoundEncryptionEnabled /t REG_DWORD /d 0 /f
-
-:: Re-enable when done
-reg delete "HKLM\SOFTWARE\Policies\Microsoft\Edge" /v ApplicationBoundEncryptionEnabled /f
-```
-
-After relaunching the browser with ABE disabled, run `python3 scripts/sidecar.py --run-once` and confirm the cookie-found log line appears. Then extract your session token into an environment variable (see the Alternative section above) and re-enable ABE.
-
-## Cookie store unavailable (the browser holds it open)
-
-On Windows, Chrome 127+ opens the active profile's `Cookies` database with a lock that
-denies reads to any other process, and encrypts every value with App-Bound Encryption.
-The sidecar cannot read such a store at all, and it reports that once per cycle
-instead of raising an error for every cookie name:
+The sidecar classifies every browser cookie store once per cycle and reports a
+store it cannot use once, naming the store and the reason:
 
 ```
 WARNING Cookie store unavailable: Chrome/Default/Network/Cookies — held open by another
@@ -117,28 +64,71 @@ WARNING Cookie store unavailable: Chrome/Default/Network/Cookies — held open b
 INFO    Cookie stores: 1 of 3 unusable this cycle (locked)
 ```
 
-**How to tell the two apart.** The reason in the message says which one you hit:
+The dashboard shows the same thing: a "Cookie store unavailable" banner on
+Home, Settings → Credentials → **Unavailable** with the store, reason and fix,
+and the provider page says why instead of "No data for this provider". It
+clears itself the cycle the store reads fine again.
+
+A working cookie path logs `[<provider>] cookie '<name>' found on <domain>` at
+INFO. If that line is missing for a provider you are signed in to in
+Chrome or Edge 127+, the reason in the warning tells you which case applies:
 
 | Reason | Meaning | Fix |
 |---|---|---|
-| `held open by another process` | The browser owns the file exclusively | Use Firefox, or supply the cookie another way — closing the browser alone is not enough on Chrome 127+, because the values are also app-bound encrypted |
-| `values are app-bound encrypted (v20)` | The store opened, but the values cannot be decrypted | Use Firefox, or disable ABE as described above |
+| `held open by another process` | The browser holds the file exclusively (Windows). | Closing the browser is not enough on Chrome 127+, because values are also app-bound encrypted. Use Firefox or one of the alternatives below. |
+| `values are app-bound encrypted (v20)` | The store opened, but the values cannot be decrypted. | Use Firefox or one of the alternatives below. |
 
-**What actually works on Windows.** Firefox stores its cookies unencrypted and keeps them
-readable while it is running, so signing into the provider in Firefox is enough — the
-sidecar reads it directly, with no restart and no policy change. The environment
-variable and the Settings → Providers paste both work regardless of which browser you
-use.
+### Why: App-Bound Encryption
 
-**The dashboard knows about it too.** The sidecar reports the unusable store to the
-server, so the provider is not silently empty: the Home page shows a "Cookie store
-unavailable" banner, Settings → Credentials has an "Unavailable" tab naming the store,
-the reason and the fix, and the provider's own page says *why* there is no data instead
-of "No data for this provider". The report disappears on its own once the store
-is readable again and the sidecar stops reporting it.
+Chrome and Edge 127+ tie cookie decryption to the browser's own app bundle, so
+external tools cannot decrypt the cookies with the macOS Keychain or Windows
+DPAPI. Cross-check by signing in to the same provider in Safari (macOS) or
+Firefox and re-running a cycle: if the cookie is then found, encryption was the
+blocker.
+
+### What works
+
+- **macOS: Safari.** Its cookie store is unencrypted; sign in there. Safari fallback covers Claude, OpenCode, ChatGPT, Kimi and Ollama.
+- **Windows and Linux: Firefox.** Its cookie database is unencrypted and stays readable while the browser runs; no restart or policy change. Edge has the same restriction as Chrome.
+- **Environment variables or the Settings paste.** These work in any browser and in Docker. Copy the cookie value from DevTools → Application → Cookies for the provider's domain.
+
+| Provider | Variable |
+|---|---|
+| Claude (OAuth) | `CLAUDE_CODE_OAUTH_TOKEN` |
+| ChatGPT | `CHATGPT_OAUTH_TOKEN` |
+| Ollama | `OLLAMA_SESSION_TOKEN` |
+| Kimi Coding | `KIMI_CODE_API_KEY` (preferred) or `KIMI_AUTH_TOKEN` |
+
+### Dev only: disabling ABE on Windows
+
+This lowers browser security: only do it on a trusted dev machine, from an
+elevated prompt, and revert as soon as you have extracted the token. Fully
+quit and relaunch the browser after each change. There is no equivalent on
+macOS (the policy is Windows-only).
+
+```bat
+:: Chrome: disable, then re-enable
+reg add "HKLM\SOFTWARE\Policies\Google\Chrome" /v ApplicationBoundEncryptionEnabled /t REG_DWORD /d 0 /f
+reg delete "HKLM\SOFTWARE\Policies\Google\Chrome" /v ApplicationBoundEncryptionEnabled /f
+
+:: Edge: disable, then re-enable
+reg add "HKLM\SOFTWARE\Policies\Microsoft\Edge" /v ApplicationBoundEncryptionEnabled /t REG_DWORD /d 0 /f
+reg delete "HKLM\SOFTWARE\Policies\Microsoft\Edge" /v ApplicationBoundEncryptionEnabled /f
+```
+
+Run a cycle, confirm the `cookie ... found` line, store the token in an
+environment variable, then re-enable ABE.
+
+## A login on a CLI-managed machine goes stale
+
+Antigravity, xAI, Claude Code and Codex logins are renewed only by their own
+CLI. On a host where the CLI rarely runs the card goes stale about an hour
+past expiry. Turn on keep-alive:
+[sidecar.md](sidecar.md#keep-alive-for-antigravity-claude-code-codex-and-xai-opt-in).
+The tray app does not support it; use the headless CLI.
 
 ## Dashboard cards or account attribution look wrong
 
-Before digging into logs, check Settings → Data health — a stale `default`-keyed
-config, an event stuck under a legacy provider id, or an orphaned gauge series
-are all things it detects and fixes in-app. See [data-health.md](data-health.md).
+Check Settings → Data health first. A stale `default`-keyed config, an event
+stuck under a legacy provider id or an orphaned gauge series are detected and
+fixed there. See [data-health.md](data-health.md).

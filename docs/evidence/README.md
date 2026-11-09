@@ -76,9 +76,31 @@ produces a newer file.
 |---|---|---|
 | [`macos-keychain-prompt-repair-764.md`](acceptance/macos-keychain-prompt-repair-764.md) | #764 | Prevention of repeated Keychain approval prompts |
 | [`macos-keychain-prompt-repair-native-764.json`](acceptance/macos-keychain-prompt-repair-native-764.json) | #764 | Native measurements for the prompt repair |
-| [`server-memory-results.json`](acceptance/server-memory-results.json) | — | Raw measurements behind [`../server-memory.md`](../server-memory.md) |
+| [`server-memory-results.json`](acceptance/server-memory-results.json) | — | Raw measurements behind [`../memory.md`](../memory.md) |
+
+### Security validation
+
+Dated, sanitized records of the physical and deployment validation runs, in
+[`security/`](security/). The runbook they follow is
+[`../security/physical-validation.md`](../security/physical-validation.md).
+Each directory is one run; the evidence uses synthetic secrets, no operator
+credentials, and RFC 5737 documentation ranges in place of private addresses.
+
+| File | Subject |
+|---|---|
+| [`security/603-authentik-traefik-2026-10-12/`](security/603-authentik-traefik-2026-10-12/README.md) | The Authentik + Traefik TLS matrix: versions, sanitized configuration, outcomes, immediate-peer logs and teardown |
+| [`security/603-macos-2026-10-15/`](security/603-macos-2026-10-15/README.md) | The macOS physical validation run |
+| [`security/windows-validation-2026-10-12.md`](security/windows-validation-2026-10-12.md) | The Windows validation record (with the machine-readable artifacts in `security/windows-2026-10-12/`) |
+| [`security/windows-update-recovery-2026-10-13.md`](security/windows-update-recovery-2026-10-13.md) | The Windows update-recovery record (artifacts in `security/windows-update-recovery-2026-10-13/`) |
+
+### Image remediation and the Windows helper
+
+| File | Subject |
+|---|---|
+| [`image-remediation-history.md`](image-remediation-history.md) | The superseded Debian 12 baseline, the util-linux reviews, the move to Debian 13 and the dated re-recordings of the exception fixture; the current state is [`../security/image-remediation.md`](../security/image-remediation.md) |
+| [`windows-browser-helper.md`](windows-browser-helper.md) | A runbook rather than a record: the Windows DNS helper used for the physical browser checks, what it binds and how it is restricted to one client |
 
 ## Related
 
-- [`../audit/`](../audit/) — the audit reports and the frozen snapshots.
-- [`../security/evidence/`](../security/evidence/) — sanitized security validation evidence.
+- [`../audit/`](../audit/): the audit reports and the frozen snapshots.
+- [`../security/README.md`](../security/README.md): the image policy and the physical acceptance runbook.

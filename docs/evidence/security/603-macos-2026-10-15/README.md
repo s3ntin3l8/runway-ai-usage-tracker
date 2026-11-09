@@ -51,7 +51,7 @@ A → B → A → B on both portable ZIP and DMG installation forms. This record
 not claim B has already been published. Inspect actual embedded runtime versions;
 do not infer the short-SHA suffix from a handoff description.
 
-Follow [physical-validation.md](../../physical-validation.md) for isolated configs,
+Follow [physical-validation.md](../../../security/physical-validation.md) for isolated configs,
 owner-state comparisons, human-operated prompts, native lock/failure/refusal rows,
 and browser evidence. Source-only refusal fixtures remain separate from genuine
 published-channel updates; they do not certify a malformed published release

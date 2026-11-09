@@ -1,120 +1,99 @@
-# Source consent and durable collection
+# Source consent
 
-The durable reference for the **Sources consent model** — which local
-scrapers a sidecar may read, who grants that permission, and what happens when
-a source is withdrawn.
+Which local sources a sidecar may read, who grants that permission, and what
+happens when it is withdrawn. Install and configuration are in
+[`sidecar.md`](sidecar.md); the wire protocol in
+[`fleet-protocol.md`](fleet-protocol.md) and the routes in
+[`api-reference.md`](api-reference.md#fleet-keychain-source-lifecycle-protocol-1).
 
-Approved product plan, 2026-10-22. Tracker: #780. This replaces the earlier
-proposal for blanket source opt-ins and expiring server credential leases.
+## What needs consent
 
-> The delivery plan and the numbered findings that accompanied this approval
-> are archived in
-> [`audit/2026-10-sidecar-source-authorization-delivery.md`](audit/2026-10-sidecar-source-authorization-delivery.md).
+Only Keychain-backed credential access needs an explicit local opt-in. Files,
+environment variables, local usage logs and the Firefox and Safari cookie
+stores are collected as before. Chromium Safe Storage and Claude Desktop
+safeStorage are Keychain dependencies, so they appear as separate scrapers.
 
-## Permission boundary
+Every scraper starts **off**:
 
-Only Keychain-backed credential access needs the new local opt-in. Files,
-environment variables, local usage logs, Firefox and Safari stores retain their
-existing collection behavior. Chromium Safe Storage and Claude Desktop safeStorage
-are Keychain dependencies and appear as separate scraper permissions. The macOS
-GitHub CLI fallback must use bounded native IO, not launch gh/security requesters.
+- **Enable all** grants read consent to the scrapers currently listed. A scraper added by a later release starts off.
+- Consent is bound to the scraper's capability revision, a local generation and the paired server. A different server needs consent again (without creating a new OS grant).
+- A shared OS grant never turns on another scraper.
+- Unknown ids, non-boolean values and mismatched revisions grant nothing.
 
-Each scraper starts off. Enable all grants read consent to the currently listed
-catalog only. New scrapers start off. Consent binds a capability revision, a local
-generation and the paired destination. Unknown IDs, truthy non-booleans, remote
-resource substitutions and mismatched revisions cannot grant access. A shared OS
-grant does not enable another scraper. The static catalog is generated from the
-canonical credential registry and overlay by make sidecar-registry, without IO.
+Renewal (writing a refreshed login back) is a separate permission and is off
+by default. Claude Code Keychain renewal needs read consent, a literal
+`claude_keychain_renewal: true` in the local config, effective keep-alive and
+a supported write path. Claude Desktop OAuth is read-only.
 
-Renewal/write-back is separate and default off. Claude requires read consent,
-literal-true claude_keychain_renewal, effective keep-alive and a supported exact-item
-write path. Claude Desktop OAuth remains read-only. Fleet may narrow permission
-but never enable local access or writes. Changing the paired destination requires
-renewed local source consent; it does not manufacture a new OS grant.
+## Granting consent locally
 
-## Setup and local controls (#782)
+The sidecar's local settings page has a **Keychain scrapers** section: one row
+per app or CLI, one row per browser-cookie service, a **Read from** selector
+for which browsers' cookie stores may be read (unticking a browser turns its
+sources off; ticking it again turns nothing on), **Enable all**, **Disable
+all** and a separate Claude renewal control.
 
-The local settings Keychain scrapers section lists apps and CLIs one row each and the
-browser-cookie sources one row per service. A **Read from** selector chooses which
-browsers' cookie stores may be read (all three until one is unticked; unticking turns that
-browser's sources off, and ticking it again turns nothing on). It also offers Enable all, Disable
-all and a separate Claude renewal control. Saving intent,
-GET/status requests and background ticks never open permission UI. Only a local
-`authorize` or `authorize_all` POST can launch the packaged foreground helper.
-**Authorize all enabled** walks the sources that are on and not authorized yet, one Keychain
-item at a time: sources that read the same item (every service in one browser; Claude Desktop's
-OAuth token and session) share a single helper launch, and each source behind it is then
-verified on its own. It can be cancelled, which stops after the item being authorized. One attempt runs at a
-time (single-source and batch share the same flight), has a deadline, selects an unambiguous
-exact existing item, and is followed by a fresh noninteractive worker check. Disabling or changing consent invalidates
-late results and cancels a waiting foreground helper. No password is entered into
-the settings page, passed as an argument, sent, logged or retained.
+Saving a choice, status requests and background ticks never open an OS
+prompt. Only an explicit local **Authorize** (or **Authorize all enabled**)
+starts the packaged foreground helper, which walks the enabled, not-yet-authorized
+sources one Keychain item at a time. Sources that read the same item share
+one helper run; each is then verified on its own. One attempt runs at a time,
+with a deadline, against one exact existing item, and it can be cancelled.
+No password is typed into the settings page, passed as an argument, sent or
+logged. Turning a source off or changing consent cancels any waiting helper.
+A denied or timed-out Keychain prompt suppresses further access to that item
+until a successful explicit setup.
 
-Keychain reads and writes use the existing private-pipe transport. Resource and
-consent checks cover discovery, identity fallbacks, cached Safe Storage keys,
-worker dispatch and egress. Denial/timeout suppression is shared by discovery and
-renewal. Only successful explicit setup may reset the affected suppression group.
-Original file-based renewers and local usage history remain intact.
+## States
 
-States are Off, Setup required, Connecting, Ready, Limited, Action required and
-Withdrawal pending. Read access alone cannot prove renewal, API acceptance or
-permission continuity across updates. The first local-control milestone withholds
-Keychain credential forwarding until the authenticated lifecycle below is
-available. Previously forwarded legacy credentials require server-side retirement;
-a local checkbox does not retroactively revoke a provider credential.
+Each source shows one of: **Off**, **Setup required**, **Connecting**,
+**Ready**, **Limited**, **Action required**, **Withdrawal pending**. Read
+access alone does not prove renewal, API acceptance or that a permission
+survives an app update. Old peers that cannot report source state appear as
+**Limited**.
 
-### Antigravity CLI on macOS
+## What Fleet can and cannot do
 
-The Antigravity (agy) CLI keeps its OAuth token in the macOS login Keychain
-(service `gemini`, account `antigravity`) from 1.4.3 on and writes no token
-file, so it is a Keychain-backed scraper like the Claude Code one: it starts
-off, needs the local read consent, and is authorized by the same bounded
-foreground helper. The service holds a second entry — the Antigravity ACP
-server's own token — so the account is part of the source's identity and is
-covered by the capability revision; the foreground authorization selects that
-one exact entry and never the ACP one.
+Fleet shows each machine's local consent, authorization, remote pause,
+collection health, renewal support, last success and report time. Offline or
+stale reporting is distinct from server collection health: the server keeps
+using eligible credentials while a sidecar is offline.
 
-The stored value is wrapped in go-keyring's envelope, which the reader
-unwraps; the fields it maps are the ones the token file maps, so every
-platform pushes the same credential shape and one Google account is filed
-under one cache key. The entry's access list trusts only the application that
-wrote it, so the read goes through the Keychain worker and never through a
-credential requester. The macOS credential stays local until the withdrawal
-lifecycle below exists, like every other Keychain-backed credential.
+Remote control can only narrow or ask:
 
-## Fleet source lifecycle and UI (#783 / #780)
+- **pause**, and **resume** only a pause the server imposed, within existing local consent;
+- **revoke** a contribution;
+- **request setup**, which creates a notice on the machine and never a native prompt.
 
-Server collectors continue using eligible credentials while a sidecar is offline.
-There are no heartbeat-based leases. A scraper contributes credentials instead of
-requiring manual entry; multiple sidecars/manual/file sources remain independent,
-even if they contain the same token. Disabling one source withdraws only its
-contribution. Collection stops only when no eligible credential remains.
+It can never enable local access, write access or a scraper the operator did
+not turn on. A dismissed "new scraper" announcement never grants consent.
+Commands carry durable ids and ordered generations and are acknowledged
+idempotently over the sidecar's polling.
 
-Introduce per-device authenticated identity through pairing, using random HMAC
-secrets and existing encrypted storage. Hostnames are labels, not identity. Keep
-legacy shared-key clients compatible without allowing them to impersonate enrolled
-devices. Source identity includes device, scraper, origin/account and generation.
-Withdrawal deletes matching secret cache material and persists a tombstone; late
-ingest cannot resurrect it. Re-enabling uses a newer generation. Historical
-usage_events and other contributions survive. Forward-safe database additions and
-Python/TypeScript/API documentation updates belong to this protocol milestone.
+## Withdrawal
 
-Fleet shows local consent, authorization, remote pause, collection health, renewal
-support, last success and report time. Offline/stale reporting is distinct from
-server collection health. Remote controls pause, resume only a server-imposed
-pause within existing local consent, revoke a contribution, or request local
-setup. Setup requests create a notice, never a native prompt. Commands use durable
-IDs, ordered generations and idempotent acknowledgments over sidecar polling.
+Disabling a source withdraws only its own contribution (identified by device,
+scraper, origin or account, and generation). The server deletes the matching
+secret cache, records a tombstone so a late ingest cannot bring it back, and
+re-enabling uses a newer generation. Other sidecars' contributions, manual and
+file-based credentials, and historical `usage_events` are untouched; collection
+stops only when no eligible credential is left. A machine that turns a source
+off while offline shows **Withdrawal pending** until it reports; a revocation
+from the server takes effect there immediately.
 
-Offline opt-out shows local Off / withdrawal pending until acknowledged; direct
-server revocation takes effect there immediately. Old peers are explicitly Limited.
-New Keychain scraper — opt in now announcements appear in both UIs, scoped to
-compatible sidecars and capability revisions. Dismissal never grants consent.
+A local checkbox does not retroactively revoke a credential the server already
+holds; revoke it from Fleet.
+
+## Windows Credential Manager
+
+The Windows Credential Manager entries for GitHub (`git:https://github.com`)
+and Antigravity (`gemini:antigravity`) need no macOS-style consent and keep
+collecting. They still have Fleet lifecycle rows, so pause, resume, revoke and
+replay protection apply. They are not part of the local Keychain opt-ins, and
+reconnecting a revoked one means pairing the machine again.
 
 ## Related
 
-- [`sidecar.md`](sidecar.md) — the sidecar itself: install, CLI, configuration.
-- [`collectors/antigravity.md`](collectors/antigravity.md) — Antigravity as a
-  Keychain-backed scraper.
-- [`evidence/README.md`](evidence/README.md) — point-in-time acceptance records.
-- [`audit/README.md`](audit/README.md) — the audit reports and the frozen snapshots.
+- [`sidecar.md`](sidecar.md): the sidecar.
+- [`collectors/antigravity.md`](collectors/antigravity.md): Antigravity's macOS Keychain scraper.
+- [`collectors/claude.md`](collectors/claude.md): Claude Code and Desktop sources.

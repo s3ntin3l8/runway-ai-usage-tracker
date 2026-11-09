@@ -4,12 +4,11 @@ Settings → Data health runs a fixed set of read-only checks over the
 database and, for each one that finds something, offers an in-app fix —
 preview first, then apply. The checks live in
 `app/services/data_health/checks/` and each one owns its own `detect()` and
-its own repair. Most of them (21 of the 24) reuse the shared repair helpers
-in `app/services/maintenance/`; the rest — `alert_channels`,
-`orphan_credential_tags` and `pending_events` — implement their fix
-in-place. See [api-reference.md](api-reference.md) for the underlying routes
-and [maintenance-scripts.md](maintenance-scripts.md) for the equivalent
-command-line repair scripts.
+its own repair. Most reuse the shared repair helpers in `app/services/maintenance/`; the
+rest implement their fix in place. Each check's docstring in that directory is
+the detailed spec. See [api-reference.md](api-reference.md) for the routes and
+[Offline repair scripts](#offline-repair-scripts) for the command-line
+equivalents.
 
 Each category is shown with a plain-language name and a short explanation.
 Expand it to see the likely impact, a suggested next step, and any dependency
@@ -48,53 +47,44 @@ applied until it's fixed — the dependency order below reflects that.
 
 ## The checks
 
-| Check ID · Severity | Name shown in Data Health | Finds | Suggested action |
+| Check · Severity | Name shown | Finds | Fix |
 |---|---|---|---|
-| `config_default_keyed` · Error | Provider account uses a generic ID | A provider config is keyed as `default` even though its label identifies a specific account. | Re-key to the identified account. The preview explains collisions and retained or moved data before confirmation. |
-| `legacy_provider_ids` · Error | Usage uses an old provider ID | Events use a provider ID Runway now folds into a canonical provider (for example, `opencode-xai` → `xai`). | Retag to the canonical provider; collisions keep the richer event. |
-| `openrouter_model_events` · Error | OpenRouter usage is filed under OpenCode | Events under `opencode`, `opencode-free` or `opencode-byok` whose model id only OpenRouter serves — `<vendor>/<model>:free` or `openrouter/...`. OpenCode tags the *gateway*, not the backend, so older sidecars and BYOK setups filed these under the wrong provider; the BYOK ones sit on `default`, which `lone_default_events` cannot move to another provider. A bare local id such as `qwen/qwen3-coder-30b` is not matched. Fixable only when there is exactly one non-default OpenRouter account. Hermes events are left alone because Hermes reaches OpenCode Zen directly. When the OpenCode extractor forwards the raw `providerID`, events carrying `openrouter` are flagged and events carrying `opencode`/`opencode-go`/`open-design-byok` are not, regardless of the model id; events without a stored raw provider fall back to the model-id shape test. | Preview shows how many events move and how many collide with a copy already under OpenRouter. The fix moves them onto that OpenRouter account and drops the losing copy of each collision (the same tie-break as `legacy_provider_ids`), then rebuilds rollups and windows. Fix each provider group in turn: a message present under both `opencode` and `opencode-byok` is deduplicated when the second group runs. The sidecar now routes new messages the same way. |
-| `lone_default_events` · Error | Usage is assigned to a generic account | Usage events or quota history remain under `default` while a specific target identity is known from configured or discovered account data. This can also appear when a default config remains active. | Preview the proposed move and explicitly confirm before moving history to the selected account. |
-| `orphan_credential_tags` · Warn | Credential tags point to a missing account | A tag still points at `default` after its provider config was re-keyed or removed. | Delete the tag or repoint it to a configured account. |
-| `orphan_credential_sources` · Warn | Credential sources point to a missing account | A stored credential source no longer has anything behind it — its configuration was re-keyed or removed, or the source is filed under two accounts and only one of them still has evidence. | Delete the stranded row; the copy under the real account is kept. |
-| `stale_credential_sources` · Warn | Credential sources no machine reports any more | A machine-reported credential row not seen for 14 days, or a metadata-only lookup an older sidecar reported as a credential (an untried “Sidecar credential”). | Forget the rows; a credential still on a machine is reported again on its next collection. |
-| `stale_credential_rules` · Warn | Assignment rules no machine matches | An assignment rule you created points at a credential origin no machine has reported for 14 days (or ever). Matching uses the same resolution as attribution, so a rule shadowed everywhere by machine-scoped rules counts as unused. **Never listed:** `provider:<id>` rules (they attribute usage events and are the sidecar's fallback hint), redirect rules, the rules Runway creates itself (identity claim / verification / rotation), `config:` origins, rules younger than 14 days, machine-scoped rules whose machine has not reported in the last day, and everything while no machine is reporting. Running `stale_credential_sources` first removes the evidence rows; both use the same window, so the result is the same. | Delete the rule. If the credential is still unidentified it comes back under “Needs mapping”. The Rules tab marks the same rules (“no credential seen”). For a login that re-keys itself (xAI rotates its refresh token, so its `#<fingerprint>` origin changes), a rule on the old fingerprint is labelled **superseded by a newer login** and the fix moves it onto the current origin instead of deleting it — or deletes it if a rule already covers that origin. |
-| `orphan_gauge_series` · Warn | Quota history belongs to an inactive account | A quota card or history series has no config or activity for at least 30 days. | Merge it into a configured account or delete it. Recent activity is checked again before preview and apply. |
-| `misidentified_gauge_series` · Error | Gauge data has no supporting evidence | Quota history exists for an account with no usage events, credentials, or config — indicating a transient collector mis-identification (e.g. an email label leaked from another provider's token cache). Unlike `orphan_gauge_series`, there is no 30-day wait — the absence of all five evidence types is the safety gate. A credential the server host found itself (an env var such as `GITHUB_TOKEN`, or Runway's own `github_oauth.json`) counts as evidence too: it is recorded as a `server:` credential source the first time a collection uses it, so an account fed only that way is not flagged — but one that has never completed a collection since upgrading may be, until it does. `server:*:file:*` rows older builds registered for CLI login files on the server host (`oauth_creds.json`, `hosts.yml`, ...) are deleted at startup; the server no longer reads those files, so an account that was fed only that way needs a sidecar (or an env var / Settings credential) and will read as unevidenced until then. | Delete immediately; there is no real usage history to preserve. For a login-keyed provider (GitHub), an *email-shaped* series next to exactly one evidenced login account is the same account re-keyed by its email label: the finding is labelled "email-keyed duplicate of `<login>`" and the default action is **merge** into that login, which keeps the history. |
-| `unpriced_models` · Warn | Some token usage has no reliable cost | Token-bearing events have zero stored cost. This includes actionable missing prices and informational configured-zero or source-reported-zero evidence. **Never listed:** free-tier model ids (`:free`, `-free`, `/free`, the bare `free` id, and the `openrouter/free/*` prefix form), and every event on the `opencode-free` provider — a free route is priced at $0 on purpose, so it is not a missing rate and gets no pricing row. | Review per-model evidence; recompute when a rate is available or add a pricing seed. Existing nonzero costs are not lowered. |
-| `stale_priced_models` · Warn | Some stored cost estimates use an outdated rate | Messages whose stored `cost_estimated_usd` differs from what today's price table gives at the event's **own date**, grouped per provider and model: a pricing correction made in place (the Sonnet 5.5 cache-read rate, the Haiku 5.5 long-prompt tier) or a new model row that events used to reach through a family fallback (`haiku-5.5` priced as `haiku`). Detection is a cheap SQL aggregate and only a hint; the preview runs the exact per-event computation. **Never listed:** `$0` events (that is `unpriced_models`), events with no stored estimate (legacy rows whose `cost_estimated_usd` was never populated; they are left alone and counted as `skipped_unpopulated` in the preview), free-tier and sentinel model ids, and models with no resolvable price row. | Preview shows counts: the events to refresh, the stored and recomputed estimate totals and how many events keep their `cost_usd` (plus how many would drop to $0). The fix rewrites `cost_estimated_usd` and the cost breakdown, and `cost_usd` only where it currently equals the old estimate; it never touches `cost_reported_usd`, so a reported cost or a `billing_type` change since ingest keeps its history. Rollups are rebuilt for the affected accounts and windows for the affected providers. It is **not** a full re-price (`scripts/recost_events.py` is). Apply is idempotent and the server stays up. Old events with no stored estimate (billed through a family fallback before the model had its own row) are handled by `fallback_priced_events`; the two checks never overlap. |
-| `fallback_priced_events` · Warn | Old usage was billed through a family price | Events from before a model had a price row of its own (for example `sonnet-5` billed at the `sonnet` family rate) that carry a stored cost but no stored estimate. An event counts only when it is a message with no reported cost, today's table has an exact row for its model, and its stored cost is within 2% of what the fallback row (version-suffix family, then segment-trim sibling) gives while today's row gives a different cost. Events whose cost matches neither, events with a stored estimate (those belong to `stale_priced_models`, which handles the estimated ones; the two never overlap) and models still priced through a fallback are never listed. The listing is one SQL aggregate per price interval (no per-event Python); the preview runs the exact per-event rule. | Review each model's preview (events, stored and new dollars), then re-price. `cost_usd`, the estimate and the cost components move to today's rate at each event's own date; `cost_reported_usd` is never written. Rollups and windows are rebuilt. Back up first. |
-| `unpriced_claude_accounts` · Warn | Claude accounts without a billing model | A Claude account never had its billing model detected, so the dashboard shows a usage value where a plan shows an estimate. A detected model only ever lands on a **new** account, so every account created before the detection existed is affected. | Preview the accounts and price them from the cards they published. An account whose model you set by hand is never touched. |
-| `rollup_drift` · Warn | Cached usage totals do not match events | Lifetime cached totals differ from usage events, including rollup rows left behind after their events were removed. | Rebuild the affected provider/account rollups from current events. |
-| `minimax_background_sessions` · Warn | Background work is filed as a conversation | MiniMax Code background-task usage carries the provenance of the session that spawned it, but the rows sit on the background task's own session — so the work shows up in the Sessions view as a conversation of its own. **Never listed:** rows collected before the extractor learned the parent link — they carry no provenance, and only the MiniMax Code runtime store can map them. | Move the rows under the session their provenance names. For the rows without a provenance, run `scripts/link_minimax_background_sessions.py` on the host that ran MiniMax Code. |
-| `path_shaped_projects` · Warn | A project label is a path | A usage event carries a directory path as its project label (`D:\Projects\repo`) instead of a name, because the label was derived on a host whose path separator the server did not recognise. One project then lands in a different bucket on every host and every checkout. | Relabel the affected sessions with the name of their project directory. The raw working directory is kept and only the label changes, so no total moves. Rows whose session holds no working directory at all are listed separately and cannot be fixed here. |
-| `inconsistent_project_labels` · Warn | A project label does not follow the reported repository | Some usage events are labelled with the name of the folder the work happened in, while newer events from the same directory carry the name of the git repository it belongs to — so one repository is split across two projects. | Move the affected rows onto the repository name the client reported. The working directory and the reported repository are kept, so no total moves. A directory that never reports a repository again keeps its label — the server cannot know which repository it belonged to. |
-| `worktree_project_labels` · Warn | A project label is named after a worktree | Some usage events are labelled with the name of a worktree directory (`<repo>/.wt/<slug>`, `.worktrees`, `.worktree`, `.mullion-worktrees`) instead of the repository, so every worktree shows up as a project of its own. A session that started in a parent folder and then moved into a worktree is labelled with the repository the worktree belongs to, not with the parent folder — but the rows that were collected in the parent folder keep the parent's name until this check relabels them, because ingest labels every event on its own. | Relabel the affected sessions with the name of their repository directory (a session that reported a repository keeps that name, so this and `inconsistent_project_labels` never undo each other). The working directory is kept and only the label changes, so no total moves. Back up the database first; the fix asks for a confirmation. |
-| `cloud_coarse_events` · Warn | Claude cloud usage from the first collector | Usage events written by the first Claude cloud-runner collector: one summary row per sweep (ids `cloud:<digest>:<n>`), without project or per-model detail. The history-based replacement collector (see the [cloud event contract](claude-cloud-event-contract.md)) does not run while these rows exist. | Preview shows the events, sessions, token sums and how many closed windows would be rebuilt. The fix removes the events, rebuilds the Anthropic rollups from what remains (on every run, so an interrupted fix is finished by applying again) and the closed windows that overlapped the removed events (only in the run that removed them), leaves that collector's two state tables alone, and asks for a confirmation. Once the replacement is enabled it collects the sessions again with project, model and timing detail. |
-| `cloud_events_reset` · Warn | Claude cloud usage with outdated labels | Claude cloud-runner usage events stored under another source id than `anthropic-cloud` (older rows carry the generic `server`). Stored events are deduplicated on `(provider_id, event_id)` and never relabelled, so only a re-collection corrects them. | Preview shows the events, sessions, checkpoints and how many closed windows would be rebuilt. The fix removes the history-based cloud events (`cloud:<digest>:m:...` / `:r:...`) **and** the collector's per-session checkpoints, rebuilds the Anthropic rollups (on every run, so an interrupted fix is finished by applying again) and the closed windows that overlapped the removed events (only in the run that removed them), drops the collector's in-memory backlog, and asks for a confirmation. The collector then reads every session's history again with the current labels; applying it twice is a no-op. If a run is interrupted after the delete, applying again repairs the rollups; replaying the window rebuild needs `scripts/reset_cloud_events.py --apply --windows-from ... --windows-to ...` (the first run reports the removed range). |
-| `cloud_session_lead_repo` · Warn | A cloud session's events carry no project label | A Claude cloud session that names several repositories leaves most of its events unlabelled, because the collector only labels an event when the session names one repository or the event ran in a directory that matches one of the names. The usage of one repository is then split away from it. | Label the session's unlabelled events with the repository its labelled events name most often — the order of the repositories in the session list is alphabetical and means nothing, so it is never consulted. A session whose leading repositories tie, or that carries no label at all, is left alone rather than guessed. The raw working directory and the events that already carry a label are kept, so no total moves. |
-| `pending_events` · Info | Events need account assignment | Events await evidence-backed or manual account assignment. | Open Fleet and decide the account for each event. |
-| `alert_channels` · Warn | Credential alerts have no delivery channel | No active webhook has credential alerts on, so an expired, rejected or failing credential notifies nobody. Not fixable here (it needs your webhook URL); Home shows a banner linking to Settings → Alerts. | Add a Discord or Slack webhook with credential alerts enabled. |
+| `config_default_keyed` · Error | Provider account uses a generic ID | A provider config keyed `default` although its label names an account. | Re-key to the identified account; the preview explains collisions. |
+| `legacy_provider_ids` · Error | Usage uses an old provider ID | Events under a provider id Runway now folds into a canonical one (`opencode-xai` → `xai`). | Retag; collisions keep the richer event. |
+| `openrouter_model_events` · Error | OpenRouter usage is filed under OpenCode | OpenCode-tagged events whose model id only OpenRouter serves. | Move onto the single non-default OpenRouter account. |
+| `lone_default_events` · Error | Usage is assigned to a generic account | Events or quota history left on `default` while a specific account is known. | Move to the selected account after confirmation. |
+| `orphan_credential_tags` · Warn | Credential tags point to a missing account | A tag still points at `default` after its config was re-keyed or removed. | Delete the tag or repoint it. |
+| `orphan_credential_sources` · Warn | Credential sources point to a missing account | A credential source with nothing behind it. | Delete the stranded row; the real account's copy stays. |
+| `stale_credential_sources` · Warn | Credential sources no machine reports any more | A machine-reported source not seen for 14 days. | Forget the rows; a live credential is re-reported. |
+| `stale_credential_rules` · Warn | Assignment rules no machine matches | A user-created assignment rule for an origin no machine reported for 14 days. | Delete the unused rules. |
+| `orphan_gauge_series` · Warn | Quota history belongs to an inactive account | A quota series with no config or activity for 30 days. | Merge into a configured account or delete. |
+| `misidentified_gauge_series` · Error | Gauge data has no supporting evidence | Quota history for an account with no events, credentials or config. | Merge or delete the series. |
+| `unpriced_models` · Warn | Some token usage has no reliable cost | Token-bearing events with zero stored cost (free-tier ids are never listed). | Recompute once a rate exists, or add a pricing seed. |
+| `stale_priced_models` · Warn | Some stored cost estimates use an outdated rate | Estimates that differ from the rate in effect at the event's date. | Recompute the estimates. |
+| `fallback_priced_events` · Warn | Old usage was billed through a family price | Events priced through a family fallback row. | Re-price against the exact row. |
+| `unpriced_claude_accounts` · Warn | Claude accounts without a billing model | Claude accounts created before billing detection. | Set the billing type from the account's published cards. |
+| `rollup_drift` · Warn | Cached usage totals do not match events | `usage_period_rollup` disagrees with `usage_events`. | Rebuild the rollups for the pair. |
+| `minimax_background_sessions` · Warn | Background work is filed as a conversation | MiniMax background-task rows filed as their own sessions. | File them under the spawning session. |
+| `path_shaped_projects` · Warn | A project label is a path | A project label that is a directory path. | Relabel with the directory name. |
+| `inconsistent_project_labels` · Warn | A project label does not follow the reported repository | One repository split across folder-named and repo-named projects. | Move rows onto the reported repository name. |
+| `worktree_project_labels` · Warn | A project label is named after a worktree | Labels named after a worktree directory. | Relabel with the repository name. |
+| `cloud_coarse_events` · Warn | Claude cloud usage from the first collector | Coarse summary rows from the first cloud collector. | Remove them and rebuild rollups; the replacement collector re-reads history. |
+| `cloud_events_reset` · Warn | Claude cloud usage with outdated labels | Cloud events stored under an outdated source id. | Remove events and checkpoints; the collector re-reads with current labels. |
+| `cloud_session_lead_repo` · Warn | A cloud session's events carry no project label | A multi-repository cloud session with unlabelled events. | Label them with the repository its labelled events name most often. |
+| `pending_events` · Info | Events need account assignment | Events awaiting account assignment. | Decide the account in Fleet. |
+| `alert_channels` · Warn | Credential alerts have no delivery channel | No active webhook has credential alerts on. | Not fixable here; add a webhook under Settings → Alerts. |
 
-`config_default_keyed` blocks `lone_default_events`, `orphan_credential_tags`,
-`orphan_credential_sources` and `openrouter_model_events`; `legacy_provider_ids`
-blocks `openrouter_model_events`, `unpriced_models`, `stale_priced_models` and `rollup_drift` — fix the blocking check first if you see a **Blocked**
-badge. The expanded check names the prerequisite that needs attention. (The
-re-key now carries a provider's credential sources with it, so resolving
-`config_default_keyed` first is usually what clears the credential-source
-findings too.)
+Dependencies are declared per check (`blocked_by`): `config_default_keyed` blocks
+`lone_default_events`, `orphan_credential_tags`, `orphan_credential_sources` and
+`openrouter_model_events`; `legacy_provider_ids` blocks `openrouter_model_events`,
+`unpriced_models`, `stale_priced_models`, `fallback_priced_events` and
+`rollup_drift`; `cloud_events_reset` blocks `cloud_session_lead_repo`. A
+**Blocked** badge names the prerequisite.
 
-**Pricing rule behind `stale_priced_models`.** A real price change is a **new**
-`provider_pricing` row with a new `effective_from`; an in-place edit of an existing
-row is only for a seed mistake. Pricing resolves the row in effect at each event's
-own date, so a new row never reaches older events, and the check only finds
-estimates that disagree with the row that was already in effect at their date.
-Editing a rate in place for a real change would rewrite history the next time
-the fix runs.
-
-The `config_default_keyed` preview exposes `counts.usage_events_to_move`.
-The former `counts.usage_events_retained_on_default` field remains as a
-deprecated compatibility key and reports the predicted remaining count (zero)
-because the repair now moves that history.
+**Pricing rule behind `stale_priced_models`.** A real price change is a new
+`provider_pricing` row with a new `effective_from`; editing a row in place is only
+for a seed mistake. Pricing resolves the row in effect at each event's date, so a
+new row never reaches older events.
 
 If a scan fails, the page reports the failure and marks any previous report as
 stale. Fixes stay disabled until an explicit re-scan succeeds. A job-status
@@ -112,3 +102,44 @@ repair.
   check is looking at it.
 - Only one scan or fix runs at a time; a fix already in flight makes
   `POST .../apply` return `409` rather than start a second one.
+
+## Offline repair scripts
+
+The `scripts/` wrappers run the same repairs against the database directly,
+without starting the server. **Stop the server first**: they write to SQLite
+without coordination. The logic lives in `app/services/maintenance/`, which the
+in-app fixes call too, so both routes give the same result. Most scripts preview
+by default and write only with `--apply`; some apply unless given `--dry-run`.
+Check `--help` before running one. `--provider` scopes a repair to one provider id.
+
+| Script | Purpose |
+|---|---|
+| `backfill_rollups.py` | Rebuild `usage_period_rollup` from `usage_events`. |
+| `backfill_cache_costs.py` | Backfill per-component cost columns, then rebuild rollups. |
+| `backfill_project_context.py` | Backfill working-directory and project context onto events. |
+| `backfill_claude_billing_type.py` | Price Claude accounts created before billing detection. |
+| `backfill_claude_dimensions.py` | Backfill Claude Code per-message dimensions. |
+| `backfill_opencode_effort.py` | Backfill the OpenCode `variant` into `usage_events.effort`. |
+| `consolidate_session_projects.py` | Relabel each session's events to its root project (the `worktree_project_labels` check). |
+| `label_cloud_session_lead_repo.py` | The `cloud_session_lead_repo` repair. |
+| `link_minimax_background_sessions.py` | The `minimax_background_sessions` repair; run it on the host that ran MiniMax Code. |
+| `remove_cloud_coarse_events.py` | The `cloud_coarse_events` repair. |
+| `reset_cloud_events.py` | The `cloud_events_reset` repair; `--windows-from` / `--windows-to` replay the window rebuild of an interrupted run. |
+| `reprice_fallback_priced_events.py` | The `fallback_priced_events` repair. |
+| `recost_events.py` | Full re-price of `cost_usd` and the derived cost tables. `--estimate-only` applies the `stale_priced_models` rule; `--skip-rollups` and `--skip-windows` leave derived tables alone. Only needed after a calculator change; for a pricing correction use the in-app fix. |
+| `assign_default_events.py` | Assign events on `default` to their identified account. |
+| `collapse_default_account_events.py` | Collapse duplicate events left by a stale `account_id`. |
+| `dedup_usage_windows.py` | Collapse duplicate `usage_windows` rows from a jittering provider reset time. |
+| `normalize_sidecar_ids.py` | Merge sidecar ids that drifted between FQDN and short host names. |
+
+**Legacy one-shots.** These fixed specific past data problems and are only
+needed on a database that still has them: `cleanup_anthropic_sonnet_weekly.py`,
+`cleanup_antigravity.py`, `cleanup_chatgpt_stale_window.py`,
+`cleanup_minimax_monthly_cards.py`, `cleanup_opencode_free_card.py`,
+`cleanup_opencode_kimi_card.py` (stale gauge cards);
+`merge_gemini_default_account.py`, `merge_antigravity_accounts.py` (duplicate
+account identities); `reclassify_opencode_providers.py`,
+`reclassify_antigravity_models.py`, `reclassify_chatgpt_models.py`,
+`reclassify_hermes_pending.py` (re-tag events); `backfill_argon_models.py`;
+`migrate_kimi_coding_key.py` (moves a `kimi_coding` key out of the
+`session_cookie` slot).

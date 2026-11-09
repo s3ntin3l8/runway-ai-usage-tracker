@@ -3,7 +3,7 @@
 This prepares the separate helper host. Windows acceptance belongs to the existing
 Windows agent/human operator. Keep #603 open, macOS acceptance pending, and #597
 open for native tray-control verification. Do not repeat the completed actual
-Authentik/Traefik matrix. Follow [physical-validation.md](physical-validation.md).
+Authentik/Traefik matrix. Follow [physical-validation.md](../security/physical-validation.md).
 
 ## Preconditions and isolation
 

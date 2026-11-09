@@ -104,9 +104,9 @@ touched.
 
 | Audit | Scope | Outcome |
 |---|---|---|
-| [2026-10-webapp-ui-ux.md](2026-10-webapp-ui-ux.md) | Webapp UI/UX — accessibility, mobile ergonomics, data honesty | 2 P0 and 24 P1 fixed; 4 further P1 found by the strengthened guard and fixed; guardrails added; the P2/P3 backlog filed as issues #948–#953 |
-| [2026-10-sidecar-source-authorization-delivery.md](2026-10-sidecar-source-authorization-delivery.md) | Sidecar sources — the Sources consent model | Frozen snapshot of the delivery of #780; the durable reference is [`../source-consent.md`](../source-consent.md) |
-| [2026-10-sidecar-source-renewal-readiness-781.md](2026-10-sidecar-source-renewal-readiness-781.md) | Sidecar sources — renewal readiness (#781) | Frozen snapshot: implemented mechanisms against the remaining acceptance gates |
+| [2026-10-webapp-ui-ux.md](2026-10-webapp-ui-ux.md) | Webapp UI/UX — accessibility, mobile ergonomics, data honesty | P0 and P1 findings fixed, guardrails added, the P2/P3 backlog filed as issues |
+| [2026-10-sidecar-source-authorization-delivery.md](2026-10-sidecar-source-authorization-delivery.md) | Sidecar sources — the Sources consent model | Frozen snapshot of the delivery plan; the durable reference is [`../source-consent.md`](../source-consent.md) |
+| [2026-10-sidecar-source-renewal-readiness-781.md](2026-10-sidecar-source-renewal-readiness-781.md) | Sidecar sources — renewal readiness | Frozen snapshot: implemented mechanisms against the remaining acceptance gates |
 
 ## Frozen snapshots
 
@@ -131,5 +131,5 @@ regenerable from a demo instance and carry permanent history weight.
 
 It does **not** apply to the acceptance records in
 [`../evidence/`](../evidence/). Those are the recorded outcomes of past
-verification runs. They are not regenerable — the run happened once — and six
-of them are cited from live issues. They stay in the repository.
+verification runs. They are not regenerable — the run happened once — so they
+stay in the repository.

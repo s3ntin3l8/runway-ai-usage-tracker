@@ -39,17 +39,10 @@ audit uses the release upstream currently advertises, verified by checksum
 against that release's source archive, and that release must be no older than 48
 hours. Upstream publishes about once a day and a release reaches its download
 location roughly an hour after its build stamp, so the newest release anybody
-can obtain is up to about 25 hours old by that stamp. The ceiling is the
-tripwire for an upstream feed that stopped publishing, not a licence to
-scan with a database upstream has already superseded.
-
-The ceiling was 30 hours, which upstream's daily cadence satisfies. On
-2026-10-23T06:30Z upstream built its last release, and thirty hours after
-that build the ceiling fired and every image audit in the repository failed on
-it — across every branch, for a feed that had published daily for years. A
-tripwire that fires on a one-day gap in an upstream feed reports the gap
-while every merge waits behind it. The ceiling is now 48 hours: two days of
-upstream silence still fails the audit, a one-and-a-half-day gap does not.
+can obtain is up to about 25 hours old by that stamp. The 48-hour ceiling is the
+tripwire for an upstream feed that stopped publishing (two days of silence
+fails; a one-and-a-half-day gap does not), not a licence to scan with a
+database upstream has already superseded.
 
 The checksum check is what refuses a database upstream has already superseded,
 and it applies whenever the advertised listing is available — the automated
@@ -156,16 +149,11 @@ Database preparation or freshness failure records failed evidence for both targe
 
 Keep `audit-RUN-ATTEMPT` candidate references for at least 90 days, matching audit
 artifact retention. Canonical edge, SHA, version, beta, stable and latest tags,
-retained image indexes, and signature/attestation material take precedence over
-this minimum. Age alone never authorizes deleting a registry version.
+retained image indexes, and signature/attestation material take precedence. Age
+alone never authorizes deleting a registry version.
 
 Cleanup is manual and reviewed. Inventory all tags and retained index references
-before considering an old audit-only version. Delete a package version only when
-it is proven unreferenced by canonical tags, retained indexes and signature or
-attestation material. A version shared with any retained reference must stay.
-If the registry inventory cannot prove that a manifest is unreferenced, retain it.
-Keep the reviewed inventory and proposed deletions with the maintenance record.
-
-Do not assume removing an audit tag removes the per-architecture bytes pushed by
-digest, and do not invent a `docker buildx imagetools rm` command. This policy adds
-no automatic deletion and performs no registry cleanup as part of publishing.
+first, and delete a package version only when it is proven unreferenced by
+canonical tags, retained indexes and signature or attestation material; if the
+inventory cannot prove it, retain it. Removing an audit tag does not remove the
+per-architecture bytes pushed by digest. Publishing performs no registry cleanup.

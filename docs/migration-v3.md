@@ -1,11 +1,6 @@
 # Upgrading to Runway 3.x
 
-> **Scope.** This document describes the upgrade from a **2.x** database to the
-> **3.x** schema. The current release is `3.0.0-beta.14`; the 3.x line is still
-> in beta, so a beta-to-beta upgrade may also apply schema migrations that are
-> **not** listed here — see [Known gaps in this note](#known-gaps-in-this-note)
-> below. Every pre-v3 database in the field is still live and still needs this
-> upgrade path, so nothing here is historical.
+> **Scope.** This guide covers upgrading a **2.x** database to the **3.x** schema. Migrations run automatically at startup and need no manual step; the ones that change behavior are described below. Later 3.x releases may add further automatic migrations: after any upgrade, open **Settings → Data health** and run a scan.
 
 ## Before you upgrade
 
@@ -36,8 +31,8 @@ inflated total.
 
 Previously, an event pushed with no resolvable account identity (no
 saved credential to match it to, no operator tag yet) was attributed to a
-`default` catch-all account and counted right away. As of `#359`, that
-event is instead held in a pending queue — excluded from account totals —
+`default` catch-all account and counted right away. That
+event is now held in a pending queue — excluded from account totals —
 until an admin assigns it. This is more conservative (nothing gets silently
 mis-attributed to `default` and mixed with other accounts' totals) but
 means usage that previously appeared automatically may now sit unassigned
@@ -72,7 +67,7 @@ config dir mounted; CLI logins live in a user's home, which is the sidecar's job
 - **If you ran a single-host server with no sidecar** and relied on it finding
   your CLI logins: run the sidecar on that machine (`make dev-all` in a dev
   checkout), or set an env var / paste the credential in Settings → Providers.
-- **Gemini** is now a sidecar provider (`docs/deployment.md`). The server still
+- **Gemini** is now a sidecar provider ([deployment.md](deployment.md#which-providers-need-a-sidecar)). The server still
   refreshes a sidecar-pushed Gemini token itself, into its own token cache; it never
   writes back to `~/.gemini`.
 - **Ignored settings.** These env vars were removed and are now ignored (a leftover
@@ -89,26 +84,14 @@ config dir mounted; CLI logins live in a user's home, which is the sidecar's job
 
 ## Open Settings → Data health after upgrading
 
-v3.0.0 ships an in-app **Data health** page (Settings → Data health) that
-scans for the same data-quality issues this release's own prod cleanup
-turned up: a provider config still keyed `default` after its label picked
-up a real identity, events stuck under a legacy OpenCode-sibling provider
-id, events sitting alone under a stale `default` account with a real
-account configured elsewhere, credential tags and gauge-series cards left
-behind by an account move, models priced at $0 with no seed row, and
-`usage_period_rollup` drift from a direct database edit. Each finding shows
-a preview before you apply anything, and checks with dependencies (e.g. a
-default-keyed config) block the checks downstream of them until fixed. See
-[docs/data-health.md](data-health.md) for the full list and what each fix
-does. Worth a look right after upgrading, especially if you've run
-previous versions long enough to accumulate account or provider-id drift.
+Settings → Data health scans for data-quality drift that long-lived installs accumulate: provider configs still keyed `default`, events under legacy provider ids or a stale `default` account, orphaned credential tags and gauge series, models priced at $0, and rollup drift. Each finding previews before you apply it. See [data-health.md](data-health.md). Worth a scan right after upgrading.
 
 ## GitHub accounts, Copilot token fallback, and `GITHUB_TOKEN`
 
-- **GitHub accounts are keyed by login** (#515), not email. After upgrading,
-  open Settings → Data Health and run the `misidentified_gauge_series` fixer
+- **GitHub accounts are keyed by login**, not email. After upgrading,
+  open Settings → Data health and run the `misidentified_gauge_series` fixer
   to merge series that were previously keyed by email.
-- **The Copilot v2/token fallback was removed** (#530). Classic personal
+- **The Copilot v2/token fallback was removed.** Classic personal
   access tokens may now be rejected by the Copilot endpoints; sign in with
   GitHub or use `gh auth login` for an OAuth token.
 - **The `GITHUB_TOKEN` setting was removed from the app settings.** The
@@ -120,10 +103,9 @@ previous versions long enough to accumulate account or provider-id drift.
 
 ## Credential-health alerts are on by default
 
-Existing Discord/Slack webhooks configured before this release will start
-firing when a credential they watch goes `expired` or `invalid` — a new
+Existing Discord/Slack webhooks fire when a credential they watch goes `expired` or `invalid` — a new
 `credential_alerts` column defaults to `true` for every existing row, not
-just newly created ones. Turn it off per webhook in Settings → Webhooks if
+just newly created ones. Turn it off per webhook in Settings → Alerts if
 you only want the original threshold alerts.
 
 ## `/fleet/config` returns less to unsigned callers
@@ -145,124 +127,43 @@ step is needed to reach v3.0.0: download and run the new installer once
 self-update resumes — this release also fixes the updater to correctly
 find stable-channel release assets, which it previously couldn't.
 
-## Non-localhost binds now require an admin gate
+## Non-localhost binds require an admin gate
 
-Previously, leaving `ADMIN_API_KEY` unset made every caller admin —
-including on a bind reachable from the network. Runway now refuses to
-start on a non-localhost `APP_HOST` unless **either** `ADMIN_API_KEY` **or**
-`TRUSTED_PROXY_IPS` is set (localhost binds are unaffected). A forward-auth
-deployment that already sets `TRUSTED_PROXY_IPS` needs no changes. A plain
-network deployment with neither set must add `ADMIN_API_KEY` before
-upgrading, or the server exits at startup with a `RuntimeError` naming this
-gate. See [SECURITY.md → Multi-Host Startup Gates](SECURITY.md).
+Leaving `ADMIN_API_KEY` unset used to make every caller admin, even on a network bind. Runway now refuses to start on a non-localhost `APP_HOST` unless `ADMIN_API_KEY` **or** `TRUSTED_PROXY_IPS` is set (localhost binds are unaffected; a forward-auth deployment that sets `TRUSTED_PROXY_IPS` needs no change). Otherwise the server exits with a `RuntimeError` naming the gate; see [SECURITY.md](SECURITY.md#multi-host-startup-gates).
 
-Separately, a forward-auth deployment that has pointed `FORWARD_AUTH_USER_HEADER`
-at something other than the default `X-Forwarded-User` (e.g. Authentik's
-`X-authentik-username`) no longer falls back to a bare `Remote-User` header.
-If your proxy only ever sends the configured header, this changes nothing;
-if you were relying on `Remote-User` as a fallback alongside a custom
-header name, switch to sending the configured header instead.
+- A forward-auth deployment that points `FORWARD_AUTH_USER_HEADER` at a custom header (for example `X-authentik-username`) no longer falls back to a bare `Remote-User` header. Send the configured header.
+- `POST /api/v1/usage/reset/{provider}`, `POST /api/v1/usage/collect/{provider}` and the GitHub device-flow endpoints (`/api/v1/auth/github/{init,poll,logout}`) now need a real admin gate on a network bind. The dashboard is unaffected; scripts need `X-Admin-Key`, a trusted forward-auth identity, or a loopback connection.
 
-`POST /api/v1/usage/reset/{provider}`, `POST /api/v1/usage/collect/{provider}`,
-and the GitHub device-flow endpoints (`/api/v1/auth/github/{init,poll,logout}`)
-already used the admin-key dependency, but on a network bind without
-`ADMIN_API_KEY` the old bypass granted admin access to every caller. They now
-require a real admin gate. The dashboard is unaffected (it sends credentials);
-scripts calling these routes need `X-Admin-Key`, a trusted forward-auth identity,
-or a loopback connection.
+## Provider configuration
 
-## Provider setup and configuration
-
-The provider settings page now uses the multi-account provider grid by default.
-The former single-account overview and edit dialog have been retired. Existing
-provider configuration remains available in the grid, including the `default`
-account.
-
-Provider configuration updates now require an explicit account ID. Update
-scripts and integrations that used:
-
-```http
-PUT /api/v1/system/provider-config/openrouter
-```
-
-to include the account ID:
+Provider settings use the multi-account grid. Provider configuration writes require an explicit account ID; the one-segment `PUT /provider-config/{provider_id}` is removed:
 
 ```http
 PUT /api/v1/system/provider-config/openrouter/default
+PUT /api/v1/system/provider-config/anthropic/alice@example.com
 ```
 
-For named accounts, use their stable account ID in the final path segment,
-for example `/provider-config/anthropic/alice@example.com`. URL-encode path
-segments in clients. The old one-segment `PUT /provider-config/{provider_id}`
-shortcut is removed; all writes must identify the account being changed.
+Use the stable account ID as the final path segment and URL-encode it. A first credential normally belongs to `default`. For Kimi API, Kimi K2, MiniMax, OpenRouter and zAI keys, lookup precedence is the saved account credential, then that account's token-cache entry, then the server environment variable, so a cached `default` key beats the env var.
 
-The per-account API also avoids ambiguity for providers with multiple saved
-credentials. A first credential normally belongs to `default`; use the
-provider's account ID for credentials already associated with an identity.
+## Docker
 
-For Kimi API, Kimi K2, MiniMax, OpenRouter, and zAI API keys, lookup precedence
-is the saved account credential, then that account's token-cache entry, then
-the server environment variable. A cached `default` account key therefore
-takes precedence over the corresponding environment variable.
+`docker-compose.yml` and `docker-compose.traefik.yml` force `APP_HOST=0.0.0.0` inside the container, overriding `.env`. (A loopback bind inside a container cannot receive published-port traffic, which used to leave a dead port while the healthcheck kept passing.) The container is therefore off-loopback and needs `DB_ENCRYPTION_KEY`, `TLS_TERMINATED`, `CORS_ORIGINS` and `ADMIN_API_KEY` or `TRUSTED_PROXY_IPS` before it starts; see [deployment.md](deployment.md#startup-gates).
 
-## Docker: the published port now actually works
+`make run` sources `.env` the way `make dev` does, because some settings (`CORS_ORIGINS`, registry "env" credentials) are read from the process environment rather than through pydantic's `.env` loading.
 
-`docker-compose.yml` and `docker-compose.traefik.yml` now force
-`APP_HOST=0.0.0.0` inside the container via Compose's `environment:` block,
-overriding whatever `.env` sets. Previously, a plain `cp .env.example .env`
-left `APP_HOST=127.0.0.1` — a value Docker's port-forwarding can never
-reach, since it lands on the container's own network interface, not its
-loopback. The container's healthcheck (which runs *inside* the container
-namespace, where loopback works fine) kept passing throughout, so this
-silently produced a dead published port rather than a visible failure.
-
-Since the container is now genuinely reachable off-loopback from the app's
-own point of view, `DB_ENCRYPTION_KEY`, `TLS_TERMINATED`, `CORS_ORIGINS`,
-and (per the multi-host startup gate — see
-[SECURITY.md → Multi-Host Startup Gates](SECURITY.md)) `ADMIN_API_KEY` or
-`TRUSTED_PROXY_IPS` become mandatory in `.env` before the container will
-start at all — see the updated quick-start comment in `docker-compose.yml`. If you were already
-setting these (e.g. following `docs/deployment.md`), nothing changes for
-you; if you were relying on the old dead-port behavior for some reason,
-the container will now refuse to start until you set them.
-
-`make run` also now sources `.env` the same way `make dev` does — some
-settings (`CORS_ORIGINS`, and any provider credential configured only via
-a registry "env" rule) are read straight from the process environment
-rather than through pydantic's own `.env` loading, so a bare
-`python -m app.main` or the previous `make run` silently missed them.
-
-When an upgrade removes legacy server credential-file sources, Runway shows a
-notice on Home and in Settings → Credentials naming the affected providers.
-Pair a sidecar on the machine where you use those CLI logins from Fleet, or
-save an API key in Settings → Providers. Dismissing the notice saves that choice
-for the whole installation, across browsers and server restarts.
-
-The notice records only removals observed by this version. Fresh installations
-and installations whose old sources were already removed receive no inferred
-notice.
+When an upgrade removes legacy server credential-file sources, Home and Settings → Credentials show a notice naming the affected providers. Pair a sidecar on the machine with those CLI logins from Fleet, or save an API key in Settings → Providers. Dismissing the notice applies to the whole installation. Only removals observed by this version are reported.
 
 ---
 
-## Known gaps in this note
+## Automatic schema migrations
 
-The 3.x line is still in beta, so migrations have landed **after** this note
-was first written. They all run automatically at startup — none of them needs a
-manual step — but they are not described above, so a reader upgrading from one
-beta to another has nothing to go on.
+These run once at startup and need no action; they are listed so a database moving between 3.x releases has something to go on.
 
-| Migration | What it does | When it matters |
-|---|---|---|
-| `usage_windows_series_identity_v1` | Adds the `provider_id` / `account_id` / `model_id` columns that make a `usage_windows` row uniquely identifiable, so the same closed window cannot be recorded twice under two accounts. Applied through the `runway_schema_migrations` ledger, so it runs exactly once. | Upgrading a database that already has closed windows from before the series identity existed. |
-| `_migrate_webhook_uniqueness` | Enforces `(provider_id, account_id, url)` uniqueness on `webhook_configs`. Pre-#274 rows all have `account_id = NULL`; SQLite treats NULLs as distinct, so they are left alone and duplicates of the "all accounts" form are rejected by the API layer instead. | Upgrading a database with webhook rows created before the `account_id` column existed. |
-| `_migrate_credential_tag_scoping` | Rebuilds `credential_tags` for per-sidecar scoping (#319). SQLite cannot drop a table constraint in place, so the table is rebuilt with a nullable `sidecar_id` and two partial unique indexes. Existing rows are copied with `sidecar_id = NULL` — deployment-wide, matching their pre-migration semantics. | Upgrading a database whose credential tags predate per-sidecar scoping. |
-| `migrate_to_provider_event_identity` | Collapses cross-account duplicate `usage_events` and creates the unique index that makes `(provider_id, event_id)` the identity. Returns the number of duplicate rows removed, and rebuilds the rollups of every affected `(provider_id, account_id)` pair. | The same job as [First boot after upgrading](#first-boot-after-upgrading), but idempotent — it is a no-op once the unique index exists. |
+| Migration | What it does |
+|---|---|
+| `usage_windows_series_identity_v1` | Adds `provider_id` / `account_id` / `model_id` to `usage_windows` so a closed window cannot be recorded twice under two accounts. Tracked in the `runway_schema_migrations` ledger, so it runs once. |
+| `_migrate_webhook_uniqueness` | Enforces `(provider_id, account_id, url)` uniqueness on `webhook_configs`. Rows with a `NULL` account are left alone (SQLite treats NULLs as distinct); the API rejects duplicates of the "all accounts" form. |
+| `_migrate_credential_tag_scoping` | Rebuilds `credential_tags` for per-sidecar scoping: a nullable `sidecar_id` plus two partial unique indexes. Existing rows get `sidecar_id = NULL` (deployment-wide, as before). |
+| `migrate_to_provider_event_identity` | Collapses cross-account duplicate `usage_events` and creates the unique index that makes `(provider_id, event_id)` the identity; see [First boot after upgrading](#first-boot-after-upgrading). A no-op once the index exists. |
 
-**Sources**
-
-- `app/core/db.py` — `usage_windows_series_identity_v1` (:472),
-  `_migrate_webhook_uniqueness` (:645), `_migrate_credential_tag_scoping` (:693)
-- `app/services/event_identity_migration.py` — `migrate_to_provider_event_identity` (:85)
-
-After any of these, open **Settings → Data health** and run a scan. The scan
-reports what the migration left behind and offers the repairs.
+The scan under Settings → Data health reports anything a migration left behind and offers the repairs.
