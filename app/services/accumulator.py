@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 # accumulator during application startup does not eagerly register DB models.
 
 
-def sidecar_source_id(provider_id: str, sidecar_id: str) -> str:
+def contribution_source_id(provider_id: str, sidecar_id: str) -> str:
     return (
         f"sidecar:{sidecar_id}:{provider_id}" if sidecar_id != "local" else f"server:{provider_id}"
     )
@@ -203,7 +203,7 @@ def upsert_latest_usage(
 
     Includes:
     - resolve_account_id canonicalisation
-    - window-close detection (_maybe_close_previous_window)
+    - window-close detection (maybe_close_previous_window)
     - stale raw-account-id row eviction
     - begin_nested savepoint so a single bad card can't abort the caller's
       transaction

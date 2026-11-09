@@ -42,7 +42,15 @@ from app.models.db import ProviderConfig, QuotaSnapshot  # noqa: E402
 from app.models.schemas import UsageEventPush  # noqa: E402
 from app.services.accumulator import upsert_latest_usage  # noqa: E402
 from app.services.collectors.anthropic import AnthropicCollector  # noqa: E402
-from app.services.collectors.anthropic_common import ANTHROPIC_WINDOW_NAME_MAP  # noqa: E402
+
+try:
+    from app.services.collectors.anthropic_common import ANTHROPIC_WINDOW_NAME_MAP  # noqa: E402
+except (
+    ModuleNotFoundError
+):  # visual-check renders the merge base with this seed; it predates the rename
+    from app.services.collectors._anthropic_common import (  # type: ignore[import-not-found,no-redef]  # noqa: E402
+        ANTHROPIC_WINDOW_NAME_MAP,
+    )
 from app.services.collectors.chatgpt import ChatGPTCollector  # noqa: E402
 from app.services.collectors.gemini import GeminiCollector  # noqa: E402
 from app.services.collectors.github import GitHubCollector  # noqa: E402
@@ -116,9 +124,10 @@ def anthropic_cards() -> list[dict[str, Any]]:
             },
         ]
     }
-    parsed = c.parse_oauth_response(
-        data, ANTHROPIC_WINDOW_NAME_MAP, {"tier": "Max 5x", "email": EMAIL}
-    )
+    parse = (
+        getattr(c, "parse_oauth_response", None) or c._parse_oauth_response
+    )  # merge base: private
+    parsed = parse(data, ANTHROPIC_WINDOW_NAME_MAP, {"tier": "Max 5x", "email": EMAIL})
     return c._tag_results(parsed)
 
 

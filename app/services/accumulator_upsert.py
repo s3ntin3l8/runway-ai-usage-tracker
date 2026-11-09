@@ -61,7 +61,7 @@ def canonicalize_account(
 ) -> _PreparedLatestUsage:
     """Resolve the account and the fields the later steps read."""
     from app.services.account_identity import resolve_account_id
-    from app.services.accumulator import sidecar_source_id
+    from app.services.accumulator import contribution_source_id
 
     canonical_account_id = resolve_account_id(card.provider_id, card.account_id, card.account_label)
     # A card may claim an account that was merged away: the account — and the
@@ -69,7 +69,7 @@ def canonicalize_account(
     # must not bring the retired account back.
     canonical_account_id = resolve_merged_account(session, card.provider_id, canonical_account_id)
     sidecar_id = sidecar_id_override or card.sidecar_id or "local"
-    contribution_source_id = source_id or sidecar_source_id(card.provider_id, sidecar_id)
+    slot_source_id = source_id or contribution_source_id(card.provider_id, sidecar_id)
     variant = card.variant or "default"
     model_id = card.model_id or ""
     incoming_partial = card.model_dump(exclude_none=True)
@@ -86,7 +86,7 @@ def canonicalize_account(
         card=card,
         canonical_account_id=canonical_account_id,
         sidecar_id=sidecar_id,
-        contribution_source_id=contribution_source_id,
+        contribution_source_id=slot_source_id,
         variant=variant,
         model_id=model_id,
         incoming_partial=incoming_partial,

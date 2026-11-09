@@ -21,10 +21,32 @@ def dunder(name: str) -> bool:
     return name.startswith("__") and name.endswith("__")
 
 
-def private_imports(tree: ast.Module) -> list[str]:
+def resolve_import(node: ast.ImportFrom, package: list[str]) -> str | None:
+    """The absolute dotted module of ``node``, resolving a relative import against ``package``."""
+    if not node.level:
+        return node.module
+    if node.level > len(package):
+        return None
+    base = package[: len(package) - node.level + 1]
+    return ".".join([*base, *([node.module] if node.module else [])])
+
+
+def private_imports(tree: ast.Module, package: list[str] | None = None) -> list[str]:
     """A private name, or a private module, imported from another module of this app."""
     found = []
     for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.level:
+            module = resolve_import(node, package or ["app"])
+            if module and module.startswith("app"):
+                parts = module.split(".")
+                if any(p.startswith("_") and not dunder(p) for p in parts[1:]):
+                    found.append(module)
+                found.extend(
+                    f"{module}.{a.name}"
+                    for a in node.names
+                    if a.name.startswith("_") and not dunder(a.name)
+                )
+            continue
         if isinstance(node, ast.Import):
             for alias in node.names:
                 parts = alias.name.split(".")
@@ -58,6 +80,32 @@ def foreign_private_reads(tree: ast.Module) -> list[str]:
         base = node.value
         if isinstance(base, ast.Name) and base.id not in SELF_NAMES:
             found.append(f"{base.id}.{node.attr}")
+        elif isinstance(base, ast.Attribute):
+            # ``module.obj._private``; ``self.x._private`` is the owner reaching into its own part
+            root = base
+            while isinstance(root, ast.Attribute):
+                root = root.value
+            if not (isinstance(root, ast.Name) and root.id in SELF_NAMES):
+                found.append(f"...{base.attr}.{node.attr}")
+    return found
+
+
+def string_private_reads(tree: ast.Module) -> list[str]:
+    """``getattr(x, "_private")`` / ``setattr`` / ``hasattr`` with a literal private name."""
+    found = []
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in {"getattr", "setattr", "hasattr", "delattr"}
+            and len(node.args) >= 2
+            and isinstance(node.args[1], ast.Constant)
+            and isinstance(node.args[1].value, str)
+            and node.args[1].value.startswith("_")
+            and not dunder(node.args[1].value)
+            and not (isinstance(node.args[0], ast.Name) and node.args[0].id in SELF_NAMES)
+        ):
+            found.append(f"{node.func.id}(..., {node.args[1].value!r})")
     return found
 
 
@@ -77,8 +125,10 @@ def declaring_classes(tree: ast.Module) -> set[str]:
 def test_module_reads_no_private_member_of_another_module(path: Path):
     rel = str(path.relative_to(ROOT))
     tree = ast.parse(path.read_text())
-    imported = private_imports(tree)
+    imported = private_imports(tree, list(path.relative_to(ROOT).with_suffix("").parts[:-1]))
     assert not imported, f"{rel} imports the private {imported}"
+    dynamic = string_private_reads(tree)
+    assert not dynamic, f"{rel} reads the private {dynamic}"
     own = declaring_classes(tree)
     read = [
         r
@@ -88,5 +138,20 @@ def test_module_reads_no_private_member_of_another_module(path: Path):
     assert not read, f"{rel} reads the private {read}"
 
 
-def test_guard_covers_the_app():
-    assert len(MODULES) > 100
+def test_guard_covers_every_subpackage():
+    covered = {p.relative_to(ROOT).parts[1] for p in MODULES if len(p.relative_to(ROOT).parts) > 2}
+    on_disk = {d.name for d in (ROOT / "app").iterdir() if d.is_dir() and d.name != "__pycache__"}
+    assert on_disk <= covered
+
+
+def test_the_guard_catches_what_it_guards():
+    def parse(src: str) -> ast.Module:
+        return ast.parse(src)
+
+    assert private_imports(parse("from . import _x"), ["app", "services"])
+    assert private_imports(parse("from ._mod import y"), ["app", "services"])
+    assert private_imports(parse("from .._mod import y"), ["app", "services"])
+    assert not private_imports(parse("from .mod import y"), ["app", "services"])
+    assert foreign_private_reads(parse("mod.obj._hidden"))
+    assert not foreign_private_reads(parse("self.part._hidden"))
+    assert string_private_reads(parse("getattr(mod, '_hidden')"))

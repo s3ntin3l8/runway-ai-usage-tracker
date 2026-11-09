@@ -196,11 +196,11 @@ async def test_refresh_due_swallows_individual_failures(cache, refresher):
 
 @pytest.mark.asyncio
 async def test_refresh_due_ignores_providers_without_refresh_endpoint(cache, refresher):
-    """If the provider isn't in _REFRESH_ENDPOINTS we have no way to refresh."""
+    """If the provider isn't in REFRESH_ENDPOINTS we have no way to refresh."""
     exp = time.time() + 60
     id_token = _jwt({"exp": exp, "email": "u@example.com"})
     await cache.store(
-        "github",  # not in _REFRESH_ENDPOINTS
+        "github",  # not in REFRESH_ENDPOINTS
         {"oauth_token": "v1", "refresh_token": "rt", "id_token": id_token},
     )
 

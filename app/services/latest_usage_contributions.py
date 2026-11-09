@@ -161,7 +161,7 @@ def upsert_contribution(
 def backfill_latest_usage_contributions(session: Session) -> int:
     """Seed producer ownership from existing current cards on upgrade."""
     from app.models.db import LatestUsage, LatestUsageContribution
-    from app.services.accumulator import is_error_card_json, sidecar_source_id
+    from app.services.accumulator import contribution_source_id, is_error_card_json
 
     rows = session.exec(select(LatestUsage)).all()
     inserted = 0
@@ -179,7 +179,7 @@ def backfill_latest_usage_contributions(session: Session) -> int:
         if row.sidecar_id == "local" or "api" in data_sources:
             source_id = f"server:{row.provider_id}"
         else:
-            source_id = sidecar_source_id(row.provider_id, row.sidecar_id or "local")
+            source_id = contribution_source_id(row.provider_id, row.sidecar_id or "local")
         existing = session.exec(
             select(LatestUsageContribution).where(
                 LatestUsageContribution.provider_id == row.provider_id,
