@@ -6,17 +6,12 @@ Kimi K2 (Credits) collector with credit balance tracking for the Kimi coding age
 
 ## Overview
 
-- **Collection Strategy**: REST API only
-- **Cards**: 1 card (credit balance)
-- **Authentication**: `KIMI_K2_API_KEY` environment variable
+- **Strategy:** `api` (REST), `data_source: api`.
+- **Cards:** one (credit balance).
 
-## Setup Methods Quick Overview
+## Credentials
 
-The Kimi K2 collector tracks prepaid credits specifically for the coding agent usage:
-
-1.  **API Key (KIMI_K2_API_KEY)**:
-    *   **Method**: Obtain your API key from the Kimi K2 platform and set it as an environment variable.
-    *   **Details**: Refer to the [Configuration section](#configuration) for `KIMI_K2_API_KEY`.
+`KIMI_K2_API_KEY` in the environment or Settings (at least 10 characters). A sidecar can also discover the environment variable, with a key-scoped origin ([architecture.md](../architecture.md#credential-origins-and-operator-tags)); the balance is fetched server-side.
 
 ## Data Source
 
@@ -25,25 +20,9 @@ The Kimi K2 collector tracks prepaid credits specifically for the coding agent u
 **Auth:** Bearer token
 **Key Format:** Minimum 10 characters
 
-## Output Format
+## Card
 
-```python
-{
-    "service_name": "Kimi K2",
-    "icon": "🌙",
-    "remaining": "150.00",
-    "unit": "credits",
-    "reset": "Manual",
-    "health": "good",
-    "pace": "Stable",
-    "detail": "Credits (consumed: 54.20)",
-    "data_source": "api",
-    "input_source": "config",
-    "is_unlimited": False,
-    "unit_type": "credits",
-    "updated_at": "2026-04-19T06:51:51+00:00",
-}
-```
+One credits card (`unit_type: credits`, `data_source: api`, reset "Manual"); the detail shows credits consumed.
 
 ## Configuration
 
@@ -61,12 +40,11 @@ The Kimi K2 collector tracks prepaid credits specifically for the coding agent u
 ### "Unauthorized"
 **Fix:** Verify the API key is valid and has permissions to access the credits endpoint.
 
-## Related Files
+## Related files
 
 | File | Purpose |
 |---|---|
-| `app/services/collectors/kimi_k2.py` | Collector entry point — the credit balance endpoint |
-| `app/services/collectors/base.py` | Collector base class |
+| `app/services/collectors/kimi_k2.py` | Collector entry point |
 | `scripts/sidecar.py` | Sidecar credential rules and event dispatch |
 
 ## References

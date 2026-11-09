@@ -1,223 +1,92 @@
-# Ollama Cloud Collector
+# Ollama Cloud
 
 **File:** `app/services/collectors/ollama.py`
 
-The Ollama provider supports two collection strategies:
+Server collector for the Ollama Cloud included-usage allowance, from an API key (preferred) or
+a browser session cookie.
 
-- **`api`** (preferred when an API key is available): bearer `Authorization: Bearer …`
-  against `GET https://ollama.com/api/balance`, the endpoint that carries the
-  quota. Two shapes are accepted:
-  - *Included credits* (current plans): `included.balance_usd` (what is left of
-    `included.allowance_usd`) plus the `included.period` the allowance refills
-    on. Reported as one monthly card: the percentage used, the remaining
-    dollars, and the reset timestamp. This is the same quota the web
-    dashboard renders as "Free usage 0% used · Refills in 3 weeks".
-  - *Legacy plan limits*: `included.session` / `included.weekly` entries with
-    `remaining_percent` and `resets_at` — one percent-quota card per window.
+## At a glance
 
-  A pay-as-you-go account with no included allowance reports its purchased
-  credits as a balance card instead. `GET /api/usage` is only consulted as a
-  fallback for deployments that do not serve `/api/balance`, and only for its
-  legacy `limits.monthly.usage` shape — its spend report is deliberately
-  ignored, because usage comes from the CLI sidecar (see
-  [OpenCode traffic](#opencode-traffic)).
+- **Strategies, in order** (`STRATEGIES`): `api` (`_get_ollama_api`) then `web`
+  (`_get_ollama_web`). `api` returns nothing when no key is available or the data is
+  unusable, and collection falls through to `web`.
+- **Cards**
+  - `api`, included credits: one `monthly` card, variant `allowance`, unit currency (USD
+    spent of the allowance, with the refill timestamp).
+  - `api`, legacy plan limits: one percent card per `session` / `weekly` entry.
+  - `api`, pay-as-you-go with no allowance: one balance card, variant `credits`.
+  - `web`: one card per usage meter. Window type comes from a concrete meter label (`Hourly
+    usage` is `session`, `Weekly usage` is `weekly`), otherwise from the reset horizon; vague
+    labels such as `Free usage` count only when no reset time is shown.
+- **Labels:** `api` cards have `data_source: "api"`, `web` cards `"web"`. `input_source` is
+  `config` (saved in Settings), `sidecar` (pushed) or `server` (env var). Values are defined in
+  [Card provenance labels](../collection_logic.md#card-provenance-labels).
+- The `allowance` and `credits` variants are separate pools because the card unit changed from
+  percent to currency; `merge_card_json` freezes the quota fields of a stored card whose unit
+  differs, and a separate pool lets the stale card be reconciled away.
 
-  The allowance card carries the variant `allowance` (the credits card
-  `credits`): the card's unit changed from percent to currency, and
-  `merge_card_json` freezes the quota fields of a stored card whose unit
-  differs — a separate pool lets the stale card be reconciled away instead.
-- **`web`** (fallback): scrape `https://ollama.com/settings` for included-usage meters
-  (one card per usage meter; window type comes from a concrete meter label —
-  `Hourly usage` → session, `Weekly usage` → weekly — else the reset horizon;
-  vague plan-name labels like `Free usage` only count when no reset timestamp
-  is shown).
+## Credentials
 
-## Overview
+Cookie precedence: saved account credentials, then sidecar values, then server env.
 
-- **Collection Strategies**: `api` (bearer) → `web` (cookie scrape) fallback.
-- **Cards**: one monthly allowance card (api path), one card per legacy limit
-  window, a credits-balance card for pay-as-you-go accounts, or one card per
-  usage meter (web path).
-- **Authentication**: bearer API key (preferred), or browser cookie (web, pushed by
-  the sidecar) / `OLLAMA_SESSION_TOKEN` (web). Saved account credentials take
-  precedence, followed by sidecar values and then server environment variables.
+| Credential | Source | Runs in | Notes |
+|---|---|---|---|
+| API key | `OLLAMA_API_KEY` env, default account only | server | Used for `api` |
+| API key | Settings (Providers, Ollama) | server | Per account |
+| API key | opencode `auth.json` (`ollama-cloud.key`) in `~/.local/share/opencode/` or `~/.opencode/` | sidecar | Same key opencode bills against, so the card tracks CLI cloud usage |
+| Session cookie | `OLLAMA_SESSION_TOKEN` env, default account only | server | Used for `web` |
+| Session cookie | Browser cookie `session`, `ollama_session`, `__Host-ollama_session` or `__Secure-next-auth.session-token` on `ollama.com` | sidecar | Pushed as `session_cookie` |
+| Session cookie | Settings | server | Bare value or full `Cookie` header |
 
-## Setup Methods Quick Overview
+The cookie is accepted as a bare value (sent as both `session` and `__Secure-session`) or a full
+`Cookie` header. A value that looks like an API key (`sk-…`) in the cookie slot is rejected.
 
-The Ollama collector supports the following authentication methods:
+The opencode-discovered key has a key-scoped origin (`path:…/auth.json#<fingerprint>`); see
+*Key-scoped origins* in [opencode.md](opencode.md). Pasting the same key in Settings makes the
+server answer `provider:ollama#<fingerprint>`. Cookie candidates keep plain origins.
 
-1.  **Browser Cookie**: Extracted from your local browser by the sidecar.
-    *   **Method**: Log in to `https://ollama.com/settings` in your browser (Chrome/Safari/Firefox/Edge). Runway will automatically pick up the session cookie.
-    *   **Details**: See [Primary: Ollama Cloud API](#primary-ollama-cloud-api).
+## Endpoints
 
-2.  **Session Token (OLLAMA_SESSION_TOKEN)**:
-    *   **Method**: If running headless, set the session token as `OLLAMA_SESSION_TOKEN` on the server.
-    *   **Details**: See [Configuration](#configuration).
+| Strategy | Request | Notes |
+|---|---|---|
+| `api` | `GET https://ollama.com/api/balance`, `Authorization: Bearer <key>` | Quota source. `included.balance_usd`, `included.allowance_usd` and `included.period` give the allowance card; `included.session` / `included.weekly` (`remaining_percent`, `resets_at`) give legacy cards |
+| `api` fallback | `GET https://ollama.com/api/usage` | Only on 404/405 from `/api/balance`, and only its legacy `limits.monthly.usage` shape; its spend report is ignored because spend comes from the CLI via the sidecar |
+| `web` | `GET https://ollama.com/settings` | Parses each `data-usage-track` meter's `aria-label` (percent used) and nearby `data-time` (reset); legacy `Session usage` / `Weekly usage` blocks are still read. The plan tier comes from the `Included usage` (legacy `Cloud Usage`) badge |
 
-## Data Source
+A 401/403 from the balance call sets an "API key was rejected" error reason; an unparseable
+body is treated as missing data. The cards link to `https://ollama.com/settings/billing`
+(`api`) or `https://ollama.com/settings` (`web`).
 
-### Primary: Ollama Cloud API
-**Endpoint:** `GET https://ollama.com/api/balance`
-**Auth:** an Ollama API key
+## Usage events (sidecar)
 
-### Fallback: Ollama Plan & Settings Page
-**Endpoint:** `https://ollama.com/settings`
-**Auth:** Browser `__Secure-session` (or `session`) cookie — a bare value or a full `Cookie` header is accepted
-**Details:** The collector fetches the HTML, reads each `data-usage-track` meter's `aria-label` (e.g. `Free usage 0% used`) for percentage used, and the nearby `data-time` for reset timestamps; legacy labeled usage blocks (`Session usage` / `Weekly usage`) remain supported as a fallback. Plan tier (Free/Pro/Max) is read from the `Included usage` (legacy: `Cloud Usage`) heading badge. Cookie sources are checked in order: account settings → sidecar push → server `OLLAMA_SESSION_TOKEN`.
-
-## Output Format
-
-```python
-# Example output format (similar to other collectors)
-{
-    "service_name": "Ollama",
-    "icon": "🦙",
-    "remaining": "70%",
-    "unit": "remaining",
-    "reset": "in 1h 30m",
-    "health": "good",
-    "pace": "Stable",
-    "detail": "30% used (Free Plan)",
-    "used_value": 30.0,
-    "limit_value": 100.0,
-    "is_unlimited": False,
-    "unit_type": "percent",
-    "reset_at": "2026-04-07T12:00:00+00:00",
-    "data_source": "web",
-    "tier": "free",
-    "usage_url": "https://ollama.com/settings",
-    "updated_at": "2026-04-07T10:30:00+00:00",
-}
-```
-
-The API path emits the monthly allowance instead — a currency card whose
-percentage is the share of the allowance already spent:
-
-```python
-{
-    "service_name": "Ollama Cloud",
-    "icon": "🦙",
-    "remaining": "100.0%",  # percent left of the allowance
-    "unit": "remaining",
-    "reset": "22d 12h",
-    "health": "good",
-    "pace": "Stable",
-    "detail": "$0.00 of $2.50 used · refills Nov 12",  # hover tooltip
-    "used_value": 0.0,  # dollars spent this period
-    "limit_value": 2.5,  # dollars the period is worth
-    "pct_used": 0.0,
-    "is_unlimited": False,
-    "unit_type": "currency",
-    "currency": "USD",
-    "reset_at": "2026-11-12T06:45:12+00:00",
-    "window_type": "monthly",
-    "variant": "allowance",
-    "data_source": "api",
-    "tier": "cloud",
-    "usage_url": "https://ollama.com/settings/billing",
-    "updated_at": "2026-10-20T19:06:31+00:00",
-}
-```
-
-## Configuration
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `OLLAMA_API_KEY` | Optional | Ollama Cloud key for the `/api/balance` quota endpoint; server env applies to the default account |
-| `OLLAMA_SESSION_TOKEN` | Optional | Ollama session cookie value or full `Cookie` header; server env applies to the default account |
-
-The API strategy needs the balance endpoint to answer with one of the shapes
-above. Anything else is treated as malformed quota data and collection falls
-back to the web settings page. That page may require a browser session cookie.
-
-*Either auto-discovery or environment variable required.
-
-## Sidecar Support
-
-Sidecar can extract cookies. See [sidecar documentation](../sidecar.md).
-
-## OpenCode traffic
-
-Ollama Cloud usage driven through [OpenCode](opencode.md) is folded into these
-same cards rather than showing up as a separate `opencode-ollama` entry. See
-`_OC_CANONICAL_MAP` in `scripts/sidecar_pkg/event_extractors/opencode.py` —
-events with `providerID: "ollama-cloud"` are retagged to
-`provider_id="ollama"` with their own account_id kept (pass-through, since the
-Ollama Cloud quota card resolves to the same email via
-`resolve_account_id(account_label)`) at ingest, with their logged $0 free-tier
-cost dropped so the server reprices them from the table below (currently no
-pricing rows — folded events land at $0, same as the existing logged value).
-
-### OpenCode CLI auto-discovery
-
-If you have the opencode CLI installed and you've configured an Ollama Cloud
-provider there, Runway auto-discovers the API key from
-`~/.local/share/opencode/auth.json["ollama-cloud"].key` (or
-`~/.opencode/auth.json`) on every host that runs a sidecar. The same key
-opencode uses for its own `ollama-cloud` backend feeds this collector's
-`/api/balance` quota call automatically — no `OLLAMA_SESSION_TOKEN` env var or
-manual cookie paste needed on hosts with the opencode CLI. When the API key
-is unavailable the collector transparently falls back to the cookie scrape
-of `/settings`, so legacy browser-cookie setups continue to work.
-
-That key is also what Ollama bills: every request the CLI makes debits the
-included allowance, so the quota card tracks the CLI's cloud usage.
-
-The discovered key's origin is key-scoped exactly like opencode's own
-(`path:…/auth.json#<fingerprint>`, see *Key-scoped origins* in
-[opencode.md](opencode.md)), so two hosts — or a rotated key — can never
-share one operator tag. Paste the same key into Providers → ollama and the
-server answers `provider:ollama#<fingerprint>` on the next sidecar cycle.
-The cookie (`cookie:ollama/session` / `OLLAMA_SESSION_TOKEN`) candidates
-are not keys and keep their plain origins.
-
-Already-ingested events under the old `opencode-ollama` id need a one-time
-migration, with the server **stopped** (SQLite is single-writer) and
-`APP_HOST=127.0.0.1`. The default-vs-email duplication must be collapsed first
-(some pre-fix ingest streams pushed the same message under both accounts):
-
-```bash
-# 1. Dedupe the default-vs-email split left over from before the sidecar
-#    resolved account identity consistently — see
-#    scripts/collapse_default_account_events.py for the full rationale.
-python scripts/collapse_default_account_events.py --provider opencode-ollama --dry-run
-python scripts/collapse_default_account_events.py --provider opencode-ollama --apply
-
-# 2. Retag provider to "ollama" and rebuild rollups for both ids.
-python scripts/reclassify_opencode_providers.py --providers opencode-ollama --dry-run
-python scripts/reclassify_opencode_providers.py --providers opencode-ollama --apply
-```
-
-No pricing reprice step is needed (no provider_pricing rows exist for ollama,
-cost is $0 today) and no gauge-card cleanup script is needed (no `latest_usage`
-rows exist for `opencode-ollama` — the synthesized fleet entry derives from
-`usage_events` directly and disappears once the events move).
+Ollama usage driven through OpenCode is folded into these cards instead of appearing as a
+separate `opencode-ollama` provider. In the OpenCode extractor, events with
+`providerID: "ollama-cloud"` are retagged to `provider_id="ollama"` through the shared
+canonical map (`scripts/sidecar_pkg/canonical_providers.py`) and their logged $0 cost is
+dropped. The seed has no Ollama price rows, so folded events are priced at $0 today. Details
+are in [opencode.md](opencode.md).
 
 ## Troubleshooting
 
-### "API Key detected" error
-**Fix:**
-You likely pasted an API key (e.g., starting with `sk-`) into the session cookie field.
+| Symptom | Fix |
+|---|---|
+| "API key detected" in the cookie field | An `sk-…` key was pasted where the session cookie belongs. Use the key field, or paste the cookie (below). |
+| "API key was rejected" | The key is invalid or revoked; replace it in Settings, or remove it so the cookie path is used. |
+| Card is empty or the `web` path fails | The cookie is expired or the page redirected to sign-in. Capture a fresh cookie (below). |
+| Unexpected balance shape | Anything other than the shapes above is malformed quota data; collection falls back to `web`, which needs a cookie. |
 
-**How to get the correct session cookie:**
-If the cookie doesn't appear in the "Application" tab, use the **Network** tab:
-1. Log in to `https://ollama.com/settings` in your browser.
-2. Open Developer Tools (`F12`) and go to the **Network** tab.
-3. Refresh the page.
-4. Click on the request named **`settings`**.
-5. Look at the **Request Headers** section for the **`Cookie`** header.
-6. Copy either the full value of the `Cookie` header or just the `__Secure-session=...` entry (a bare value with no cookie name also works — Runway sends it under both `session` and `__Secure-session`).
-7. Paste this into the Runway settings for Ollama.
+Getting the cookie: sign in at `https://ollama.com/settings`, open DevTools, Network tab,
+refresh, select the `settings` request and copy the `Cookie` request header (or just the
+`__Secure-session=…` entry) into Settings. With a sidecar and a logged-in browser this is
+automatic.
 
-## Related Files
+## Related files
 
 | File | Purpose |
 |---|---|
-| `app/services/collectors/ollama.py` | Collector entry point — `api` balance strategy, `web` fallback |
+| `app/services/collectors/ollama.py` | Collector: `api` balance strategy and `web` scrape |
 | `app/services/collectors/base.py` | Collector base class |
-| `scripts/sidecar.py` | Sidecar credential rules and event dispatch |
+| `app/core/registry.json` | `ollama` credential rules (opencode file, env, cookies) |
 | `scripts/sidecar_pkg/cookie_scan.py` | Cross-platform browser cookie store discovery |
-
-## References
-
-- **Ollama:** `https://ollama.com/settings`
+| `scripts/sidecar_pkg/event_extractors/opencode.py` | Folds `ollama-cloud` OpenCode events onto `ollama` |
+| `scripts/sidecar_pkg/canonical_providers.py` | Shared canonical provider map |
