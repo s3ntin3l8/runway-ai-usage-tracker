@@ -1,265 +1,110 @@
-# Security Guidelines
+# Security
 
-## 🛡️ Core Principles
+Runway is local-first: its primary topology is a developer machine, its secondary one a self-hosted server behind a TLS reverse proxy. This document is the policy: what is trusted, what is verified, what is encrypted, and what an operator must do. Evidence and tracked gaps are in [security-validation.md](security-validation.md). To report a vulnerability, open a private security advisory on GitHub or contact the maintainer directly.
 
-1. **Local-First & Database-Backed**: Runway uses an encrypted SQLite database to store credentials, configuration, and usage history. The `DB_ENCRYPTION_KEY` (from `.env`) encrypts sensitive fields at rest. Credentials and tokens can also be supplied via environment variables for stateless deployments.
-2. **Server-Side API Calls**: All external provider API calls are made from the main application server, never the sidecar.
-3. **Signed Ingestion**: Data sent from sidecars to the server is cryptographically signed to ensure integrity and authenticity.
+## Trust model
 
-## 🔑 Credential Management
+1. **Database-backed.** Credentials, configuration and usage history live in SQLite. `DB_ENCRYPTION_KEY` encrypts sensitive fields at rest. Credentials can also come from environment variables for stateless deployments.
+2. **Provider calls come from the server.** The sidecar extracts and forwards raw data; it does not call provider APIs on the server's behalf.
+3. **Signed ingestion.** Sidecar-to-server data is HMAC-signed.
+4. **No credential files on the server.** The server reads only its own `github_oauth.json`; CLI logins reach it through a sidecar, an env var or Settings.
 
-### Environment Variables (.env)
-Credentials **may** be supplied through a `.env` file at the project root. The file is excluded from version control via `.gitignore`, and every variable in it is optional — the app starts with no `.env` at all. Credentials also reach the server through the sidecar and through the Settings → Providers UI, which is the v3 model.
+[`.env.example`](../.env.example) is the contract for every supported variable. Every variable is optional on a loopback bind; the app starts with no `.env`.
 
-Refer to [.env.example](../.env.example) for the full contract — it is the single source of truth for every supported variable, its default and an explanation.
+## Operator checklist
 
-### Automatic Protection (Pre-commit)
-The project uses `pre-commit` hooks to prevent accidental credential leaking.
+- Bind to a network only behind a reverse proxy that terminates TLS, and satisfy the [startup gates](#multi-host-startup-gates).
+- Use HTTPS everywhere sidecars connect; HMAC does not provide confidentiality.
+- Rotate credentials quarterly, or at once on suspected exposure: create the new key at the provider, update the value, revoke the old one. Rotating `INGEST_API_KEY` requires re-pairing every sidecar.
+- Put secrets in a secret store (GitHub repository secrets in CI), inject them through `env:` at runtime, and never log them.
+- Enable the git hooks (`make install`); the secret scan and the rest of the commit checks are described in [CONTRIBUTING.md](../CONTRIBUTING.md).
 
-**Installation:**
-```bash
-make install-hooks
-```
+## Ingestion (sidecars)
 
-`make install-hooks` is the supported path. It copies `scripts/hooks/git-hook.sh` into `.git/hooks/` — a plain `pip install pre-commit; pre-commit install` writes a script with the interpreter baked in, so it is **not** the supported route here (see `.pre-commit-config.yaml`).
+Sidecars send metrics, tokens and per-message events to `POST /api/v1/fleet/ingest`, authenticated with HMAC-SHA256 over the JSON body and an `X-Timestamp`, keyed by `INGEST_API_KEY` (or an enrolled device key).
 
-**What it checks — 13 hooks:**
-- `detect-secrets` — scans for API keys, tokens and secrets, against `.secrets.baseline`
-- `check-json` — validates JSON syntax
-- `check-yaml` — validates YAML syntax
-- `check-added-large-files` — rejects files over 1000 KB
-- `check-merge-conflict` — rejects unresolved conflict markers
-- `trailing-whitespace` and `end-of-file-fixer`
-- `ruff` and `ruff-format` — Python lint and format
-- `mypy` — Python type checking
-- `pytest` (unit) and `pytest` (all) — the test suite
-- `eslint` — the frontend linter
+- The server rejects nonfinite timestamps and accepts a 5-minute window. Each valid signature is claimed once in SQLite, so a replayed envelope returns `409` (`replayed_request`); unavailable receipt storage returns `503`. Retries use a fresh timestamp and signature, and event identifiers keep event-level idempotency.
+- Ingest is capped at 600 requests/minute per source IP and at 8 MiB per request, regardless of `Content-Length`.
+- `GET /api/v1/fleet/config` needs no key, but only a request signed with the same HMAC (which binds `sidecar_id`) receives account ids, tag hints and per-account credential tokens. Unsigned callers on a non-loopback bind get the enabled/strategies view; an invalid signature is rejected with 401.
+- 400 responses report field paths and error types only, never the submitted value.
+- Session names are free text and may be sensitive. The server cleans them and never logs or raises a name: logs carry counts only. Keep this rule in new code on both sides.
+- Sidecar server URLs reject embedded credentials, fragments and redirects. Plain HTTP is allowed only for loopback hosts; `RUNWAY_INSECURE` / `tls_insecure` disables certificate verification (not remote HTTP) and should give way to a configured CA. The sidecar's settings server validates Host and exact Origin and never embeds the saved ingest key in HTML.
 
-The git hook runs the same set as `make lint` plus the frontend lint, so a commit is checked the way CI will check it.
+### Unidentified credentials
 
-## 🛰️ Ingestion API Security (Sidecars)
+For providers whose collector can ask the upstream API who owns a credential (Anthropic, ChatGPT, Gemini, Antigravity, GitHub, OpenCode), a sidecar sends a credential it cannot attribute to the server flagged `identity_pending`; the server verifies it against the provider.
 
-In Multi-Host or Docker modes, sidecars send metrics, tokens, and per-message events via `POST /api/v1/fleet/ingest`. Runway uses **HMAC-SHA256 Signing** for request authenticity and integrity. HTTPS provides confidentiality and authenticates the server; HMAC does not encrypt credentials or authenticate responses:
+- Destinations are fixed literals in the collectors; a payload supplies only header values.
+- The account email comes from the provider, not the sidecar, and never overwrites an operator's own mapping.
+- A pending bundle is readable only through its pinned source: it never enters the shared `default` cache, never uses the server's own credential, and the server stores only a whitelisted quota preview.
+- Retries back off exponentially (15 minutes up to 6 hours), at most five pending sources per provider per cycle.
+- Identity is not authenticated beyond the shared key: whoever holds `INGEST_API_KEY` can claim any `sidecar_id` or account. Treat a sidecar host that can reach the key as trusted for every account it could pair with.
 
-1. **Shared Secret**: The `INGEST_API_KEY` (from `.env`) is the HMAC secret.
-2. **Signature Generation**:
-   - Sidecars calculate a signature over the JSON body and a `X-Timestamp`.
-   - The server rejects nonfinite timestamps and accepts a 5-minute sliding window. Valid signatures are claimed atomically in SQLite before handler effects and retained for 360 seconds across workers and restarts. A repeated envelope returns `409` with `detail.error = "replayed_request"`; unavailable receipt storage returns `503`.
-   - Every retry must use a fresh timestamp and signature, including after a lost response or handler error. Sidecars generate unique microsecond timestamps. The signed wire format remains unchanged; event identifiers still provide event-level idempotency.
-3. **Rate Limit**: `POST /ingest` is capped at **600 requests/minute per source IP** to bound damage from a stolen key or a misconfigured sidecar.
-4. **Requirement**: Always use **HTTPS** for the `APP_HOST` in production to encrypt the request body during transit.
-5. **Config endpoint**: `GET /api/v1/fleet/config` needs no key, but only a request signed with the same HMAC (message: `X-Timestamp + "GET:" + query string`, which binds `sidecar_id`) receives account ids, operator tag hints and per-account credential tokens. Unsigned callers on a non-loopback bind get only the enabled/strategies view; a present-but-invalid signature is rejected (401).
+## Sidecar pairing
 
-### Session names are free text
+A sidecar can be set up from the dashboard (Fleet → Add sidecar → Generate pairing link) instead of pasting the server URL and key.
 
-Sidecars may send session names (`session_names` in the ingest payload; stored in `session_names`). They are titles written by a user or generated by an AI tool and can contain sensitive wording. The server cleans them (control characters, whitespace, 200 characters) but **never logs a name or puts one in an exception message**: logs carry counts only. Tests assert that no name text reaches the logs; keep it that way in any new code that handles them, and keep the same rule in the sidecar.
+1. **Mint (admin).** `POST /api/v1/fleet/pairing-codes` (10/min, audited) creates a random 10-character Crockford-base32 code; only its SHA-256 is stored. It expires after `PAIRING_CODE_TTL_SECONDS` (default 10 minutes). The link is `runway-sidecar://pair?server=<url>&code=<code>`, where the server URL is `PUBLIC_URL`, else the admin's browser origin, else the request base URL.
+2. **Confirm.** Any web page can open a `runway-sidecar://` link and pairing re-points where the machine ships credentials, so the sidecar never pairs silently: the link opens a local confirmation page on the tray's loopback settings server (Origin-checked), which names the target server, warns if it replaces the current one, and waits for an explicit click.
+3. **Redeem.** The sidecar calls `POST /api/v1/fleet/pair` with the code, over HTTPS for non-loopback servers. A conditional update makes the code single-use even under races; unknown, expired and reused codes get one identical 400. Redeem is limited to 10/min/IP and every outcome is audited. The response is `{api_url, api_key}`.
 
-### Sidecar transport and update verification
+When the OS launches a second sidecar process for the link, it forwards it to the running tray with a per-run random token held in an owner-only control file, which a browser cannot read or forge. Pairing delivers the same shared key as manual setup; it changes delivery, not the trust model.
 
-All sidecar server URLs reject embedded credentials, fragments, invalid ports, and redirects. Plain HTTP is allowed only for canonical loopback hosts (`localhost`, `127.0.0.1`, `[::1]`); remote servers require HTTPS. An explicit `RUNWAY_INSECURE` / `tls_insecure` certificate-verification opt-in remains available with warnings. It does not permit remote HTTP and weakens server authentication; use a trusted certificate or configured CA instead where possible.
+## Multi-Host Startup Gates
 
-Packaged self-updates require both the existing checksum and a `.sigstore.json` bundle. The official Sigstore verifier checks the artifact digest, certificate chain, GitHub issuer, transparency evidence, and exact signing identity `https://github.com/s3ntin3l8/runway-ai-usage-tracker/.github/workflows/sidecar-build.yml@refs/heads/main` before extraction or installation. Trust refresh and verification failures leave the installation unchanged. Older releases without bundles are refused; there is no checksum-only fallback. The sidecar's insecure server-TLS option does not change update verification trust.
+When `APP_HOST` is not loopback, the server refuses to start unless all of these are set:
 
-The built-in server disables uvicorn forwarded-header rewriting so trusted-proxy decisions use the immediate socket peer. If launching uvicorn yourself, pass `--no-proxy-headers`; configure `TRUSTED_PROXY_IPS` for the immediate authenticated proxy, strip client identity headers there, and configure the explicit HTTPS `CORS_ORIGINS` and `TLS_TERMINATED=1` for TLS termination. Do not infer the trusted hop from a client-supplied `X-Forwarded-For` header.
+| Setting | Why |
+|---|---|
+| `DB_ENCRYPTION_KEY` | Encrypts credentials at rest. |
+| `TLS_TERMINATED=1` | Operator assertion that a proxy terminates TLS in front of Runway. |
+| `CORS_ORIGINS=…` | Explicit allow-list; a wildcard with credentials is rejected by browsers. |
+| `ADMIN_API_KEY` or `TRUSTED_PROXY_IPS` | Off loopback, at least one real gate must exist or every request would be admin. |
 
-See [the security validation record](security-validation.md) for evidence and tracked gaps.
+A misconfiguration fails at import time with a clear `RuntimeError`. Blank values count as unset, and a malformed `DB_ENCRYPTION_KEY` also fails at startup rather than falling back to plaintext. If encryption fails at runtime, credential writes return 503 and nothing is stored in plaintext. Local mode requires Host to name a loopback address (DNS-rebinding protection); network deployments need an explicit CORS allow-list, and requests with a foreign Origin are rejected before handlers run.
 
-### Unidentified credentials and identity verification
+If you launch uvicorn yourself, pass `--no-proxy-headers`. The built-in server already ignores forwarded headers, so trusted-proxy decisions use the immediate socket peer: set `TRUSTED_PROXY_IPS` to the proxy, strip client identity headers there, and never infer the trusted hop from `X-Forwarded-For`.
 
-A sidecar normally keeps a credential it cannot attribute to an account on the machine. For the providers whose server collector can ask the upstream API who owns a credential (Anthropic, ChatGPT, Gemini, Antigravity, GitHub, OpenCode), it instead sends the secret (a browser session cookie, a session env var or an access token) to the server flagged `identity_pending`, and the server calls the provider (`claude.ai`, `api.anthropic.com`, `chatgpt.com`, Google) with it. What that means for your trust model:
+**Where else secrets rest:**
 
-- **Fixed destinations only.** The upstream URLs are literals in the collectors; a payload only ever supplies header values (cookie / bearer), never a host or path.
-- **The proof comes from the provider, not the sidecar.** The email bound to a source is the one the provider returns for that credential; a sidecar cannot make a credential report someone else's email. A source is bound to its account by a durable `identity_verification` tag, and an operator's own mapping is never overwritten by it.
-- **Isolation while pending.** A pending bundle is only readable through its pinned source: it never enters the shared `default` cache, never uses the server's own env or Settings credential, and its exchanged bearer is not stored. The server persists only a whitelisted quota preview (no card detail text) so you can map it by hand.
-- **Bounded upstream traffic.** A source that works but cannot name its account, or fails, is retried with exponential backoff (15 minutes doubling to 6 hours), and at most five pending sources per provider are verified per cycle. A new secret for the same source (a re-login) is retried on the next cycle.
-- **Shared key, shared trust.** Sidecar identity is not authenticated beyond the shared `INGEST_API_KEY`, so anyone holding it can already claim any `sidecar_id`, `account_id` or origin. Treat a sidecar host that can reach the key as trusted for every account it could pair with.
-- **What is never sent.** A credential the sidecar can name from the credential itself (an `id_token` or access-token email claim, `OPENCODE_ACCOUNT_LABEL`, a tag you set) is never sent for verification.
+- `github_oauth.json`: the `access_token` is encrypted with `DB_ENCRYPTION_KEY` when one is set, and re-encrypted on first read if saved before a key existed. Without a key it stays plaintext, like every other secret.
+- The sidecar offline queue holds usage only: credential-carrying cards are dropped before queueing and the queue files are 0600.
+- Logs are redacted at write time (bearer values, JWTs, provider key shapes, credential-looking `name=value` pairs) on the sidecar, again when forwarded, and again on the server before storage.
 
-## 🔗 Sidecar Pairing (`runway-sidecar://` links)
+## Authentication
 
-New sidecars can be set up from the dashboard (*Fleet → Add sidecar → Generate pairing link*) instead of by pasting the server URL and `INGEST_API_KEY` into each machine. The design keeps the shared key out of URLs and out of the user's hands:
+Three paths gate every mutating endpoint, resolved by `resolve_auth` in `app/core/security.py` for both the `require_admin_key` dependency and the `/system/settings` probe:
 
-1. **Mint (admin only).** `POST /api/v1/fleet/pairing-codes` (behind `require_admin_key`, 10/min, audited as `sidecar.pairing_code.create`) creates a random 10-character Crockford-base32 code (~50 bits). Only its SHA-256 is stored, in `sidecar_pairing_codes`. It expires after `PAIRING_CODE_TTL_SECONDS` (default 10 min). The response carries `runway-sidecar://pair?server=<url>&code=<code>`. The server URL is `PUBLIC_URL` if set, otherwise the origin the admin's browser is on, otherwise the request's base URL.
-2. **Confirm (on the sidecar).** Any web page can fire a `runway-sidecar://` link, and pairing re-points where the machine ships provider tokens and cookies. So the sidecar **never pairs silently**. The link only opens a local confirmation page. That page names the target server, warns if it would replace the current one, and waits for an explicit *Pair* click. The page lives on the tray's loopback settings server, whose POSTs are Origin-checked.
-3. **Redeem (single use).** The sidecar calls `POST /api/v1/fleet/pair` with the code over the same channel it will use for ingest. The sidecar refuses plain `http://` for non-loopback servers, and the multi-host gates require TLS. The conditional `UPDATE … WHERE used_at IS NULL AND expires_at > now` makes the code single-use even under races. Unknown, expired and reused codes get one identical 400, so there is no oracle. Redeem is rate-limited to 10/min per IP and every outcome is audited (`sidecar.pair` / `sidecar.pair.rejected`). The response is `{api_url, api_key}`, and `api_key` is the ingest HMAC secret.
+1. **Localhost trust** — loopback client on a loopback-only bind.
+2. **Reverse-proxy SSO** (recommended off-loopback) — a forward-auth proxy asserts the user through an identity header, trusted only from an IP in `TRUSTED_PROXY_IPS`. Header names, group/user allow-lists, the Authentik setup and the router split are in [forward-auth.md](forward-auth.md). The IP allow-list is the security boundary: the proxy must strip client-supplied identity headers, and the list must contain only IPs you control.
+3. **Admin key** — `ADMIN_API_KEY` as `X-Admin-Key`, or exchanged in the browser for a session cookie. It stays the break-glass path when SSO is configured.
 
-Hand-off between processes: on Windows the OS starts a second `RunwaySidecar.exe "<url>"`. That process forwards the link to the running tray through `/pair-request`, authenticated by a per-run random token in an owner-only (0600) control file in the sidecar config dir. A browser can't forge that request: it can't read the token, and the custom header forces a CORS preflight that the server never answers.
+Runway deliberately has no built-in login, OIDC client or role model; multi-user identity is the proxy's job.
 
-Pairing hands out the **same** shared `INGEST_API_KEY` that manual setup uses; it changes how the key is delivered, not the trust model. Rotating `INGEST_API_KEY` still requires re-pairing, or re-entering the key, on every sidecar.
+**Browser sessions.** `POST /api/v1/auth/session` validates the key once (10/min) and sets an `HttpOnly`, `SameSite=Strict` cookie (`runway_session`, `Secure` when `TLS_TERMINATED=1`) holding a Fernet token with only an expiry. It is signed with `SESSION_SECRET` (generated on first use, stored encrypted, separate from `DB_ENCRYPTION_KEY` and never derived from the admin key). Lifetime is `SESSION_LIFETIME_HOURS` (12), or `SESSION_REMEMBER_DAYS` (30) with "remember me". `POST /api/v1/auth/logout` clears one browser; `POST /api/v1/auth/revoke-all` rotates `SESSION_SECRET` and ends every session ("sign out everywhere", Settings → System → Session) without touching `DB_ENCRYPTION_KEY`.
 
-## 🚦 Multi-Host Startup Gates
+**Read access.** Private usage, event, fleet, provider-configuration and system reads need the same admin authentication as writes. `/system/settings`, `/system/health` and `/system/sidecar-downloads` stay public for bootstrap, and fleet config keeps its signed/redacted contract. A LAN proxy cannot grant local admin trust. Vite binds `127.0.0.1` by default; for remote development set `VITE_HOST` and use a network-mode backend with an admin key, CORS origins and TLS. `X-Runway-Dev-Remote` is an internal marker the dev proxy overwrites; it never grants authentication, and production proxies should strip it.
 
-When `APP_HOST` is not `127.0.0.1` / `localhost`, the server refuses to start unless four things are in place — HMAC alone is not enough confidentiality for sidecar payloads carrying OAuth tokens, cookies, and API keys.
+**Webhooks.** Destinations must be HTTPS Slack (`hooks.slack.com/services/…`) or Discord (`discord.com/api/webhooks/…`) URLs on port 443, validated at save and at delivery; custom hosts and redirects are unsupported.
 
-| Setting                              | Required | Why |
-|---------------------------------------|----------|-----|
-| `DB_ENCRYPTION_KEY`                   | yes      | Encrypts credentials at rest. |
-| `TLS_TERMINATED=1`                    | yes      | Operator assertion that nginx / caddy / cloudflare / kube ingress terminates TLS in front of Runway. |
-| `CORS_ORIGINS=…`                      | yes      | Explicit allow-list. The legacy `["*"]` fallback combined with `allow_credentials=True` is rejected by browsers. |
-| `ADMIN_API_KEY` or `TRUSTED_PROXY_IPS`| yes      | `resolve_auth`'s "no key configured" bypass only opens on a loopback bind — off-loopback, at least one real gate (the key, or a forward-auth proxy) must exist, or every request would be treated as admin. |
+## Response headers
 
-These are fail-fast checks: a misconfigured deployment dies at import time with a clear `RuntimeError`, never silently exposing tokens over cleartext, serving with a broken CORS policy, or leaving every admin endpoint open to the network. Localhost binds are exempt by design — Runway's primary topology is "developer's laptop".
+Every response carries a strict `Content-Security-Policy` (`default-src 'self'`; scripts only from `'self'`; inline styles allowed only for runtime style attributes; `frame-ancestors 'none'`), plus `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY` and `Referrer-Policy: no-referrer`. The SPA bundles all scripts and fonts, so no CDN is allowed.
 
-**Other places a secret can rest** (all covered, none rely on the database):
+## Audit log
 
-- **GitHub OAuth token** (`github_oauth.json` in the config dir): the `access_token` field is encrypted with `DB_ENCRYPTION_KEY` when one is set. A token saved before a key was configured is rewritten encrypted the first time it is read. Without a key it stays plaintext, like every other secret.
-- **Sidecar offline queue**: queued payloads hold usage only. Credential-carrying cards are dropped before queueing and the forwarded log tail is redacted, so the 0600 queue files never contain a token, key or cookie. A queue left by an older sidecar is cleaned the next time it is replayed.
-- **Sidecar logs** are redacted at write time (bearer values, JWTs, provider key shapes, `name=value` pairs for credential-looking names), and again when the log tail is forwarded; the server redacts the lines once more before storing them in `recent_logs`.
-- **Ingest 400 responses** report field paths and error types only. They never echo the submitted value, which on those routes can be a credential.
+Every successful admin mutation (sidecar pause/resume/delete, webhook changes, provider-config writes, token-cache actions) is written to `audit_log` with actor, source IP, action, target and a JSON payload. Rows also carry `actor_type` (`localhost`, `proxy`, `session`, `api-key`, `none`) and, for the proxy path, the asserted identity, email and groups. Read it through `GET /api/v1/system/audit-log` (admin) or Settings → Audit log. It is a diagnostic trail, not a tamper-evident log: the table is append-only in the application, but anyone with database access can delete rows.
 
-Blank values are treated as unset: an empty or whitespace-only `ADMIN_API_KEY` or `DB_ENCRYPTION_KEY` normalizes to `None` (so `KEY=""` in `.env` doesn't masquerade as a configured secret). A **malformed** `DB_ENCRYPTION_KEY` (set but not a valid Fernet key) also fails fast at startup, rather than silently falling back to plaintext storage.
+## Debug captures
 
-Local CORS defaults allow only the configured localhost origins. Network deployments must provide an explicit allow-list. Browser requests with an Origin outside the request origin and this allow-list are rejected before handlers run. In local mode, Host must name localhost or a loopback address, protecting localhost administrator trust against DNS rebinding and LAN-facing proxies.
+`GET /api/v1/system/debug/raw/{provider_id}` (admin, rate-limited) runs a collector live and returns the upstream exchanges. Secret headers are masked and URLs, bodies and errors pass through `app.core.log_redaction`, which replaces token shapes, emails and sensitive keys with `[REDACTED]`. This is best-effort pattern matching: treat captures as sensitive.
 
-## 🔐 Application Authentication
+`POST /api/v1/system/debug/sources/{provider_id}` (admin, 5/min) makes one real request per credential source to show which work, returning only status codes, error types and counts. It is side-effect-free by construction (token-cache writes, rejection flags, provider error events and server-side OAuth refresh are suppressed, so no refresh token is rotated), but the provider still sees the request.
 
-Runway is local-first; its secondary mode is self-hosted behind a reverse proxy. The auth model reflects that — it does **not** try to be an identity provider. Three paths gate every mutating endpoint (resolved by `app/core/security.py:resolve_auth`, shared by the `require_admin_key` dependency and the `/system/settings` probe so they can never disagree):
+## Verifying sidecar downloads and updates
 
-1. **Localhost trust** — client is `127.0.0.1`/`::1` *and* the server is bound localhost-only. Zero-touch for the developer-laptop case; no key needed.
-2. **Reverse-proxy SSO** *(recommended for multi-host)* — a forward-auth proxy asserts the user via a configurable identity header (`X-Forwarded-User` by default, or e.g. Authentik's `X-authentik-username`), trusted **only** when the source IP is in `TRUSTED_PROXY_IPS`. The proxy owns real identity; Runway just consumes it. See *Forward-auth / SSO* below.
-3. **Built-in admin key** — `ADMIN_API_KEY`, presented either as the `X-Admin-Key` header (API/script clients) or, in the browser, exchanged once for a session cookie (below). This remains the **break-glass fallback** even when forward-auth is configured — it keeps working for scripts and for recovering access if the identity provider is unreachable.
+Every release asset has a `.sha256` and a `.sigstore.json` bundle from keyless Sigstore signing in the release workflow. To prove a file was built by this repository's CI:
 
-### Decision (issue #92): why this shape
+The exact `cosign verify-blob` command is under [Verify a download](sidecar.md#verify-a-download).
 
-We deliberately **did not** build username/password login, a built-in OIDC client, or role-based access control. For a self-hosted tool, multi-user SSO is the reverse proxy's job — Authelia, oauth2-proxy, Traefik forward-auth, Cloudflare Access, or Tailscale all do it better and are already in most homelab stacks. Building those into Runway would add attack surface and maintenance for little gain. They remain open as scoped follow-ups (RBAC #101, OIDC #102) if concrete demand appears.
-
-### Browser session cookies (hardened admin key)
-
-The SPA no longer keeps the admin key in `localStorage` (readable by any XSS). Instead `POST /api/v1/auth/session` validates the key once and sets an **`HttpOnly`, `SameSite=Strict`** cookie (`runway_session`), marked `Secure` whenever `TLS_TERMINATED=1`. The cookie is a Fernet token carrying only an expiry — no identity, since the built-in path has a single admin.
-
-- **Signing key** (`SESSION_SECRET`): auto-generated on first use, stored encrypted-at-rest in `system_config`, kept **separate from `DB_ENCRYPTION_KEY`**. It is never derived from `ADMIN_API_KEY`.
-- **Lifetime**: `SESSION_LIFETIME_HOURS` (default 12), or `SESSION_REMEMBER_DAYS` (default 30) when "remember me" is checked.
-- **Login throttle**: `POST /auth/session` is rate-limited (10/min) — the `X-Admin-Key` header path has no such throttle.
-- **Migration**: a leftover `localStorage` key from older builds is auto-exchanged for a cookie on first load, then cleared.
-
-### Logout & revocation
-
-- `POST /api/v1/auth/logout` clears this browser's cookie.
-- `POST /api/v1/auth/revoke-all` (admin) **rotates `SESSION_SECRET`**, invalidating every session everywhere at once (issue #100) — the "sign out everywhere" in **Settings → System → Session**. Because the session key is independent of `DB_ENCRYPTION_KEY`, this does **not** re-encrypt provider secrets.
-- Rotating `DB_ENCRYPTION_KEY` is *not* required to drop sessions; use revoke-all.
-
-### Forward-auth / SSO (recommended multi-host pattern)
-
-Put a forward-auth proxy in front and trust its identity header — this is how Runway supports Authentik, Authelia, oauth2-proxy, Cloudflare Access, and Tailscale without a built-in OIDC client (see *Decision* above). Minimal shape, composed with the startup gates above:
-
-```yaml
-# Runway env
-APP_HOST=0.0.0.0
-TLS_TERMINATED=1
-DB_ENCRYPTION_KEY=<fernet-key>
-CORS_ORIGINS=https://runway.example.com
-TRUSTED_PROXY_IPS=10.0.0.2          # the proxy's source IP, NOT a CIDR you don't control
-# ADMIN_API_KEY optional — the proxy is the gate; the key is the break-glass fallback
-```
-
-**Header names are configurable** (`app/core/security.py:resolve_auth`), so a proxy that emits non-standard header names doesn't need remapping:
-
-| Setting                         | Default              | Purpose |
-|----------------------------------|----------------------|---------|
-| `FORWARD_AUTH_USER_HEADER`       | `X-Forwarded-User`   | Asserted username — grants the session when trusted. |
-| `FORWARD_AUTH_EMAIL_HEADER`      | `X-Forwarded-Email`  | Recorded in the audit log (`actor_meta_json`). |
-| `FORWARD_AUTH_GROUPS_HEADER`     | `X-Forwarded-Groups` | Recorded in the audit log, and checked against `FORWARD_AUTH_ALLOWED_GROUPS` if set. |
-
-A CGI-style `Remote-User` header is accepted as a fallback when the configured user header is absent, for back-compat — but **only** while `FORWARD_AUTH_USER_HEADER` is left at its default (`X-Forwarded-User`). Once you point it at a proxy-specific header (e.g. Authentik's `X-authentik-username`), `Remote-User` is no longer consulted at all, so a request that reaches the app without that specific header can't fall back to forging identity via the CGI convention.
-
-**Authentik**: point the three header settings at the outpost's native headers — no proxy-side header renaming required:
-
-```yaml
-FORWARD_AUTH_USER_HEADER=X-authentik-username
-FORWARD_AUTH_EMAIL_HEADER=X-authentik-email
-FORWARD_AUTH_GROUPS_HEADER=X-authentik-groups   # Authentik pipe-delimits multiple groups; both "|" and "," are accepted
-```
-
-Configure an Authentik **Proxy Provider** in *forward auth (single application)* mode bound to Runway's outpost, then wire your reverse proxy's forward-auth middleware to it (e.g. Traefik's `forwardAuth` middleware pointed at the outpost, with `authResponseHeaders` listing the three headers above so they reach Runway). Other identity providers:
-
-- **oauth2-proxy / Authelia**: configure them to inject `X-Forwarded-User` (and optionally `X-Forwarded-Email` / `X-Forwarded-Groups`) — the defaults already match.
-- **Cloudflare Access / Tailscale**: terminate identity at the edge / tailnet; forward the asserted user header from a fixed proxy IP listed in `TRUSTED_PROXY_IPS`.
-
-In every case, ensure the proxy **strips client-supplied** identity headers before adding its own — the IP allowlist (`TRUSTED_PROXY_IPS`) is load-bearing: without it, anyone could forge `X-Forwarded-User` directly. Never list an IP range you don't fully control.
-
-**Optional authorization allowlist** — defense-in-depth on top of the identity provider's own app binding. Empty (default) trusts any user the proxy asserts, matching prior behavior:
-
-```yaml
-FORWARD_AUTH_ALLOWED_GROUPS=runway-admins    # comma-separated; matched against FORWARD_AUTH_GROUPS_HEADER
-FORWARD_AUTH_ALLOWED_USERS=alice,bjorn       # comma-separated; matched against the asserted username
-```
-
-If set, a proxy-asserted user who matches neither list does **not** get the proxy trust branch — the request falls through to the session cookie / admin-key checks instead of a hard failure, so a real admin can still log in with the break-glass key even while SSO is locked down to a specific group.
-
-Once forward-auth is configured, the `/system/settings` probe adds `"forward_auth"` to `auth_methods` and the dashboard's Settings → About / System sections surface the SSO user — the browser never needs the admin key.
-
-## 🔒 Response Headers
-
-Every response carries a defence-in-depth header set:
-
-- `Content-Security-Policy`: `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'`. The v2 SPA bundles all scripts and fonts (no CDN, no inline handlers), so `script-src` is a strict `'self'`; `style-src` keeps `'unsafe-inline'` only for the runtime style *attributes* ECharts/Radix set. `frame-ancestors 'none'` blocks framing.
-- `X-Content-Type-Options: nosniff`
-- `X-Frame-Options: DENY` (for older user agents that ignore `frame-ancestors`)
-- `Referrer-Policy: no-referrer`
-
-## 📜 Audit Log
-
-Every successful admin mutation (sidecar pause/resume/delete/patch, webhook CRUD, provider-config writes, token-cache refresh/evict) is written to the `audit_log` table with actor, source IP, action, target, and a JSON payload. Read it via `GET /api/v1/system/audit-log` (admin-only) or from the **Settings → Audit Log** panel.
-
-Attribution is structured (issue #103): alongside the human-readable `actor` string, each row records `actor_type` (`localhost` / `proxy` / `session` / `api-key` / `none`) and, for the proxy path, the asserted identity plus any `X-Forwarded-Email` / `X-Forwarded-Groups` in `actor_meta_json`. Rows predating this degrade gracefully (null structured fields).
-
-Scope: this is a diagnostic trail with the same trust model as the rest of Runway — useful for "what happened when something surprising changed" — not a legal-grade tamper-evident log. The table is append-only at the application layer; rows can still be deleted by anyone with direct DB access.
-
-## 🐞 Debug Captures
-
-`GET /api/v1/system/debug/raw/{provider_id}` (admin-only, rate-limited) runs a collector live and returns the upstream HTTP exchanges. Known secret headers are masked, and request URLs, response bodies and error messages are passed through `app.core.log_redaction.redact_secrets` / `redact_url`: token-shaped strings (JWTs, bearer values, `sk-…` keys, session cookies), emails, and string values under sensitive keys (`access_token`, `password`, …) become `[REDACTED]`. This is best-effort pattern matching, not a guarantee — treat captures as sensitive.
-
-`POST /api/v1/system/debug/sources/{provider_id}` (admin-only, `5/minute`) makes one live request per credential source to show which of an account's credentials work. It returns only status codes, error types, a redacted message and counts — no bodies, headers or tokens — and is side-effect-free by construction: each source runs on a fresh collector copy in a task-local *probe mode* (`app/services/probe_mode.py`) in which token-cache stores (mirrored login files, exchanged bearers, refreshed tokens), the account's "rejected" flag and provider error events are all suppressed at the write itself, server-side OAuth refresh is disabled (a refresh would rotate a refresh token; xAI's own refresh honours the same switch), and a machine-owned login whose token has expired is reported rather than called. It is still a real request, so the provider sees it.
-
-## 🔄 Maintenance & Hygiene
-
-### Credential Rotation
-Rotate credentials quarterly or immediately if you suspect exposure.
-1. Generate a new key/token from the provider dashboard (GitHub, Anthropic, etc.).
-2. Update the value in your local `.env`.
-3. Revoke the old key/token immediately.
-
-### CI/CD Security
-When using GitHub Actions or other CI/CD pipelines:
-- Use **Encrypted Secrets** (e.g., GitHub Repository Secrets).
-- Never log secrets to standard output or log files.
-- Inject secrets into the environment at runtime using the `env:` block in YAML.
-
-## 👮 Reporting Vulnerabilities
-If you discover a security vulnerability, please open a private security advisory on GitHub or contact the maintainer directly.
-
-
-### Audit boundary protections
-
-Private usage, event, fleet, provider configuration, GitHub login status, and
-system state reads require the same administrator authentication as writes.
-`/system/settings`, `/system/health`, and `/system/sidecar-downloads` remain
-public bootstrap endpoints; fleet configuration retains its existing redacted
-public / signed sidecar contract. Dashboard layout writes require admin auth.
-
-Vite binds `127.0.0.1` by default. For remote development, explicitly set
-`VITE_HOST` and use a network-mode backend with an admin key, explicit CORS
-origins, and TLS as described above. A LAN proxy cannot grant local admin trust.
-
-The sidecar settings server validates Host and exact Origin. It never embeds
-the saved ingestion key in HTML; leaving the key field blank preserves it.
-Enter a replacement to rotate the key, or pair again from the dashboard.
-
-Webhook destinations must be HTTPS Slack (`hooks.slack.com/services/…`) or
-Discord (`discord.com/api/webhooks/…`, legacy `discordapp.com` also accepted)
-URLs on port 443. Custom hosts and redirects are unsupported; existing custom
-webhooks must be replaced. Saved unsupported destinations display a warning in
-Settings → Webhooks immediately after upgrade; no database rewrite is needed.
-Validation applies at save time and delivery time.
-
-Ingestion stops receiving when its 8 MiB cap is exceeded, irrespective of
-Content-Length. Nonfinite HMAC timestamps are rejected. If configured encryption
-fails at runtime, credential writes fail instead of persisting plaintext.
-
-Encryption failures return HTTP 503 with a safe retry message. Credential writes
-remain blocked until encryption recovers. No exception details or keys reach the client.
-
-`X-Runway-Dev-Remote` is an internal Vite downgrade marker, overwritten by the
-dev proxy on every request. It never grants authentication. Production reverse
-proxies should strip client-supplied values, alongside identity headers, and
-assert identity only after authenticating the caller.
+Packaged self-updates require both the checksum and the bundle. The sidecar verifies the artifact digest, certificate chain, GitHub issuer, transparency evidence and the exact signing identity above before extracting or installing anything; a failure leaves the installation unchanged, releases without bundles are refused, and there is no checksum-only fallback. The insecure server-TLS option does not affect update verification.

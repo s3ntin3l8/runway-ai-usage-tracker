@@ -15,9 +15,9 @@ on the client side in `scripts/sidecar.py` and `scripts/sidecar_pkg/`.
 
 ## Authentication
 
-Two independent schemes.
+Three independent schemes.
 
-### HMAC ingest auth — for the data plane
+### Shared-key HMAC — the data plane for legacy clients
 
 The sidecar signs its payloads with the shared ingest key (`INGEST_API_KEY`).
 Two headers:
@@ -27,36 +27,37 @@ Two headers:
 | `X-Signature` | `HMAC-SHA256(secret, timestamp + body)` |
 | `X-Timestamp` | Unix timestamp. It must fall inside `[now - 300, now + 60]` — five minutes of clock skew in the past, one minute in the future. Outside that window the request is rejected with **400**. |
 
-The server validates the signature and **claims** it. A claimed signature is
-rejected on replay — receipts are held for 360 seconds and contain neither the
-request body nor reusable signature material. An invalid request also consumes
-a valid signature, so a retry must sign a fresh timestamp.
+The server validates the signature and **claims** it as a durable, single-use
+receipt. Reusing the same envelope returns **409** (`replayed_request`), and
+the receipt holds neither the request body nor reusable signature material.
+Every retry must therefore sign a fresh timestamp.
 
-Signature auth (the shared ingest key, or an enrolled device's own key — see
-below) guards the data-plane routes `POST /ingest` and
-`POST /credentials/manifest`; `POST /source-sync` accepts a device signature
-only. Every other fleet route is admin-authenticated, with two exceptions:
-
-- `GET /fleet/config` is rate-limited (`60/minute`) and returns only the
-  enabled/strategies view to anyone, unless the caller signs the request (with
-  the ingest key or a device key) or the server is bound to loopback.
-- `POST /fleet/pair` is unauthenticated by design: the one-time pairing code is
-  the credential (see [Pairing](#pairing); 10 per minute per IP).
-
-This split is enforced by `tests/unit/test_forward_auth_routes.py`.
+Signed requests are accepted on `POST /ingest`, `POST /credentials/manifest`,
+`POST /source-sync` and `GET /config`. `GET /config` is also served unsigned to
+anyone, rate-limited (`60/minute`), as the redacted enabled/strategies view
+unless the caller signs it with the ingest key or the server is bound to
+loopback. Every other fleet route is admin-authenticated, or open by design
+(`POST /pair`, authorised by the one-time code). The split is enforced by
+`tests/unit/test_forward_auth_routes.py`.
 
 ### Device identity — for enrolled sidecars
 
-An enrolled sidecar has a random HMAC secret of its own, stored encrypted.
-Its requests carry `X-Runway-Device-Id`, `X-Timestamp` and `X-Signature`, an
-HMAC-SHA256 over `DEVICEv1|device_id|timestamp|purpose|` plus the raw body (raw
-query bytes for `GET /config`). The purpose (`ingest`, `manifest`, `config` or
-`source-sync`) binds the operation without relying on a proxy preserving the
-public path, and the shared key can neither authenticate a device header nor
-claim a reserved `device-<hex>` identity. The device key is accepted on
-`/ingest`, `/credentials/manifest` and `GET /config` as well as `/source-sync`. Source identity is **(device, scraper, origin/account, generation)** —
-hostnames are labels, not identity. Legacy shared-key clients stay compatible
-but cannot impersonate an enrolled device.
+Pairing enrols a sidecar with a random HMAC secret of its own, stored
+encrypted. Source identity is **(device, scraper, origin/account,
+generation)** — hostnames are labels, not identity. A device request sends
+`X-Runway-Device-Id`, `X-Timestamp` and `X-Signature`, where the signature is
+HMAC-SHA256 under the device key over
+`DEVICEv1|device_id|timestamp|purpose|` followed by the raw body (the raw query
+bytes for `GET /config`). `purpose` is `ingest`, `manifest`, `config` or
+`source-sync`, so a signature cannot be replayed against another operation
+and does not depend on a proxy preserving the public path. The timestamp
+window, body caps and replay protection are the same as above.
+
+A shared ingest key cannot authenticate a device header or claim a reserved
+`device-<32 hex>` registry id, so legacy clients stay compatible but cannot
+impersonate an enrolled device. A sidecar whose enrolment is lost or revoked
+sees a 401 from `source-sync`, shows a re-pair notice and withholds Keychain
+credentials; it never falls back to the shared key.
 
 Withdrawal deletes the matching secret cache material and persists a
 tombstone, so late ingest cannot resurrect a withdrawn source. Re-enabling
@@ -77,16 +78,14 @@ A new machine is enrolled by pairing:
    `PAIRING_CODE_TTL_SECONDS` (default 600 s).
 2. The operator opens the `runway-sidecar://pair?…` link on the new machine,
    or runs `runway-sidecar-cli --pair SERVER_URL CODE`.
-3. The sidecar posts the code to `POST /fleet/pair` (it sends its
-   `device_protocol` and platform) and receives `api_url` and `api_key`. When
-   the sidecar sent `device_protocol` 1 and the server has `DB_ENCRYPTION_KEY`
-   configured, the response also carries
-   `device_id`, `device_key`, `device_api_url` and `source_protocol`, which
-   enrol it as a device.
-4. It writes these to its config and exits; start the daemon afterwards.
-
-`POST /fleet/pair` is the one unauthenticated fleet route besides the limited
-`GET /fleet/config` view; the code in step 1 is what authorises it.
+3. The sidecar posts the code to `POST /fleet/pair`. The response carries
+   `api_url` and `api_key`; when the server has `DB_ENCRYPTION_KEY`, it also
+   carries `device_id`, `device_key`, `device_api_url` and `source_protocol`.
+   Without it, pairing returns the legacy response and Keychain forwarding
+   stays limited until enrolment.
+4. It writes these to its config (device key in an owner-only file) and exits;
+   start the daemon afterwards. Re-pairing creates a new device; it does not
+   claim the hostname's earlier sources.
 
 Only pair with a link generated in **your own** dashboard — pairing points that
 machine's usage data and provider sign-ins at that server.
@@ -99,8 +98,9 @@ machine's usage data and provider sign-ins at that server.
    source it can reach.
 2. It collects quota cards and per-message events.
 3. It signs the payload and posts it.
-4. The server verifies the signature, stores the credentials in an in-memory
-   cache (30-minute TTL), upserts the cards into `latest_usage`, and ingests
+4. The server verifies the signature, caches the credentials (a 30-minute
+   TTL for shared-key clients; contributions from enrolled devices are durable
+   and survive a server restart or an offline machine), upserts the cards into `latest_usage`, and ingests
    the events into `usage_events`.
 
 **Dedup key:** events are deduplicated by `(provider_id, event_id)` — *not* by
@@ -148,15 +148,14 @@ drops it as soon as the sidecar stops reporting that store.
 
 ## Credential tags
 
-A credential origin (`env:…`, `path:…`, `cookie:…`) that no tag resolves yet is
-reported by the sidecar in the manifest and waits as a pending origin.
-`GET /fleet/credentials/tags/pending` lists them. The **operator** resolves one
-with `POST /fleet/credentials/tags`, an admin route that maps the origin to a
-configured account, either for one sidecar or deployment-wide.
-`GET /fleet/credentials/tags` lists the resolved tags and
-`DELETE /fleet/credentials/tags` removes one. A sidecar never writes a tag; it
-only receives the resolved mappings in the manifest response and in
-`GET /config`.
+When a credential's origin has no known account, it waits as *pending*. The
+**operator** resolves it with `POST /fleet/credentials/tags` (admin-only),
+choosing an account that is configured or has live evidence for the same
+provider. `GET` lists tags, `DELETE` removes one and
+`GET /fleet/credentials/tags/pending` lists the origins still waiting. A tag
+is scoped to the deployment or to one sidecar; browser-cookie and Keychain
+origins belong to a machine and take a sidecar scope. Tagging to an archived
+account parks the binding until the account is restored.
 
 ## Pending events
 
@@ -212,8 +211,7 @@ source (pause or resume, ask the Mac to set up, revoke after a confirmation), an
 ## Source lifecycle
 
 `GET /fleet/sidecars/{id}/sources` reports the sources on one machine, and
-`POST /fleet/source-sync` is how an enrolled device reports its sources and
-acknowledges the commands the server queued for them.
+`POST /fleet/source-sync` synchronises source state across the fleet.
 
 Local consent, authorization, remote pause, collection health, renewal
 support, last success and report time are all distinct. **Offline/stale
@@ -221,9 +219,19 @@ reporting is not the same as server-side collection health** — a sidecar that
 has not checked in still holds its credentials, and the server keeps using
 eligible ones.
 
+## What the sidecar forwards
+
+Forwarded: quota cards, per-message usage events (batched, 1000 per push),
+credentials the server needs to call provider APIs, and a credential manifest.
+Usage events carry token counts, model, timestamps and ids; conversation text
+and raw transcript records are not uploaded. The sidecar extracts and pushes;
+the server makes every provider call. When the server is unreachable the
+payload goes to the sidecar's offline queue and is replayed later; events are
+deduplicated by id, so a replay cannot double-count.
+
 ## Related
 
-- [`api-reference.md`](api-reference.md) — every route, with its auth scheme (the route index lives there).
+- [`api-reference.md`](api-reference.md) — every route, with its auth scheme, and the device-enrolment details.
 - [`SECURITY.md`](SECURITY.md) — the trust model these routes implement.
 - [`source-consent.md`](source-consent.md) — what may be read, and who says so.
 - [`sidecar.md`](sidecar.md) — the sidecar side of the protocol.

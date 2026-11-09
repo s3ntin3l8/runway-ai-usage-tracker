@@ -1,8 +1,8 @@
 # Forward-Auth / SSO (Authentik walkthrough)
 
-Runway doesn't ship a built-in OIDC client (see `docs/SECURITY.md` → *Decision (issue #92)*) — instead it trusts an identity header asserted by a forward-auth proxy sitting in front of it. This is the recommended pattern for a multi-host/Docker deployment: your identity provider (Authentik, Authelia, oauth2-proxy, Cloudflare Access, Tailscale, …) does real authentication, and Runway just consumes the result. This doc walks through the concrete Authentik setup so the dashboard never prompts for the admin key again.
+Runway has no built-in OIDC client. It trusts an identity header asserted by a forward-auth proxy in front of it, which is the recommended pattern for a multi-host or Docker deployment: your identity provider (Authentik, Authelia, oauth2-proxy, Cloudflare Access, Tailscale, …) authenticates, and Runway consumes the result. This guide walks through Authentik so the dashboard never prompts for the admin key. The trust model is in [SECURITY.md](SECURITY.md#authentication).
 
-See `docs/SECURITY.md` → *Application Authentication* for the full trust-ladder reference; this doc is the practical how-to.
+Other providers: oauth2-proxy and Authelia inject `X-Forwarded-User` (and optionally `X-Forwarded-Email` / `X-Forwarded-Groups`), which already match the defaults of `FORWARD_AUTH_USER_HEADER`, `FORWARD_AUTH_EMAIL_HEADER` and `FORWARD_AUTH_GROUPS_HEADER`. Cloudflare Access and Tailscale terminate identity at the edge; forward the asserted user header from a fixed proxy IP listed in `TRUSTED_PROXY_IPS`. A CGI-style `Remote-User` header is accepted as a fallback only while `FORWARD_AUTH_USER_HEADER` is left at its default.
 
 ## 1. Authentik: Proxy Provider + Outpost
 
@@ -34,12 +34,28 @@ services:
 
 `authResponseHeaders` is what makes the outpost's identity headers actually reach the `runway` container — without it Traefik strips them. Other proxies (nginx `auth_request`, Caddy `forward_auth`) follow the same shape: authenticate against the outpost, then forward its response headers through to the upstream.
 
-> **Spoofing risk:** the middleware above only *adds* the outpost's headers on top of whatever the client sent — it doesn't strip a client-supplied `X-authentik-username` first. Since `TRUSTED_PROXY_IPS` is the actual security boundary (Runway only reads these headers from a request whose source IP is in that allow-list), a request that *never reaches Traefik's public entrypoint at all* isn't a risk — but if anything else on your Docker network could reach the `runway` container directly, it could forge these headers. Production setups should chain a header-stripping step before `forwardAuth` (blank the identity headers, then let the outpost set the real ones) — see §5, which references this as `chain-authentik@file` instead of the bare `authentik@docker` above.
+> **Spoofing risk:** the middleware above only *adds* the outpost's headers on top of whatever the client sent; it does not strip a client-supplied `X-authentik-username`. `TRUSTED_PROXY_IPS` is the real boundary (Runway reads these headers only from that source IP), but anything else on the Docker network that can reach the `runway` container directly could forge them. Production setups chain a header-stripping step before `forwardAuth`. §5 uses such a chain, `chain-authentik@file`; it is a name you define yourself in Traefik's file provider, for example:
+>
+> ```yaml
+> http:
+>   middlewares:
+>     strip-identity:
+>       headers:
+>         customRequestHeaders:
+>           X-authentik-username: ""
+>           X-authentik-email: ""
+>           X-authentik-groups: ""
+>     chain-authentik:
+>       chain:
+>         middlewares: [strip-identity, authentik@docker]
+> ```
+>
+> Defining the chain once in shared config also means a later security fix is not repeated per app.
 
 ## 3. Runway: trust the proxy and read Authentik's headers
 
 ```bash
-# Runway env (composes with the multi-host gate — see docs/SECURITY.md)
+# Runway env (composes with the startup gates in SECURITY.md)
 APP_HOST=0.0.0.0
 TLS_TERMINATED=1
 DB_ENCRYPTION_KEY=<fernet-key>
@@ -61,7 +77,7 @@ FORWARD_AUTH_ALLOWED_GROUPS=runway-admins
 # Authentik is ever unreachable. Never entered in the browser once SSO works.
 # Genuinely optional here only because TRUSTED_PROXY_IPS is set above — on a
 # non-loopback bind, the startup gate requires at least one of the two (see
-# docs/SECURITY.md → Multi-Host Startup Gates).
+# SECURITY.md → Multi-Host Startup Gates).
 ADMIN_API_KEY=<strong secret>
 ```
 
@@ -94,9 +110,9 @@ Gating the *entire* host behind `chain-authentik@file` (or whatever your forward
   | `POST /api/v1/fleet/source-sync` | enrolled **device** key | a paired Mac never completes a source sync, so it keeps its Keychain-derived credentials (for example the Claude Console cookie) to itself, and pause/revoke commands never reach any enrolled host |
   | `POST /api/v1/fleet/pair` | the one-time pairing code itself, rate limited to 10/min/IP | a sidecar cannot pair |
 
-  Runway validates every one of them itself, limits unsigned config responses, and rate limits `pair`; bypassing proxy SSO does not bypass Runway's endpoint checks. The failure is quiet: ingest keeps working while `source-sync` is redirected, so check all five (see *Verify the bypass* below).
-- **Performance.** Vite's content-hashed JS/CSS/font bundle (`/assets/*`) is a couple dozen separate requests per page load, and each one would separately pay the forwardAuth round-trip cost (see *Why this matters* below).
-- **The PWA's own update mechanism.** The browser's periodic fetch of `/sw.js` treats a redirect response as a failed update — that's spec behavior, not a Runway quirk. If `/sw.js` is SSO-gated, then the moment a client's Authentik session lapses, its service worker can no longer fetch its own successor and is stuck forever replaying whatever build was cached when the session was last valid. Concretely: a stale pre-fix service worker doesn't know how to distinguish an SSO bounce from a real backend outage, so it renders "Backend unreachable" instead of a login prompt — and re-authenticating in the browser doesn't fix it, because the broken SW is what's serving the page. `/manifest.webmanifest` and the install/splash icons need the same bypass so the PWA install experience isn't degraded either.
+  Runway applies its own request checks to every one of them, so bypassing proxy SSO does not bypass endpoint authentication. The failure is quiet (ingest keeps working while `source-sync` is redirected), so check all five (see *Verify the bypass* below).
+- **Performance.** The content-hashed bundle under `/assets/*` is a couple dozen requests per page load, each of which would pay the forwardAuth round trip (see §6).
+- **The PWA's update mechanism.** The browser treats a redirect on its periodic `/sw.js` fetch as a failed update. If `/sw.js` is SSO-gated, a client whose Authentik session lapses can never fetch a newer service worker and keeps replaying the build it cached. `/manifest.webmanifest` and the install and splash icons need the same bypass.
 
 Fix: four Traefik routers on the same `runway` service, differentiated by path and priority — only the default (Host-only) router carries the SSO middleware:
 
@@ -184,22 +200,18 @@ If `source-sync` shows a redirect, a paired Mac has no source states on the serv
 
 ## 6. Why this matters: forward-auth latency
 
-Every request that goes through `chain-authentik@file` costs a real network round-trip — the outpost has to validate the session against Authentik's core server before Traefik forwards the request on. If that core server isn't co-located with the outpost (a very common setup: outpost + Traefik on one host, Authentik itself on another), that round-trip is 50-150ms, not the sub-millisecond you'd see hitting the app directly.
-
-For a traditional server-rendered app — one request per page load — that's invisible. Runway is a SPA: a single page view fires off dozens of requests (every JS/CSS/font chunk, plus several API calls for cards/status/settings), and background polling keeps firing more. Before the router split above, *every one* of those independently paid the same 50-150ms tax, which compounds into very noticeable load times, especially on first load or when a browser tab regains focus (which retriggers a burst of API calls). The `runway-static` bypass removes the multiplier for the bulk of that request count — only the page load and actual API calls still pay the (now singular, not multiplied) cost.
-
-To check whether this is your bottleneck, compare latency through an SSO-gated path vs. an unprotected one on the same container (the ingest router is a convenient control group):
+Every request through `chain-authentik@file` costs a round trip from the outpost to Authentik's core server, typically 50-150 ms when the two are on different hosts. A server-rendered page pays that once; Runway is a SPA whose page view fires dozens of requests (JS/CSS/font chunks plus several API calls) and keeps polling, so without the router split each one pays it. The `runway-static` bypass removes the multiplier for the bulk of those requests. To check whether this is your bottleneck, compare an SSO-gated path with a bypassed one on the same container:
 
 ```bash
 curl -s -o /dev/null -w "%{time_total}s\n" -H "Host: runway.example.com" https://<traefik-host>/           # SSO-gated
 curl -s -o /dev/null -w "%{time_total}s\n" -H "Host: runway.example.com" -X POST https://<traefik-host>/api/v1/fleet/ingest  # bypassed
 ```
 
-A large gap between the two confirms the forwardAuth round-trip (not Runway itself) is the slow part.
+A large gap points at the forwardAuth round trip, not Runway.
 
 ## 7. Stabilizing `TRUSTED_PROXY_IPS`
 
-`TRUSTED_PROXY_IPS` is an **exact IP match, not a CIDR** (see `docs/SECURITY.md`). If your reverse proxy's container IP isn't pinned on its Docker network, it's assigned in creation order and can drift the next time that container is recreated — silently breaking forward-auth trust (Runway falls back to the admin key / a 403, rather than failing open).
+`TRUSTED_PROXY_IPS` is an **exact IP match, not a CIDR** (see [SECURITY.md](SECURITY.md#authentication)). If your reverse proxy's container IP isn't pinned on its Docker network, it's assigned in creation order and can drift the next time that container is recreated — silently breaking forward-auth trust (Runway falls back to the admin key / a 403, rather than failing open).
 
 Fix: pin a static IP for the proxy service on its network. This requires the network to already have a defined subnet (check with `docker network inspect <network> --format '{{json .IPAM}}'` — if it shows a `Subnet`, you're set):
 
@@ -211,7 +223,7 @@ services:
         ipv4_address: 10.0.0.2   # match this to TRUSTED_PROXY_IPS
 ```
 
-Apply with `docker compose up -d` in that stack's directory — this recreates just the proxy container, so expect a brief reconnect blip for *every* app it proxies, not just Runway. Confirm afterward:
+Apply with `docker compose up -d` in that stack's directory. This recreates the proxy container, so every app it proxies sees a brief blip. Confirm afterward:
 
 ```bash
 docker inspect <proxy-container> --format '{{.NetworkSettings.Networks.<network>.IPAddress}}'
@@ -219,7 +231,6 @@ docker inspect <proxy-container> --format '{{.NetworkSettings.Networks.<network>
 
 ## Notes
 
-- The admin key (`ADMIN_API_KEY`) keeps working as a fallback — `X-Admin-Key` for scripts, or the existing session-cookie login screen if you ever hit Runway directly (bypassing the proxy) and need to recover access.
-- Sign-out is Authentik's job once SSO is active — see the Settings → System → Session card, which explains this when `user_context` is set.
-- The IP allowlist (`TRUSTED_PROXY_IPS`) is the real security boundary here, not the header names — never point it at an IP range you don't fully control, since anything in that range can forge the identity headers directly.
-- If you're running multiple apps behind the same forwardAuth-capable proxy, define the middleware once in the proxy's shared/file-provider config rather than per-app docker labels — every app then references it the same way (`chain-authentik@file` in the examples above), so a security fix (like adding an identity-header strip step) never has to be repeated per app.
+- `ADMIN_API_KEY` keeps working as a fallback: `X-Admin-Key` for scripts, or the key-entry screen if you reach Runway directly and need to recover access.
+- Sign-out is the identity provider's job once SSO is active; Settings → System → Session says so when a proxy user is present.
+- Never point `TRUSTED_PROXY_IPS` at a range you do not fully control: anything in it can forge the identity headers.

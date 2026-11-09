@@ -2,7 +2,7 @@
 
 Issue: [#603](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/603).
 Runbook/tooling: [#608](https://github.com/s3ntin3l8/runway-ai-usage-tracker/pull/608)
-and [physical-validation.md](../../physical-validation.md).
+and [physical-validation.md](../../../security/physical-validation.md).
 
 **Result: all 51 checks passed for the actual Authentik/Traefik TLS matrix.**
 This is an isolated application using the existing real Authentik core, dev-01

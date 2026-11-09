@@ -17,13 +17,11 @@ Runway is always **server + sidecar(s)**. Two axes vary independently:
        (1..N hosts)  └────────────────────────┘
 ```
 
-The server never performs local detection itself — all LSP probes, browser cookies, and IDE/file introspection live in the sidecar. The sidecar batches up to 1000 events per push to `POST /api/v1/fleet/ingest` (HMAC-signed, 600/min/IP).
+The server never performs local detection itself — LSP probes, browser cookies, and IDE/file introspection live in the sidecar. The sidecar pushes batches of up to 1000 events to `POST /api/v1/fleet/ingest` (HMAC-signed, 600/min/IP). The trust model is in [SECURITY.md](SECURITY.md); the architecture in [architecture.md](architecture.md).
 
 ## Server runtime
 
 ### Python
-
-For local development and single-machine setups:
 
 ```bash
 make install                # venv, deps, git hooks
@@ -31,53 +29,38 @@ cp .env.example .env        # add API keys
 make dev-all                # server + Vite frontend (:5173) + local sidecar, hot reload, Ctrl-C stops all
 ```
 
-For production-style runs (no hot reload — server serves the built SPA at :8765):
+For production-style runs (no hot reload — the server serves the built SPA at :8765):
 
 ```bash
 make run-all                # build SPA, then server + sidecar in one command
-# or run the pieces separately:
+# or separately:
 make run                    # server only (serves webapp/dist)
-make sidecar                # in a second shell, or run via a process manager
+make sidecar                # in a second shell, or under a process manager
 ```
 
-Defaults: the server binds `127.0.0.1:8765` and trusts requests from localhost. To reach it from other devices, set `APP_HOST=0.0.0.0` in `.env` and restart — but a non-local bind turns on the startup gates in [Configuration](#configuration) (`DB_ENCRYPTION_KEY`, `TLS_TERMINATED`, `CORS_ORIGINS`, and `ADMIN_API_KEY` or `TRUSTED_PROXY_IPS`). Then open `http://<your-ip>:8765`. Never expose Runway directly to the internet without a reverse proxy and HTTPS.
+The server binds `127.0.0.1:8765` and trusts localhost. To reach it from other devices set `APP_HOST=0.0.0.0` in `.env` and restart. A non-local bind turns on the [startup gates](#startup-gates). Never expose Runway to the internet without a reverse proxy and HTTPS.
 
 ### Docker
 
-For servers, headless environments, or team dashboards, use the shipped
-[`docker-compose.yml`](../docker-compose.yml) or the
-[`docker-compose.traefik.yml`](../docker-compose.traefik.yml) stack below.
-Copy the matching example env file to `.env` and fill in the required
-security settings before starting. A raw `docker run` needs the same env
-settings and a TLS-terminating proxy; see the startup gates below.
-
-For the base Compose file, first configure a TLS proxy, then:
+Use the shipped [`docker-compose.yml`](../docker-compose.yml) or the [Traefik stack](#docker-behind-traefik). Copy the matching example env file to `.env` and fill in the required security settings first. A raw `docker run` needs the same settings and a TLS-terminating proxy.
 
 ```bash
-cp .env.example .env
-# Edit .env with the required settings below.
+cp .env.example .env        # fill in the startup-gate variables
 docker compose up -d
 ```
 
-Restrict direct access to the published port `8765`; if the proxy runs on
-the same host, change the Compose port mapping to `127.0.0.1:8765:8765`.
+Restrict direct access to the published port `8765`; if the proxy runs on the same host, publish it as `127.0.0.1:8765:8765`.
 
 > [!IMPORTANT]
-> **Docker runs the server, not the sidecar.** Containers have no access to native desktop keychains or browser cookies. Every cookie-/local-file-backed collector (Claude, ChatGPT, Ollama, Kimi Coding, OpenCode, Antigravity, …) needs a sidecar running on the host where those credentials live.
+> **Docker runs the server, not the sidecar.** A container has no desktop keychain or browser cookies. Every cookie- or local-file-backed collector needs a [sidecar](sidecar.md) on the host where those credentials live (see [Which providers need a sidecar](#which-providers-need-a-sidecar)).
 
-Docker binds the app to `0.0.0.0` inside the container, so the server refuses
-to start without `DB_ENCRYPTION_KEY`, `TLS_TERMINATED=1`, an explicit
-`CORS_ORIGINS` allow-list, and either `ADMIN_API_KEY` or `TRUSTED_PROXY_IPS`
-with forward-auth. Set `TLS_TERMINATED=1` only when a proxy actually provides
-TLS. See [SECURITY.md](SECURITY.md) and the [v3 migration guide](migration-v3.md).
+### Startup gates
+
+The container binds `0.0.0.0`, so the server refuses to start without `DB_ENCRYPTION_KEY`, `TLS_TERMINATED=1`, an explicit `CORS_ORIGINS` allow-list, and either `ADMIN_API_KEY` or `TRUSTED_PROXY_IPS` (forward-auth). Set `TLS_TERMINATED` only when a proxy really provides TLS. The same gates apply to any non-loopback `APP_HOST`; the reasoning is in [SECURITY.md](SECURITY.md#multi-host-startup-gates).
 
 ### Docker behind Traefik
 
-For a public-facing dashboard, front Runway with a reverse proxy that terminates TLS. This crosses the multi-host gate above, so `DB_ENCRYPTION_KEY`, `TLS_TERMINATED=true`, `CORS_ORIGINS`, and an admin gate become mandatory — the container fails fast on startup without them.
-
-[`docker-compose.traefik.yml`](../docker-compose.traefik.yml) is a self-contained Traefik + Runway stack with automatic HTTPS via Let's Encrypt. Runway publishes no host ports; traffic enters only through Traefik on `:443`.
-
-[`.env.traefik.example`](../.env.traefik.example) ships the full flag set for this topology — `cp .env.traefik.example .env`, fill it in, then `docker compose -f docker-compose.traefik.yml up -d`. The mandatory keys:
+[`docker-compose.traefik.yml`](../docker-compose.traefik.yml) is a self-contained Traefik + Runway stack with automatic HTTPS (Let's Encrypt). Runway publishes no host ports; traffic enters only through Traefik on `:443`. [`.env.traefik.example`](../.env.traefik.example) holds the full flag set: `cp .env.traefik.example .env`, fill it in, then `docker compose -f docker-compose.traefik.yml up -d`. The mandatory keys:
 
 ```bash
 APP_HOST=0.0.0.0
@@ -88,74 +71,70 @@ INGEST_API_KEY=<strong secret>            # for sidecar ingestion
 RUNWAY_HOST=runway.example.com            # public DNS name (Host rule)
 ACME_EMAIL=you@example.com                # Let's Encrypt contact
 ADMIN_API_KEY=<strong secret>             # required unless forward-auth uses TRUSTED_PROXY_IPS
-TRUSTED_PROXY_IPS=<traefik container IP>  # optional for per-client rate limiting (see below)
+TRUSTED_PROXY_IPS=<traefik container IP>  # forward-auth trust and per-client rate limiting
 
 # Generate the Fernet key:
 python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
 
 > [!NOTE]
-> Let's Encrypt's HTTP-01 challenge needs ports **80 and 443** publicly reachable and a real DNS **A record** for `RUNWAY_HOST` pointing at the host. The same labels apply if you already run Traefik — copy the `runway` service onto your existing proxy network.
+> The HTTP-01 challenge needs ports **80 and 443** publicly reachable and a DNS **A record** for `RUNWAY_HOST`. If you already run Traefik, attach Runway to it with the [override file](#updates-and-the-devprod-split) instead.
 
-Once TLS is in place, layer a forward-auth identity provider (Authentik, Authelia, oauth2-proxy, Cloudflare Access) in front so the dashboard logs in via SSO instead of the admin key — see [`docs/forward-auth.md`](forward-auth.md) for a full Authentik walkthrough, and `docs/SECURITY.md` → *Application Authentication* for the trust model.
+Once TLS is in place, add a forward-auth identity provider (Authentik, Authelia, oauth2-proxy, Cloudflare Access) so the dashboard signs in through SSO instead of the admin key: see [forward-auth.md](forward-auth.md).
 
 #### Sidecars behind Traefik
 
-Runway publishes no host port in this topology — `:8765` lives only on the internal `proxy` network. Sidecars reach the server through the **public URL**; `/api/v1/fleet/ingest` is just another path under the `Host()` router, so it rides through Traefik on `:443`:
-
-Set `INGEST_API_KEY` on the sidecar host to the same shared key configured on the server.
+`:8765` lives only on the internal `proxy` network. Sidecars reach the server through the **public URL**; `/api/v1/fleet/ingest` is just another path under the `Host()` router. Set `INGEST_API_KEY` on the sidecar host to the server's key:
 
 ```bash
 RUNWAY_API_URL=https://runway.example.com RUNWAY_API_KEY="$INGEST_API_KEY" python3 scripts/sidecar.py
 ```
 
-This applies to **remote and same-host sidecars alike** — the sidecar always runs natively (it needs host keychains/cookies/files) and talks to the server over the network. Going through Traefik is the preferred path: it's TLS-encrypted, which matters because ingest payloads carry OAuth tokens and cookies (HMAC protects integrity, not confidentiality). The sidecar needs only outbound HTTPS — no inbound ports.
+This applies to remote and same-host sidecars alike: the sidecar always runs natively and talks to the server over the network. Going through Traefik is preferred because ingest payloads carry OAuth tokens and cookies (HMAC protects integrity, not confidentiality). The sidecar needs only outbound HTTPS.
 
 Four things to know:
 
-- **Behind SSO, five routes must bypass it.** `/api/v1/fleet/ingest` is not the only path a sidecar calls: `config`, `credentials/manifest`, `source-sync` (an enrolled device's consent sync) and `pair` (one-time-code pairing) are too, and a login redirect on any of them fails quietly (ingest keeps working). The list, a verification probe and the Authentik equivalent are in [`docs/forward-auth.md`](forward-auth.md#5-production-hardening-split-the-traefik-router).
-- **Rate-limit bucketing.** The ingest limiter (600/min) keys on client IP. Behind a proxy that IP is Traefik's, so every sidecar collapses into one bucket unless you set `TRUSTED_PROXY_IPS` to Traefik's container IP — then Runway honors the `X-Forwarded-For` Traefik sets and buckets per real client (this also gates `X-Forwarded-User` admin auth). Harmless for a couple of sidecars; set it for a fleet. The match is exact (not CIDR), so pin Traefik to a static IP if you depend on it.
-- **Same-host shortcut.** To let a local native sidecar skip the public DNS → Traefik round-trip, add a loopback publish to the `runway` service — `ports: ["127.0.0.1:8765:8765"]` — and point that sidecar at `http://localhost:8765`. Remote sidecars keep using the public URL.
-- **Certificate trust.** The sidecar bundles [`certifi`](https://pypi.org/project/certifi/), so a valid public cert (Let's Encrypt via Traefik) verifies with no extra setup. If you terminate TLS with a **self-signed or internal-CA** cert, hand the sidecar your CA chain via `ca_bundle` in its config (or `RUNWAY_CA_BUNDLE` / `SSL_CERT_FILE` env); `RUNWAY_INSECURE=1` disables verification entirely as a trusted-network last resort. See [sidecar.md → TLS / certificate errors](sidecar.md#tls--certificate-errors-certificate_verify_failed).
+- **Behind SSO, five routes must bypass it.** `/api/v1/fleet/ingest` is not the only path a sidecar calls: `config`, `credentials/manifest`, `source-sync` (an enrolled device's consent sync) and `pair` (one-time-code pairing) are too, and a login redirect on any of them fails quietly (ingest keeps working). The list, a verification probe and the Authentik equivalent are in [forward-auth.md](forward-auth.md#5-production-hardening-split-the-traefik-router).
+- **Rate-limit bucketing.** The ingest limiter keys on client IP. Behind a proxy that is Traefik's IP, so every sidecar shares one bucket unless `TRUSTED_PROXY_IPS` names Traefik's container IP; Runway then honors the `X-Forwarded-For` Traefik sets (this also gates `X-Forwarded-User` admin auth). The match is exact, not CIDR, so pin Traefik to a static IP ([forward-auth.md](forward-auth.md#7-stabilizing-trusted_proxy_ips)).
+- **Same-host shortcut.** To let a native sidecar skip the public DNS and Traefik round trip, publish a loopback port on the `runway` service (`ports: ["127.0.0.1:8765:8765"]`) and point that sidecar at `http://localhost:8765`.
+- **Certificate trust.** The sidecar bundles [`certifi`](https://pypi.org/project/certifi/), so a public certificate verifies out of the box. For a self-signed or internal-CA certificate, give the sidecar your CA chain via `ca_bundle` in its config or `RUNWAY_CA_BUNDLE` / `SSL_CERT_FILE`; `RUNWAY_INSECURE=1` disables verification as a trusted-network last resort. See [sidecar.md](sidecar.md#tls--certificate-errors-certificate_verify_failed).
 
-## Continuous deployment & the dev/prod split
+### Updates and the dev/prod split
 
-If you already run Traefik (rather than the bundled stack above), attach Runway to your existing external `proxy` network with a **`docker-compose.override.yml`** — Compose auto-merges it onto the generic `docker-compose.yml`. Copy the tracked template and edit the host/resolver:
+To attach Runway to an existing external `proxy` network, use a **`docker-compose.override.yml`**, which Compose merges onto the base file:
 
 ```bash
 cp docker-compose.override.example.yml docker-compose.override.yml   # gitignored
 docker compose up -d                                                 # base + override
 ```
 
-The override pins the **`:edge`** image, drops host port publishing, joins `proxy`, and adds your router labels (see the template for the full set).
+The override pins the `:edge` image, drops host port publishing, joins `proxy`, and adds router labels (see the template).
 
-**How updates reach a running deployment.** The SPA is baked into the server image (the `Dockerfile` copies `webapp/dist/`), so **UI/server changes ship in the server image — not via the sidecar edge channel** (that channel only updates the collector binary). Two channels:
+The SPA is baked into the server image, so UI and server changes ship in the image, not through the sidecar update channel (which only updates the collector binary). Two image channels:
 
-- **`:edge`** — rebuilt on every push to `main`. Pull it to track your latest work: `docker compose pull runway && docker compose up -d runway` (optionally automate with watchtower).
-- **`:latest` / `:vX.Y.Z`** — published only on a Release-Please release; pin these for deliberate, change-controlled updates.
+- **`:edge`** — rebuilt on every push to `main`: `docker compose pull runway && docker compose up -d runway`.
+- **`:latest` / `:vX.Y.Z`** — published on a release; pin these for change-controlled updates.
 
-Schema upgrades are forward-safe: there's no Alembic, just idempotent `create_all` + `ALTER TABLE ADD COLUMN` at startup (`app/core/db.py`), so bumping the image never breaks an existing DB. (No automatic *down*grade — pin a known-good tag to roll back.)
+Schema upgrades are forward-safe ([architecture.md](architecture.md#data-model)); there is no automatic downgrade, so pin a known-good tag to roll back.
 
-**Dev alongside prod — separate data dirs.** `make dev` / `make dev-all` / `make sidecar` default `RUNWAY_CONFIG_DIR` to the gitignored **`./data`** (override with an explicit env value), so the dev loop never touches your real data. Keep **prod data in `~/.config/runway`** by pointing the override's volume at the home dir:
+**Dev beside prod.** `make dev`, `make dev-all` and `make sidecar` default `RUNWAY_CONFIG_DIR` to the gitignored `./data`, so the dev loop never touches real data. SQLite is single-writer: keep only one process on a given database. To keep prod data in `~/.config/runway`, point the override's volume at it:
 
 ```yaml
     volumes: !override
       - ${HOME}/.config/runway:/home/runway/.config/runway
 ```
 
-Because the container's `runway` user is UID 1000, a host whose user is also UID 1000 can bind-mount `~/.config/runway` **in place — no copy, no chown**. SQLite is single-writer, so ensure only one process writes it: stop `make dev-all` (now on `./data` anyway) before `docker compose up -d`, and run your daily prod sidecar against the deployed URL (its own home config dir), reserving `make dev-all`'s bundled sidecar for the `./data` sandbox. To iterate against real data, snapshot prod into dev with `sqlite3 ~/.config/runway/runway.db ".backup ./data/runway.db"` (WAL-safe) while dev is stopped.
+The container's `runway` user is UID 1000, so a host user with UID 1000 can bind-mount the directory in place. To iterate against real data, snapshot prod into dev while dev is stopped: `sqlite3 ~/.config/runway/runway.db ".backup ./data/runway.db"`.
 
 ## Sidecar deployment
 
 ### Same host
 
-Runs alongside a Python server during development, or alongside a Dockerised server on the same machine:
-
 ```bash
 make sidecar
 ```
 
-`make sidecar` sources `.env`, so `RUNWAY_CONFIG_DIR` and `INGEST_API_KEY` automatically align with the local server. `make dev-all` does this in one command (server + Vite frontend + sidecar in parallel, Ctrl-C stops all); `make run-all` is the production-build equivalent (built SPA served by the server + sidecar).
+`make sidecar` sources `.env`, so `RUNWAY_CONFIG_DIR` and `INGEST_API_KEY` match the local server. `make dev-all` runs server, Vite and sidecar together; `make run-all` is the production-build equivalent.
 
 ### Remote hosts
 
@@ -167,158 +146,59 @@ RUNWAY_API_KEY="$INGEST_API_KEY" \
 python3 scripts/sidecar.py
 ```
 
-Pre-built binaries are attached to every [GitHub release](https://github.com/s3ntin3l8/runway-ai-usage-tracker/releases): the user-facing installers `Runway-Sidecar-macOS-<version>.dmg` and `Runway-Sidecar-Windows-<version>-setup.exe`, plus the portable self-update payloads `Runway-Sidecar-macOS-<version>.zip` and `Runway-Sidecar-Windows-<version>.zip`. See [sidecar.md](sidecar.md) for the desktop app installer flow and [sidecar-build.md](sidecar-build.md) for the asset-naming contract.
+Pre-built installers and portable payloads are attached to every [GitHub release](https://github.com/s3ntin3l8/runway-ai-usage-tracker/releases). [sidecar.md](sidecar.md) covers installation and pairing from the dashboard; [sidecar-build.md](sidecar-build.md) covers asset naming. The sidecar needs only outbound HTTP.
 
-The sidecar only needs outbound HTTP — no inbound ports.
+### Which providers need a sidecar
 
-## Per-provider sidecar requirements
+Per-provider credentials and collection paths are in the [collectors index](collectors/README.md). In short:
 
-| Provider | Sidecar required? | Notes |
-|----------|:-----------------:|-------|
-| **Claude** | ⚠️ Yes for cookie-based auth | OAuth bearer via `CLAUDE_CODE_OAUTH_TOKEN` works server-only |
-| **Claude Console** | ⚠️ Yes for cookie-based auth | A separate connection from the Claude API one; it authenticates with the platform.claude.com `sessionKey` cookie, so the sidecar supplies it |
-| **Gemini** | ⚠️ Yes | The server reads no `~/.gemini` login; the sidecar pushes the OAuth bundle (the server then refreshes it) and adds local-log enrichment |
-| **GitHub Copilot** | Optional | `GITHUB_TOKEN` or the UI GitHub login works server-only; `gh` CLI logins (`hosts.yml`, keyring) are read by the sidecar |
-| **ChatGPT** | ⚠️ Yes for cookie-based auth | OAuth bearer via `CHATGPT_OAUTH_TOKEN` works server-only |
-| **OpenRouter** | No | `OPENROUTER_API_KEY` works everywhere |
-| **DeepSeek** | No | `DEEPSEEK_API_KEY` works everywhere |
-| **MiniMax** | No | `MINIMAX_API_KEY` works everywhere |
-| **Ollama** | ⚠️ Yes | Cookie extraction needs host access |
-| **OpenCode** | Optional | Web API preferred, sidecar provides local DB fallback |
-| **zAI API / zAI Plan** | No | API key works everywhere |
-| **Kimi API** | No | `KIMI_API_KEY` works everywhere |
-| **Kimi Coding** | No | `KIMI_CODE_API_KEY` works everywhere; sidecar adds the browser cookie / CLI credential for enrichment |
-| **Kimi K2** | No | API key works everywhere |
-| **xAI (Grok)** | Optional | A pasted bearer in Settings works server-only; sidecar adds auto-discovery from OpenCode/Grok CLI credentials |
-| **Antigravity** | ⚠️ Yes for remote-host credentials and events | Server queries the Cloud Code Assist API for quota; a sidecar sends the agy OAuth token from another host and extracts local conversation events |
+| Sidecar | Providers |
+|---|---|
+| **Required** for the full picture | Claude and Claude Console (cookie or CLI login), ChatGPT (cookie or CLI login), Gemini (CLI login), Antigravity (login or events from another host) |
+| **Optional** (enrichment or discovery) | GitHub Copilot, OpenCode, xAI, Kimi Coding, Ollama |
+| **Not needed** (API key works everywhere) | OpenRouter, DeepSeek, MiniMax, zAI, Kimi API, Kimi K2 |
 
-**The server reads no credential files** except Runway's own `github_oauth.json` (written by the UI GitHub login). CLI logins (`~/.gemini`, `~/.claude`, `~/.codex`, `~/.config/gh`, opencode, agy) reach the server only through a sidecar; otherwise use an env var or Settings → Providers.
-
-**Legend:** ⚠️ Yes = sidecar required for full coverage. "No" means the server-side API path is enough, though a sidecar adds enrichment (token breakdowns, session counts, per-message events).
+"Not needed" still benefits from a sidecar for token breakdowns, session counts and per-message events. **The server reads no credential files** except its own `github_oauth.json`: CLI logins (`~/.gemini`, `~/.claude`, `~/.codex`, `~/.config/gh`, opencode, agy) reach it only through a sidecar, an env var, or Settings → Providers.
 
 ## Configuration
 
-> **`.env.example` is the single env-var contract.** It documents every
-> supported variable, with the default and an explanation. This table lists the
-> ones that decide whether a deployment works; the rest are documented in the
-> template itself.
-
-The relevant env vars apply to both runtimes:
+[`.env.example`](../.env.example) is the contract: every supported variable, its default and an explanation. The ones that decide whether a deployment works:
 
 | Variable | Required | Purpose |
-|----------|:--------:|---------|
-| `INGEST_API_KEY` | ✅ for remote sidecars (recommended for all) | HMAC-signing secret shared between server and sidecars |
-| `GITHUB_TOKEN` | optional | GitHub Copilot API |
-| `OPENROUTER_API_KEY` | optional | OpenRouter API |
-| `DEEPSEEK_API_KEY` | optional | DeepSeek API |
-| `MINIMAX_API_KEY` | optional | MiniMax API |
-| `KIMI_API_KEY` | optional | Kimi API |
-| `KIMI_CODE_API_KEY` | optional | Kimi Coding (Kimi For Coding) |
-| `ZAI_API_KEY` | optional | zAI API & Plan |
-| `DB_ENCRYPTION_KEY` | ✅ when `APP_HOST != 127.0.0.1` | Fernet key for sensitive metadata at rest |
-| `TLS_TERMINATED` | ✅ when `APP_HOST != 127.0.0.1` | Operator assertion that an upstream proxy terminates TLS |
-| `CORS_ORIGINS` | ✅ when `APP_HOST != 127.0.0.1` | Comma-separated origin allow-list |
-| `ADMIN_API_KEY` or `TRUSTED_PROXY_IPS` | ✅ when `APP_HOST != 127.0.0.1` | Admin key or trusted forward-auth proxy for network binds |
-| `SESSION_LIFETIME_HOURS` | optional (default `12`) | Admin session-cookie lifetime for a normal login |
-| `SESSION_REMEMBER_DAYS` | optional (default `30`) | Session lifetime when the login uses "remember me" |
-| `RUNWAY_BUILD_SHA` | optional | The commit this build came from, shown in Settings → About. The official Docker image bakes it in at build time; set it by hand for a source or pip install |
+|---|:---:|---|
+| `INGEST_API_KEY` | for sidecars | HMAC secret shared by server and sidecars. Empty disables ingest silently |
+| `DB_ENCRYPTION_KEY` | non-loopback bind | Fernet key for sensitive data at rest |
+| `TLS_TERMINATED` | non-loopback bind | Assertion that an upstream proxy terminates TLS |
+| `CORS_ORIGINS` | non-loopback bind | Comma-separated origin allow-list |
+| `ADMIN_API_KEY` or `TRUSTED_PROXY_IPS` | non-loopback bind | Admin key, or the forward-auth proxy's IP |
+| `PUBLIC_URL` | optional | Server URL handed out in sidecar pairing links |
+| `RUNWAY_CONFIG_DIR`, `DATABASE_PATH` | optional | Where config and the SQLite file live |
+| `SESSION_LIFETIME_HOURS`, `SESSION_REMEMBER_DAYS` | optional | Admin session cookie lifetimes (12 h / 30 d) |
+| `TOKEN_AUTO_REFRESH_ENABLED` | optional | Background OAuth refresh of tokens the server holds (default on) |
+| `CLAUDE_CLOUD_COLLECTOR_ENABLED` | optional | Claude cloud-runner collector (default on); the Settings → Providers → Claude switch overrides it once set |
+| `RUNWAY_BUILD_SHA` | optional | Commit shown in Settings → About; the official image bakes it in |
+
+For local single-host development no variable is mandatory. `.env.example` ships `INGEST_API_KEY` empty: the server starts, but sidecar ingest is disabled.
 
 ### Providing credentials by hand
 
-In Docker or on a headless host no browser or keychain is available, so a provider's login has to arrive another way: an environment variable from the table above, a [sidecar](sidecar.md) on a workstation, or a value you enter yourself under **Settings → Providers** (add a provider, or open an existing account).
+In Docker or on a headless host a provider login arrives as an environment variable, through a [sidecar](sidecar.md), or entered under **Settings → Providers** (add a provider, or open an existing account).
 
-- **API key** — paste the provider's key or bearer token (for ChatGPT and Claude, the full token that usually starts with `eyJ…`). This takes priority over a cookie.
-- **Session cookie** — a fallback for providers that offer no token. It expires with the browser session, so expect to renew it.
+- **API key** — the provider's key or bearer token (for ChatGPT and Claude the full token, usually starting `eyJ…`). Takes priority over a cookie.
+- **Session cookie** — a fallback for providers without a token. It expires with the browser session, so expect to renew it.
 
-**Settings → Credentials** then shows where each account's login comes from and when it expires.
+**Settings → Credentials** shows where each account's login comes from and when it expires.
 
-### Provider limits and overrides
+### Polling
 
-These tune the collectors rather than the deployment. All are optional.
+Collectors poll every 15 minutes by default. Override per account with the poll interval under Settings → Providers; a global default can be stored in `system_config` (`default_poll_interval_seconds`). Resolution order is per-provider, then global, then 900 s. After several polls with no quota change the poller sleeps at a 2-hour cadence; any usage event or `POST /api/v1/system/wake` wakes it. Sidecar-forwarded tokens are held in memory only.
 
-| Variable | Purpose |
-|---|---|
-| `CLAUDE_FREE_LIMIT` | Override the assumed free-tier limit for Claude |
-| `CLAUDE_PRO_LIMIT` | Override the assumed Pro-tier limit for Claude |
-| `CLAUDE_MAX_LIMIT` | Override the assumed Max-tier limit for Claude |
-| `CLAUDE_OAUTH_CLIENT_ID` | Client id used for the Claude OAuth exchange |
-| `ZAI_API_HOST` | Override the zAI API host |
-| `ZAI_QUOTA_URL` | Override the zAI quota endpoint |
-| `OPENCODE_GO_API_KEY` | API key for the OpenCode Go service |
-| `BROWSER_PREFERENCE` | Order of browsers to search for cookies. Options: `safari`, `chrome`, `chromium`, `edge`, `firefox` |
+### Memory
 
-### Runtime and storage
+`SQLITE_TEMP_STORE` and `MALLOC_ARENA_MAX` tune server RAM: see [memory.md](memory.md).
 
-| Variable | Purpose |
-|---|---|
-| `APP_PORT` | Port the server listens on (the container exposes `8765`) |
-| `DATABASE_PATH` | Path to the SQLite database file |
-| `LOG_FORMAT` | Log output format |
-| `CREDENTIAL_TOKEN_TTL_SECONDS` | Lifetime of the short-lived, per-account credential tokens `GET /fleet/config` issues to signed/loopback sidecar callers (default `3600`) |
-| `PENDING_CREDENTIAL_PREVIEW_MAX_AGE_SECONDS` | How long quota-only previews for unresolved sidecar credentials stay visible before their values are cleared (default `86400`) |
-| `KEYCHAIN_PROMPT_MODE` | How the sidecar handles OS keychain prompts |
+## Network and secrets
 
-### Token auto-refresh
-
-The server can refresh OAuth tokens it holds. This is **off unless enabled**.
-
-| Variable | Purpose |
-|---|---|
-| `TOKEN_AUTO_REFRESH_ENABLED` | Turn background token auto-refresh on |
-| `TOKEN_AUTO_REFRESH_INTERVAL_SECONDS` | How often the background refresher runs |
-| `TOKEN_AUTO_REFRESH_THRESHOLD_SECONDS` | Refresh a token this long before it expires |
-| `CLAUDE_CLOUD_COLLECTOR_ENABLED` | Collect usage for Claude Code cloud-runner sessions from their history (default on; set to `false` to turn it off). The switch under Settings → Providers → Claude overrides this default once set |
-| `CLAUDE_CLOUD_COLLECTOR_INTERVAL_SECONDS` | How often that collector runs (default 1800; sooner while it has work left) |
-
-The Claude cloud collector is **on by default**. It reads only cloud-runner sessions (`environment_kind == anthropic_cloud`), never scrapes local files, and needs one eligible Claude Code OAuth login held by the server; with none it does nothing (a login that is present but not eligible is logged as `outcome=source_ineligible`) and makes no provider request. It runs about every 30 minutes. Turn it off with the **Cloud-runner collector** switch in Settings → Providers → Claude (takes effect at once, no restart) or set `CLAUDE_CLOUD_COLLECTOR_ENABLED=false`; a value stored from the app overrides the env default. Events already written stay.
-
-For local single-host development the only mandatory variable is `INGEST_API_KEY` — and `.env.example` ships it **empty**. With it unset the server starts normally and sidecar ingest is simply **disabled**; nothing warns you that ingest is off. The literal `sidecar-default-secret` is only the *insecure-default detection constant* the server uses to recognise a well-known placeholder — it is never shipped as a value. For any multi-host or Docker deployment, `DB_ENCRYPTION_KEY`, `TLS_TERMINATED`, `CORS_ORIGINS`, and an admin gate (`ADMIN_API_KEY` or `TRUSTED_PROXY_IPS` with forward-auth) become hard requirements; the server fails fast on startup otherwise.
-
-Four real settings are **listed in `.env.example`** alongside the rest, all of them commented out: `SESSION_SECRET` (the session-signing key), `SESSION_LIFETIME_HOURS` and `SESSION_REMEMBER_DAYS` (session lifetimes), and `RUNWAY_INSECURE` (disable TLS verification on the sidecar — sidecar-side only). All four are optional; unset, they keep the built-in defaults — a generated signing key, a 12-hour session, a 30-day remembered session, and TLS verification on.
-
-## Data Collection & Caching
-
-Runway uses **SmartCollector** for intelligent caching.
-
-### Cache TTL
-
-The built-in default for every registered collector is **15 minutes (900 seconds)**. The schedule is set by a per-provider TTL table in `app/services/collector_manager.py` — one entry per registered provider, currently all 900 seconds, so the schedule is uniform in practice but the table is real and is what a future per-provider change would edit.
-
-You can override the polling cadence at two layers:
-
-- **Per-provider** — set `poll_interval_seconds` on a `provider_configs` row (Settings UI → Providers → poll interval). This wins for that `(provider_id, account_id)` pair.
-- **Globally** — set `default_poll_interval_seconds` in `system_config` (Settings UI → App Config). Used whenever a provider row leaves the field null.
-
-Resolution order is per-provider override → global default → built-in 900s. The accompanying smart-polling sleep mode stretches the effective interval to ~2 hours after 45 minutes without a quota change, so an idle dashboard isn't hammering provider APIs.
-
-### Features
-
-- **TTL Caching**: Each provider has configurable cache duration (see above)
-- **Error Tracking**: Monitors consecutive errors, forces retry after threshold
-- **Graceful Degradation**: Returns stale cached data during API failures
-- **Token Cache**: Sidecar-forwarded tokens are kept in-memory only (30-min TTL, never persisted to disk on the server)
-- **Smart sleep**: Idle dashboards downshift the poller to a 2-hour cadence; any usage event or `/api/v1/system/wake` resets it
-
-## Memory usage
-
-See [Server memory](server-memory.md) for bounded aggregation, SQLite temporary
-storage and allocator controls, reproducible benchmarks, and rollout measurement.
-
-## Security
-
-### API keys in Docker
-
-**Option 1:** Environment variables (simple, standard)
-**Option 2:** Sidecar-only (no keys in container, requires sidecar on every credential-bearing host)
-**Option 3:** Docker secrets (Swarm/Kubernetes)
-
-### Network
-
-- Use HTTPS in production (reverse proxy terminating TLS)
-- Rotate `INGEST_API_KEY` periodically
-- Sidecars only need outbound HTTP — no inbound ports
-
----
-
-See [sidecar.md](sidecar.md) for detailed sidecar configuration and the ingest payload format.
-See [sidecar-build.md](sidecar-build.md) for building and packaging the sidecar.
+- Use HTTPS in production (a reverse proxy terminating TLS); sidecars need only outbound access.
+- Provide provider keys as environment variables, Docker secrets, or sidecar-only (no keys in the container; needs a sidecar on every credential-bearing host).
+- Rotate `INGEST_API_KEY` periodically; every sidecar must then be re-paired or given the new key.

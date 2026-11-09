@@ -177,7 +177,7 @@ owns its `detect()` and its repair, usually through the shared helpers. They are
 served by `/api/v1/system/data-health/*` (a single-flight job registry in
 `data_health/jobs.py`) and Settings → Data health. Host-run scripts are not all
 thin wrappers. See [data health](data-health.md) and
-[maintenance scripts](maintenance-scripts.md).
+[offline repair scripts](data-health.md#offline-repair-scripts).
 
 ## Credentials and accounts
 

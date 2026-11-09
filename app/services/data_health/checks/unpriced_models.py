@@ -51,7 +51,7 @@ class _Buckets(dict[str, int]):
 
     A plain mapping of counter name to count, so that the memory benchmark's
     digest of `_classify_events` keeps matching a baseline it compares
-    against (see `docs/server-memory.md`) — the extra fact below is an
+    against (see `docs/memory.md`) — the extra fact below is an
     attribute, not a fifth counter.
 
     `seed_proof` counts the `needs_seed_row` events that a PRICING_SEED row
@@ -132,7 +132,7 @@ def _classify_events(session: Session) -> dict[tuple[str, str], _Buckets]:
         if buckets is None:
             # Not `setdefault`: it evaluates its default eagerly, so every
             # event would allocate a throwaway `_Buckets`. The classify case
-            # is what the memory benchmark tunes for (docs/server-memory.md).
+            # is what the memory benchmark tunes for (docs/memory.md).
             buckets = _Buckets(
                 recost_fixes_it=0,
                 verified_zero=0,

@@ -21,10 +21,8 @@ run it. This index covers everything else.
 | [sidecar.md](sidecar.md) | The sidecar: install, CLI, configuration, updates. |
 | [troubleshooting.md](troubleshooting.md) | Symptom-driven fixes. |
 | [migration-v3.md](migration-v3.md) | Upgrading a 2.x database to 3.x. |
-| [data-health.md](data-health.md) | The in-app checks and repairs. |
-| [maintenance-scripts.md](maintenance-scripts.md) | Command-line equivalents of the in-app repairs. |
+| [data-health.md](data-health.md) | The in-app checks and repairs, and their command-line equivalents. |
 | [source-consent.md](source-consent.md) | Which local sources a sidecar may read, who grants that, and what withdrawal does. |
-| [macos-usage.md](macos-usage.md) | macOS-specific usage collection. |
 
 ## Security
 
@@ -57,7 +55,7 @@ run it. This index covers everything else.
 | [demo.md](demo.md) | The throwaway demo instance and the screenshot pipeline. |
 | [branding.md](branding.md) | Icons, splash screens and the `make logo` pipeline. |
 | [security-validation.md](security-validation.md) | How the security gates work. |
-| [server-memory.md](server-memory.md) · [sidecar-memory.md](sidecar-memory.md) | How memory use behaves, and how to measure it. |
+| [memory.md](memory.md) | How memory use behaves, the tuning knobs, and how to measure it. |
 
 ## Point-in-time records
 
