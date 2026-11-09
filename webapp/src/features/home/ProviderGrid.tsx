@@ -1,4 +1,5 @@
 import { CreditBreakdown } from '@/components/ui/CreditBreakdown';
+import { FreeModels } from '@/components/ui/FreeModels';
 // All-providers grid: compact cards, drag-to-reorder (dnd-kit), persisted
 // via PUT /system/dashboard-layout. Keyboard + touch sensors included;
 // pointer drags need 8px of travel so taps stay taps.
@@ -252,6 +253,8 @@ function SortableProviderCard({
       )}
 
       {kind === 'spend' && gauge.credit_breakdown ? <CreditBreakdown entries={gauge.credit_breakdown} compact /> : null}
+
+      <FreeModels models={gauge.free_models} />
 
       {secondaries.length > 0 ? (
         <div className="mt-2.5 flex flex-wrap gap-1">

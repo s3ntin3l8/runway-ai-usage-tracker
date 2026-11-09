@@ -1274,3 +1274,99 @@ def test_live_settings_page_yields_no_legacy_meter_cards():
     assert collector._looks_signed_out(html) is False
     assert collector._parse_html(html) == []
     assert collector._last_error_reason == "missing_data"
+
+
+SETTINGS_FIXTURE = Path(__file__).parent.parent / "fixtures" / "ollama-settings-included-usage.html"
+FIXTURE_MODELS = [
+    "beam",
+    "gemma4:31b",
+    "gpt-oss:120b",
+    "gpt-oss:20b",
+    "nemotron-3-super",
+    "nemotron-3-ultra",
+]
+
+
+@pytest.mark.parametrize(
+    ("allowance", "tier"),
+    [(60, "pro"), (300, "max"), (1000, "team"), (2.5, "free"), (12.34, "cloud")],
+)
+def test_tier_from_allowance(allowance, tier):
+    cards = OllamaCollector()._build_cards_from_api_balance(
+        _balance_body(balance=allowance, allowance=allowance)
+    )
+    assert cards[0]["tier"] == tier
+
+
+class TestOllamaSettingsEnrichment:
+    @staticmethod
+    async def _run(settings_response, cookie="session=abc.def-123"):
+        """Run _get_ollama_api with a mocked balance + settings transport."""
+        collector = OllamaCollector(account_id="acc_test")
+        requested: list[str] = []
+
+        async def fake_http(client, method, url, **kwargs):
+            requested.append(url)
+            if url == OllamaCollector.BALANCE_URL:
+                return _make_response(_balance_body(balance=40, allowance=60))
+            if isinstance(settings_response, Exception):
+                raise settings_response
+            return settings_response
+
+        with (
+            patch.object(collector, "_get_api_key", new=AsyncMock(return_value="k")),
+            patch.object(collector, "_get_cookie_header", new=AsyncMock(return_value=cookie)),
+            patch("app.services.collectors.ollama.http_request_with_retry", new=fake_http),
+        ):
+            collector.current_input_source = "config"
+            cards = await collector._get_ollama_api(MagicMock())
+        return cards, requested, collector
+
+    @staticmethod
+    def _page(text, status=200):
+        resp = _make_response({}, status)
+        resp.text = text
+        return resp
+
+    @pytest.mark.asyncio
+    async def test_cookie_adds_free_models_and_keeps_input_source(self):
+        cards, requested, collector = await self._run(self._page(SETTINGS_FIXTURE.read_text()))
+        assert cards[0]["free_models"] == FIXTURE_MODELS
+        assert cards[0]["tier"] == "pro"
+        assert cards[0]["input_source"] == "config"
+        assert requested[-1] == collector.target_url
+
+    @pytest.mark.asyncio
+    async def test_plan_badge_wins_over_allowance_tier(self):
+        html = (
+            '<span>Included usage</span> <span class="capitalize">max</span>'
+            + SETTINGS_FIXTURE.read_text()
+        )
+        cards, _, _ = await self._run(self._page(html))
+        assert cards[0]["tier"] == "max"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "response",
+        [
+            403,
+            500,
+            "signed-out",
+            httpx.ConnectError("boom"),
+        ],
+    )
+    async def test_failed_settings_fetch_leaves_card_unchanged(self, response):
+        if response == 403 or response == 500:
+            response = self._page("", response)
+        elif response == "signed-out":
+            response = self._page("<html><h1>Sign in</h1></html>")
+        cards, _, _ = await self._run(response)
+        assert len(cards) == 1
+        assert cards[0]["tier"] == "pro"
+        assert cards[0].get("free_models") is None
+
+    @pytest.mark.asyncio
+    async def test_no_cookie_never_requests_settings(self):
+        cards, requested, _ = await self._run(self._page("x"), cookie=None)
+        assert requested == [OllamaCollector.BALANCE_URL]
+        assert cards[0]["tier"] == "pro"

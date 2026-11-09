@@ -439,6 +439,7 @@ interface LimitCard {
   is_unlimited?: boolean;
   unit_type?: string;       // "currency" | "tokens" | "requests" | "minutes" | "percent" | "generic"
   currency?: string;      // "USD" | "EUR" | "CNY"
+  free_models?: string[] | null; // Cloud models the free allowance covers (Ollama, cookie-backed)
   credit_breakdown?: Array<{ // Optional purchased/promotional balance explanation
     kind: 'purchased' | 'subscription' | 'promotion';
     label: string;
