@@ -1,16 +1,44 @@
 # Collection Logic
 
+How a provider's response becomes a card, how cards from several producers are
+reconciled, and how per-message events get their project and session labels.
+
 ## Overview
 
-The collection system uses a bucket-based approach: strategies are categorized by the type of data they provide, collected in phases, and merged into a single card per provider.
+Two producers feed the dashboard:
 
-For providers that emit per-message logs (Claude, Codex, Gemini, OpenCode), the
-sidecar additionally extracts events into `usage_events` and pushes them via
-`/api/v1/fleet/ingest`. The card produced by the strategy pipeline carries the
-authoritative quota gauge (`pct_used`, `limit_value`, `reset_at`); per-model and
-per-sidecar splits are derived on demand from `usage_events` by the
-`/api/v1/usage/fleet` endpoint's `window_aggregations` field. See the
-[Data Model section of architecture.md](architecture.md#data-model) for the full event flow.
+- **Server collectors** call provider APIs and web endpoints on a poll
+  interval and produce **cards** (quota gauges).
+- **Sidecars** read what only a workstation can see — logs, CLI caches, browser
+  cookies, keychains — and push **usage events** (and, where needed, cards) to
+  `POST /api/v1/fleet/ingest`.
+
+A card carries the authoritative quota gauge (`pct_used`, `limit_value`,
+`reset_at`). Per-model and per-sidecar splits are derived on demand from
+`usage_events`. See the [data model](architecture.md#data-model) for the full
+event flow.
+
+## Card provenance labels
+
+Every card carries two labels, rendered raw on the credential rows as
+`data_source / input_source` (for example `api / config`).
+
+**`data_source`: how the data was obtained**
+
+| Value | Meaning |
+|---|---|
+| `api` | An official API or OAuth endpoint. The most reliable source. |
+| `web` | A web endpoint called with a session cookie or scraped. More detail, but it breaks when the site changes. |
+| `local` | A local log, CLI output or application database. **Never emitted by a server collector** — a `local` card reached the server because a sidecar pushed it. |
+| `error` | The card reports a failure instead of a quota. |
+
+**`input_source`: where the credential came from**
+
+| Value | Meaning |
+|---|---|
+| `config` | Entered in Settings and stored in the database. |
+| `server` | Found by the server process itself: an environment variable, `.env`, or Runway's own `github_oauth.json`. |
+| `sidecar` | Forwarded by a sidecar (host logs, browser cookies, CLI logins, keychains). |
 
 ## Current-card reconciliation
 
@@ -18,485 +46,311 @@ per-sidecar splits are derived on demand from `usage_events` by the
 snapshots independently: server collectors reconcile after a fresh complete
 response, and sidecars include `completed_providers` with each ingest cycle.
 Cards omitted from a complete snapshot are removed from that producer's live
-contribution; snapshots from cached, skipped, failed, or partial collection
-cycles do not remove anything. Failures mark retained last-good cards stale
-after an hour. The source contribution table lets one producer reconcile
-without removing another producer's card for the same provider/account.
-Server-side accounts that disappear from the active collector set are treated
-like skipped collections: their last-good contributions are retained and aged
-to stale after the same one-hour grace period, rather than being mistaken for
-a successful empty snapshot.
-When multiple sources report the same slot, a fresh server contribution keeps
-the materialized `sidecar_id` as `local`; otherwise the freshest healthy
-sidecar owns the slot. If every contribution is stale, the most recently
+contribution; snapshots from cached, skipped, failed or partial cycles remove
+nothing. A failure marks retained last-good cards stale after an hour. A
+per-source contribution table lets one producer reconcile without removing
+another producer's card for the same provider and account. Server-side accounts
+that disappear from the active collector set are treated like skipped
+collections: their last-good contributions age to stale after the same grace
+period instead of being mistaken for an empty snapshot.
+
+When several sources report the same slot, a fresh server contribution wins and
+the slot's `sidecar_id` is materialised as `local`; otherwise the freshest
+healthy sidecar owns it. If every contribution is stale, the most recently
 updated source owns it.
 
-`BaseCollector.complete_snapshot(result)` defaults to `False`. Each registered
-collector explicitly opts in with `COMPLETE_SNAPSHOT = True` only when it emits
-full provider snapshots; collectors with result-dependent completeness should
-override the method. Valid empty results must also use
-`successful_empty_result` so only a provider-confirmed empty snapshot can retire
-old cards.
-Reconciliation only changes the live card view; `quota_snapshots` and
-`usage_events` retain their historical data.
+`BaseCollector.complete_snapshot(result)` defaults to `False`. A collector opts
+in with `COMPLETE_SNAPSHOT = True` only when it emits full provider snapshots;
+one whose completeness depends on the result overrides the method. A valid empty
+result must use `successful_empty_result`, so only a provider-confirmed empty
+snapshot can retire old cards. Reconciliation changes only the live view;
+`quota_snapshots` and `usage_events` keep their history.
 
-## Strategy Types
+## Strategies and the collection pipeline
 
-There are exactly **two** buckets, and a strategy is in one of them or the
-other. The bucket is not declared as a type — it is derived from the strategy's
-options: a strategy whose options carry `{"enrich": True}` is an **enrichment**
-strategy, and everything else is a **primary** strategy.
+A collector declares an ordered list of **strategies**. There are two buckets,
+derived from each strategy's options:
 
-| Bucket | How it is declared | What it does |
+| Bucket | Declared as | Behaviour |
 |---|---|---|
-| **primary** | anything without `{"enrich": True}` | Produces the card. The **first** primary strategy that succeeds wins; the rest are not run. |
-| **enrichment** | `{"enrich": True}` in the strategy's options | Runs **after** a primary strategy has succeeded, and merges extra fields into the primary card. It never acts as a fallback for missing quota data. |
+| **primary** | anything without `{"enrich": True}` | Produces the card. The **first** primary strategy that does not return an error card wins; the rest are not run. |
+| **enrichment** | `{"enrich": True}` | Runs after a primary strategy succeeded and merges token and message breakdowns into its card. Never a fallback for missing quota data. |
 
-There is no third bucket. A strategy cannot return quota and enrichment
-separately in one response — there is no `mixed` strategy type, and no code
-path anywhere in `app/services/collectors/` that would produce one.
+There is no global ranking of `api` over `web` over `local`; the declaration
+order within one collector is the priority. A strategy returns a list of card
+dicts, or a list holding one error card.
 
-The only options key any collector may pass is `enrich`. See
-`app/services/collectors/base.py:138-140`.
+`BaseCollector.collect()` runs two phases:
 
-> **No shipped collector declares an enrichment strategy.** The mechanism is
-> implemented in the base class, but every collector in the registry uses only
-> primary strategies. The per-message token breakdowns and session counts that
-> reach the dashboard arrive as **sidecar usage events**, not as a server-side
-> enrichment strategy.
+1. **Primary.** Run the primary strategies in order; the first success wins. If
+   all errored, the highest-priority error card is returned (or the collector's
+   own error handler runs).
+2. **Enrichment.** Only after a primary success, run the enrichment strategies
+   and merge each successful result via `_enrich_results()`. A failing
+   enrichment is skipped; it never discards the primary result.
 
-Enrichment events also carry **project context** — the working directory (`cwd`), `git_branch`, and the tool names invoked in the message (`tool_names`). The server derives `project` (the basename of `cwd`) in `EventIngestor` and indexes it, which is what powers the Sessions project column and the Top Projects / Top Tools rankings. The derivation is **host-independent**: a client's working directory is a path on *that* machine (`D:\Projects\repo` on Windows, `/home/u/repo` on macOS/Linux), and the server runs on Linux, so the label is the last path segment of either separator form rather than whatever the server's `os.path` would split on.
+`_enrich_results()` matches an enrichment to a primary card by `(service_name,
+variant, window_type, model_id)`, falling back to less specific keys (an
+enrichment with `model_id=None` acts as an aggregate fallback). On a match it
+**overwrites** `token_usage`, `by_model` and `msgs`, then re-derives `pct_used`
+from the primary card's own `used_value` / `limit_value`, so enrichment can
+never change the quota percentage.
 
-A sidecar additionally resolves the **git repository** the working directory belongs to and reports its **name** (`project_ref`) — the remote URL never leaves the client, because it can carry credentials. The server prefers that name over the folder's name, so two checkouts of one repository group together even when their folders are named differently. A client that cannot resolve one (no `git`, not a repository) simply reports none, and the folder's name is the label.
+> No shipped collector declares an enrichment strategy. The mechanism exists in
+> the base class, but per-message breakdowns reach the dashboard as **sidecar
+> usage events**.
 
-**Which label a session gets.** A session run in a git repository, or in a worktree of one, is labelled with the **repository name** (`project_ref`). A session not run in a repository is labelled with the **folder it was run in** (the last segment of its `cwd`, e.g. `Projects`). The precedence in `EventIngestor` is `project_ref` first, the `cwd`-derived label second. For a worktree whose repository can no longer be resolved (most are deleted after merging), the `cwd` fallback cuts the path at the first worktree-container directory — `.claude`, `.wt`, `.worktrees`, `.worktree` or `.mullion-worktrees` (`WORKTREE_CONTAINERS` in `app/services/project_label.py`) — so `<repo>/.wt/<slug>/app` is labelled `<repo>`. The segment must be a whole one, preceded by a separator, in either separator form and any case. A bare `worktrees` folder (no dot) is deliberately not a container. The operator can add more names under Settings > System > Project labels (`worktree_patterns`, up to 20 entries of at most 64 characters; one directory name, no path separators, `*` the only wildcard, matched against whole segments, case-insensitively). They are added to the built-ins, never replace them, and the worktree-segment scan in `app/services/project_label.py` is the only place that applies them. **One cut rule, scanning the segments left to right and acting on the first worktree directory:** a *container* (every built-in, and any pattern that does not start with `*`, e.g. `worktrees-extra`, `wt-*`) is cut off with everything after it, so `<repo>/worktrees-extra/<slug>/app` is labelled `<repo>`. A *sibling* pattern (starts with `*`, then a literal suffix, e.g. `*-wt`) names a folder kept beside the repository: the path is cut after that segment and the suffix is stripped from it, so `/home/u/repo-wt/<slug>/app` is labelled `repo`; a segment that is nothing but the suffix is cut like a container. The patterns are read through a cached getter (`app/services/worktree_patterns.py`, invalidated when Settings saves them), and the `worktree_project_labels` Data Health check uses the same list, so saving a pattern and applying the check relabels history. Rows stored before this rule are relabelled by the `worktree_project_labels` Data Health check, which prefers a session's reported `project_ref` over the `cwd`.
+**Rate limiting** is per collector, in `SmartCollector`: a `429` puts the
+provider into a backoff state and the collector is skipped until it ends. There
+is no generic "fall through to the web strategy on 429" rule.
 
-**A session that moved into a worktree.** A session's label comes from its *shallowest* `cwd` — the directory it was launched in. A session that started in a parent folder and then moved into a worktree of a repository would be labelled with the parent folder's name, because the parent is shallower than the repository the worktree belongs to. So when a session has no reported `project_ref` and one of its `cwd`s runs through a worktree directory (a `WORKTREE_CONTAINERS` segment or one of the operator's `worktree_patterns`), the label comes from that worktree — but only when the repository it holds lies **inside** the session's shallowest working directory. That is what makes the shallower directory a parent folder rather than a different repository the session merely touched: a session that worked in `repo-a` and once changed into `repo-b/.wt/feat-x` keeps `repo-a`, because `repo-b` does not live inside it. The rows whose own `cwd` is the parent folder take the label too. A session without such a worktree keeps the shallowest-`cwd` label exactly as before.
+The sidecar is not a strategy. It is a separate producer and never competes with
+a server strategy for the same card; reconciliation above decides which
+contribution a slot shows.
 
-They also carry **the client app that made the call** (`source_app`: `opencode`, `claude_code`, `minimax_code`, ...). That is not the same as the provider the request was billed to — several client apps share one provider, and a canonical-provider retag folds them onto one id. `source_app` survives the retag, so "which app spent the quota" stays answerable (`/usage/source-apps`).
+### Per-collector strategies
 
-Rows written **before** the column existed are backfilled with `provider_id`, which is exactly what the ingestor falls back to when an older sidecar reports no app. Those rows therefore show the provider id (`minimax`, `opencode`, ...) under the app label until enough new events arrive to separate them — the split is only as precise as the data behind it, not a bug in the chart.
+All server strategies run in the server and only do `api` / `web`.
 
-OpenCode events additionally carry a raw `providerID` (the OpenCode gateway tag) in `raw_provider_id` when the sidecar forwards it. Older sidecars and older rows leave it `NULL`, and the OpenRouter data-health check falls back to the model-id shape test in that case.
+| Collector | Strategies |
+|---|---|
+| Anthropic | oauth, web |
+| Anthropic Console | web |
+| Antigravity, Gemini, xAI | api |
+| ChatGPT | web |
+| Kimi Coding, Ollama, OpenCode | api, web |
+| DeepSeek, GitHub, Kimi API, Kimi K2, MiniMax, OpenRouter, zAI | implement the abstract primary / fallback path instead of a `STRATEGIES` dict |
 
-## Per-Collector Strategy Mapping
+### MiniMax credentials
 
-The "Runs in" column shows where the strategy executes. The server-side collectors only do `api` / `web`; everything that needs filesystem, CLI, or LSP access lives in the sidecar and reaches the server through `/api/v1/fleet/ingest`.
-
-| Collector | Strategy | Bucket | Runs in |
-|-----------|----------|--------|---------|
-| **Anthropic** | oauth | primary | server |
-| Anthropic | web | primary | server |
-| **Anthropic Console** | web | primary | server |
-| **Antigravity** | api | primary | server |
-| **ChatGPT** | web | primary | server |
-| **DeepSeek** | — | primary | server |
-| **Gemini** | api | primary | server |
-| **GitHub** | — | primary | server |
-| **Kimi API** | — | primary | server |
-| **Kimi Coding** | api, web | primary | server |
-| **Kimi K2** | — | primary | server |
-| **MiniMax** | — | primary | server |
-| **Ollama** | api, web | primary | server |
-| **OpenCode** | api, web | primary | server |
-| **OpenRouter** | — | primary | server |
-| **xAI** | api | primary | server |
-| **zAI** | — | primary | server |
-
-A dash means the collector does not declare a `STRATEGIES` dict; it implements
-the abstract `_primary_strategy` / `_fallback_strategies` path instead. The
-order within a `STRATEGIES` dict is the **declaration order**, and that is the
-order the primary strategies are tried in — first success wins.
-
-The sidecar is not a strategy and does not appear in this table. It is a
-separate producer: it reads local sources (transcripts, CLI caches, browser
-cookie stores) and pushes **usage events** to `/api/v1/fleet/ingest`. It never
-runs inside a collector and never competes with a server strategy for the same
-card.
-
-The two MiniMax strategies need different credentials: the platform API secret
+The MiniMax collector accepts two kinds of credential: the platform API secret
 (`sk-…`) and the MiniMax Code app's OAuth token (`mmoat_…`). Each host accepts
-only its own — sending the wrong kind comes back as **HTTP 200** with
-`base_resp.status_code` 1004 "login fail", so the failure is only visible in the
-body. The collector reports that as an **error card**, not as an empty plan:
-this collector reports complete snapshots, so a healthy-looking "No active plan"
-card would retire the user's real session and weekly rows. Which kind a
-credential is comes from the `mmoat_` prefix, so a token pasted into Settings
-or the database is still routed to the host that accepts it.
+only its own, and sending the wrong kind comes back as **HTTP 200** with
+`base_resp.status_code` 1004 "login fail", so the failure is visible only in the
+body. The collector reports it as an **error card**, not an empty plan: it
+reports complete snapshots, so a healthy-looking "No active plan" card would
+retire the user's real rows. The kind is read from the `mmoat_` prefix, so a
+token pasted into Settings is still routed to the host that accepts it.
 
 The app's auth store keeps one record per build and region, each with its own
-expiry. The registry reaches it with a `records.*` wildcard, and both the
-server and the sidecar pick the record whose expiry is still in the future — a
-dead record must not win just because its key sorts first, and the token and
-its expiry must come from the *same* record.
+expiry. Server and sidecar both pick the record whose expiry is still in the
+future, and the token and expiry come from the *same* record.
 
 ### MiniMax Code pricing: no free/paid signal
 
-MiniMax Code traffic is priced the way every other subscription plan is: the
-events carry no cost, and the server prices them against the pay-as-you-go
-API rates (see the MiniMax block in `app/services/pricing_seed.py`). The
-result is a **notional** figure — what the usage would have cost on the API —
-not an amount that was billed.
+MiniMax Code events carry no cost, so the server prices them against the
+pay-as-you-go API rates (the MiniMax block in `app/services/pricing_seed.py`).
+The result is a **notional** figure — what the usage would have cost on the API
+— not an amount billed. The app's runtime ledger has no free/paid flag: its cost
+column is always 0, usage rows have no model, and no catalog, pricing or billing
+table sits beside them. So "is this model free?" cannot be answered from the
+source.
 
-That distinction matters because MiniMax Code's runtime ledger carries **no
-free/paid flag at all**: its usage rows have `cost_usd = 0` (the M Plan is a
-subscription, so the ledger's own cost column is always zero), their model
-column is `NULL`, and the only model string in the ledger is the session's
-`effectiveModel` (`minimax/MiniMax-M3.1-Flash`). There is no model catalog,
-pricing table, quota table or billing table beside them. So "is this model
-free?" is not a question the source can answer — the answer is missing
-upstream, not lost in Runway.
+- A model covered by a plan is not a free model. A non-zero cost for
+  MiniMax-M3.1-Flash is the API-equivalent convention, not a pricing error.
+- A real free model prices at $0 automatically: the cost calculator treats a
+  `-free` / `:free` / `/free` model id as free, and the extractor only strips the
+  `minimax/` prefix, so such a suffix survives.
 
-Two consequences worth keeping in mind:
+## Project labels
 
-- **A model that is covered by a plan is not a free model.** MiniMax lists
-  MiniMax-M3.1-Flash at $0.15 / $0.60 / $0.015 per M tokens (input / output /
-  cache read); under the M Plan the included quota draws down at that price.
-  Runway reporting a non-zero cost for it is the API-equivalent convention
-  above, not a pricing error.
-- **A real free model would price at $0 automatically.** The cost calculator
-  treats a `-free` / `:free` / `/free` model id as free and skips the pricing
-  fallback, and OpenCode's free catalog is filed under its own `opencode-free`
-  provider for the same reason. If the MiniMax Code runtime ever starts
-  emitting a free id, the existing guard prices it at $0 with no Runway
-  change — the MiniMax extractor only strips the `minimax/` prefix, so such a
-  suffix survives normalization.
+Events carry a working directory (`cwd`), `git_branch` and tool names. The
+server derives a **project label** in `EventIngestor` and indexes it, which
+powers the Sessions project column and the Top Projects / Top Tools rankings.
+Events also carry the **client app** that made the call (`source_app`:
+`opencode`, `claude_code`, `minimax_code`, …), which is not the provider the
+request was billed to — several apps share one provider. `source_app` survives
+a canonical-provider retag, so "which app spent the quota" stays answerable.
+Rows written before the column existed show the provider id under the app label
+until newer events separate them. OpenCode events also carry the gateway tag as
+`raw_provider_id` when the sidecar forwards it.
 
-## Collection Pipeline
+**Which label a session gets**, in order:
 
-`BaseCollector.collect()` has **two** phases, not four.
+1. **`project_ref`** — the git repository name the sidecar resolved for the
+   `cwd`. The remote URL never leaves the client, because it can carry
+   credentials. Two checkouts of one repository group together.
+2. **The `cwd` fallback** — the last path segment, in either separator form
+   (a client path like `D:\Projects\repo` is labelled correctly on a Linux
+   server). For a worktree whose repository can no longer be resolved, the path
+   is cut at the first worktree directory, so `<repo>/.wt/<slug>/app` is
+   labelled `<repo>`.
 
-```
-┌──────────────────────────────────────────────────────────────┐
-│                    collect(provider)                          │
-├──────────────────────────────────────────────────────────────┤
-│  Phase 1: PRIMARY                                            │
-│  ├── Partition the strategies into primary and enrichment   │
-│  │   (by the presence of {"enrich": True} in their options) │
-│  ├── Run the primary strategies in declaration order        │
-│  ├── The FIRST one that does not return an error card wins  │
-│  ├── If every primary strategy errored, the best error      │
-│  │   card wins (highest priority error_type), else the      │
-│  │   collector's own error handler runs                     │
-│  └── Capture the primary result's metadata so enrichment can │
-│      align its window boundaries (reset_at vs fixed cutoffs) │
-├──────────────────────────────────────────────────────────────┤
-│  Phase 2: ENRICHMENT                                         │
-│  ├── Run the enrichment strategies, in declaration order     │
-│  ├── Merge each successful enrichment into the primary card  │
-│  │   via _enrich_results()                                   │
-│  └── An enrichment strategy that fails is skipped — it never │
-│      discards the primary result                            │
-└──────────────────────────────────────────────────────────────┘
-```
+**Worktree directories.** The built-in containers are `.claude`, `.wt`,
+`.worktrees`, `.worktree` and `.mullion-worktrees` (`WORKTREE_CONTAINERS` in
+`app/services/project_label.py`); a bare `worktrees` folder is deliberately not
+one. Operators can add more under Settings → System → Project labels
+(`worktree_patterns`: up to 20 entries of at most 64 characters, one directory
+name, `*` the only wildcard, matched against whole segments, case-insensitive).
+Patterns add to the built-ins, never replace them. The path is scanned left to
+right and acted on at the first worktree directory:
 
-Enrichment only runs when a primary strategy has already succeeded. It is
-never a fallback: if the primary strategies all failed, the enrichment
-strategies are not run at all.
+- a **container** pattern (every built-in, and any pattern not starting with
+  `*`, like `wt-*`) is cut off with everything after it;
+- a **sibling** pattern (starts with `*` and a literal suffix, like `*-wt`)
+  names a folder kept beside the repository: the path is cut after that segment
+  and the suffix stripped, so `/home/u/repo-wt/<slug>/app` is labelled `repo`.
 
-### Rate limiting
+**A session that moved into a worktree.** A session is labelled from its
+shallowest `cwd`. If it has no `project_ref` and one of its `cwd`s runs through a
+worktree directory, the label comes from that worktree — but only when the
+repository it holds lies inside the session's shallowest directory, which is
+what distinguishes a parent folder from a different repository the session
+merely touched.
 
-There is no cross-source priority ladder and no generic "fall back to the web
-strategy when the API is rate limited" rule. Rate limiting is handled
-**per collector**, in `SmartCollector`:
+Rows stored under an older rule are relabelled by the `worktree_project_labels`
+Data Health check, which prefers a session's `project_ref` over its `cwd`.
 
-- a `429` marks the provider as rate-limited and the backoff state is
-  recorded;
-- while that backoff is active, the collector is skipped rather than
-  retried.
+### Which events get a `project_ref`
 
-A strategy failing for any other reason is simply "the next primary strategy
-is tried".
+The sidecar resolves the repository of each event's `cwd` once per cycle
+(`scripts/sidecar_pkg/git_identity.py`) with `git rev-parse --show-toplevel` and
+`remote.origin.url`. Answers are kept in the sidecar's `git-identity.json`
+(successes only, bounded, oldest dropped first), so a directory resolved once
+keeps its name after the worktree is deleted or the sidecar restarts.
 
-## Conflict Resolution
+Events that cannot get one:
 
-### Primary data
-
-The first primary strategy that does not return an error card wins. There is
-no comparison between strategies, no quality ranking, and no cross-source
-priority. "Sidecar" is not a strategy and never competes with a server
-strategy — the sidecar's contribution is reconciled separately, by
-`accumulator.py`, and the freshest healthy sidecar owns a slot when no fresh
-server contribution exists.
-
-### Enrichment data
-
-`_enrich_results()` matches an enrichment dict to a primary card by
-`(service_name, variant, window_type, model_id)`, with graceful fallback to
-less specific keys — a card is also looked up by `(variant, window_type,
-model_id)`, then `(window_type, model_id)`, then `(model_id)`. An enrichment
-dict with `model_id=None` acts as an aggregate fallback for any primary card.
-
-When a match is found, the enrichment **overwrites** these three fields on the
-card:
-
-| Field | What happens |
-|---|---|
-| `token_usage` | replaced by the enrichment value |
-| `by_model` | replaced by the enrichment value |
-| `msgs` | replaced by the enrichment value |
-
-Nothing is maximised and nothing is summed. `pct_used` is then re-derived from
-the primary card's own `used_value` / `limit_value`, so the enrichment can
-never change the quota percentage — only the token and message breakdown.
-
-## Claude cloud-runner sessions
-
-Local scraping already covers CLI, Desktop and bridge sessions. Claude Code sessions that run
-on Anthropic's cloud runner leave no local transcript, so a server-side collector
-(`app/services/claude_cloud_collector.py`, `CLAUDE_CLOUD_COLLECTOR_ENABLED`, on by default) reads
-their history. The rules are specified in
-[the cloud event contract](claude-cloud-event-contract.md); the wire facts behind them are in
-[the source-shape evidence](evidence/acceptance/claude-cloud-source-shape-20261029.md).
-
-- **On by default; turning it off.** The collector runs unless switched off in the app (Settings → Providers → Claude) or `CLAUDE_CLOUD_COLLECTOR_ENABLED=false`
-  is set. Enabled, it reads cloud-runner sessions only (`environment_kind == anthropic_cloud`),
-  never scrapes local files, and needs one eligible Claude Code OAuth login already held by the
-  server (exact source, account and organization checks; read-only, no refresh). With no Claude
-  login at all a cycle does nothing and logs nothing; with a login that is not eligible it logs
-  `outcome=source_ineligible` and does nothing. Neither makes a provider request. It first runs about two minutes after
-  start, then every `CLAUDE_CLOUD_COLLECTOR_INTERVAL_SECONDS` (default 1800, about 30 minutes;
-  sooner while it has work left). Turning it off stops new collection; events already written stay.
-- **Which sessions.** `GET /v1/code/sessions` is listed page by page (the real API omits
-  `next_cursor` on the last page, which the collector, like the verifier, treats as the end; a
-  declared `has_more` that disagrees with the cursor fails the cycle as `unsupported_contract`). Only
-  rows whose top-level `environment_kind` is `anthropic_cloud` count; `bridge` rows are local
-  sessions mirrored to claude.ai and are skipped. A session is read when its `last_event_at` moved
-  (the row's `updated_at` is unrelated to usage and is not used).
-- **What is written.** The session's history (`/v1/code/sessions/{id}/events`) goes through
-  `claude_cloud_events`: one **message event** per assistant message (model, time, tools, subagent,
-  input and cache tokens with the 1h/5m write split, project and branch) and, when a `result` record
-  closes a turn, one **remainder event** per model for what its cumulative `modelUsage` reports beyond
-  those messages (side calls, the real output, a second model such as Haiku). Events carry
-  `sidecar_id` `server`, `entrypoint` `cloud`, and a digest as `session_id`; their ids are derived
-  from the history, so a replay is a duplicate, never a second event. The API's `costUSD` and the
-  list row's usage block are not used for pricing; Runway prices the tokens itself.
-- **Session names.** The list row's `title` (a string; anything else is ignored) is stored as the
-  session's name (`session_names`, provider `anthropic`, the digest as session id, kind `generated`)
-  on every list pass, also for sessions that are not re-read, through the same cleaning and
-  change-only upsert as sidecar names. `task_summary` and `post_turn_summary` are status text and
-  never names. A failed names write is a note on the cycle (`names_<ExceptionType>`) and does not
-  fail the usage sync; the cycle log carries `names_updated=<count>`, never a title.
-- **Resuming.** Each session has a checkpoint (`claude_cloud_session_checkpoint`): the sequence
-  number of its last closed turn and the encrypted cursor of the page that holds it, plus the
-  reducer's state. The next read starts there; the open tail after the last result is read again.
-  A cursor the API rejects falls back to reading from the start. Events are committed before the
-  checkpoint moves.
-- **Open tail.** Messages after the last result are emitted once the session has been quiet for an
-  hour (without a remainder).
-- **Cross-check.** After a session settles, its events are compared with the list row's usage block
-  and only a label is logged (`agree`, `block_higher`, `block_lower`, `mixed`, `no_block`); the block
-  is built differently in different sessions, so it never gates or rewrites anything.
-- **Budgets.** Per cycle at most 40 history pages and, always, 200 requests; a session that could not close a
-  turn within its pages gets a larger page budget next time (never beyond the request cap; a turn longer
-  than that is skipped until the session changes again and reported as `stalled_turn_skipped`), and while work is left the next cycle runs
-  after 120 s instead of the interval, reusing the unfinished sessions instead of listing again. The 120 s pace also holds when a cycle cannot see its login (`source_ineligible`) while sessions are still pending, but only for `MAX_UNREAD_CATCH_UPS` (3) such cycles in a row that read nothing; after that the interval applies until a cycle reads again, and the collector logs `unread_catch_up_capped` once when it falls back. Logs carry counts and fixed labels only.
-- **Health record.** Every cycle upserts one `claude_cloud_collector_state` row per account (last outcome and time, events read, cycles, consecutive failures, backlog flag); `GET /api/v1/system/status` reports it as `claude_cloud` and Settings shows it in the Claude detail, flagging an account unhealthy after 3 failed cycles in a row or no cycle for 3 intervals. A `busy` cycle only refreshes the time.
-- **Migration.** While events of the first (coarse) collector exist (`cloud:<digest>:<n>` ids) the
-  cycle writes nothing and reports `migration_required`; the `cloud_coarse_events` Data Health fix
-  removes them.
-- Known limits: message counts in rollups, top models and history run high for cloud sessions
-  (remainders are separate rows; the sessions view and top sessions/projects collapse them); the
-  cache-write TTL split of a remainder is an estimate; per-message output is a lower bound. A cloud
-  session later resumed on a local machine could also appear in local transcripts; none of about 290
-  checked message ids does, and there is no cross-source de-duplication.
-
-### Bridge-session spot check
-
-`app/services/claude_cloud_bridge_check.py` and `scripts/check_bridge_sessions.py` compare the
-`external_metadata.usage` block of `bridge` list rows with the sums of the same session's local
-events (`provider_id = 'anthropic'`, not `sidecar_id = 'anthropic-cloud'`; `cse_` and `session_`
-ids are the same session). It is a counts-only check of local accuracy that writes no events.
-By default it is offline: the operator supplies the rows as a JSON file (`--rows`). Input, cache read and cache
-write are compared; a value unknown on either side is counted as unknown, never as 0 or a
-mismatch. Output is excluded because the assistant `output_tokens` the cloud records are
-placeholders. The block's input exceeds the local input by the side model's (Haiku) input, which
-local transcripts omit, so a small positive input difference is expected, while cache counters
-should match exactly. Most bridge rows carry no block at all (37 of 1,479 in
-[the source-shape evidence](evidence/acceptance/claude-cloud-source-shape-20261029.md)), so this
-is a spot check, not coverage, and does not replace local scraping.
-
-`--live` produces the rows instead of the file: `read_bridge_rows`
-(`app/services/claude_cloud_bridge_rows.py`) pages `GET /v1/code/sessions` with the collector's
-list reader (`read_session_list`), page bound, headers and read-only login handling, and keeps the
-`bridge` rows that carry a usage block, with `null` for any counter the API did not report. Because
-it calls the provider it also requires `--yes-call-provider` and exits non-zero without making a
-request when that is missing; the report is the same counts-only JSON. The script
-enables source controls first, so the token cache hydrates from the durable Claude Code
-contributions in the configured database (read-only, no refresh); with none it exits 3 with
-`source_unavailable`. Bridge rows whose block carries no usable counter are dropped and counted in
-the log, so `without_block` stays 0 in a live report.
-
-```
-python scripts/check_bridge_sessions.py --live --yes-call-provider
-```
-
-## Which events get a `project_ref`
-
-The sidecar names the git repository of each event's working directory
-(`scripts/sidecar_pkg/git_identity.py`, applied once per cycle to every event
-the cycle collected, at the end of `run_collection`). Every event extractor and
-the directory-scoped Claude/Codex path feed that one list, so no extractor
-skips the annotator; what decides the outcome is the event's `cwd`.
-
-The lookup is `git rev-parse --show-toplevel` plus `remote.origin.url` in the
-directory, so it works for any worktree layout, but only while the directory
-exists. The answer for each directory is therefore kept in the sidecar's
-`git-identity.json` (successes only, bounded to 4096 entries, oldest dropped
-first): a directory resolved once keeps its name after the worktree is deleted
-and after a restart. A directory that still exists is looked up again once per
-process, so a renamed remote is picked up.
-
-Events that cannot get a `project_ref`, and why:
-
-- **Deleted worktrees and clones, seen for the first time after the deletion.**
-  Backfilled transcripts and rows older than the annotator (the first
-  collection after an upgrade reads history) name directories that no longer
-  exist. Nothing is guessed from the path or from a parent directory, because a
-  parent can belong to a different repository. A directory the sidecar saw
-  while it existed is resolved from the persisted cache.
-- **Directories outside any repository** (scratch folders, a home directory).
-  Not remembered, so a directory that becomes a repository later is picked up.
-- **Antigravity generated worktrees**
-  (`<agy home>/.system_generated/worktrees/<id>`). The workspace path in the
-  conversation database (and `workspace_uris`) is that generated directory,
-  which carries no name of its own; only a git lookup while it exists can name
-  the repository, and agy removes these directories.
-- **Another host's paths.** A sidecar resolves only its own filesystem. The
-  Hermes, opencode and Gemini stores can hold paths written on another
-  machine; those do not exist here and stay unresolved unless that machine runs
-  its own sidecar.
-- **Events without a working directory.** Claude cowork sessions
-  (macOS desktop agent mode) and the cloud collector carry no `cwd` from the
-  sidecar; the cloud collector sets its own `project_ref`.
+- **Deleted worktrees and clones first seen after deletion** (backfilled history).
+  Nothing is guessed from the path, because a parent can belong to another
+  repository.
+- **Directories outside any repository.** Not remembered, so a directory that
+  becomes a repository later is picked up.
+- **Antigravity generated worktrees** (`<agy home>/.system_generated/worktrees/<id>`),
+  which carry no name and are removed by agy.
+- **Another host's paths.** A sidecar resolves only its own filesystem.
+- **Events without a working directory**: Claude cowork sessions. The cloud
+  collector sets its own `project_ref`.
 - **No `git` on the sidecar's PATH**, or a lookup that fails or exceeds 3 s.
   These are not persisted, so the next cycle retries.
 
-## Session names from the sidecar
+## Session names
 
-A session name is a title a tool shows for a session. The sidecar sends them in
+A session name is a title a tool shows for a session. Sidecars send them in
 `IngestRequest.session_names` (`{provider_id, session_id, source_app, name,
-kind}`, `kind` is `agent` or `generated`); the server stores them in
-`session_names`. A name is free text and is never logged, on either side.
+kind}`, `kind` is `agent` or `generated`) and the server stores them in
+`session_names`. A name is free text and is never logged.
 
-Plumbing in `scripts/sidecar_pkg/session_names.py`, for every extractor that has names:
+A sidecar extractor registers a `collect(out)` function in
+`scripts/sidecar.py::_SESSION_NAME_COLLECTORS` under its provider id; it runs
+once per cycle after that provider's events and must use the same `provider_id`
+as those events. `run_collection` returns only names that changed since the last
+accepted push (at most 2000 per push, the server's cap), and they ride the first
+batch. The sent hashes are saved only once that batch was accepted
+(`names_upserted` present, no `names_error`), so a failed or queued push sends
+them again. The offline queue file holds names in clear text, like it holds
+working directories; the state file holds only hashes.
 
-- Write a collector `collect(out: list[dict])` that appends records built with
-  `session_names.make_record(provider_id, session_id, name, kind, source_app)`,
-  and register it in `scripts/sidecar.py::_SESSION_NAME_COLLECTORS` under the
-  provider id. It runs once per cycle right after that provider's events were
-  extracted (so the same consent and gating apply). `provider_id` must be the
-  id the sidecar stamps on that session's events; the server does not derive it.
-- Nothing else is needed. `run_collection` keeps the last record per
-  (provider_id, session_id, kind) and returns only names that changed since the
-  last accepted push in `CollectionResult.session_names` (at most 2000, the
-  server's cap; the rest follows next cycle). They ride the first batch of the
-  push only. The sent hashes live in the sidecar's `session-names.json`
-  (hashes only, 0600, atomic, bounded to 20000) and are saved only after the
-  first batch was accepted (the answer carries `names_upserted`) and the answer
-  does not set `names_error` (the server's name write failed), so a failed or
-  queued push, or a server-side name failure, sends them again. An older server
-  that answers no `names_upserted` is never marked sent.
-  A push that fails is queued like any other payload, so the offline queue
-  file (owner-only) holds the names in clear text, as it holds events' working
-  directories; the state file never does.
-- A collector that can skip unchanged inputs may call
-  `session_names.file_unchanged(path)` and `session_names.stage_files(scanned)`
-  (size and mtime signatures, saved together with the names, never before).
+| Tool | Provider / app | Kind | Source |
+|---|---|---|---|
+| Claude Code | `anthropic` / `claude_code` | `agent` and `generated` | `agent-name` and `ai-title` records in `~/.claude/projects` transcripts. Cowork transcripts are not covered. |
+| opencode | per event provider / `opencode` | `generated` | `session.title` (`session_v2.title` after migration) |
+| MiniMax Code | `minimax` / `minimax_code` | `generated` | `local_runtime_sessions.title`; child background sessions are skipped |
+| Codex | `chatgpt` / `codex` | `agent` | `threads.name` in `state_*.sqlite`, else `session_index.jsonl` |
+| Antigravity (agy) | `antigravity` / `antigravity` | `generated` | `title` in `conversation_summaries.db` |
 
-Claude Code: `parse_anthropic_session_names` reads the plain
-`~/.claude/projects` transcripts (and `CLAUDE_CONFIG_DIR` roots), keeps the last
-`agent-name` record as kind `agent` and the last `ai-title` as kind `generated`
-per session, with provider `anthropic` and source app `claude_code`. Lines are
-only JSON-decoded when they contain a marker, and a transcript whose size and
-mtime are unchanged is skipped. macOS cowork transcripts are not covered.
+Conversation content is never read for names: Codex's `title`, `preview` and
+`first_user_message`, agy's `preview`, and subagent nicknames are all ignored.
 
-opencode: `parse_opencode_session_names` reads `session.title` (and
-`session_v2.title` on a migrated v2 database), kind `generated`, source app
-`opencode`, for sessions that have assistant messages. A session whose messages
-were served by several backends gets one name per runway provider id its events
-carry (the same retag as the event extractor, `event_provider_id`). The scan is
-skipped while the database and its WAL are unchanged.
+## Claude cloud-runner sessions
 
-MiniMax Code: `parse_minimax_code_session_names` reads
-`local_runtime_sessions.title` (not `agent_name`, not the FTS index) from every
-runtime store, including per-profile roots, kind `generated`, provider
-`minimax`, source app `minimax_code`. It is registered under the ledger's
-scheduling id `minimax_code` and under `minimax`. A background-task session whose parent is in the
-store is skipped, because its events are filed under the parent.
+Claude Code sessions that run on Anthropic's cloud runner leave no local
+transcript, so a server-side collector
+(`app/services/claude_cloud_collector.py`) reads their history. The rules are
+specified in [the cloud event contract](claude-cloud-event-contract.md); the wire
+facts behind them are in
+[the source-shape evidence](evidence/acceptance/claude-cloud-source-shape-20261029.md).
 
-Codex (`parse_chatgpt_session_names`, provider `chatgpt`, source app `codex`):
-kind `agent`, from `threads.name` in `state_*.sqlite` under each Codex home
-(`CODEX_HOME` / `codex_home`, `~/.codex`, `~/.config/codex`), falling back to
-`thread_name` in `session_index.jsonl` when the column is empty. The session id
-is the stem of the thread's `rollout_path` (the id the events carry); without
-one it is the stem of the discovered rollout file ending in the thread id, and a
-thread with neither is skipped. The state DB is opened read-only. Codex's
-`title`, `preview` and `first_user_message` are the first prompt, i.e.
-conversation content, and are **never read for names**; `agent_nickname` is a
-subagent nickname, not a name.
+- **Enabling.** On by default; switch it off in Settings → Providers → Claude or
+  with `CLAUDE_CLOUD_COLLECTOR_ENABLED=false`. Turning it off stops new
+  collection; written events stay. It reads cloud-runner sessions only
+  (`environment_kind == anthropic_cloud`), never local files, and needs one
+  eligible Claude Code OAuth login already held by the server (read-only, no
+  refresh). With no login a cycle does nothing and logs nothing; with an
+  ineligible one it logs `outcome=source_ineligible` and makes no request. It
+  first runs about two minutes after start, then every
+  `CLAUDE_CLOUD_COLLECTOR_INTERVAL_SECONDS` (default 1800), sooner while work is
+  left.
+- **Which sessions.** `GET /v1/code/sessions` is listed page by page; the API
+  omits `next_cursor` on the last page, which counts as the end, and a declared
+  `has_more` that disagrees with the cursor fails the cycle as
+  `unsupported_contract`. Only `anthropic_cloud` rows count — `bridge` rows are
+  local sessions mirrored to claude.ai. A session is re-read when its
+  `last_event_at` moved.
+- **What is written.** The session history goes through `claude_cloud_events`:
+  one **message event** per assistant message (model, time, tools, subagent,
+  input and cache tokens with the 1h/5m write split, project, branch) and, when a
+  `result` record closes a turn, one **remainder event** per model for what its
+  cumulative `modelUsage` reports beyond those messages. Events carry
+  `sidecar_id` `server`, `entrypoint` `cloud` and a digest as `session_id`; ids
+  derive from the history, so a replay is a duplicate, never a second event. The
+  API's `costUSD` is not used: Runway prices the tokens itself.
+- **Session names.** The list row's `title` is stored as the session's name
+  (kind `generated`) on every list pass, including sessions not re-read. A failed
+  names write is noted on the cycle and does not fail the usage sync.
+- **Resuming.** Each session has a checkpoint with its last closed turn, the
+  encrypted cursor of the page holding it, and the reducer state. A cursor the
+  API rejects falls back to reading from the start. Events are committed before
+  the checkpoint moves. Messages after the last result are emitted once the
+  session has been quiet for an hour, without a remainder.
+- **Budgets.** At most 40 history pages and 200 requests per cycle. A session
+  that could not close a turn gets a larger page budget next time; a turn longer
+  than the request cap is skipped (`stalled_turn_skipped`) until the session
+  changes. While work is left the next cycle runs after 120 s; that pace is
+  capped at `MAX_UNREAD_CATCH_UPS` (3) consecutive cycles that read nothing.
+- **Health.** Each cycle upserts one `claude_cloud_collector_state` row per
+  account. `GET /api/v1/system/status` reports it as `claude_cloud`, and Settings
+  flags an account unhealthy after 3 failed cycles in a row or no cycle for 3
+  intervals.
+- **Migration.** While events of the first (coarse) collector exist
+  (`cloud:<digest>:<n>` ids) the cycle writes nothing and reports
+  `migration_required`; the `cloud_coarse_events` Data Health fix removes them.
+- **Known limits.** Message counts in rollups, top models and history run high
+  for cloud sessions (remainders are separate rows; the sessions view and top
+  sessions and projects collapse them). A remainder's cache-write TTL split is an
+  estimate and per-message output is a lower bound. There is no cross-source
+  de-duplication against local transcripts.
 
-agy (`parse_antigravity_session_names`, provider `antigravity`, source app
-`antigravity`): kind `generated`, the non-empty `title` of
-`~/.gemini/antigravity-cli/conversation_summaries.db` keyed by
-`conversation_id` (read-only). Conversations without a title, parent or child,
-are skipped; a child with its own title is reported. agy's `preview` is
-conversation text and is **never read**; `agent_name` is a subagent name and is
-not used either.
+### Bridge-session spot check
 
-## Implementation Notes
-
-- The strategy options dict carries exactly one key: `enrich`. There is no
-  `type` field.
-- `BaseCollector.collect()` (`app/services/collectors/base.py:283`) partitions
-  the strategies, runs the primary ones until one succeeds, then runs the
-  enrichment ones.
-- `_enrich_results()` (`app/services/collectors/base.py:401`) does the merge.
-  There is no `_merge_enrichment()` method anywhere in the codebase.
-- A strategy returns a **list** of card dicts, or a list containing a single
-  error card. There is no `{"quota": ..., "enrichment": ...}` shape.
+`scripts/check_bridge_sessions.py` compares the usage block of `bridge` list rows
+with the sums of the same session's local events (`app/services/claude_cloud_bridge_check.py`).
+It is a counts-only check that writes no events. By default it reads rows from a
+JSON file (`--rows`); `--live --yes-call-provider` fetches them itself, read-only,
+and exits 3 with `source_unavailable` without an eligible login. Input, cache
+read and cache write are compared (an unknown value is never a mismatch); output
+is excluded because the cloud's assistant `output_tokens` are placeholders. A
+small positive input difference is expected — the side model's input is missing
+from local transcripts — while cache counters should match exactly. Most bridge
+rows carry no usage block, so this is a spot check, not coverage.
 
 ## Expiry units
 
 A credential's expiry may be published in seconds, milliseconds, microseconds or
-nanoseconds. The reader does **not** take the unit from the rule — it reads it off the
-magnitude of the number, because the registry maps an expiry field by name
-(`expiry_date`) without saying which unit that field carries.
-
-Both sides of the fence implement the same rule, and
-`tests/unit/test_mapping_resolver_parity.py` pins the two copies together. They have to
-agree: the server decides whether a credential is fresh and the sidecar reports
-freshness independently, so a divergence means the two sides disagree about whether a
-credential is alive.
-
-| | copy | read by |
-|---|---|---|
-| server | `app/core/expiry.py::expiry_seconds` | `app/services/credential_provider.py` (the freshness probe) and `app/core/utils.py` (`IdentityExtractor.exp_from_tokens`, the single source of truth for a *stored* bundle's expiry — the token cache, the auto-refresher and Token Health all read through it) |
-| sidecar | `scripts/sidecar_pkg/expiry.py::expiry_seconds` | `scripts/sidecar.py` (the freshness probe) and `scripts/sidecar_pkg/xai_renewer.py` (a JWT's `exp` claim) |
-
-The rule, as both copies implement it:
+nanoseconds. The reader takes the unit from the **magnitude** of the number, not
+from the rule, because the registry maps an expiry field by name
+(`expiry_date`) without saying which unit it carries.
 
 | The raw value is | Read as | Divide by |
-| --- | --- | --- |
+|---|---|---|
 | `>= 1e17` | nanoseconds | 1e9 |
 | `>= 1e14` | microseconds | 1e6 |
 | `>= 1e11` | milliseconds | 1e3 |
 | anything smaller | seconds | — |
 
-A 2026 epoch is ~1.8e9 s, ~1.8e12 ms, ~1.8e15 us and ~1.8e18 ns, so each threshold sits
-clear of the next. A millisecond value has to be ~3000 years in the future before it
-would be read as microseconds, and it then lands in the past — expired, which is the safe
-direction. The old reader divided by 1000 exactly once, so a microsecond epoch landed
-thousands of years ahead and read as **fresh forever**; because the record picker takes
-the *largest* expiry, a dead microsecond record also outranked a live millisecond one.
+A 2026 epoch is about 1.8e9 s, 1.8e12 ms, 1.8e15 µs or 1.8e18 ns, so each
+threshold sits clear of the next. A value that is not a number, not a plausible
+expiry (past the last second of year 9999), `nan` or an infinity reads as **no
+expiry claim** — never as fresh — so an unknown expiry cannot beat a record that
+states one in the largest-expiry picker.
 
-A value that is not a number, and a value that is not a plausible expiry at all (past the
-last second of year 9999), both read as **no expiry claim** — never as fresh. So do `nan`
-and an infinity: `nan` compares False against everything, so without an explicit check it
-would pass every test and be reported as an expiry of its own. An unknown expiry must not
-win the largest-expiry picker over a record that states one.
+Both sides implement the same rule, and
+`tests/unit/test_mapping_resolver_parity.py` pins the two copies together: the
+server decides whether a credential is fresh and the sidecar reports freshness
+independently, so a divergence would have them disagree about whether a login is
+alive.
 
-Every expiry field the registry maps today is epoch milliseconds
-(`claudeAiOauth.expiresAt`, `expiresAt`, `records.*.expiresAtMs`, `expiry_date`), so this
-is a robustness change rather than a fix for a live report. A provider that publishes
-another unit needs no rule change: the magnitude table covers s/ms/us/ns.
+| | Copy | Read by |
+|---|---|---|
+| server | `app/core/expiry.py::expiry_seconds` | `app/services/credential_provider.py` (freshness probe) and `app/core/utils.py` (`IdentityExtractor.exp_from_tokens`, the single source of truth for a stored bundle's expiry — the token cache, the auto-refresher and Credentials all read through it) |
+| sidecar | `scripts/sidecar_pkg/expiry.py::expiry_seconds` | `scripts/sidecar.py` (freshness probe) and `scripts/sidecar_pkg/xai_renewer.py` (a JWT's `exp` claim) |

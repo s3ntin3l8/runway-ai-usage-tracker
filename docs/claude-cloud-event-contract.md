@@ -1,8 +1,6 @@
 # Claude cloud-runner usage: the event contract
 
-**Status: draft for approval. No implementation follows until this is approved.**
-
-This is the specification the cloud-runner collector is built and accepted against (epic #669, track 1).
+This is the specification the cloud-runner collector (`app/services/claude_cloud_collector.py`, with its pure half `claude_cloud_events.py`) is built and accepted against.
 It is derived from real responses, not assumptions: every wire fact below is recorded in
 [`evidence/acceptance/claude-cloud-source-shape-20261029.md`](evidence/acceptance/claude-cloud-source-shape-20261029.md)
 and its companion JSON files. Where the data does not settle something, this document says so and gives
@@ -12,8 +10,8 @@ the default.
 
 Sessions of Claude Code that ran on Anthropic's cloud runner (`environment_kind == "anthropic_cloud"`
 in `GET /v1/code/sessions`). Local and bridged sessions are scraped locally and are not touched. Chat,
-Cowork, the local-versus-cloud cross-check (#1008), a UI toggle (#1026) and a health surface (#1023) are
-out of scope, as is side-model capture for local sessions (#1073).
+Cowork is out of scope, as is side-model capture for local sessions. The cross-check, the on/off switch and
+the health record are described under [Claude cloud-runner sessions](collection_logic.md#claude-cloud-runner-sessions).
 
 ## 2. Goal
 
@@ -202,9 +200,11 @@ branch values.
 
 ## 6. State kept
 
-One row per cloud session (keyed by `digest`, account): last `sequence_num`, last `last_event_at`,
-previous result's `modelUsage` per model (for 5.3), result ordinal, message and remainder counters, last
-cross-check result. No content, no ids. The coarse-collector tables are replaced.
+One `claude_cloud_session_checkpoint` row per cloud session (keyed by account and session digest): the last
+closed turn's `committed_sequence` and the encrypted cursor of the page that holds it, `last_event_at`, the
+reducer's serialised state (including the previous result's `modelUsage` per model, for 5.3), an `open_tail`
+flag, stall, turn, message and remainder counters, and the last cross-check label. No content, no ids.
+The collector's per-account health lives in `claude_cloud_collector_state`.
 
 ## 7. Acceptance criteria (checked on prod, read-only SQL plus the cycle log)
 
@@ -283,6 +283,6 @@ guard is unaffected; applying it twice is a no-op.
   documented.
 - The largest known session has not been read to its end (above 100 pages); its page count sets the
   backfill duration, not the design.
-- Side-model usage in **local** sessions is tracked in #1073.
+- Side-model usage in **local** sessions is not captured by this collector.
 - Not verified against live data: behaviour for a session that is still running (the open tail rule is a
   precaution, as every captured session was archived).

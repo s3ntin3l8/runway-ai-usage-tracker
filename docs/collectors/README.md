@@ -49,8 +49,9 @@ events and files them under the canonical provider they map to.
 ### `data_source` and `input_source`
 
 Every card carries both. They are defined once, in
-[`../statistics.md`](../statistics.md) — that document is the source of truth
-for their values; the other documents link to it rather than restating them.
+[`../collection_logic.md`](../collection_logic.md#card-provenance-labels) —
+the source of truth for their values; the other documents link to it rather
+than restating them.
 
 One note that is easy to get wrong: **`data_source: "local"` is never emitted
 by a server collector.** The constant exists in `app/services/collectors/base.py`,
