@@ -129,6 +129,11 @@ class OllamaCollector(BaseCollector):
     # Vague plan-name keywords only apply when no concrete reset is available.
     WINDOW_TYPE_WEAK_KEYWORDS = (("free", "monthly"),)
 
+    # The redesigned, signed-in "Usage" page loads its figures through a script
+    # (`data-usage-async`) and shows the free-usage model list in
+    # `#free-plan-models`, but carries no allowance meter, plan badge or email.
+    RE_USAGE_PAGE = re.compile(r"data-usage-async|id=[\"']free-plan-models[\"']", re.IGNORECASE)
+
     # Patterns for detecting logged-out state (case-insensitive)
     RE_SIGN_IN_HEADING = re.compile(r"sign in to ollama|log in to ollama", re.IGNORECASE)
     RE_AUTH_FORM = re.compile(
@@ -158,12 +163,16 @@ class OllamaCollector(BaseCollector):
         "invalid_api_key": "auth_failed",  # pragma: allowlist secret
         "not_logged_in": "auth_required",
         "missing_data": "parse_error",
+        "usage_not_on_page": "missing_config",
         "invalid_credential_type": "invalid_config",
     }
     ERROR_MESSAGES = {
         "invalid_api_key": "Ollama API key was rejected. Check or replace the key in provider settings.",  # pragma: allowlist secret
         "not_logged_in": "Not logged in. Please log in at ollama.com",
         "missing_data": "Could not parse usage data",
+        # Error-card detail is cut at 40 characters: keep this short and put the
+        # reason (the settings page no longer shows the allowance) in the docs.
+        "usage_not_on_page": "Add an Ollama API key for the quota",
         "invalid_credential_type": "API Key detected. Quota tracking requires a Session Cookie (ollama_session).",
     }
 
@@ -202,6 +211,10 @@ class OllamaCollector(BaseCollector):
         self._last_error_reason: str = "unknown"
         self.current_input_source: str = "server"
         self._no_monthly_cap = False
+        # Whether an API key is configured, resolved by the web strategy itself so
+        # it does not depend on which strategy ran first: advice to "add an API
+        # key" would be wrong for an account that has one.
+        self._api_key_configured = False
 
     def _is_error_result(self, results: list[dict[str, Any]]) -> bool:
         """Treat an API-confirmed no-cap response as a successful empty result."""
@@ -217,6 +230,7 @@ class OllamaCollector(BaseCollector):
     async def collect(self, client: httpx.AsyncClient) -> list[dict[str, Any]]:
         """Clear per-collection state before trying the configured strategies."""
         self._no_monthly_cap = False
+        self._api_key_configured = False
         return await super().collect(client)
 
     async def is_configured(self) -> bool:
@@ -236,15 +250,17 @@ class OllamaCollector(BaseCollector):
         """Reset collector state between collection runs."""
         self._last_error_reason = "unknown"
         self._no_monthly_cap = False
+        self._api_key_configured = False
 
     def _set_error_reason(self, reason: str) -> None:
         """Keep the most specific auth diagnosis across API and web fallback."""
         priority = {
             "unknown": 0,
             "missing_data": 1,
-            "not_logged_in": 2,
-            "invalid_credential_type": 3,
-            "invalid_api_key": 4,
+            "usage_not_on_page": 2,
+            "not_logged_in": 3,
+            "invalid_credential_type": 4,
+            "invalid_api_key": 5,
         }
         if priority.get(reason, 0) >= priority.get(self._last_error_reason, 0):
             self._last_error_reason = reason
@@ -285,6 +301,18 @@ class OllamaCollector(BaseCollector):
             self.current_input_source = "server"
             return settings.OLLAMA_API_KEY.strip()
         return None
+
+    async def _has_api_key(self) -> bool:
+        """Whether an API key is configured, without disturbing ``current_input_source``.
+
+        ``_get_api_key`` records where the key came from; the web strategy has
+        already recorded the cookie's origin and must keep it.
+        """
+        source = self.current_input_source
+        try:
+            return bool(await self._get_api_key())
+        finally:
+            self.current_input_source = source
 
     async def _get_cookie_header(self) -> str | None:
         """Combine session cookies (including chunked ones) into a header string."""
@@ -811,6 +839,7 @@ class OllamaCollector(BaseCollector):
 
         # Merge static headers with dynamic Cookie
         headers = {**self.STATIC_HEADERS, "Cookie": cookie_header}
+        self._api_key_configured = await self._has_api_key()
 
         try:
             # CRITICAL: set follow_redirects=True as Ollama often redirects to www. or /
@@ -851,6 +880,16 @@ class OllamaCollector(BaseCollector):
 
         blocks = self._get_usage_blocks(html, now)
         if not blocks:
+            if self.RE_USAGE_PAGE.search(html) and not self._api_key_configured:
+                # A signed-in page that simply no longer carries the allowance:
+                # not a parse failure of a known layout, and the cookie cannot
+                # fix it; the API key reads the quota. With a key already
+                # configured the advice would be wrong (the balance call failed
+                # for another reason), so that case stays a parse failure,
+                # whichever order the strategies ran in.
+                logger.debug("Ollama: settings page shows no allowance meter")
+                self._set_error_reason("usage_not_on_page")
+                return []
             logger.debug("Ollama: no usage data found in response")
             self._set_error_reason("missing_data")
             return []
