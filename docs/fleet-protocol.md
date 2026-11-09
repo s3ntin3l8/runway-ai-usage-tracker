@@ -35,11 +35,15 @@ a valid signature, so a retry must sign a fresh timestamp.
 Signature auth (the shared ingest key, or an enrolled device's own key — see
 below) guards the data-plane routes `POST /ingest` and
 `POST /credentials/manifest`; `POST /source-sync` accepts a device signature
-only. Every other fleet route is admin-authenticated, with one exception:
-`GET /fleet/config` is rate-limited (`60/minute`) and returns only the
-enabled/strategies view to anyone, unless the caller signs the request (with the
-ingest key or a device key) or the server is bound to loopback. This split is
-enforced by `tests/unit/test_forward_auth_routes.py`.
+only. Every other fleet route is admin-authenticated, with two exceptions:
+
+- `GET /fleet/config` is rate-limited (`60/minute`) and returns only the
+  enabled/strategies view to anyone, unless the caller signs the request (with
+  the ingest key or a device key) or the server is bound to loopback.
+- `POST /fleet/pair` is unauthenticated by design: the one-time pairing code is
+  the credential (see [Pairing](#pairing); 10 per minute per IP).
+
+This split is enforced by `tests/unit/test_forward_auth_routes.py`.
 
 ### Device identity — for enrolled sidecars
 
@@ -80,6 +84,9 @@ A new machine is enrolled by pairing:
    `device_id`, `device_key`, `device_api_url` and `source_protocol`, which
    enrol it as a device.
 4. It writes these to its config and exits; start the daemon afterwards.
+
+`POST /fleet/pair` is the one unauthenticated fleet route besides the limited
+`GET /fleet/config` view; the code in step 1 is what authorises it.
 
 Only pair with a link generated in **your own** dashboard — pairing points that
 machine's usage data and provider sign-ins at that server.
