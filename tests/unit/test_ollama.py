@@ -1408,13 +1408,17 @@ class TestOllamaSettingsEnrichment:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure", ["http_500", "timeout"])
-async def test_api_key_with_a_failing_balance_call_is_not_told_to_add_a_key(failure):
+@pytest.mark.parametrize("order", [["api", "web"], ["web", "api"]], ids=["api-first", "web-first"])
+async def test_api_key_with_a_failing_balance_call_is_not_told_to_add_a_key(failure, order):
     """An account that already has a key must not get "Add an Ollama API key".
 
     The balance call fails for another reason (a 500, a timeout) and the cookie
-    fallback then reads the Usage page: the card stays a parse error.
+    path reads the Usage page. That must stay a parse error whichever order the
+    strategies run in, including a persisted web-first order, so this goes through
+    ``collect()`` rather than calling the strategies in a fixed sequence.
     """
     collector = OllamaCollector(account_id="acc_test")
+    collector.apply_strategy_config([{"id": s_id, "enabled": True} for s_id in order])
     page = _make_response({})
     page.text = SETTINGS_FIXTURE.read_text(encoding="utf-8")
 
@@ -1432,13 +1436,28 @@ async def test_api_key_with_a_failing_balance_call_is_not_told_to_add_a_key(fail
         ),
         patch("app.services.collectors.ollama.http_request_with_retry", new=fake_http),
     ):
-        assert await collector._get_ollama_api(MagicMock()) == []
-        assert await collector._get_ollama_web(MagicMock()) == []
-        cards = await collector._error_handler()
+        cards = await collector.collect(MagicMock())
 
-    assert collector._last_error_reason == "missing_data"
+    assert len(cards) == 1
     assert cards[0]["error_type"] == "parse_error"
     assert cards[0]["detail"] != OllamaCollector.ERROR_MESSAGES["usage_not_on_page"]
+
+
+@pytest.mark.asyncio
+async def test_the_web_strategy_keeps_the_cookies_input_source_when_checking_for_a_key():
+    """Resolving key presence must not overwrite where the cookie came from."""
+    collector = OllamaCollector(account_id="acc_test")
+    collector.current_input_source = "sidecar"
+
+    async def fake_get_api_key():
+        # Like the real method, record where the key came from.
+        collector.current_input_source = "config"
+        return "k"
+
+    with patch.object(collector, "_get_api_key", new=fake_get_api_key):
+        assert await collector._has_api_key() is True
+
+    assert collector.current_input_source == "sidecar"
 
 
 def test_usage_page_marker_accepts_either_quote_style():
