@@ -54,10 +54,14 @@ SCHEDULES: dict[str, tuple[Window, ...]] = {
 
 class _Scheduled(Protocol):
     @property
-    def rate_schedule(self) -> str | None: ...
+    def rate_schedule(self) -> str | None:
+        """Name of the schedule in `SCHEDULES`, or None."""
+        raise NotImplementedError
 
     @property
-    def rate_schedule_multiplier(self) -> float | None: ...
+    def rate_schedule_multiplier(self) -> float | None:
+        """Factor applied inside the schedule's window, or None."""
+        raise NotImplementedError
 
 
 def _utc(ts: datetime) -> datetime:
