@@ -526,6 +526,14 @@ def test_rejected_database_retains_metadata_without_scanning(tmp_path, monkeypat
 
 
 def test_audit_records_the_expired_exceptions(tmp_path, monkeypatch):
+    # audit() reads the wall clock; pin it to NOW so the "live" entry (NOW + 30
+    # days) cannot expire under the test as real time advances.
+    class FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return NOW
+
+    monkeypatch.setattr(audit_module, "datetime", FrozenDatetime)
     exceptions = write_exceptions(
         tmp_path, [expired_exception(package="gone-package"), exception()]
     )

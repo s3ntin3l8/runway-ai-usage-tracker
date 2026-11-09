@@ -352,3 +352,71 @@ def test_dns_allocation_failure_is_bounded_and_closes_tcp(helper, monkeypatch, p
         servers(helper, port)
     assert len(binds) == attempts
     assert closed == binds
+
+
+def _winsock_denied() -> OSError:
+    # Shaped like a Windows bind failure: raw WSAEACCES (10013) in both fields,
+    # which matches neither errno.EACCES nor errno.EADDRINUSE on Linux.
+    exc = OSError(10013, "An attempt was made to access a socket in a way forbidden")
+    exc.winerror = 10013  # type: ignore[attr-defined]
+    return exc
+
+
+def _patch_winsock_udp(monkeypatch, fail_first):
+    import socketserver
+
+    binds = []
+    closed = []
+    original_bind = socketserver.ThreadingUDPServer.server_bind
+    original_close = socketserver.ThreadingTCPServer.server_close
+
+    def bind_udp(server):
+        binds.append(server.server_address)
+        if len(binds) <= fail_first:
+            raise _winsock_denied()
+        return original_bind(server)
+
+    def close_tcp(server):
+        closed.append(server.server_address)
+        original_close(server)
+
+    monkeypatch.setattr(socketserver.ThreadingUDPServer, "server_bind", bind_udp)
+    monkeypatch.setattr(socketserver.ThreadingTCPServer, "server_close", close_tcp)
+    return binds, closed
+
+
+def test_dns_allocation_retries_windows_access_denied(helper, monkeypatch):
+    binds, _ = _patch_winsock_udp(monkeypatch, fail_first=2)
+    udp, tcp = servers(helper, 0)
+    try:
+        assert len(binds) == 3
+        assert udp.server_address == tcp.server_address
+    finally:
+        udp.server_close()
+        tcp.server_close()
+
+
+def test_dns_allocation_windows_access_denied_is_bounded(helper, monkeypatch):
+    binds, closed = _patch_winsock_udp(monkeypatch, fail_first=99)
+    with pytest.raises(OSError) as info:
+        servers(helper, 0)
+    assert info.value.errno == 10013
+    assert len(binds) == 5
+    assert len(closed) == 5
+
+
+def test_dns_allocation_windows_access_denied_explicit_port_not_retried(helper, monkeypatch):
+    import socketserver
+
+    binds, closed = _patch_winsock_udp(monkeypatch, fail_first=99)
+    original_tcp_bind = socketserver.ThreadingTCPServer.server_bind
+
+    def bind_tcp(server):
+        server.server_address = (helper.bind, 0)
+        original_tcp_bind(server)
+
+    monkeypatch.setattr(socketserver.ThreadingTCPServer, "server_bind", bind_tcp)
+    with pytest.raises(OSError):
+        servers(helper, 19443)
+    assert len(binds) == 1
+    assert len(closed) == 1
