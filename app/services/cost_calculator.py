@@ -248,7 +248,7 @@ def resolve_price_row(
     # same. Guarded here, ahead of both, so the invariant is structural
     # rather than a property of which fallback happens to fire.
     free_tier = is_free_tier_model_id(model_id)
-    if row is None and provider_id == "ollama" and ":" in model_id:
+    if row is None and not free_tier and provider_id == "ollama" and ":" in model_id:
         # Ollama tags a size/variant after a colon ("gemma4:31b"); the pricing
         # page lists the family once ("gemma4"). Rows whose id carries its own
         # tag ("gpt-oss:20b") match exactly above. Scoped to ollama: other

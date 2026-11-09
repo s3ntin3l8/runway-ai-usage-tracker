@@ -90,6 +90,10 @@ def test_tag_fallback_is_scoped_to_ollama(session):
     assert resolve_price_row(session, "deepseek", "gemma4:31b", TS) is None
 
 
+def test_free_tier_tag_does_not_reach_paid_ollama_row(session):
+    assert resolve_price_row(session, "ollama", "gemma4:free", TS) is None
+
+
 def test_backdated_rows_do_not_touch_other_providers(session):
     before = compute_event_cost_breakdown(
         session,
