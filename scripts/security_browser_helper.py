@@ -274,13 +274,31 @@ def servers(
             try:
                 udp = reserved.enter_context(UDP((helper.bind, tcp.server_address[1]), UDPHandler))
             except OSError as exc:
-                if exc.errno in {errno.EACCES, errno.EADDRINUSE} and attempt + 1 < attempts:
+                if _port_unavailable(exc) and attempt + 1 < attempts:
                     continue
                 raise
             # Both sockets are now reserved; ownership transfers to the caller.
             reserved.pop_all()
             return udp, tcp
     raise AssertionError("DNS allocation exhausted without a result or exception")
+
+
+# Winsock codes WSAEACCES / WSAEADDRINUSE. Spelled as literals because
+# ``errno.WSAEACCES`` and ``OSError.winerror`` do not exist off Windows.
+_PORT_UNAVAILABLE_WINSOCK = {10013, 10048}
+
+
+def _port_unavailable(exc: OSError) -> bool:
+    """True when a bind failed because the port is excluded or taken.
+
+    CPython normally maps the Winsock code to ``errno.EACCES``/``EADDRINUSE``,
+    but a Winsock error can also surface with the raw WSA code in ``errno``
+    and/or ``winerror``; accept every spelling.
+    """
+    if exc.errno in {errno.EACCES, errno.EADDRINUSE}:
+        return True
+    winerror = getattr(exc, "winerror", None)
+    return exc.errno in _PORT_UNAVAILABLE_WINSOCK or winerror in _PORT_UNAVAILABLE_WINSOCK
 
 
 def http_server(
