@@ -31,6 +31,7 @@ Every card carries two labels, rendered raw on the credential rows as
 | `web` | A web endpoint called with a session cookie or scraped. More detail, but it breaks when the site changes. |
 | `local` | A local log, CLI output or application database. **Never emitted by a server collector** — a `local` card reached the server because a sidecar pushed it. |
 | `error` | The card reports a failure instead of a quota. |
+| `lsp` | A legacy value. No shipped collector emits it, but ingest still recognises it as the one exception to the rule that a sidecar may not push percentage-quota cards: quota cards come from server API collectors, and a sidecar quota card with any other `data_source` is dropped at ingest. |
 
 **`input_source`: where the credential came from**
 
