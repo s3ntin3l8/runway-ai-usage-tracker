@@ -218,7 +218,10 @@ def init_db() -> None:
                         session,
                         providers=[provider_id],
                         only_zero_cost=True,
-                        models=models,
+                        # Ollama events carry tagged ids ("gemma4:31b") that
+                        # resolve to an untagged seed row, so an exact-id
+                        # filter would miss them; unpriced ones stay $0.
+                        models=None if provider_id == "ollama" else models,
                         skip_windows=True,
                     )
                     logger.info(
