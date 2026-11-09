@@ -1,5 +1,6 @@
 import { CreditBreakdown } from '@/components/ui/CreditBreakdown';
 import { FreeModels } from '@/components/ui/FreeModels';
+import { UntrackedSpendNote } from '@/components/ui/UntrackedSpendNote';
 // Overview: "how am I doing right now?" — a KPI strip, any anomaly/error
 // alerts, the quota-window gauges, and a compact fill trajectory for the
 // critical window so the answer to "am I on pace?" is visible without a tab
@@ -215,6 +216,9 @@ export function OverviewTab({ entry, scope }: { entry: FleetEntry; scope: TabSco
   return (
     <div className="flex flex-col gap-4">
       <ProviderKpis entry={entry} scope={scope} excludeCache={excludeCache} />
+      {[entry.critical_gauge, ...entry.secondary_limits]
+        .filter((card) => card.untracked_spend_usd != null)
+        .map((card, i) => <UntrackedSpendNote key={i} card={card} />)}
       <ProviderErrorBanner providerId={entry.provider_id} accountId={entry.account_id} />
       <ProviderAnomalies providerId={entry.provider_id} accountId={entry.account_id} />
       {entry.server_collector_available && entry.critical_gauge.data_source === 'local' ? (

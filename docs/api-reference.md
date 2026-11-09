@@ -440,6 +440,7 @@ interface LimitCard {
   unit_type?: string;       // "currency" | "tokens" | "requests" | "minutes" | "percent" | "generic"
   currency?: string;      // "USD" | "EUR" | "CNY"
   free_models?: string[] | null; // Cloud models the free allowance covers (Ollama, cookie-backed)
+  untracked_spend_usd?: number | null; // Ollama allowance spend no tracked usage event explains
   credit_breakdown?: Array<{ // Optional purchased/promotional balance explanation
     kind: 'purchased' | 'subscription' | 'promotion';
     label: string;

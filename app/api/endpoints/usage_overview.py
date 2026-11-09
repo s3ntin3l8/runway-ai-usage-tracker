@@ -291,6 +291,11 @@ def _fetch_fleet_view_sync(session: Session) -> dict[str, Any]:
         billing_types,
     )
 
+    from app.services.queries.untracked_spend import apply_untracked_spend
+
+    for gcards in groups.values():
+        apply_untracked_spend(session, gcards)
+
     now = datetime.now(UTC)
     # Per-sidecar contribution for the user-local current month, computed live
     # from usage_events. The UTC-keyed rollup lags the local month boundary

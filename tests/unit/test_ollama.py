@@ -1027,6 +1027,7 @@ class TestOllamaBalanceCollector:
     def test_modern_shape_reports_allowance_and_reset(self):
         collector = OllamaCollector(account_id="acc_test")
         cards = collector._build_cards_from_api_balance(_balance_body(balance=2.0, allowance=2.5))
+        assert cards[0]["period_from"] == "2026-10-12T06:45:12+00:00"
         assert len(cards) == 1
         card = cards[0]
         assert card["service_name"] == "Ollama Cloud"

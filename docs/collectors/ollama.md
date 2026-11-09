@@ -90,6 +90,19 @@ Details are in [opencode.md](opencode.md). Notes:
 - Existing $0 Ollama events are re-costed when new rows are seeded (and by the Data Health
   fixer / `scripts/recost_events.py`); re-running is a no-op.
 
+## Untracked usage
+
+The allowance debits for every Ollama client, but `usage_events` only holds traffic the
+sidecars collected (the Ollama desktop app, `curl` or another machine never appear). The
+fleet view (`app/services/queries/untracked_spend.py`, called from `_fetch_fleet_view_sync`)
+compares `used_value` (allowance minus balance) with the summed priced `cost_usd` of that
+account's `ollama` events since `included.period.from` (carried on the card as `period_from`).
+When the difference exceeds the larger of $0.05 and 5% of the spend, the card gets
+`untracked_spend_usd` and its `detail` ends with `· $X not from tracked clients`; the UI
+renders a muted line under the gauge. Nothing is shown when there are no priced events in the
+period (not measurable) or the gap is small. Needs events priced at Ollama's rates, otherwise
+every event costs $0.
+
 ## Troubleshooting
 
 | Symptom | Fix |

@@ -576,8 +576,10 @@ class OllamaCollector(BaseCollector):
 
         period = included.get("period")
         reset_at = None
+        period_from = None
         if isinstance(period, dict):
             reset_at = self._parse_timestamp(period.get("until"))
+            period_from = self._parse_timestamp(period.get("from"))
 
         spent = allowance - balance
         pct = max(min(spent / allowance * 100.0, 100.0), 0.0)
@@ -607,6 +609,9 @@ class OllamaCollector(BaseCollector):
                 "unit_type": "currency",
                 "currency": "USD",
                 "reset_at": reset_at.isoformat() if reset_at else None,
+                # Transport extra: the allowance period start, so the server can
+                # sum tracked event cost over the same window (untracked spend).
+                "period_from": period_from.isoformat() if period_from else None,
                 "account_label": self.account_label or "",
                 "window_type": "monthly",
                 # A distinct pool: the card's unit changed from percent (the

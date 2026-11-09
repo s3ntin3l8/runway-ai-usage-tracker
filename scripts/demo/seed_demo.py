@@ -211,19 +211,18 @@ def opencode_cards() -> list[dict[str, Any]]:
 
 
 def ollama_cards() -> list[dict[str, Any]]:
-    # No account_id: the parser then takes the identity from the page itself.
-    c = OllamaCollector()
-    html = f"""
-    <html><head><span id="header-email">{EMAIL}</span></head><body>
-      <div>Cloud Usage <span class="capitalize">Pro</span></div>
-      <div class="usage-block"><span>Session usage</span>
-        <div class="bar" style="width: 18.0%"></div><span class="text">18.0% used</span>
-        <span data-time="{iso(NOW + timedelta(hours=3))}">Resets soon</span></div>
-      <div class="usage-block"><span>Weekly usage</span>
-        <div class="bar" style="width: 9.0%"></div><span class="text">9.0% used</span>
-        <span data-time="{iso(NOW + timedelta(days=5))}">Resets later</span></div>
-    </body></html>"""
-    return c._tag_results(c._parse_html(html))
+    # The allowance shape of /api/balance. $4.50 of the $20 spent is more than the
+    # priced Ollama events below explain, so the card shows the untracked-spend line.
+    c = OllamaCollector(account_label=EMAIL)
+    included = {
+        "allowance_usd": 20.0,
+        "balance_usd": 15.5,
+        "period": {
+            "from": iso(NOW - timedelta(days=20)),
+            "until": iso(NOW + timedelta(days=10)),
+        },
+    }
+    return c._tag_results(c._cards_from_included_credits(included, None) or [])
 
 
 # --- Quota history --------------------------------------------------------------
@@ -300,6 +299,7 @@ EVENT_PLAN: list[tuple[str, str, list[tuple[str, float]], tuple[int, int], float
     ("chatgpt", EMAIL, [("gpt-5.5", 0.6), ("gpt-5.3-codex", 0.4)], (15, 70), None),
     ("gemini", EMAIL, [("pro", 0.7), ("flash", 0.3)], (5, 30), None),
     ("opencode", EMAIL, [("kimi-k2", 1.0)], (5, 25), 0.012),
+    ("ollama", EMAIL, [("gpt-oss:120b", 0.6), ("qwen3-coder:480b", 0.4)], (3, 10), 0.012),
 ]
 
 
