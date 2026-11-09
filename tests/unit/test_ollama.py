@@ -1221,9 +1221,7 @@ def test_the_page_email_is_reported_as_verified_identity(ollama_html):
 
 # --- ollama.com/settings fixture (#1287) -----------------------------------
 
-SETTINGS_FIXTURE = (
-    Path(__file__).resolve().parents[1] / "fixtures" / "ollama_settings_included_usage.html"
-)
+SETTINGS_FIXTURE = Path(__file__).parent.parent / "fixtures" / "ollama-settings-included-usage.html"
 
 _FREE_MODELS = (
     "beam",
@@ -1254,6 +1252,25 @@ def test_settings_fixture_carries_the_free_model_list():
 def test_settings_fixture_holds_no_account_data():
     html = SETTINGS_FIXTURE.read_text(encoding="utf-8")
 
-    assert "@" not in html
+    assert re.search(r"\S+@\S+\.\S+", html) is None
+    assert "mailto:" not in html
     assert "header-email" not in html
     assert "<script" not in html.lower()
+
+
+def test_live_settings_page_yields_no_legacy_meter_cards():
+    """Records the page drift found while capturing the fixture (#1287).
+
+    The live page loads its usage figures asynchronously, so the raw response
+    has no usage meter, plan badge or account-email element: ``_parse_html``
+    finds no cards, and the page does not look signed out either, so the web
+    strategy degrades to "missing data" rather than an auth error. If Ollama
+    renders the meter server-side again, this fails and the fixture should be
+    recaptured.
+    """
+    html = SETTINGS_FIXTURE.read_text(encoding="utf-8")
+    collector = OllamaCollector()
+
+    assert collector._looks_signed_out(html) is False
+    assert collector._parse_html(html) == []
+    assert collector._last_error_reason == "missing_data"
