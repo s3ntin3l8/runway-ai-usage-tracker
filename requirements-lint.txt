@@ -9,7 +9,7 @@
 # pip-audit and pre-commit for the other gates. The test suite's set is
 # `requirements-test.txt`, and the union of the two is
 # `requirements-dev.txt`.
-ruff==0.17.3
+ruff==0.17.4
 mypy==2.4.1
 types-PyYAML==6.0.12.20261103
 pip-audit==2.10.1
