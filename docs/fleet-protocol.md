@@ -20,7 +20,7 @@ Two independent schemes.
 ### HMAC ingest auth — for the data plane
 
 The sidecar signs its payloads with the shared ingest key (`INGEST_API_KEY`).
-Three headers:
+Two headers:
 
 | Header | Value |
 |---|---|
@@ -32,9 +32,10 @@ rejected on replay — receipts are held for 360 seconds and contain neither the
 request body nor reusable signature material. An invalid request also consumes
 a valid signature, so a retry must sign a fresh timestamp.
 
-HMAC auth applies to exactly two routes: `POST /ingest` and
+Shared-key HMAC auth guards the data-plane routes `POST /ingest` and
 `POST /credentials/manifest`. Every other fleet route is admin-authenticated
-or device-authenticated, with one exception: `GET /fleet/config` is neither —
+or device-authenticated (`POST /source-sync`), with one exception:
+`GET /fleet/config` is neither —
 it is rate-limited (`60/minute`) and returns only the enabled/strategies view
 to anyone, unless the caller signs the request with the ingest key or the
 server is bound to loopback. This split is enforced by
@@ -43,7 +44,12 @@ server is bound to loopback. This split is enforced by
 ### Device identity — for enrolled sidecars
 
 An enrolled sidecar has a random HMAC secret of its own, stored encrypted.
-Source identity is **(device, scraper, origin/account, generation)** —
+Its requests carry `X-Runway-Device-Id`, `X-Timestamp` and `X-Signature`, an
+HMAC-SHA256 over `DEVICEv1|device_id|timestamp|purpose|` plus the raw body (raw
+query bytes for `GET /config`). The purpose (`ingest`, `manifest`, `config` or
+`source-sync`) binds the operation without relying on a proxy preserving the
+public path, and the shared key can neither authenticate a device header nor
+claim a reserved `device-<hex>` identity. Source identity is **(device, scraper, origin/account, generation)** —
 hostnames are labels, not identity. Legacy shared-key clients stay compatible
 but cannot impersonate an enrolled device.
 
@@ -66,10 +72,12 @@ A new machine is enrolled by pairing:
    `PAIRING_CODE_TTL_SECONDS` (default 600 s).
 2. The operator opens the `runway-sidecar://pair?…` link on the new machine,
    or runs `runway-sidecar-cli --pair SERVER_URL CODE`.
-3. The sidecar posts the code to `POST /fleet/pair` and receives its device
-   secret and the server configuration.
-4. It writes `api_url` / `api_key` to its config and exits; start the daemon
-   afterwards.
+3. The sidecar posts the code to `POST /fleet/pair` (it sends its
+   `device_protocol` and platform) and receives `api_url` and `api_key`. When
+   the server has `DB_ENCRYPTION_KEY` configured the response also carries
+   `device_id`, `device_key`, `device_api_url` and `source_protocol`, which
+   enrol it as a device.
+4. It writes these to its config and exits; start the daemon afterwards.
 
 Only pair with a link generated in **your own** dashboard — pairing points that
 machine's usage data and provider sign-ins at that server.
@@ -131,14 +139,15 @@ drops it as soon as the sidecar stops reporting that store.
 
 ## Credential tags
 
-`POST /fleet/credentials/tags` lets a sidecar propose an account label for a
-credential it found — for example an email address that identifies the Claude
-account behind an opaque credential id.
-
-Tags are a proposal, not a decision. The operator assigns them; the server
-records the mapping. `GET /fleet/credentials/tags` lists them,
-`DELETE /fleet/credentials/tags` removes one, and
-`GET /fleet/credentials/tags/pending` lists the tags still waiting.
+A credential origin (`env:…`, `path:…`, `cookie:…`) that no tag resolves yet is
+reported by the sidecar in the manifest and waits as a pending origin.
+`GET /fleet/credentials/tags/pending` lists them. The **operator** resolves one
+with `POST /fleet/credentials/tags`, an admin route that maps the origin to a
+configured account, either for one sidecar or deployment-wide.
+`GET /fleet/credentials/tags` lists the resolved tags and
+`DELETE /fleet/credentials/tags` removes one. A sidecar never writes a tag; it
+only receives the resolved mappings in the manifest response and in
+`GET /config`.
 
 ## Pending events
 
@@ -194,7 +203,8 @@ source (pause or resume, ask the Mac to set up, revoke after a confirmation), an
 ## Source lifecycle
 
 `GET /fleet/sidecars/{id}/sources` reports the sources on one machine, and
-`POST /fleet/source-sync` synchronises source state across the fleet.
+`POST /fleet/source-sync` is how an enrolled device reports its sources and
+acknowledges the commands the server queued for them.
 
 Local consent, authorization, remote pause, collection health, renewal
 support, last success and report time are all distinct. **Offline/stale
@@ -202,36 +212,9 @@ reporting is not the same as server-side collection health** — a sidecar that
 has not checked in still holds its credentials, and the server keeps using
 eligible ones.
 
-## Route index
-
-| Method | Route |
-|---|---|
-| POST | `/ingest` |
-| POST | `/credentials/manifest` |
-| POST / GET / DELETE | `/credentials/tags` |
-| GET | `/credentials/tags/pending` |
-| GET / POST | `/credentials/{source_id}/claude-organizations` |
-| GET | `/events/pending` |
-| GET | `/events/pending/sessions` |
-| POST | `/events/pending/assign` |
-| POST | `/events/pending/assign-batch` |
-| GET | `/sidecars` |
-| GET / PATCH / DELETE | `/sidecars/{sidecar_id}` |
-| PUT | `/sidecars/{sidecar_id}/settings` |
-| PUT | `/sidecars/{sidecar_id}/keep-alive` |
-| POST | `/sidecars/{sidecar_id}/pause` |
-| POST | `/sidecars/{sidecar_id}/resume` |
-| POST | `/sidecars/{sidecar_id}/update` |
-| GET | `/config` |
-| POST | `/pairing-codes` |
-| POST | `/pair` |
-| POST | `/source-sync` |
-| GET | `/sidecars/{sidecar_id}/sources` |
-| POST | `/sidecars/{sidecar_id}/sources/{source_id}/commands` |
-
 ## Related
 
-- [`api-reference.md`](api-reference.md) — every route, with its auth scheme.
+- [`api-reference.md`](api-reference.md) — every route, with its auth scheme (the route index lives there).
 - [`SECURITY.md`](SECURITY.md) — the trust model these routes implement.
 - [`source-consent.md`](source-consent.md) — what may be read, and who says so.
 - [`sidecar.md`](sidecar.md) — the sidecar side of the protocol.
