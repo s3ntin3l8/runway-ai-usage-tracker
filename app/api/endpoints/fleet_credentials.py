@@ -323,6 +323,7 @@ async def _retire_missing_claude_sources(
 def _validate_device_manifest(
     request: Request, payload: CredentialManifestRequest, session: Session
 ) -> None:
+
     from app.services import sidecar_devices
 
     payload.sidecar_id = (
