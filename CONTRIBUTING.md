@@ -151,8 +151,8 @@ its links left in place.
 Then `make dev-all` (server + Vite + sidecar) or `make dev` (server only) —
 note that `make dev` alone no longer sees your local CLI logins (Gemini, Claude,
 Codex, `gh`, opencode, ...): the server reads no credential files, so use
-`make dev-all` to collect from them. See the [Quick Start](README.md#quick-start) and
-[Development Shortcuts](README.md#development-shortcuts) in `README.md`.
+`make dev-all` to collect from them. See the [Quick start](README.md#quick-start) in `README.md`, and run
+`make help` for every target.
 
 ## Before opening a PR
 

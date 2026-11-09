@@ -1112,8 +1112,6 @@ changing parser acceptance, request budgets, or retry rules. It contains only
 a supported provider contract. Historical checkpoint evidence stays encrypted
 locally when a changed source suppresses the public projection.
 
-See [the #956 design and acceptance boundaries](claude-complete-history-verification-956.md).
-
 ### Failed Claude list-boundary diagnostic (operator only)
 
 `POST /api/v1/system/debug/claude-cloud-list-boundary` accepts only
