@@ -32,14 +32,14 @@ rejected on replay — receipts are held for 360 seconds and contain neither the
 request body nor reusable signature material. An invalid request also consumes
 a valid signature, so a retry must sign a fresh timestamp.
 
-Shared-key HMAC auth guards the data-plane routes `POST /ingest` and
-`POST /credentials/manifest`. Every other fleet route is admin-authenticated
-or device-authenticated (`POST /source-sync`), with one exception:
-`GET /fleet/config` is neither —
-it is rate-limited (`60/minute`) and returns only the enabled/strategies view
-to anyone, unless the caller signs the request with the ingest key or the
-server is bound to loopback. This split is enforced by
-`tests/unit/test_forward_auth_routes.py`.
+Signature auth (the shared ingest key, or an enrolled device's own key — see
+below) guards the data-plane routes `POST /ingest` and
+`POST /credentials/manifest`; `POST /source-sync` accepts a device signature
+only. Every other fleet route is admin-authenticated, with one exception:
+`GET /fleet/config` is rate-limited (`60/minute`) and returns only the
+enabled/strategies view to anyone, unless the caller signs the request (with the
+ingest key or a device key) or the server is bound to loopback. This split is
+enforced by `tests/unit/test_forward_auth_routes.py`.
 
 ### Device identity — for enrolled sidecars
 
@@ -49,7 +49,8 @@ HMAC-SHA256 over `DEVICEv1|device_id|timestamp|purpose|` plus the raw body (raw
 query bytes for `GET /config`). The purpose (`ingest`, `manifest`, `config` or
 `source-sync`) binds the operation without relying on a proxy preserving the
 public path, and the shared key can neither authenticate a device header nor
-claim a reserved `device-<hex>` identity. Source identity is **(device, scraper, origin/account, generation)** —
+claim a reserved `device-<hex>` identity. The device key is accepted on
+`/ingest`, `/credentials/manifest` and `GET /config` as well as `/source-sync`. Source identity is **(device, scraper, origin/account, generation)** —
 hostnames are labels, not identity. Legacy shared-key clients stay compatible
 but cannot impersonate an enrolled device.
 
@@ -74,7 +75,8 @@ A new machine is enrolled by pairing:
    or runs `runway-sidecar-cli --pair SERVER_URL CODE`.
 3. The sidecar posts the code to `POST /fleet/pair` (it sends its
    `device_protocol` and platform) and receives `api_url` and `api_key`. When
-   the server has `DB_ENCRYPTION_KEY` configured the response also carries
+   the sidecar sent `device_protocol` 1 and the server has `DB_ENCRYPTION_KEY`
+   configured, the response also carries
    `device_id`, `device_key`, `device_api_url` and `source_protocol`, which
    enrol it as a device.
 4. It writes these to its config and exits; start the daemon afterwards.
