@@ -60,7 +60,7 @@ Upgrading from 2.x? See the [v3 migration notes](docs/migration-v3.md).
 - **Sidecars** run on each workstation to read local logins and per-message events, then push them to the server. Pair a new one from Fleet with a one-time link.
 - **Fleet** lists every sidecar with version, OS and activity, pause and resume, per-sidecar settings and updates, and a banner for credentials found but not yet mapped to an account.
 - **Credentials** (Settings → Credentials) show where each account's login comes from — which machine, environment variable, file, keychain or cookie — its expiry, and refresh or remove actions.
-- **Keep-alive** (opt-in) renews xAI, Claude Code, Codex and Antigravity logins from the sidecar so they do not lapse while the CLI sits idle. The tray app renews Claude on macOS only. Set a fleet-wide default and override it per login.
+- **Keep-alive** (opt-in) renews xAI, Claude Code, Codex and Antigravity logins from the sidecar so they do not lapse while the CLI sits idle. It is not supported by the tray app. Set a fleet-wide default and override it per login.
 
 **Operations**
 - **Alerts** to Discord or Slack when a limit crosses a threshold or a login expires or is rejected.

@@ -40,6 +40,7 @@ run it. This index covers everything else.
 |---|---|
 | [architecture.md](architecture.md) | The event-sourced data model, the ingest path, the service modules and the collectors. |
 | [collection_logic.md](collection_logic.md) | How a collector turns a response into a card: strategies, enrichment, reconciliation. |
+| [statistics.md](statistics.md) | The `data_source` / `input_source` taxonomy. **The source of truth for those values.** |
 | [statistics.md](statistics.md) | The `data_source` / `input_source` values every card carries. |
 | [api-reference.md](api-reference.md) | Every `/api/v1` route, its auth, and the `LimitCard` schema. |
 | [fleet-protocol.md](fleet-protocol.md) | The sidecar↔server protocol: ingest auth, pairing, credential manifests, remote control. |
@@ -62,13 +63,13 @@ run it. This index covers everything else.
 
 ## Point-in-time records
 
-These are **frozen**. They are not maintained, and where one contradicts a
-reference document above, the reference document wins.
+Some material here is **frozen**. It is not maintained, and where a record
+contradicts a reference document above, the reference document wins.
 
 | Directory | What it holds |
 |---|---|
-| [evidence/](evidence/README.md) | Acceptance and verification records named after the issue they evidence. They hold booleans, counts and statuses, never credentials or account identifiers. |
-| [audit/](audit/README.md) | Audit reports named `YYYY-MM-<scope>-<topic>.md`; two are frozen snapshots and say so in their banner. |
+| [evidence/](evidence/README.md) | Append-only acceptance and verification records named after the issue they evidence. They hold booleans, counts and statuses, never credentials or account identifiers. |
+| [audit/](audit/README.md) | Audit reports named `YYYY-MM-<scope>-<topic>.md`. The UI/UX audit is maintained; the other two are frozen snapshots and say so in their banner. |
 
 ## A note on dates
 
