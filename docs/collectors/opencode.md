@@ -1,353 +1,98 @@
-# OpenCode Collector
+# OpenCode
 
-**File:** `app/services/collectors/opencode.py` (server) · `scripts/sidecar.py` (sidecar)
+**File:** `app/services/collectors/opencode.py`
 
-OpenCode quota collector with API-key and session-cookie strategies.
+Quota cards for the OpenCode Go subscription (server), plus per-message usage events and session names read from OpenCode's local database (sidecar).
 
-## Overview
+## At a glance
 
-- **Strategy:** `api` (primary, bearer token) → `web` (fallback, console session cookies)
-- **Cards:** 3 cards per account (5h rolling, 7d weekly, 30d monthly)
-- **Auth:** OpenCode Go API key (`oc_sk_…`), or session cookies (`auth` + `__Host-console_session`)
-- **Local history:** The sidecar extracts per-message usage events from OpenCode's SQLite database; it does not emit rolling quota cards from that database.
+- **Strategies** (in order): `api` (OpenCode API key, bearer) then `web` (console session cookies).
+- **Cards:** up to three per account, all USD: `session` (5h rolling), `weekly` (7d) and `monthly` (30d). Default limits when the API omits one: $12 / $30 / $60.
+- **Labels:** the bearer endpoint is `data_source: api`, the cookie endpoint is `web`. `input_source` is `config` (key or cookies pasted in Settings), `sidecar` (discovered locally) or `server` (environment variable).
+- Strategy and label semantics: [collection_logic.md](../collection_logic.md) and [architecture.md](../architecture.md#standard-definitions).
 
-### Local history: v1 vs v2 databases
+## Credentials
 
-OpenCode v2 migrates `opencode.db` **in place** and leaves the v1 tables behind,
-frozen. The sidecar picks the reader by schema:
+Precedence for one account: a saved Settings value, then a sidecar-discovered credential, then a server environment variable. The server never reads another host's files.
 
-| | v1 (≤ 1.x) | v2 |
+| Source | Where | Runs in | Notes |
+|---|---|---|---|
+| CLI key | `~/.local/share/opencode/auth.json` or `~/.opencode/auth.json`, entry `opencode-go.key` | sidecar | Key shape `oc_sk_...`. |
+| OpenCode v2 key | `credential` table in `opencode.db` | sidecar | v2 imports `auth.json` once and never reads it again; the sidecar reads the table in the legacy `auth.json` shape. |
+| Environment | `OPENCODE_API_KEY` (preferred), `OPENCODE_GO_API_KEY` | sidecar or server | A server uses it for the default account. |
+| Settings paste | Providers, opencode, `OpenCode API Key` | server | Stored encrypted in `provider_configs`; survives restarts. |
+| Cookies | `auth` and `__Host-console_session` on `opencode.ai` | sidecar (browser) or Settings paste | Both are required; a multi-cookie paste is split. Without both the console returns 401. |
+| Workspace id | The account's workspace field in Settings | server | Needed only when the cookie account has several Go workspaces. |
+
+Other providers that read the same `auth.json` (openrouter, minimax, kimi_coding, ollama, xai, ...) are covered in their own docs; this page is the reference for how that file and the v2 database are discovered.
+
+### Account identity
+
+An `oc_sk_` key carries no account identity, so a discovered key is shown under **Fleet, Untagged Credentials** until it is assigned. The sidecar reports it under a key-scoped origin (`path:.../auth.json#<fingerprint>` or `env:OPENCODE_API_KEY#<fingerprint>`); only the fingerprint crosses the wire. A rotated key is a new origin and needs a new tag. Background: [Credential origins and operator tags](../architecture.md#credential-origins-and-operator-tags).
+
+The sidecar resolves the account most-specific first:
+
+| # | Tier | Meaning |
 |---|---|---|
-| Detected by | no `session_v2` table | `session_v2` table present (1.19 already ships an empty `session_message`, so that is not the signal) |
-| Messages | `message` (`data.role = 'assistant'`) | `session_message` (`type IN ('assistant','compaction')`) |
-| Model / provider | `data.modelID`, `data.providerID` | `data.model.id`, `data.model.providerID` |
-| Effort | `data.variant` | `data.model.variant` (`"default"` = none) |
-| Working dir | `data.path.cwd` | `session_v2.directory` |
+| 0 | `OPENCODE_ACCOUNT_LABEL` | Host-local, explicit; outranks every server-side hint. |
+| 1 | Keyed origin tag | Operator tag on this exact credential. |
+| 1b | Fingerprint hint | `provider:opencode#<fingerprint>` when the same key is pasted in Settings. |
+| 2 | Legacy plain tag | A `path:...` tag from before origins were fingerprinted. It still resolves on any host with the same path and after a key rotation, so replace it with a tag on the keyed origin. |
+| 3 | Provider-wide hint | `provider:opencode`, used only when the server has one account and the local state does not contradict it. |
 
-Message ids and `time_created` survive the migration, so existing watermarks and
-event ids carry over (no re-ingest, no duplicates). The database is opened
-read-only. A v2 row still streaming (no `time.completed`/`error`, or a `running`
-compaction) is held back — and everything after it — until it settles, because
-ingest is insert-or-ignore; one that stays unsettled for over an hour is treated
-as abandoned and skipped. "Abandoned" means the owning opencode process crashed or
-was killed mid-response; the one-hour threshold (`_V2_PENDING_GRACE_MS`) is
-deliberately generous for a normal turn or compaction, and a row that settles
-only after it has been skipped is not recovered (its `time_created` is already
-behind the watermark). Compactions with no cost and no non-zero token count produce no
-event. `OPENCODE_DB` (opencode's own override) is honoured when set.
+The tier-3 check compares the key with the CLI's own record of the active `opencode-go` account: `account.json` next to the `auth.json` the key came from, or the `credential` table on v2. If a different key is active the hint is withheld and the credential stays untagged.
 
-`scripts/reclassify_opencode_providers.py` reads **both** layouts too, and picks the
-same reader by schema. It used to query only the v1 `message` table, so on a migrated
-database it saw the history from before the migration and none of the usage since —
-the migration silently reclassified nothing and the events kept their old provider
-ids. It now reuses the extractor's own detection, query and reshaping, so the two
-readers cannot drift apart.
-
-`auth.json` is likewise no longer read by OpenCode v2 (credentials moved to the
-`credential` table); see the credential-discovery notes above.
-
-## Auth Sources
-
-Saved provider credentials take precedence for their account, followed by credentials discovered by the sidecar and then server environment variables. Local files and browser cookies are read by the sidecar; the server does not inspect another machine's filesystem.
-
-### 1. CLI discovery
-
-The opencode CLI stores every configured provider's credential in
-`~/.local/share/opencode/auth.json`. Runway reads `opencode-go.key` from
-this file on hosts where the sidecar runs. Since the file can contain
-keys for several provider accounts without reliable account identity,
-newly discovered keys appear under Untagged Credentials until assigned
-to a provider account — unless one of the identity sources below resolves
-them first. The sidecar reports the key under a **key-scoped origin**
-(`path:…/auth.json#<fingerprint>`, see *Account identity*), so two hosts —
-or one host after a key rotation — never share a tag.
-
-```
-~/.local/share/opencode/auth.json
-└── "opencode-go": {"type": "api", "key": "oc_sk_…"}
-```
-
-The same extraction works from `~/.opencode/auth.json` (alternate install
-location).
-
-### 2. Environment variable
-
-`OPENCODE_API_KEY=oc_sk_…` may be set on the sidecar or server. The
-sidecar reports local environment values; a server uses its environment
-value for the default account.
-
-### 3. UI / `provider_configs` manual paste
-
-The Providers → opencode page exposes an `OpenCode API Key (api)` field
-that encrypts and persists the key into `provider_configs.api_key_encrypted`.
-The collector reads the account-scoped value directly, so it remains
-available after restart and does not expire with the sidecar token cache.
-
-### 4. Cookie fallback (legacy / non-migrated workspaces)
-
-Two cookies are required: `auth` and `__Host-console_session`. The
-sidecar extracts both from the browser on each cycle, and the manual UI
-paste accepts a multi-cookie string that gets split into the two
-tokens. Without both cookies, the console handshake returns 401 /
-`{"_tag":"Unauthorized"}` and the dashboard surfaces an auth_failed
-error card.
-
-## Account Identity
-
-### Why the CLI key has no identity of its own
-
-Runway needs to know *whose* `oc_sk_…` key it found. For the OpenCode CLI
-there is no such answer in the credential, and none online either. Every
-source was checked and comes back empty:
-
-| Source checked | What it returned |
-|---|---|
-| `opencode auth list` | Display names only — no email, no account id |
-| `opencode debug info` / `debug paths` | Paths and versions; nothing identity-shaped |
-| `opencode.db` `account(email, …)` table | Empty (0 rows) and not linked to the API key |
-| `anomalyco/opencode` `console/app/src/routes/zen/go/v1/*` | `{chat, messages, models, responses, systemone, usage}` — no identity route |
-| `GET https://opencode.ai/zen/go/v1/usage` | `{"usage": {rolling, weekly, monthly}}` only |
-| `GET https://opencode.ai/console/api/user` | Cookie-only; 401 with a bearer token |
-| `~/.local/state/opencode` | Nothing |
-
-So the sidecar cannot *derive* an account for a discovered key. It must
-also never *inherit* one: `path:/home/u/.local/share/opencode/auth.json`
-is identical on every host with the same username, and identical before
-and after a key rotation. If that were the origin, two different keys
-would share one operator tag and silently land on each other's account.
-
-### Key-scoped origins
-
-Origins for opencode are therefore suffixed with a 12-hex fingerprint of
-the *key* (`credential_fingerprint`, PBKDF2-HMAC-SHA256, salt
-`runway-credential-fp-v1`):
-
-```
-path:/home/alice/.local/share/opencode/auth.json#495fa9c614ce
-env:OPENCODE_API_KEY#495fa9c614ce
-```
-
-Only the fingerprint crosses the wire — never the key. The server builds
-the same value from a key pasted into `provider_configs`, under
-`provider:opencode#<fingerprint>` (it does not know the sidecar's paths;
-the sidecar does not know which account row matched).
-
-**Key rotation produces a new fingerprint, hence a new origin.** The old
-tag stays on the old credential and the rotated key lands in Untagged
-Credentials until it is tagged again or matched by a pasted key below.
-
-### The sibling providers (#349)
-
-Five providers read this same `auth.json` — `openrouter`, `minimax`,
-`kimi_coding`, `ollama` and `xai` — and inherit the identical problem, so
-their origins are keyed exactly the same way. The membership lives in one
-constant, `FINGERPRINTED_ORIGIN_PROVIDERS`, mirrored in
-`app/services/account_identity.py` (what the server answers hints for) and
-`scripts/sidecar_pkg/identity.py` (what the sidecar suffixes). Two details
-worth knowing:
-
-- **xai's field is `xai_refresh`, falling back to `xai_access`.** No xai
-  candidate carries `api_key` — its rules map every source's bearer to
-  `xai_access` — and that bearer is the part that expires: a fresh login's
-  token measured `iat → exp` at ~6 hours (2026-10), and it rotates several
-  times a day — Runway refreshes it when a candidate ships a refresh
-  token, and the Grok / OpenCode CLI refreshes it from its own session
-  too. Fingerprinting it would therefore re-key the origin on every
-  refresh. File and CLI candidates ship a refresh token and are keyed by
-  it; `GROK_OAUTH_TOKEN` has none and falls back to its bearer. The server
-  still fingerprints `provider_configs.api_key`, which holds a pasted
-  *access* bearer, so its `provider:xai#<fp>` hint answers for the env
-  candidate and never for a refresh-keyed file/CLI origin — see
-  [xai.md](xai.md).
-- **Non-key candidates stay plain.** A cookie (`cookie:ollama/session`),
-  `kimi_coding`'s own CLI credential file, and `openrouter`'s cosmetic
-  `OPENROUTER_HTTP_REFERER` / `OPENROUTER_X_TITLE` env vars carry no key
-  field and keep their existing origins — nothing an operator already
-  tagged moves. `kimi` itself is outside the set (#349's scope).
-
-The cascade below applies to them unchanged, including tier 1b's
-`provider:<pid>#<fingerprint>` hint and the tier-2 legacy fallback. Only the
-tier-3 `account.json` gate is opencode-specific: the siblings have no local
-state that can contradict the provider-wide hint, so they take it ungated.
-
-### Resolution cascade
-
-The sidecar resolves a token card's account most-specific-first; whatever
-remains unresolved is blocked and shown in **Fleet → Untagged
-Credentials**:
-
-| # | Tier | Source |
-|---|---|---|
-| 0 | `OPENCODE_ACCOUNT_LABEL` | Host-local, explicit. Local evidence outranks every server-side hint — the same precedence `_opencode_account_email` applies to events. |
-| 1 | Keyed origin tag | Operator tag written against this exact credential (`…#<fingerprint>`). |
-| 1b | Fingerprint hint | `provider:opencode#<fingerprint>` → account, when the same key is in `provider_configs`. Not a guess, so it ships even in multi-host deployments. |
-| 2 | Legacy plain tag | `path:…` tag written by an older sidecar, before origins were fingerprinted. **Compat only — see below.** |
-| 3 | Provider-wide auto-hint | `provider:opencode` → account, **gated** (below). |
-| — | Untagged | Nothing resolved; the credential is not shipped. |
-
-Tier 2 exists so an upgrade does not strand operators who already tagged a
-credential, but it is *not* isolation. A tag on the plain `path:…` origin
-carries no fingerprint, so it still resolves for any host whose base path
-matches (same username, different machine) and it still matches after the
-key under it has been rotated — exactly the silent cross-inheritance
-failure keyed origins were introduced to close. Treat it as a debt to
-clear: tag the entry's keyed origin (`…#<fingerprint>`) in **Fleet →
-Untagged Credentials**, then delete the legacy row from **Fleet →
-Credential mappings**. Until then the credential inherits whatever
-account the legacy tag names.
-
-### The tier-3 gate
-
-`provider:opencode` is the last resort and can only mean one thing: "the
-server has exactly one account configured, so it is probably that one."
-Before honouring it, the sidecar compares the discovered key against
-`account.json`'s active `opencode-go` record — the only local evidence
-that can contradict the guess. Only the `account.json` *sitting next to
-the `auth.json` the key came from* is read: where both
-`~/.local/share/opencode/` and `~/.opencode/` exist, neither directory
-gets a vote over the other's credential:
-
-| `account.json` state | Result |
-|---|---|
-| Absent, unreadable, no active record for `opencode-go` | `"unknown"` — no contradicting evidence, the hint applies (preserves behaviour for older CLI installs). |
-| Active record holds this exact key | `"single"` — one live account, the discovered key is it. Hint applies. |
-| Active record holds a *different* key | `"ambiguous"` — the credential on disk is not the account the CLI says is active. The hint is withheld, a warning is logged, the card stays Untagged until tagged against its key-scoped origin. |
-
-#### opencode v2: the `credential` table
-
-opencode v2 imports `auth.json` into `opencode.db` (`credential` table) once and
-never reads the file again — the stale file is left behind. On a v2 host the
-sidecar therefore reads the table instead, presented in the legacy `auth.json`
-shape (`{integration_id: value}`: `type:"key"` keeps `key`; `type:"oauth"` keeps
-`access`/`refresh`/`expires`), so every mapping above is unchanged. The origin
-stays `path:…/auth.json#<fingerprint>` (even when v2 never wrote the file), so
-existing operator tags keep binding. The database is opened read-only and v2 is
-detected by its `session_v2` table (1.19 ships an empty `credential` table too).
-
-The tier-3 gate uses the table instead of `account.json` on v2: the key is
-`"single"` when it is `opencode-go`'s active credential (`active = 1`, or the only
-row), `"ambiguous"` when a different active key exists or several unflagged rows
-compete, `"unknown"` when the table has nothing for the service.
-
-### Assigning a key
-
-- **Paste it** in Providers → opencode (source 3). The server then
-  recognises the key by fingerprint on the next sidecar cycle (tier 1b).
-- **Or tag its origin** in Fleet → Untagged Credentials. The origin line
-  shows the full `…#<fingerprint>` string.
-- **Or set `OPENCODE_ACCOUNT_LABEL=<email>`** on the sidecar host when
-  that machine's CLI key always belongs to one account (tier 0).
+To assign a key: paste it in Providers, opencode (tier 1b on the next cycle); tag its origin in Fleet, Untagged Credentials; or set `OPENCODE_ACCOUNT_LABEL=<email>` on a host whose CLI key always belongs to one account.
 
 ## Endpoints
 
-### Primary (new)
-
-- `GET https://opencode.ai/zen/go/v1/usage` — bearer auth.
-  Returns `{usage: {rolling, weekly, monthly: {percent, status, resetsAt}}}`.
-- `GET https://opencode.ai/console/api/go/status` — cookie auth with
-  `x-org-id`. Returns subscription meters with usage, limits, and resets.
-
-### Fallback (cookie)
-
-- `GET https://opencode.ai/console/api/orgs` — lists workspaces
-  (`[{id, name}]`). Cookie auth only; bearer returns 401.
-- `GET https://opencode.ai/console/api/go/status` with `x-org-id` header —
-  same body shape as the bearer variant.
-
-When the cookie account has one Go workspace, it is selected automatically.
-When several workspaces have Go access, enter that workspace's ID in the
-OpenCode account settings. The collector never guesses from list order.
-
-## Card Schema
-
-```python
-{
-    "service_name": "OpenCode",
-    "icon": "⚡",
-    "remaining": f"${remaining:.2f}",
-    "unit": f"${limit:.0f} limit",
-    "reset": "5h" | "7d" | "30d",
-    "health": "good" | "warning" | "critical",
-    "pace": PaceCalculator.estimate_longevity(pct, reset_at),
-    "detail": f"${used:.2f} used ({pct:.1f}%) · OpenCode Go API",
-    "used_value": used,
-    "limit_value": limit,
-    "pct_used": pct,
-    "is_unlimited": False,
-    "unit_type": "currency",
-    "currency": "USD",
-    "account_label": "<email>" | "",
-    "reset_at": "<ISO 8601>" | None,
-    "window_type": "session" | "weekly" | "monthly",
-    "provider_id": "opencode",
-    "tier": "Go",
-    "data_source": "api" | "web",
-    "input_source": "sidecar" | "config" | "server",
-    "usage_url": "https://opencode.ai/console/usage",
-    "updated_at": "<ISO 8601>",
-}
-```
-
-## Window Mapping
-
-The OpenCode API uses different keys depending on the endpoint:
-
-| API shape | Internal `window_type` | Default limit (USD) |
+| Endpoint | Auth | Returns |
 |---|---|---|
-| `fiveHour` / `rolling` | `session` | $12 |
-| `week` / `weekly` | `weekly` | $30 |
-| `month` / `monthly` | `monthly` | $60 |
+| `GET https://opencode.ai/zen/go/v1/usage` | bearer API key | `{usage: {rolling, weekly, monthly: {percent, status, resetsAt}}}` |
+| `GET https://opencode.ai/console/api/orgs` | cookies | Workspaces `[{id, name}]` |
+| `GET https://opencode.ai/console/api/go/status` | cookies plus `x-org-id` | `access.meters` with used and limit (micro-cents) and `resetsAt` |
 
-`window_type` is the canonical Runway enum used for card identity across
-the dashboard.
+A cookie account with one Go workspace uses it automatically. With several, set the workspace id; the collector never guesses from list order. Window keys map to `window_type`: `fiveHour`/`rolling` is `session`, `week`/`weekly` is `weekly`, `month`/`monthly` is `monthly`.
 
-## Failure Modes
+## Usage events (sidecar)
 
-The collector no longer silently returns `[]`. Every failure mode is
-mapped to an `_last_error_reason` that `_error_handler` translates into
-a visible error card with `error_type`:
+The sidecar reads per-message events and session titles from `opencode.db` (read-only). It emits no quota cards from the database.
 
-| Reason | Error type | Card message |
+- **Location:** `~/.local/share/opencode/opencode.db` or `~/.opencode/opencode.db`. `OPENCODE_DB` (OpenCode's own override) wins when set: `~` expands, a relative path is under `~/.local/share/opencode`, and a missing target means no ingest rather than falling back.
+- **Schema:** v2 is detected by the `session_v2` table (an empty `session_message` alone is not the signal); v2 migrates in place and leaves the v1 tables frozen.
+
+| | v1 | v2 |
 |---|---|---|
-| `missing_api_key` | `auth_failed` | OpenCode session expired — paste a fresh `oc_sk_…` API key… |
-| `invalid_api_key` | `auth_failed` | OpenCode session expired — paste a fresh `oc_sk_…` API key… |
-| `missing_cookies` | `auth_failed` | OpenCode session expired — paste a fresh `oc_sk_…` API key… |
-| `session_invalid` | `auth_failed` | OpenCode session expired — paste a fresh `oc_sk_…` API key… |
-| `no_workspace` | `parse_error` | OpenCode: no workspace found for the configured account. |
-| `invalid_config` | `invalid_config` | Set the OpenCode workspace ID in settings. |
-| `api_unavailable` | `api_error` | OpenCode: usage API unreachable. Will retry on next cycle. |
-| (other) | `unknown` | OpenCode quota collection failed. |
+| Messages | `message`, `data.role = 'assistant'` | `session_message`, `type` in (`assistant`, `compaction`) |
+| Model and provider | `data.modelID`, `data.providerID` | `data.model.id`, `data.model.providerID` |
+| Effort | `data.variant` | `data.model.variant` (`default` means none) |
+| Working directory | `data.path.cwd` | `session_v2.directory` |
 
-Auth errors identify expired or missing credentials. Untagged CLI keys
-must first be assigned to an OpenCode account in Settings.
+- **Event id:** the message row id, so ids and watermarks survive the v1 to v2 migration without re-ingest.
+- **Streaming rows:** a v2 row with no completion or error time (or a running compaction) is held back, with everything after it, until it settles. After an hour it is treated as abandoned (crashed process) and skipped. A compaction with no cost and no tokens yields no event.
+- **Provider id:** OpenCode's `providerID` maps to a Runway provider: `opencode-go` to `opencode`, `opencode` to `opencode-free`, `opencode-zen`, `open-design-byok` to `opencode-byok`, `openrouter` to `opencode-openrouter`, `ollama-cloud` to `opencode-ollama`, any other id to `opencode-<id>`. A backend Runway collects directly (for example xai) is retagged onto that provider, and a gateway-tagged message with an OpenRouter-only model id folds onto `openrouter`.
+- **Session names:** the sidecar reads `session_v2.title` (v2, which wins even when blank) or `session.title` (v1) for sessions that have assistant messages. See [Session names from the sidecar](../collection_logic.md#session-names-from-the-sidecar).
+- **Repair:** `scripts/reclassify_opencode_providers.py` re-applies the provider mapping to already ingested events and reads both layouts.
 
-## Migration from the Legacy `_server` Path
+## Troubleshooting
 
-The old collector called `/_server?id=def3997…` with the `auth` Iron
-cookie. That endpoint is no longer the right surface for migrated
-workspaces: opencode now answers with a 302-encoded redirect to
-`/console/login` (encoded as a `new Response(null, {status:302, location:…})`
-in the RSC stream), or returns the SPA shell. The collector detects
-both as `_last_error_reason = "session_invalid"` and surfaces an error
-card.
+| Symptom | Fix |
+|---|---|
+| Error card "OpenCode session expired" | Key missing or rejected, or cookies missing or stale. Paste a fresh `oc_sk_` key in Providers, opencode, or make `auth.json` readable by the sidecar. |
+| Error card "no workspace found" | The cookie account has no Go workspace; check the console login. |
+| Error card "Set the OpenCode workspace ID" | Several Go workspaces; enter the id in the account settings. |
+| Error card "usage API unreachable" | Transient; retried next cycle. |
+| Key appears under Untagged Credentials | Assign it as described under Account identity. |
+| Key tagged but lands on the wrong account | A legacy plain tag is still in force; tag the keyed origin and delete the legacy row under Fleet, Credential mappings. |
+| No events on a v2 host | Check `OPENCODE_DB` and that the sidecar can read `opencode.db`; a stuck streaming row holds later rows back for up to an hour. |
 
-The `auth` cookie alone is also no longer sufficient — the console
-handshake requires `__Host-console_session` too. The sidecar's cookie
-rule now extracts both names.
-
-## Related Files
+## Related files
 
 | File | Purpose |
 |---|---|
-| `app/services/collectors/opencode.py` | Collector entry point |
-| `app/services/collectors/base.py` | Collector base class |
-| `scripts/sidecar.py` | Sidecar credential rules and event dispatch |
-| `scripts/sidecar_pkg/event_extractors/opencode.py` | Local OpenCode usage events |
-| `scripts/sidecar_pkg/opencode_credentials.py` | OpenCode credential discovery |
-| `scripts/reclassify_opencode_providers.py` | One-shot reclassification of events mislabelled before #182 |
-
-## References
-
-- **CodexBar opencode.md** — the canonical description of the two
-  endpoints the collector targets.
-- **OpenCode:** https://opencode.ai
+| `app/services/collectors/opencode.py` | Quota collector |
+| `scripts/sidecar.py` | Credential rules, account resolution, event and session-name dispatch |
+| `scripts/sidecar_pkg/opencode_credentials.py` | v2 `credential` table reader and key binding |
+| `scripts/sidecar_pkg/event_extractors/opencode.py` | Usage events and session titles |
+| `scripts/reclassify_opencode_providers.py` | Provider reclassification of ingested events |
+| `app/core/registry.json` (`providers.opencode`) | Credential rules and UI help text |

@@ -1,150 +1,64 @@
-# GitHub Copilot Collector
+# GitHub Copilot
 
 **File:** `app/services/collectors/github.py`
 
-GitHub Copilot quota collector. One endpoint (`copilot_internal/user`) returns the plan and either quota snapshots (paid) or limited/monthly quotas (free).
+GitHub Copilot quota. One endpoint returns the plan and either quota snapshots (paid plans) or limited/monthly quotas (free plan).
 
-## Overview
+## At a glance
 
-- **Collection Strategy**: api (`copilot_internal/user`); no fallback endpoint
-- **Cards**: 2 cards (Completions, Chat) or 3 cards (Premium Interactions, Chat, Included Credits)
-- **Authentication**: a GitHub OAuth token (device login, `gh`, or an editor sign-in) or a PAT; see [Credential Discovery](#credential-discovery)
+- **Strategies:** `api` only (`copilot_internal/user`); there is no fallback endpoint. Results are cached for 5 minutes.
+- **Cards:** one per quota the plan reports, variant `Copilot` service: `Completions` and `Chat` (free plan, from `limited_user_quotas` against `monthly_quotas`), or `Premium Interactions`, `Chat`, `Completions`, `Included Credits` from `quota_snapshots` (metrics with `has_quota: false` are skipped). Snapshot cards are `window_type: monthly`, `unit_type: requests`. A free-plan quota without a known total shows no percentage rather than inventing one.
+- **Labels:** `data_source=api`; `input_source` is `config`, `server` or `sidecar` by where the token came from. See [Strategy Types](../collection_logic.md#strategy-types).
+- **Account identity:** an account is keyed by its GitHub login (`/user` returns `login` for every token type and it never changes), never by email, which is only the display label. The server host's `git config user.email` and `gh` login are not consulted: they identify the host, not the token.
 
-## Setup Methods Quick Overview
+## Credentials
 
-The GitHub Copilot collector supports multiple authentication methods:
-
-1.  **Token**: Provide a static GitHub token. An OAuth token (from `gh auth login` or the device login) works best; a classic PAT may be rejected by the Copilot endpoints.
-    *   **Method**: Set the `GITHUB_TOKEN` environment variable.
-    *   **Details**: Refer to the [Configuration section](#configuration) for `GITHUB_TOKEN` and the [GitHub OAuth Setup](#github-oauth-setup) in the Overview.
-
-2.  **OAuth Device Flow**: Interactively log in via GitHub's OAuth Device Flow to obtain a token.
-    *   **Method 1 (Default)**: Uses Runway's bundled public `GITHUB_CLIENT_ID`.
-    *   **Method 2 (Custom)**: Use your own GitHub OAuth App by setting `GITHUB_CLIENT_ID`.
-    *   **Details**: See the [GitHub OAuth Setup section](#github-oauth-setup) below.
-
-3.  **`gh` CLI Credential Discovery**: Automatically discover credentials from the `gh` CLI's configuration.
-    *   **Method**: Log in via `gh auth login`, and the sidecar reads the `oauth_token` from `~/.config/gh/hosts.yml` (or Windows equivalent) or the keyring and pushes it. The server never reads `hosts.yml` from its own host.
-    *   **App/Sidecar**: Sidecar only (`make dev` alone does not see it; use `make dev-all`).
-    *   **Details**: See the [Credential Discovery section](#credential-discovery) below.
-
-## Account identity
-
-A GitHub account is keyed by its **login** (`/user` → `login`), never by email:
-the login is returned for every token type and never changes. The email (from
-`/user` or `/user/emails`) is only the display label. The server host's own
-`git config user.email` and `gh` login are deliberately *not* consulted — it identifies the host,
-not the token. `resolve_account_id` treats GitHub as login-keyed, so an email
-label cannot re-key an explicitly identified account.
-
-## Data Sources
-
-### GitHub Copilot internal API
-**Endpoint:** `api.github.com/copilot_internal/user` (plan, quota snapshots, and the free-tier `limited_user_quotas` / `monthly_quotas`)
-
-**Auth:** `Authorization: token <token>`
-**Headers:** VS Code Copilot extension headers for reliability
-
-Identity comes from `api.github.com/user` (and `/user/emails` for the label).
-
-`copilot_internal/v2/token` is deliberately not called: it only mints a short-lived model-proxy token and carries no totals, so it added a secret to cache and redact for no data (#519).
-
-## Output Format
-
-```python
-{
-    "service_name": "Copilot",
-    "variant": "Completions",
-    "icon": "🐙",
-    "remaining": "45",
-    "unit": "/ 100",
-    "reset": "in 2h 30m",
-    "health": "good",
-    "pace": "Stable",
-    "detail": "45/100 requests left • Free Tier",
-    "used_value": 55.0,
-    "limit_value": 100.0,
-    "is_unlimited": False,
-    "unit_type": "requests",
-    "reset_at": "2026-04-08T00:00:00+00:00",
-    "data_source": "api",
-    "input_source": "config",
-    "tier": "free",
-    "usage_url": "https://github.com/settings/copilot/features",
-    "updated_at": "2026-04-07T10:30:00+00:00",
-}
-```
-
-## Configuration
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `GITHUB_TOKEN` / `GH_TOKEN` | One credential source is enough | GitHub OAuth token (preferred) or PAT; `GH_TOKEN` is the `gh` CLI's variable and is read the same way |
-| `GITHUB_CLIENT_ID` | No | Client ID for OAuth Device Flow (default: `Iv1.b507a08c87ecfe98`) |
-
-## GitHub OAuth Setup
-
-Runway uses the public GitHub OAuth Client ID (`Iv1.b507a08c87ecfe98`) to enable the interactive "Connect GitHub" flow. If you prefer to use your own OAuth App instead of a static `GITHUB_TOKEN`:
-
-1.  Create a new **OAuth App** at [GitHub Developer Settings](https://github.com/settings/developers).
-2.  Set the **Homepage URL** to any valid URL (e.g., `http://localhost:8765`).
-3.  **IMPORTANT:** Check the box **"Enable Device Flow"**. Without this, the login will return a `404 Not Found` error.
-4.  Copy the **Client ID** and add it to your `.env` file:
-    ```bash
-    GITHUB_CLIENT_ID=your_new_client_id_here
-    ```
-5.  Restart Runway.
-
-## Credential Discovery
-
-GitHub credentials come from these sources. The first one found by the server (settings key, then env, then Runway's own `github_oauth.json`) is used by the collector; every machine-reported one is kept as its own row in Settings → Credentials.
+The collector uses the first one the server finds: Settings key, then env, then Runway's own `github_oauth.json`. Every machine-reported credential is kept as its own row in Settings, Credentials.
 
 | Source | Detected by | Notes |
 |---|---|---|
 | Settings key | server | A token pasted in the provider dialog. |
-| `GITHUB_TOKEN` / `GH_TOKEN` | server and sidecar | Environment variable. |
-| Sign in with GitHub (device flow) | server | Button in the GitHub account dialog. The token is stored encrypted at `<config dir>/github_oauth.json` and listed as a server credential; it counts as evidence for the account while the file exists, and Disconnect deletes it. Sidecars never ship this file. |
-| `gh` CLI `hosts.yml` | sidecar | `~/.config/gh/hosts.yml` (Linux/macOS) or `%APPDATA%\GitHub CLI\hosts.yml`; spellings of the same file are read once. |
-| `gh` CLI keyring | sidecar | `gh auth token`, for `gh` ≥ 2.40, which keeps the token in the OS keyring and leaves `hosts.yml` without one. Skipped when it returns a token already found above. |
-| Editor Copilot sign-in files | sidecar | `apps.json` / `hosts.json` under `~/.config/github-copilot` (or `%LOCALAPPDATA%\github-copilot`), written by JetBrains, Neovim (`copilot.vim`/`copilot.lua`), Xcode and Zed. `github.com` entries only; the file's `user` is not used as the account id. The three known client ids are tried first, then any other `github.com:<client id>` entry. With several entries the first by sorted key is used. The same token in more than one file counts once. |
-| Copilot CLI plaintext token | sidecar | `~/.copilot/config.json` (JSON with `//` comments), `authTokens` / `copilotTokens` entries for `https://github.com:<login>`. The CLI keeps its token in the OS keychain when it can, so this file only holds a token on a machine without one (typically headless Linux); elsewhere it is read and found empty without logging. The login in the key is not used as the account id. `COPILOT_HOME` is not honoured. |
-| Windows Credential Manager `github.com` | sidecar | |
+| `GITHUB_TOKEN` / `GH_TOKEN` | server and sidecar | Environment variable; both set to one value count once. |
+| Sign in with GitHub (device flow) | server | Button in the GitHub account dialog. The token is stored encrypted at `<config dir>/github_oauth.json` (`GITHUB_OAUTH_PATH`), counts as evidence for the account while the file exists, and Disconnect deletes it. Sidecars never ship this file. |
+| `gh` CLI `hosts.yml` | sidecar | `~/.config/gh/hosts.yml` (Linux/macOS) or `%APPDATA%\GitHub CLI\hosts.yml`. |
+| `gh` CLI keyring | sidecar | `gh auth token`, for `gh` 2.40 and later, which keeps the token in the OS keyring. Skipped when it returns a token already found. |
+| Editor Copilot sign-in files | sidecar | `apps.json` / `hosts.json` under `~/.config/github-copilot` (or the platform data dir), written by JetBrains, Neovim, Xcode and Zed. `github.com` entries only; the known client ids are tried first. The same token in several files counts once. |
+| Copilot CLI plaintext token | sidecar | `~/.copilot/config.json` (`authTokens` / `copilotTokens` for `https://github.com:<login>`). Holds a token only on a machine without an OS keychain. `COPILOT_HOME` is not honoured. |
+| Windows Credential Manager | sidecar | Target `git:https://github.com`. |
 
-Not detected: the VS Code Copilot extension (its sign-in lives in VS Code's encrypted secret storage and is not readable), the Copilot CLI's keychain entry, GitHub Enterprise Cloud (`*.ghe.com`) sign-ins, browser cookies.
+Not detected: the VS Code Copilot extension (encrypted secret storage), the Copilot CLI keychain entry, GitHub Enterprise Cloud (`*.ghe.com`) sign-ins, browser cookies.
 
-If a machine's GitHub credential disappears, the sidecar log (`~/.config/runway/sidecar/sidecar.log`) says `file read but no credential keys found` once per file when a rule's file exists but holds no token (a logged-out `gh`, or a token moved to the keyring).
+An OAuth token (from `gh auth login` or the device login) works best; a classic PAT may be rejected by the Copilot endpoints. The sidecar only forwards credentials and never calls the GitHub API; the server verifies the account with `/user`.
 
-**Custom Config Directory**:
-The default location for Runway's configuration files (including where GitHub OAuth tokens are saved) is platform-specific (e.g., `~/.config/runway` on Linux). You can override this location by setting the `RUNWAY_CONFIG_DIR` environment variable to an absolute path. This is particularly useful for Docker or custom multi-host deployments.
+**Own OAuth app.** The device login uses the bundled public client id (`GITHUB_CLIENT_ID`, default `Iv1.b507a08c87ecfe98`). To use your own, create an OAuth App at GitHub Developer Settings, tick **Enable Device Flow** (without it the login returns 404), set `GITHUB_CLIENT_ID` in `.env`, and restart.
 
-## Sidecar Support
+## Endpoints
 
-The sidecar only extracts and forwards GitHub credentials; it never calls the GitHub API. The server verifies the account with `/user`. See [sidecar documentation](../sidecar.md).
+| Endpoint | Notes |
+|---|---|
+| `GET api.github.com/copilot_internal/user` | Plan, `quota_snapshots`, and the free-plan `limited_user_quotas` / `monthly_quotas`. Sent with VS Code Copilot extension headers and `Authorization: token <token>`. |
+| `GET api.github.com/user` | Login and identity. |
+| `GET api.github.com/user/emails` | Display label. |
+
+`copilot_internal/v2/token` is deliberately not called: it only mints a short-lived model-proxy token and carries no totals.
 
 ## Troubleshooting
 
-### No Copilot data returned
-**Check:**
-1. `echo $GITHUB_TOKEN` - is it set?
-2. Is the token an OAuth token for an account with Copilot (a classic PAT may be rejected)?
-3. User has active Copilot subscription?
+| Symptom | Fix |
+|---|---|
+| No Copilot data | Check the token is set and belongs to an account with an active Copilot subscription (a classic PAT may be rejected). |
+| 401/403 | Regenerate the token, or prefer `gh auth login` or Sign in with GitHub over a classic PAT; verify the subscription at github.com/settings/copilot. |
+| Device login returns 404 | The OAuth App lacks Enable Device Flow. |
+| Credential missing on a machine | The sidecar log (`~/.config/runway/sidecar/sidecar.log`) says `file read but no credential keys found` once per file when a rule's file exists but holds no token (a logged-out `gh`, or a token moved to the keyring). |
+| `make dev` shows no `gh` login | The server reads no credential files; use `make dev-all`. |
 
-### 401/403 errors
-**Fix:**
-1. Regenerate token at https://github.com/settings/tokens
-2. Prefer `gh auth login` or the Sign in with GitHub button over a classic PAT
-3. Verify subscription at https://github.com/settings/copilot
+`RUNWAY_CONFIG_DIR` overrides the config directory (where `github_oauth.json` lives), useful for Docker or multi-host setups.
 
-## Related Files
+## Related files
 
 | File | Purpose |
 |---|---|
-| `app/services/collectors/github.py` | Collector entry point — the Copilot internal API |
+| `app/services/collectors/github.py` | Collector: the Copilot internal API |
 | `app/services/collectors/base.py` | Collector base class |
-| `scripts/sidecar.py` | Sidecar credential rules and event dispatch |
-| `scripts/sidecar_pkg/cookie_scan.py` | Cross-platform browser cookie store discovery |
-
-## References
-
-- **GitHub Copilot:** https://github.com/features/copilot
-- **Token Settings:** https://github.com/settings/tokens
+| `scripts/sidecar.py` | Credential rules (env, `hosts.yml`, keyring, editor files, Copilot CLI) |
+| `app/core/registry.json` | `github` provider rules shared with the sidecar |

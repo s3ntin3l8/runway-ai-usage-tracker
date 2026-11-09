@@ -1,325 +1,126 @@
-# Claude Collector
+# Claude
 
-**File:** `app/services/collectors/anthropic.py` (server) · `app/services/collectors/anthropic_console.py` (server) · `scripts/sidecar.py` (sidecar)
-**Sidecar:** `scripts/sidecar.py` + `sidecar_app/` (local-source strategies: statusline, CLI, logs)
+**File:** `app/services/collectors/anthropic.py` (provider `anthropic`) and `app/services/collectors/anthropic_console.py` (provider `anthropic_console`)
 
-Anthropic Claude quota collector with a 3-tier fallback: `api` → `web` → `local` → Error cards. The `local` tier executes inside the sidecar — the server itself never reads `~/.claude/*` or shells out to the `claude` CLI. The sidecar extracts those signals and posts them to `/api/v1/fleet/ingest`, where they merge into the same card as the server's `api` / `web` results.
+Claude subscription quotas (Pro/Max, via OAuth or a claude.ai session), Claude Console prepaid credit, and the Claude Code / Cowork usage events the sidecar extracts. The server reads no credential files; every local login arrives through the sidecar.
 
-## Overview
+## At a glance
 
-- **Collection Strategy**: api (OAuth) → web (Cookies) → local (Statusline/CLI/Logs, via sidecar)
-- **Cards**: Session and Weekly quota windows, per-model Sonnet and Opus cards, and Extra Usage windows
-- **Authentication**: OAuth token (api), Chrome cookies (web), local statusline / CLI (local — collected by the sidecar).
+**`anthropic`** (display name Claude Pro). `STRATEGIES` in `anthropic.py`, in order:
 
-## Setup Methods Quick Overview
+| Strategy | Label | `data_source` | Endpoint |
+|---|---|---|---|
+| `oauth` | OAuth API | `api` | `api.anthropic.com/api/oauth/usage` |
+| `web` | Web API | `web` | `claude.ai/api/organizations/{orgId}/usage` |
 
-The Claude collector supports multiple authentication and data collection methods:
+Cards: `Session` (5h, `session`), `Weekly` (7d, `weekly`), per-model weekly windows the API reports (for example `Opus Weekly`), `OAuth Apps`, and `Extra Usage`; the web strategy can add a prepaid `Balance` card. `input_source` is `sidecar` when the credential was pushed by a sidecar and `config` when it came from `CLAUDE_CODE_OAUTH_TOKEN` or Settings.
 
-1.  **OAuth Token (Preferred)**:
-    *   **Method 1**: Set the `CLAUDE_CODE_OAUTH_TOKEN` environment variable.
-    *   **Method 2 (Auto-discovered by the sidecar)**: Log in via the `claude` CLI and run the sidecar on that machine; the server never reads these files from its own host (`make dev` alone does not see them; use `make dev-all`). On Linux, Claude Code stores the token in `~/.claude/.credentials.json` and account identity in `~/.claude.json`. On macOS, Keychain is the default credential store; `.credentials.json` is a fallback, not a required duplicate. The sidecar pairs those files for identity discovery; custom credential files must contain their own `oauthAccount` identity or they remain available for assignment in Fleet. Other installations may use `~/.config/claude/oauth_creds.json` or macOS Keychain.
-    *   When the discovered email matches an enabled Claude account, Runway records the host-specific origin mapping as `identity_claim` in Fleet's Credential Mappings. Unmatched credentials remain pending for operator assignment.
-    *   **Method 3 (Auto-discovered, macOS only)**: Claude Code OAuth tokens stored in macOS Keychain, including configured-directory service variants. The sidecar selects the current macOS Keychain account and forwards expiry.
-    *   **Details**: See [Tier 1: api (OAuth)](#tier-1-api-oauth) and [Configuration section](#configuration).
+**`anthropic_console`** (display name Claude Console). One strategy, `web`, one `Balance` card (`window_type: rolling`, `data_source=web`, `input_source=config`), polled every 15 minutes.
 
-2.  **Statusline File**:
-    *   **Method**: This is a fast local data source, often present when the `claude` CLI is running. The sidecar reads `~/.claude/statusline.json` (or platform equivalent); the server does not.
-    *   **Details**: See [Tier 1: api (OAuth)](#tier-1-api-oauth).
+The sidecar adds `data_source=local`, `input_source=sidecar` data: the statusline file (below) and per-message events. See [Strategy Types](../collection_logic.md#strategy-types) for how primary and enrichment data merge.
 
-3.  **Automatic macOS Browser Sessions**: Sign in normally in Chrome and run the sidecar. Subscription quotas and Console credits use separate verified sessions; see [automatic macOS discovery](#automatic-macos-browser-discovery).
+## Credentials
 
-4.  **Manual Cookie Entry**: Used for Web API fallback if OAuth token is unavailable.
-    *   **Method**: Log in to [claude.ai](https://claude.ai) in any browser, extract the `sessionKey` cookie, and paste it into the **Runway Settings** UI.
-    *   **Details**: See [Manual Authentication — Extracting the Cookie Bundle](#1-extracting-the-cookie-bundle).
+| Source | Where it comes from | Runs in | Notes |
+|---|---|---|---|
+| `CLAUDE_CODE_OAUTH_TOKEN` | Environment variable | server and sidecar | Optional; the sidecar reports it as an OAuth source too. |
+| `~/.claude/.credentials.json` | Claude Code login, paired with `~/.claude.json` for `oauthAccount` identity | sidecar | Also `<Claude config dir>/oauth_creds.json` and `CLAUDE_CONFIG_DIR`. Defined in `app/core/registry.json`. |
+| macOS Keychain `Claude Code-credentials` | Claude Code login on macOS | sidecar | Includes configured-directory service variants; the file above is only a fallback there. |
+| Claude Desktop OAuth cache | `config.json` under Claude Desktop's Application Support directory (`oauth:tokenCacheV2`, legacy `oauth:tokenCache`) | sidecar, macOS | Forwards access tokens and expiry, never refresh tokens. See [macOS](#macos). |
+| `sessionKey` cookie for `claude.ai` | Browser cookie stores, or Claude Desktop's cookie store on macOS | sidecar | Automatic discovery; the web strategy uses it when OAuth is unavailable. |
+| Manual cookie bundle | Settings → Providers | server | Paste the full Cookie header of a `claude.ai/settings/usage` request (see below). |
+| `sessionKey` cookie for `platform.claude.com` | Browser cookie stores, or pasted in Settings (Claude, Console API credits) | sidecar / server | Console only. A bare value or a full Cookie header is accepted. |
+| `~/.claude/statusline.json` | Claude Code statusline | sidecar | Used only when modified in the last 5 minutes; emits Session and Weekly cards tagged `local`. |
 
-5.  **CLI PTY**:
-    *   **Method**: If the `claude` CLI is installed, Runway can execute `claude -s read-only` to get quota data.
-    *   **Details**: See [Tier 3: local (CLI / Logs / Statusline)](#tier-3-local-cli--logs--statusline--sidecar-only).
+A login on a machine's own `~/.claude` is never refreshed by the server (Anthropic's refresh tokens are single-use). With the sidecar's `--keep-alive` the sidecar renews it and writes it back; see [Keep-alive](../sidecar.md#keep-alive-for-antigravity-claude-code-codex-and-xai-opt-in). A login the server holds itself (Settings or env) is refreshed by the server.
 
-6.  **Local Logs**:
-    *   **Method**: As a last resort, Runway can read usage data from local log files generated by the `claude` CLI.
-    *   **Details**: See [Tier 3: local (CLI / Logs / Statusline)](#tier-3-local-cli--logs--statusline--sidecar-only).
+When a discovered email matches an enabled Claude account, the origin is attached to it. Otherwise the source shows in Fleet for assignment, and in Settings → Credentials as unassigned. A manually assigned origin wins over the discovered email.
 
-## Data Sources
+**Manual cookie bundle.** Log in to claude.ai, open DevTools, Network, load `claude.ai/settings/usage`, and copy the whole `Cookie` request header (or Copy as cURL). Paste it into the account's **Session cookie** field under Settings → Providers. A bare `sessionKey` works, but the full bundle is recommended so Cloudflare accepts the request; Runway mimics the browser's User-Agent and Client Hints.
 
-### Tier 1: api (OAuth)
-This is the preferred method, providing the most reliable and comprehensive data.
+## Endpoints
 
-**Endpoints:** `https://api.anthropic.com/api/oauth/usage`
-**Auth:** Bearer token from env, credentials file, or macOS Keychain.
-**Key Discovery:** A login the server holds itself (config/env) is refreshed by the server. A login on a machine's own `~/.claude` is **never** refreshed by the server (Anthropic's refresh tokens are single-use, so that would sign Claude Code out); with the sidecar's `--keep-alive` the sidecar renews it and writes it back to Claude Code's credentials file — see [Keep-alive](../sidecar.md#keep-alive-for-antigravity-claude-code-codex-and-xai-opt-in).
+| Endpoint | Used by | Notes |
+|---|---|---|
+| `GET api.anthropic.com/api/oauth/usage` | `oauth` | Bearer token. |
+| `GET api.anthropic.com/v1/organizations/me` | `oauth` | Identity fallback when the token holder is unknown. |
+| `POST platform.claude.com/v1/oauth/token` | server-held logins | Refresh, only for logins the server owns. |
+| `GET claude.ai/api/organizations` | `web` | Resolves the organization UUID. |
+| `GET claude.ai/api/organizations/{orgId}/usage` | `web` | Quota windows. |
+| `GET platform.claude.com/api/organizations/{orgId}/prepaid/credits` | `anthropic_console` | Private endpoint; the schema can change. |
 
-### Tier 2: web (Session Cookies)
-**Endpoints:** `claude.ai/api/organizations/.../usage`
-**Auth:** Chrome `sessionKey` cookie or manually provided cookie bundle.
-**Behavior:** Used as a fallback if the OAuth API is unavailable.
-**Endpoints:**
-- `claude.ai/api/organizations` (get org UUID)
-- `claude.ai/api/organizations/{orgId}/usage` (get quotas)
-**Auth:** Chrome `sessionKey` cookie OR manually provided cookie in Runway UI.
-**Behavior:** This data source is used if the primary hybrid strategy fails or yields no results.
+## Claude Console
 
-### Tier 3: local (CLI / Logs / Statusline) — sidecar-only
-**Runs in:** the sidecar (`scripts/sidecar.py` / `sidecar_app/`). The server-side collector does not implement this tier — its only strategies are `oauth` and `web`.
-**Mechanism (sidecar):**
-- **Statusline**: Reads `~/.claude/statusline.json` for Session and Weekly quota windows (Fast Path).
-- **CLI PTY**: Executes `claude -s read-only` to parse CLI output.
-- **Local Logs**: Scans `~/.claude/projects/**/*.jsonl` for token usage and emits per-message events.
-**Behavior:** The sidecar pushes parsed quota windows and per-message events from local logs to `/api/v1/fleet/ingest`. The sidecar does not emit the context-window token count as a separate card; per-message token usage remains available from event history. On the server, `EventIngestor` merges local event data with any `api`/`web` results for the same `(provider_id, account_id, window_type, variant, model_id)` tuple — token breakdown and session counts come from events, while the headline `%` typically comes from `api`. Cards merged from sidecar-collected data are tagged `data_source=local`, `input_source=sidecar`.
+Console credit is a separate connection (Claude, Console API credits). The quota cookie cannot read Console billing and the Console cookie cannot read subscription quotas, and API keys do not work for the balance endpoint, so keep each credential in its own connection. Console cookies are stored with the normal credential encryption and must be replaced when the session expires. With one accessible organization it is selected automatically; add another connection to track another organization.
 
-## Output Format
+The card shows the full reported balance. Purchased credits and unexpired promotional grants explain the total; subscription credits carry `program_id=subscription_api_credit`. Grant expiry is shown as expiry. Credits can have product restrictions, shown in the connection overview. No token events or API spend are inferred from balance movements. A zero balance is valid. Auth, permission, transport and parse failures keep last-good data under the normal staleness policy and do not affect subscription quotas.
 
-```python
-{
-    "service_name": "Claude",
-    "variant": "Session Window",
-    "icon": "🟠",
-    "remaining": "75.0%",
-    "unit": "capacity",
-    "reset": "in 2h 15m",
-    "health": "good",
-    "pace": "Stable",
-    "detail": "25.0% used [OAuth]",
-    "used_value": 25.0,
-    "limit_value": 100.0,
-    "is_unlimited": False,
-    "unit_type": "percent",
-    "reset_at": "2026-04-07T15:00:00+00:00",
-    "data_source": "api",
-    "input_source": "sidecar",
-    "tier": "pro",
-    "usage_url": "https://claude.ai/settings/usage",
-    "updated_at": "2026-04-07T10:30:00+00:00",
-}
-```
+**Naming and billing.** An automatically discovered account is named after what it is: a subscription by the member's email, a Console account by the organization name (shared by all members). A plan publishes percentage quotas and bills as a subscription; a Console account publishes a prepaid balance and bills as pay-as-you-go. A claude.ai prepaid balance proves neither. The model is detected when the account is first recorded; a billing type nobody set is filled in on a later poll, and one set in Settings is never overwritten. For hand-added accounts, **Detect billing model** in the wizard only suggests a model; the operator's pick is saved. The identity a card proved (an organization-scoped one is marked `org: `) lives in the card's detail.
 
-## Configuration
+## Usage events (sidecar)
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `CLAUDE_CODE_OAUTH_TOKEN` | Optional | OAuth token for API access (the sidecar discovers Claude Code credentials or the macOS Keychain login if this is not set) |
+Source: `~/.claude/projects/**/*.jsonl` and `~/.config/claude/projects/**/*.jsonl` (plus `CLAUDE_CONFIG_DIR`), parsed by `scripts/sidecar_pkg/event_extractors/anthropic.py`. Only `assistant` records are read. Event id is `<message id>|<request id>` (message id alone without a request id), deduplicated on that pair. Model ids are normalized by `normalize_anthropic_model` to `family-version` (`opus-4.7`, `sonnet-3.5`); date snapshots are dropped and pricing falls back to the bare family. Conversation text is not uploaded.
 
-**Auto-Discovery (sidecar only):**
-- Credentials files: `~/.claude/.credentials.json` (paired with `~/.claude.json` for `oauthAccount.emailAddress`) or the Claude config directory's `oauth_creds.json` (normally `~/.config/claude/oauth_creds.json` on Linux); macOS Keychain is also supported.
-- Projects directory: `~/.claude/projects/` **and** `~/.config/claude/projects/` — the sidecar scans both (the sidecar discovers them for local logs)
+Per-message columns on `usage_events`, defined in `app/models/db_usage.py` and added by the `ALTER TABLE` list in `app/core/db.py`:
 
-## Sidecar Support
+| Column | Source field |
+|---|---|
+| `effort` | record `effort` (`low` to `max`) |
+| `speed` | `usage.speed` (`fast` when fast mode was active) |
+| `service_tier` | `usage.service_tier` (`standard`, `priority`, `batch`) |
+| `entrypoint`, `app_version` | record `entrypoint` (`cli`, `sdk-ts`, `claude-vscode`, ...) and `version` |
+| `tokens_cache_create_1h`, `tokens_cache_create_5m` | `usage.cache_creation.ephemeral_*_input_tokens`; `tokens_cache_create` stays the total |
+| `web_search_requests`, `web_fetch_requests` | `usage.server_tool_use` |
 
-The sidecar extracts the token and expiry from `~/.claude/.credentials.json`, and the email from `~/.claude.json`. If the email matches an enabled Claude account, Runway attaches the OAuth source to it. Otherwise the source appears in Fleet for assignment with the discovered login displayed, and in Token Health as unassigned. A manually assigned origin takes precedence over the discovered email. The sidecar also supports the Claude config directory's `oauth_creds.json` and macOS Keychain. See [sidecar documentation](../sidecar.md). A reverse proxy must let sidecars reach `/api/v1/fleet/config` and `/api/v1/fleet/credentials/manifest` as well as `/api/v1/fleet/ingest` ([example](../forward-auth.md#5-production-hardening-split-the-traefik-router)).
+Sidechain records also carry the subagent type. Claude Code sessions that run on Anthropic's cloud runner leave no local transcript; a server-side collector reads them instead, see [Claude cloud-runner sessions](../collection_logic.md#claude-cloud-runner-sessions).
+
+## Pricing notes
+
+The 1h cache-write portion bills at `cache_create_1h_per_mtok` (falling back to the 5m rate when none is seeded) instead of the 5m rate; this is why the TTL split is stored. See `app/services/cost_calculator.py`.
+
+## macOS
+
+- **Claude Code** usage comes from its project JSONL logs. Claude Desktop chat activity does not necessarily appear there, and ordinary Desktop Chat token usage is not collected.
+- **Desktop cookie.** The sidecar reads the `sessionKey` for `claude.ai` from Desktop's `Cookies` store, using the `Claude Safe Storage` Keychain item, and forwards it through the normal credential pipeline. Desktop is tried before browser stores. Keychain results are cached in memory, a denied or timed-out lookup is not repeated until the sidecar restarts, and nothing is written to Desktop's login.
+- **Desktop OAuth.** Described in Credentials. The server verifies the holder profile and readable quota before activating a discovered native OAuth source; OAuth sources are preferred over cookies at equal priority. Desktop and the CLI own renewal.
+- **Browser sessions.** Chrome-family and Safari sessions for `claude.ai` and `platform.claude.com` are discovered separately and verified with their own APIs. Multiple eligible Console organizations appear in the pending-credentials dialog. An inaccessible store is never treated as logout; last-good sources are kept.
+- **Quotas are not token events.** Desktop's `plan-usage-history.json` samples quota utilization, not tokens, and is not turned into events.
+- **Cowork.** Session manifests under `~/Library/Application Support/Claude/local-agent-mode-sessions/` point to embedded `.claude/projects/**/*.jsonl` transcripts, read with the same parser and event ids as Claude Code (`scripts/sidecar_pkg/cowork_events.py`). All available history is eligible, independent of the CLI watermark. Per-transcript offsets and a prefix fingerprint live in `cowork-progress.json` beside the sidecar config; replays deduplicate on the server. Desktop Code normally writes ordinary project logs and is collected by the standard path.
+- **Tray counters.** The tray separates the last successful server sync (including idle heartbeats) from the last successful data upload; metric and event counts belong to that upload, not to the process lifetime.
+- **Opt out of Desktop access.** Set `RUNWAY_CLAUDE_DESKTOP_CREDENTIALS` to `0`, `false`, `off` or `no` in the sidecar environment to skip both Desktop OAuth and the Desktop cookie store (default on). Browser discovery and event collection continue. For a launchd-managed sidecar set it in `EnvironmentVariables`; a shell export does not reach a separately launched tray app.
 
 ## Troubleshooting
 
-### "No data — All sources exhausted"
-**Cause:** No authentication available across any data source.
-**Fix:**
-1.  **LSP/Statusline**: Ensure the `claude` CLI is running and actively being used.
-2.  **OAuth Token**:
-    -   Set `export CLAUDE_CODE_OAUTH_TOKEN="sk-ant-..."`
-    -   Or run `claude login` to create the Claude Code credentials files.
-3.  **Chrome Cookies**: Log in to `https://claude.ai` in Chrome.
-5.  **CLI PTY**: Ensure the `claude` CLI is installed and in your PATH, and you're logged in.
+| Symptom | Fix |
+|---|---|
+| "No data", all sources exhausted | Log in with `claude login` and run the sidecar on that machine, set `CLAUDE_CODE_OAUTH_TOKEN`, or log in to claude.ai in a browser the sidecar can read. |
+| 401 Unauthorized | Start the sidecar with `--keep-alive` (or enable it in Fleet) so the login renews before it lapses; otherwise it renews the next time Claude Code runs. After `invalid_grant`, run `claude auth login`. |
+| Credential found but not attached | Its email matches no enabled account; assign it in Fleet. |
+| Browser cookie decryption fails on macOS | Grant Keychain access for the browser's Safe Storage item, then restart the sidecar. |
+| Console balance missing | Re-paste the `platform.claude.com` `sessionKey`; the claude.ai cookie does not work. |
+| `make dev` shows no local login | The server reads no credential files; use `make dev-all`. |
+| Sidecar cannot sync behind a proxy | The proxy must pass `/api/v1/fleet/config`, `/api/v1/fleet/credentials/manifest` and `/api/v1/fleet/ingest` ([example](../forward-auth.md#5-production-hardening-split-the-traefik-router)). |
 
-### "401 Unauthorized"
-**Cause:** Token expired
-**Fix:** On a sidecar machine, start the sidecar with `--keep-alive` (or turn it on in Fleet) so the login is renewed before it lapses; otherwise it renews the next time Claude Code runs. If a refresh is rejected with `invalid_grant` and Claude Code did not renew it, run `claude auth login`.
-
-### Cookie decryption fails on macOS
-**Fix:** Grant keychain access: `security add-generic-password -s "Chrome Safe Storage" -w`
-
-## Related Files
+## Related files
 
 | File | Purpose |
 |---|---|
-| `app/services/collectors/anthropic.py` | Collector entry point — picks the OAuth or web strategy |
-| `app/services/collectors/anthropic_oauth.py` | OAuth bearer strategy |
-| `app/services/collectors/anthropic_web.py` | Claude.ai web session strategy |
-| `app/services/collectors/anthropic_console.py` | Claude Console (`platform.claude.com`) balance strategy |
-| `app/services/collectors/anthropic_common.py` | Shared card shaping for every Anthropic source |
-| `app/services/collectors/base.py` | Collector base class — strategies, enrichment, card contract |
+| `app/services/collectors/anthropic.py` | Collector entry point and strategy table |
+| `app/services/collectors/anthropic_oauth.py` | OAuth bearer strategy and refresh |
+| `app/services/collectors/anthropic_web.py` | claude.ai web session strategy |
+| `app/services/collectors/anthropic_console.py` | Console prepaid balance |
+| `app/services/collectors/anthropic_common.py` | Shared window names and card shaping |
 | `app/services/collectors/oauth_base.py` | Shared OAuth token handling |
-| `scripts/sidecar.py` | Sidecar credential rules and event dispatch |
-| `scripts/sidecar_pkg/event_extractors/anthropic.py` | Local Claude Code usage events from transcripts |
-| `scripts/sidecar_pkg/claude_code_keychain.py` | Claude Code Keychain credential read |
-| `scripts/sidecar_pkg/claude_desktop.py` | Claude Desktop OAuth credential read |
-| `scripts/sidecar_pkg/cookie_scan.py` | Cross-platform browser cookie store discovery |
-| `scripts/sidecar_pkg/browser_store.py` | Browser store identification and decryption |
-| `scripts/sidecar_pkg/macos_cookies.py` | macOS Safari/Chrome cookie decryption |
+| `app/services/claude_cloud_collector.py` | Cloud-runner session collector |
+| `scripts/sidecar.py` | Credential rules, statusline rule, event dispatch |
+| `scripts/sidecar_pkg/event_extractors/anthropic.py` | Claude Code usage events |
+| `scripts/sidecar_pkg/cowork_events.py` | Cowork transcript events |
+| `scripts/sidecar_pkg/claude_code_keychain.py` | Claude Code Keychain read |
+| `scripts/sidecar_pkg/claude_desktop.py` | Claude Desktop OAuth and cookie read |
+| `scripts/sidecar_pkg/cookie_scan.py` | Browser cookie store discovery |
+| `scripts/sidecar_pkg/macos_cookies.py` | macOS Chrome cookie decryption |
 | `scripts/sidecar_pkg/safari_cookies.py` | Safari cookie decryption |
-| `scripts/sidecar_pkg/anthropic_renewer.py` | Claude keep-alive renewer |
-| `scripts/sidecar_pkg/claude_keychain_renewer.py` | Claude Keychain write-back renewer |
+| `scripts/sidecar_pkg/anthropic_renewer.py` | Keep-alive renewer |
+| `scripts/sidecar_pkg/claude_keychain_renewer.py` | Keychain write-back renewer |
 | `scripts/sidecar_pkg/claude_renewal_lock.py` | Per-item renewal locking |
-
-## References
-
-- **Claude:** https://claude.ai
-- **API Docs:** https://api.anthropic.com
-
-## Manual Authentication (Advanced)
-
-If automatic cookie extraction fails (e.g. in Docker or Headless mode), you can manually provide a browser cookie bundle in the **Settings** UI.
-
-### 1. Extracting the Cookie Bundle
-1.  Open [Claude.ai](https://claude.ai) in your browser and log in.
-2.  Press **F12** to open Developer Tools.
-3.  Go to the **Network** tab.
-4.  Navigate to [https://claude.ai/settings/usage](https://claude.ai/settings/usage).
-5.  Find the `usage` request in the Network list.
-6.  Right-click the request and select **Copy -> Copy as CURL** (to see the whole header) OR find the **Cookie** field under **Request Headers**.
-7.  **IMPORTANT:** Copy the **ENTIRE string** starting with things like `anthropic-device-id=...`.
-
-### 2. Implementation in Runway
-- **Field in Runway Settings**: **Manual Authentication (Cookie Bundle)**
-- **Note**: Runway will automatically handle both standalone `sessionKey` values and full browser bundles. The full bundle is strongly recommended to bypass Cloudflare security (WAF).
-- **Hardening**: Runway mimics your specific browser's fingerprint (User-Agent and Client Hints) to ensure the session remains valid.
-
-
-## Console API credits (separate connection)
-
-### Automatic macOS browser discovery
-
-A paired macOS sidecar can discover existing Chrome-family subscription and
-Console sessions without copying cookies. Sign in to `claude.ai` for
-subscription quotas and `platform.claude.com` for Console credits. Runway
-keeps these credentials separate, verifies each source with its own API, and
-activates a connection when its account and usable organization are
-unambiguous. Multiple eligible organizations appear in the pending-credentials
-dialog; select the organization there, without supplying a cookie.
-
-Browser/profile sources remain separate, so an inaccessible Desktop credential
-does not hide a working browser session. Keychain supplies the browser's
-encryption secret; the session itself comes from the cookie database. OS access
-may require a permission grant. A denied or timed-out Keychain lookup is not
-repeated until the sidecar is restarted. After resolving access, restart the
-sidecar to retry. `RUNWAY_CLAUDE_DESKTOP_CREDENTIALS=off` opts out of Desktop
-credential discovery while retaining browser discovery.
-
-The server never opens browser stores or Keychain. Windows/Linux discovery
-retains its existing behavior; native automatic Console discovery is enabled
-for macOS. Ordinary sign-in, expiry and revocation still apply. Native Chrome
-source-runtime evidence is recorded in
-[automatic connection acceptance](../evidence/acceptance/claude-automatic-native-acceptance-671.md).
-
-A completed provider scan can still be empty when a browser store or Keychain is
-inaccessible. Runway preserves last-good credential sources in that case. It retires
-an absent cookie fingerprint only when another fingerprint from the same browser,
-profile, and store is positively reported after a completed scan. A logout leaving
-that store entirely empty can therefore leave stale source metadata until explicit
-cleanup or later positive replacement evidence. Failed or expired credentials retain
-the existing rejection behavior; an empty scan does not prove logout.
-
-### Naming and pricing a discovered account
-
-An automatically discovered Claude account is named after what it is, not after
-the browser session that happened to find it. A subscription belongs to one
-member, so its email names it. A Console account is the organization itself —
-every member shares its credit — so the organization's name names it, and one
-organization keeps that name no matter which member signed in last.
-
-The billing model follows the cards the account publishes: a plan publishes
-percentage quotas and bills as a subscription, a Console account publishes a
-prepaid balance and bills as pay-as-you-go. A claude.ai account's own prepaid
-balance proves neither — a Claude plan can carry prepaid credit, so a balance
-on its own says nothing about how that account bills — and neither does a quota
-window the collector invented to fill a gap. A model is detected when the
-account is first recorded, and a billing type nobody set is filled in on a
-later poll. A name or billing type set in Settings afterwards is never
-overwritten by a later poll.
-
-An account added **by hand** is priced the same way, from the same cards. The
-Console connection is priced while the organization is picked — the balance it
-publishes is prepaid credit — and a subscription is priced on request: press
-**Detect billing model** in the wizard and the account's own quota windows
-decide. The wizard only *suggests* the model; what the operator picks in the
-next step is what gets saved, and a model nobody picked is left to the
-server's own proof.
-
-A card's label is the account's *name* — the member's email for a claude.ai
-account, the organization's name for a Console account — and it is what keys the
-card to its account, so a name a human chose never files a card under another
-account. The *identity* a card proved, which an organization-scoped one marks
-with `org: `, lives in the card's detail, where the tagger reads it back; that
-detail is the only place the marker appears.
-
-### Manual fallback
-
-Choose **Claude → Console API credits** when adding a connection. Sign in at
-`https://platform.claude.com`, use browser developer tools to copy the Console
-`sessionKey` cookie, then paste it into **Console session cookie**. A bare value
-or a full Cookie header is accepted. Load organizations, select the API
-organization receiving your credits, and save. With one accessible organization
-it is selected automatically. Add another connection to track another organization.
-
-This uses the internal `anthropic_console` collector, independently of the
-subscription collector. Live tests found the quota cookie unable to access
-Console billing and the Console cookie unable to access subscription quotas;
-API keys did not work for the balance endpoint. Keep the quota credential in its
-existing connection. Console cookies are stored using Runway's existing
-credential encryption mechanism and must be replaced when the session expires.
-
-The collector reads
-`GET https://platform.claude.com/api/organizations/{organization UUID}/prepaid/credits`
-every 15 minutes by default, tagged `data_source=web`, `input_source=config`.
-The card shows the full reported balance in the existing pay-as-you-go layout.
-Purchased credits and unexpired promotional grants explain the total; subscription
-credits are identified by `program_id=subscription_api_credit`. Grant expiry is
-shown as expiry, not as the next monthly-credit date. Credits can have product
-restrictions, shown in the connection overview. No token events or actual API
-spending are inferred from balance movements.
-
-A zero balance is valid. Authentication, permission, transport and parsing failures
-retain last-good data under the normal cache/staleness policy and do not affect
-subscription quotas. This endpoint is private and its schema can change.
-
-Automatic discovery is tracked in
-[#671](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/671), with
-remaining native-source acceptance in
-[#672](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/672).
-Manual-cookie connections remain supported independently.
-
-
-### macOS Desktop OAuth discovery
-
-The sidecar reads Claude Desktop's `config.json` under its Application Support directory.
-It decrypts the observed `oauth:tokenCacheV2` and legacy `oauth:tokenCache` layouts
-using the process-cached `Claude Safe Storage` key, shared with Desktop cookie discovery.
-The first Desktop key lookup allows 30 seconds for a macOS prompt. Denial or timeout
-suppresses further lookups until sidecar restart. Tokens themselves are reread each cycle.
-
-V2 slots take precedence, including removed slots. Identical access tokens are deduplicated;
-independent account/client/organization/scope slots retain separate machine-bound origins.
-The sidecar forwards access tokens and millisecond expiry, never Desktop refresh tokens.
-`RUNWAY_CLAUDE_DESKTOP_CREDENTIALS=0` disables both Desktop OAuth and cookie discovery.
-
-The server checks the holder profile, its UUID against the cache binding, and readable
-quota before activating any automatically discovered native OAuth source. Every native
-OAuth collection rechecks identity and carries an exact-generation proof through persistence.
-Changed inferred native logins re-enter verification; explicit source assignments remain
-binding and a holder mismatch fails closed. All verified accounts connect automatically.
-OAuth sources are preferred to cookies at equal operator priority; independent cookie
-sources remain available for fallback. 403, rate limiting and transport errors do not
-turn an unverified cache entry into a working connection.
-
-Desktop and the CLI own renewal. This read-only path issues no refresh request or
-credential write. It does not collect chat contents or exact token-consumption events.
-Desktop OAuth implementation/acceptance is tracked in #679; CLI variants in #673,
-scoped macOS acceptance in #672, optional browser acceptance in #683, and renewal/write-back in #526.
-
-### macOS browser acceptance and store diagnostics
-
-Chrome, Safari and Claude Desktop passed the scoped packaged-app acceptance in
-[#672](../evidence/acceptance/claude-native-macos-acceptance-672.md). Safari discovery covers legacy,
-container and separate profile cookie stores. macOS may require user-controlled
-privacy access; an inaccessible store is never treated as logout.
-
-Internal store diagnostics distinguish candidates, successful empty reads, missing
-stores/items, inaccessible stores, denial, timeout and unsupported layouts. Expired
-cookies are filtered and counted. Malformed relevant Safari records mark the scan
-incomplete while preserving independently decoded candidates. Unknown Chromium schema
-versions remain unsupported and report the observed version. Diagnostic store IDs use
-a random process-local HMAC key, so they correlate scans only until restart and do not
-expose profile paths. Per-store outcomes are DEBUG logs/internal diagnostic sinks, not ingestion fields;
-INFO logs contain one aggregate count summary per scan call.
-Safe Storage failures are cached until sidecar
-restart. `RUNWAY_CLAUDE_DESKTOP_CREDENTIALS=0` still disables both Desktop OAuth and
-Desktop cookie discovery. Empty scans preserve last-good source metadata; explicit
-cleanup remains available. Optional-browser native acceptance is tracked in #683.
+| `app/models/db_usage.py` | Per-message event columns |

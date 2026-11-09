@@ -108,7 +108,7 @@ RunwaySidecar.exe --probe-minimax-code                               # Windows
 ```
 
 It exits 0 when the store was found and understood, and 1 when there is nothing to read or the
-schema has drifted. See [`docs/collectors/minimax.md`](collectors/minimax.md#checking-a-host) for
+schema has drifted. See [`docs/collectors/minimax_code.md`](collectors/minimax_code.md#checking-a-host) for
 the full report.
 
 ### Unsigned app warning
@@ -246,7 +246,7 @@ before it and never reach argparse: `--authorize-keychain-source`,
 - **PID File:** Prevents multiple daemon instances
 - **16 Providers:** Claude, Claude Console, GitHub Copilot, Gemini, ChatGPT, OpenRouter, MiniMax, OpenCode, Ollama, zAI, Kimi API, Kimi Coding, Kimi K2, DeepSeek, xAI (Grok), Antigravity (quota via server-side API collector; sidecar ships the OAuth token and token/cost enrichment only). See [`collectors/README.md`](collectors/README.md) for the provider ↔ module ↔ rule map, and note that two further sources are **sidecar-only** and are not server providers: `hermes` and `minimax_code`.
 - **Event Batching:** Per-message events (Claude, Codex, Gemini, OpenCode, MiniMax Code) shipped in 1000-event batches
-- **Persistent Watermark:** `~/.config/runway-sidecar/event-watermark.json` tracks last-pushed timestamp per (provider, account). The MiniMax Code extractor keeps an id-based cursor of its own in `minimax_code_watermark.json` next to the sidecar's state, because the runtime's request timestamps are not globally monotonic — see [`docs/collectors/minimax.md`](collectors/minimax.md#minimax-code-traffic)
+- **Persistent Watermark:** `~/.config/runway-sidecar/event-watermark.json` tracks last-pushed timestamp per (provider, account). The MiniMax Code extractor keeps an id-based cursor of its own in `minimax_code_watermark.json` next to the sidecar's state, because the runtime's request timestamps are not globally monotonic — see [`docs/collectors/minimax_code.md`](collectors/minimax_code.md#cursor)
 - **HMAC-SHA256 Signing:** Secure payload verification
 
 ## Configuration

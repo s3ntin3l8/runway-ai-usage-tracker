@@ -6,38 +6,21 @@ DeepSeek prepaid (pay-as-you-go) balance collector.
 
 ## Overview
 
-- **Collection Strategy**: api (REST)
-- **Cards**: 1 card (Balance)
-- **Authentication**: `DEEPSEEK_API_KEY` (api)
+- **Strategy:** `api` (REST), `data_source: api`.
+- **Cards:** one (Balance).
 
 DeepSeek is a pure pay-by-use provider: there is no session/weekly/monthly
 quota window upstream — the only gauge is the topped-up/granted balance.
 Token usage and per-message costs reach Runway through the sidecar's opencode
 event extractor, not through this collector.
 
-## Setup Methods Quick Overview
+## Credentials
 
-1.  **API Key (`DEEPSEEK_API_KEY`)**:
-    *   **Method**: Obtain your API key from the [DeepSeek Platform](https://platform.deepseek.com/) (API keys page) and set it as an environment variable or via the Runway UI settings.
-    *   **Details**: Refer to the [Configuration section](#configuration) and [Troubleshooting: "Missing DEEPSEEK_API_KEY" error](#missing-deepseek_api_key-error).
+`DEEPSEEK_API_KEY` in the environment or Settings, Providers (key from the [DeepSeek Platform](https://platform.deepseek.com/)). A sidecar also discovers the key from the environment or from OpenCode's `auth.json` entry `deepseek.key` ([discovery and origins](opencode.md)); a discovered key stays under Fleet, Untagged Credentials until an account is assigned, and only then does the balance collector see it. The balance itself is always fetched server-side.
 
-## OpenCode CLI auto-discovery
+## OpenCode usage events
 
-If you have the [opencode CLI](opencode.md) installed with a BYOK DeepSeek
-provider, the sidecar reads the key from
-`~/.local/share/opencode/auth.json["deepseek"].key` (or
-`~/.opencode/auth.json`) on every host that runs a sidecar, or from the
-`DEEPSEEK_API_KEY` env var. That skips pasting the key, but it does not
-attach the balance card by itself: the origin is key-scoped
-(`path:…/auth.json#<fingerprint>`, see *Key-scoped origins* in
-[opencode.md](opencode.md)), and the token stays blocked in **Fleet →
-Untagged Credentials** until an account hint resolves. Only then does the
-balance collector see the key.
-
-### DeepSeek-direct vs. DeepSeek through the OpenCode Go subscription
-
-Both flow through the opencode CLI, but they are **different billers** and
-never share a card:
+DeepSeek through OpenCode comes from different billers that never share a card:
 
 | How you use DeepSeek in opencode | opencode `providerID` | Runway `provider_id` | Billed to |
 |----------------------------------|----------------------|----------------------|-----------|
@@ -85,32 +68,9 @@ detailed per-key usage lives behind the private Platform dashboard endpoints
 which require a browser session. Token usage is therefore sourced from
 opencode events.
 
-## Output Format
+## Card
 
-### Card: Balance
-
-```python
-{
-    "service_name": "DeepSeek",
-    "variant": "Balance",
-    "window_type": "rolling",
-    "icon": "🐋",
-    "remaining": "$50.00",
-    "unit": "USD",
-    "reset": "Prepaid",
-    "health": "good",
-    "pace": "Stable",
-    "detail": "Paid: $40.00 / Granted: $10.00 [API]",
-    "unit_type": "currency",
-    "currency": "USD",
-    "data_source": "api",
-    "usage_url": "https://platform.deepseek.com/usage",
-    "updated_at": "2026-09-26T12:00:00+00:00",
-}
-```
-
-When `is_available` is false, `health` degrades to at least `warning` and the
-detail gains `— balance unavailable for API calls`.
+One `Balance` card (`window_type: rolling`, `unit_type: currency`, `data_source: api`): remaining total, with paid and granted balance in the detail. When `is_available` is false, `health` is at least `warning` and the detail notes the balance is unavailable for API calls.
 
 ## Configuration
 
@@ -118,15 +78,7 @@ detail gains `— balance unavailable for API calls`.
 |----------|----------|-------------|
 | `DEEPSEEK_API_KEY` | Yes* | DeepSeek API key (`sk-...`) |
 
-\* Or a key saved in the Runway dashboard (Settings → Providers), or read
-from opencode's `auth.json` once an account hint resolves (Fleet →
-Untagged Credentials).
-
-## Sidecar Support
-
-Sidecar discovers the key (env var / opencode `auth.json`) and, once an
-account hint resolves, pushes it via the token cache; the balance itself
-is fetched server-side. See [sidecar documentation](../sidecar.md).
+\* Or a key saved in Settings, or discovered by the sidecar (see Credentials).
 
 ## Troubleshooting
 
@@ -145,18 +97,10 @@ match yet.
 **Fix:** Label the account in Fleet → Untagged Credentials; the
 `account_tag_hints` flow then retargets future events (same as OpenRouter).
 
-## Related Files
+## Related files
 
 | File | Purpose |
 |---|---|
 | `app/services/collectors/deepseek.py` | Collector entry point — the prepaid balance endpoint |
-| `app/services/collectors/base.py` | Collector base class |
+| `scripts/sidecar_pkg/event_extractors/opencode.py` | Retags BYOK DeepSeek events onto `deepseek` |
 | `scripts/sidecar.py` | Sidecar credential rules and event dispatch |
-
-## References
-
-- **DeepSeek Platform:** https://platform.deepseek.com/
-- **Models & Pricing:** https://api-docs.deepseek.com/quick_start/pricing
-- **Balance endpoint contract:** `GET /user/balance` — not linked from the
-  current docs nav; response shape cross-checked against CodexBar's
-  [DeepSeek provider docs](https://github.com/steipete/CodexBar/blob/main/docs/deepseek.md)

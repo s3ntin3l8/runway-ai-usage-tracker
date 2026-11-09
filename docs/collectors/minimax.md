@@ -1,622 +1,109 @@
-# MiniMax Collector
+# MiniMax
 
-**File:** `app/services/collectors/minimax.py` (server) · `scripts/sidecar.py` (sidecar)
+**File:** `app/services/collectors/minimax.py`
 
-MiniMax coding-plan quota collector.
+Server collector for the MiniMax coding-plan quota (5-hour and weekly windows). MiniMax Code
+*usage events* are a separate, sidecar-only path: see [minimax_code.md](minimax_code.md).
 
-## Overview
+## At a glance
 
-- **Collection Strategy**: api (REST) only — no fallback tier. The HTML coding-plan page
-  (`platform.minimax.io/user-center/payment/coding-plan`) is a client-rendered SPA and can't
-  be scraped, so a former regex-based fallback was retired.
-- **Cards**: Two cards per poll — a `session` (5h rolling) card and a `weekly` card. There is
-  no monthly window.
-- **Authentication**: `MINIMAX_API_KEY`
+- **Strategy:** `api` only. `MiniMaxCollector` has no `STRATEGIES` dict and no fallback tier
+  (`_fallback_strategies()` returns `[]`): the coding-plan web page is a client-rendered SPA
+  and is not scraped.
+- **Cards:** one `session` card (label `5h`) per entitled quota bucket plus one `weekly` card.
+  There is no monthly window. `COMPLETE_SNAPSHOT = True`, so a missing window retires the old
+  card.
+- **Labels:** `data_source: "api"`; `input_source` is `config` (Settings or a manually pasted
+  credential), `sidecar` (credential pushed by a sidecar) or `server` (`MINIMAX_API_KEY` env,
+  default account only). Values are defined in [statistics.md](../statistics.md). The card
+  `detail` ends in `[API]` or `[App]` according to the credential kind.
+- **Two credential kinds** reach this collector and each needs its own host (see below).
 
-## Data Source
+## Credentials
 
-### api (Coding Plan API)
-**Endpoint:** `https://api.minimax.io/v1/coding_plan/remains` (default — international host).
-Set `MINIMAX_HOST=minimaxi.com` to switch to the China host
-(`https://api.minimaxi.com/v1/coding_plan/remains`). `MINIMAX_HOST` must be a **bare domain**
-— the collector prefixes it with `api.` (and, for the dashboard link, `platform.`) itself.
-A value that arrives with a scheme is normalised to its host, so it is never pasted into
-the middle of a URL.
-**Auth:** Bearer token.
+The kind is decided by the token prefix, so a credential pasted into Settings or stored in the
+database still goes to the right host.
 
-**Response** (real payload, one entry per quota bucket in `model_remains[]` — not one per
-billable model; `"general"` covers the text/coding models this collector surfaces, `"video"`
-is a separate entitlement it doesn't):
+| Kind | Looks like | Source | Runs in | Notes |
+|---|---|---|---|---|
+| Platform API secret | `sk-…` (anything not `mmoat_`) | `MINIMAX_API_KEY` env; Settings; opencode `auth.json` (`minimax-coding-plan.key`) | server (env, Settings); sidecar (opencode file) | Sent to the API host |
+| MiniMax Code app OAuth token | `mmoat_…` | `~/.minimax/auth/*/*/mcode-public/auth.json` (`records.*.accessToken`, with refresh token, client id and expiry) | sidecar only | Sent to the open-platform host |
+
+Lookup order in `_get_current_creds()`: stored provider config, then the sidecar token cache
+(`api_key` slot, else `oauth_token`), then `MINIMAX_API_KEY` for the `default` account.
+
+The app's auth store keeps one record per build and region, each with its own expiry. Server
+and sidecar both pick the record whose expiry is still in the future, and the token and expiry
+come from the same record. The expiry unit (seconds to nanoseconds) is read from the number's
+magnitude, not from the field name: see [Expiry units](../collection_logic.md#expiry-units).
+The failure mode when the wrong kind is sent is described in
+[collection_logic.md](../collection_logic.md) ("MiniMax credentials").
+
+| Variable | Default | Description |
+|---|---|---|
+| `MINIMAX_API_KEY` | none | Platform API secret for the default account |
+| `MINIMAX_HOST` | `minimax.io` | Bare domain; `minimaxi.com` selects the China platform. A value with a scheme is reduced to its host |
+
+## Endpoints
+
+| Credential | Method and URL | Auth |
+|---|---|---|
+| API secret | `GET https://api.<host>/v1/coding_plan/remains` | `Authorization: Bearer <key>` |
+| OAuth token, global | `GET https://platform.<host>/v1/api/openplatform/coding_plan/remains` | `Authorization: Bearer <token>` |
+| OAuth token, China | `GET https://www.minimaxi.com/v1/api/openplatform/coding_plan/remains` | `Authorization: Bearer <token>` |
+
+The China open-platform host is chosen when the parsed hostname of `MINIMAX_HOST` is
+`minimaxi.com` or a subdomain of it (a plain suffix test would accept `evilminimaxi.com`).
+Both paths return the same payload, so one parser serves both. The dashboard link on the
+cards is `https://platform.minimax.io/user-center/payment/coding-plan`.
+
+Payload shape (abridged):
 
 ```json
 {
   "model_remains": [
-    {
-      "model_name": "general",
-      "start_time": 1788361200000, "end_time": 1788379200000, "remains_time": 4692260,
-      "current_interval_total_count": 0, "current_interval_usage_count": 0,
-      "current_interval_status": 1, "current_interval_remaining_percent": 100,
-      "weekly_start_time": 1788134400000, "weekly_end_time": 1788739200000,
-      "current_weekly_total_count": 0, "current_weekly_usage_count": 0,
-      "current_weekly_status": 1, "current_weekly_remaining_percent": 100
-    },
-    {
-      "model_name": "video",
-      "current_interval_status": 3,
-      "...": "..."
-    }
+    {"model_name": "general",
+     "end_time": 1788379200000,
+     "current_interval_total_count": 0, "current_interval_usage_count": 0,
+     "current_interval_status": 1, "current_interval_remaining_percent": 100,
+     "weekly_end_time": 1788739200000,
+     "current_weekly_total_count": 0, "current_weekly_usage_count": 0,
+     "current_weekly_status": 1, "current_weekly_remaining_percent": 100}
   ],
-  "base_resp": { "status_code": 0, "status_msg": "success" }
+  "base_resp": {"status_code": 0, "status_msg": "success"}
 }
 ```
 
-Field notes (undocumented by MiniMax; derived from observation of a live account):
-
-- `*_remaining_percent` is **remaining**, not used — the collector inverts it
-  (`pct_used = 100 - remaining_percent`) when `total_count` is still 0 (a fresh/unused plan).
-  Once `total_count > 0`, `pct_used = usage_count / total_count * 100` takes precedence.
-- `current_interval_status` (and `current_weekly_status`) bundles two different things.
-  `{1, 2}` means "you own this bucket" — `1` = available, `2` = exhausted (0% remaining, observed
-  live once real traffic depleted the "general" bucket); both are shown. `3` (observed on the
-  `"video"` entry, always 100% remaining regardless of usage) means "not part of your plan" and is
-  excluded. MiniMax doesn't document the enum, so this is observed behavior, not a documented
-  contract — an earlier version of this collector treated status `2` the same as `3` and silently
-  hid the card at 0% remaining, exactly when a user most needs to see it.
-- `end_time` / `weekly_end_time` (ms epoch) map directly to `reset_at` — verified against
-  `remains_time` (`remains_time == end_time - now`), so there's no need to reconstruct from it.
-- The weekly block (`weekly_start_time` / `weekly_end_time` / `current_weekly_*`) is **identical
-  across every `model_remains` entry** — one account-level weekly quota, not per-model — so the
-  collector emits exactly one weekly card, taken from the first entitled entry.
-- `/v1/token_plan/remains` is a newer path MiniMax documents on the same host; this collector
-  still uses `/v1/coding_plan/remains`, which is confirmed working.
-
-## Output Format
-
-Two cards, `window_type="session"` (5h) and `window_type="weekly"`:
-
-```python
-{
-    "service_name": "MiniMax",
-    "icon": "🤖",
-    "remaining": "90.0%",
-    "unit": "capacity",
-    "reset": "32m",
-    "health": "good",
-    "pace": "Sustainable",
-    "detail": "40/400 prompts (5h) [API]",
-    "used_value": 40.0,
-    "limit_value": 400.0,
-    "unit_type": "requests",
-    "pct_used": 10.0,
-    "window_type": "session",
-    "model_id": None,
-    "reset_at": "2026-09-02T20:00:00+00:00",
-    "tier": None,
-    "data_source": "api",
-    "input_source": "config",
-    "usage_url": "https://platform.minimax.io/user-center/payment/coding-plan",
-    "updated_at": "2026-09-02T19:27:00+00:00",
-}
-```
-
-`tier` is always `None` — MiniMax doesn't return a plan/tier name, and third-party sources
-disagree on the vocabulary for this product (Plus/Max/Ultra vs. Starter/Pro/Max). The allowance
-is surfaced in `detail` instead once `current_interval_total_count`/`current_weekly_total_count`
-start reporting real numbers (`0/0` on a fresh, unused subscription — displayed as `"—/—"`).
-
-## Pricing (notional cost)
-
-`app/services/pricing_seed.py` seeds pay-as-you-go API rates (USD/Mtok) for MiniMax models, so
-Coding-Plan usage (subscription — $0 actual cost) gets the same "what this would have cost on
-the API" figure that Claude subscription usage gets against Claude API rates:
-
-| Model | Input | Output | Cache read | Confidence |
-|---|---|---|---|---|
-| `MiniMax-M3.1-Flash` | $0.15 | $0.60 | $0.015 | High — MiniMax's own pricing page (checked 2026-10-20) |
-| `MiniMax-M3` | $0.30 | $1.20 | $0.06 | High — cross-checked against two sources |
-| `MiniMax-M2.7` | $0.30 | $1.20 | $0.06 | Medium |
-| `MiniMax-M2.5` | $0.30 | $1.20 | $0.03 | Medium — one source instead quotes $0.27/$0.95 |
-| `MiniMax-M2` | $0.255 | $1.02 | $0.03 | Low — single source, not cross-checked |
-
-M3 has an undocumented pricing cliff above 512K input tokens (doubles to $0.60/$2.40, cache
-read $0.12); this isn't modeled per-event (the schema has no context-length tiering), so a
->512K-token call will undercount. M3.1-Flash has no published tier split — MiniMax lists it
-flat, outside the Standard/Priority tabs that carry M3's context-length tiers — so a single
-row covers every call length.
-
-The legacy rows (M2/M2.5/M2.7) are kept so historical events keep their original figure, but
-none of them is listed on MiniMax's pricing page any more: M2 is retired, and M2.5/M2.7 are
-retired on 2026-11-18 (they were closed to new users on 2026-10-19, when M Plan and Token Plan
-traffic on them was automatically rerouted to M3.1 Flash). Their rates came from third-party
-sources rather than MiniMax, so treat them as a rough figure rather than a list price.
-
-Rows are keyed on the canonical id (`MiniMax-M3.1-Flash`), so OpenCode's lowercase
-`minimax-m3.1-flash` spelling prices through the cost calculator's case-insensitive fallback.
-The `-free` spellings (`minimax-m3.1-flash-free`, `MiniMax-M3.1-Flash-free`) stay deliberately
-unpriced — that is OpenCode's free route, billed at $0 on purpose, not a missing seed row.
-The cost calculator skips its segment-trim fallback for free-tier ids, so a `-free` id can
-never reach a paid sibling row and be billed at list price.
-
-## OpenCode traffic
-
-MiniMax coding-plan usage driven through [OpenCode](opencode.md) is folded into these same
-cards rather than showing up as a separate `opencode-minimax-coding-plan` entry. See
-`_OC_CANONICAL_MAP` in `scripts/sidecar_pkg/event_extractors/opencode.py` — events with
-`providerID: "minimax-coding-plan"` are retagged to `provider_id="minimax"`,
-`account_id="default"` (matching this collector's own account identity, since MiniMax is
-API-key-only and has no account email) at ingest, with their logged $0 cost dropped so the
-server prices them from the table above instead.
-
-### OpenCode CLI auto-discovery
-
-If you have the opencode CLI installed and you've configured a MiniMax Coding Plan provider
-there, Runway auto-discovers the key from
-`~/.local/share/opencode/auth.json["minimax-coding-plan"].key` (or
-`~/.opencode/auth.json`) on every host that runs a sidecar. No
-`MINIMAX_API_KEY` env var or UI paste needed — the same key opencode uses for
-its own `minimax-coding-plan` backend lights up this collector's quota card.
-
-The discovered key's origin is key-scoped exactly like opencode's own
-(`path:…/auth.json#<fingerprint>`, see *Key-scoped origins* in
-[opencode.md](opencode.md)), so two hosts — or a rotated key — can never
-share one operator tag. Paste the same key into Providers → minimax and the
-server answers `provider:minimax#<fingerprint>` on the next sidecar cycle.
-
-Already-ingested events under the old `opencode-minimax-coding-plan` id need a one-time
-migration, with the server **stopped** (SQLite is single-writer) and `APP_HOST=127.0.0.1`:
-
-```bash
-# 1. Start the server once first if this is a fresh DB — seed_pricing_table() only
-#    runs inside init_db() at startup, so the MiniMax pricing rows above don't exist
-#    until the server has started at least once. Then stop it again before migrating.
-# 2. Scope the rescan to just the MiniMax fold-in (skips the much larger legacy
-#    opencode/opencode-free backlog, which reclassify_opencode_providers.py can also
-#    migrate, but that's a separate, unrelated cleanup):
-python scripts/reclassify_opencode_providers.py \
-    --providers opencode-minimax-coding-plan --apply
-# 3. Price the retagged events from the table above:
-python scripts/recost_events.py --provider minimax
-# 4. Clear the stale pre-fix gauge cards (see scripts/cleanup_minimax_monthly_cards.py):
-python scripts/cleanup_minimax_monthly_cards.py --apply
-# 5. Restart the server.
-```
-
-## MiniMax Code traffic
-
-MiniMax Code — the runtime behind this agent (the `mavis` agent of the MiniMax Code CLI and
-desktop app) — keeps its **own usage ledger** on disk. The sidecar reads it directly, so the
-MiniMax Code sessions you run locally show up as usage on the MiniMax cards instead of only
-showing up as a quota gauge.
-
-The extractor lives in `scripts/sidecar_pkg/event_extractors/minimax_code.py` and pushes one
-event per **API request** under `provider_id="minimax"` with `source_app="minimax_code"`.
-
-### Scheduling: a client app, not an account
-
-The ledger is collected under the **scheduling id `minimax_code`**, not under `minimax`.
-
-The two are different things. The `minimax` *provider* is an account: it has a quota card, a
-provider config row and an API key. The MiniMax Code runtime is a **client app**: its ledger
-exists on every host that ran it, whether or not that host has a MiniMax account. Sharing one id
-tied the ledger's collection to the account, so a host with neither a provider config row nor a
-quota card only saw its MiniMax Code usage on full cycles — roughly once a day — instead of on
-every poll cycle (#928).
-
-`minimax_code` is a **scheduling id only**. It is never a provider: the server has no provider
-row, card or credential for it, and it is never listed as one. What it changes:
-
-| | Before | After |
-|---|---|---|
-| Scheduling id | `minimax` | `minimax_code` |
-| When the ledger is read | only when the host has a MiniMax account | every poll cycle |
-| `provider_id` on the events | `minimax` | `minimax` (unchanged) |
-| Account the events land on | the operator's MiniMax account | the operator's MiniMax account (unchanged) |
-
-The events keep `provider_id="minimax"`, so the server files them under the MiniMax provider
-exactly as before, and the account hint and the taggable origin stay the **provider's**
-(`provider:minimax`) — not the scheduling id's. Without that, the events would fall back to
-`"default"` and land in "Unassigned usage" the moment the ledger moved to its own id.
-
-A host that has a MiniMax account is scheduled for both ids (`minimax` for the quota card,
-`minimax_code` for the ledger). Both dispatch the same extractor, so the sidecar reads each
-store **once per cycle** — whichever id reaches it first collects the rows.
-
-A sidecar that is newer than its server still collects the ledger: the server sends
-`minimax_code` from the version that knows it, and an older server that sends only `minimax`
-keeps working because the ledger is still reachable under that id.
-
-### The app login's expiry unit
-
-The desktop app's own login (`~/.minimax/auth/*/*/mcode-public/auth.json`) is read by the
-`minimax` provider's file rule, which maps `records.*.expiresAtMs` to `expiry_date`. That
-field is an **epoch-millisecond** value, and the `Ms` suffix says so — but the reader does not
-take the unit from the field name. The registry maps an expiry field by name without saying
-which unit that field carries, so both the server and the sidecar read the unit off the
-*magnitude* of the number instead (seconds / milliseconds / microseconds / nanoseconds).
-
-The convention, and why both readers have to implement it identically, is in
-[`docs/collection_logic.md`](../collection_logic.md#expiry-units). A record that publishes
-its expiry in another unit needs no rule change.
-
-### Where the ledger lives
-
-```
-~/.minimax/v2/sqlite/runtime-state.sqlite   (+ -wal, -shm)
-```
-
-The runtime resolves its data dir from `join(homeDir ?? homedir(), ".minimax")` — the bundle has
-no macOS or Windows branch for it — so the **same path works on Linux, macOS and Windows**
-(`%USERPROFILE%\.minimax\v2\sqlite\runtime-state.sqlite` on Windows).
-
-That is only the **default**. The runtime also scopes the dir per profile
-(`~/.minimax-<profile>` — the profile comes from the desktop app, the CLI's `--profile` flag or
-the supervisor, and the runtime derives one from the current branch when it runs inside its own
-repository), honours environment overrides, and used to live in `~/.mavis` before it migrated.
-The sidecar therefore reads **every** store it finds, not just the first:
-
-| Where | What |
-|---|---|
-| `MINIMAX_DATA_DIR`, `MAVIS_DATA_DIR` | The runtime's public data-dir overrides. |
-| `__MAVIS_RUNTIME_DATA_DIR`, `__MAVIS_PARENT_DATA_DIR` | The internal ones the daemon supervisor injects into the processes it spawns. |
-| `~/.minimax-<profile>` | A profile-scoped install, next to the default one. |
-| `~/.mavis`, `~/.mavis-<profile>` | The legacy basename, for a host that never migrated. |
-| `~/Library/Application Support/MiniMax Agent` | The macOS desktop app's Electron profile — probed as insurance, but it holds the Chromium profile and never the ledger. |
-| `%APPDATA%\MiniMax Agent` | The same, on Windows: the Electron profile is named after the app's *product* name on both platforms, not after the installer's. |
-| `%APPDATA%\MiniMax Code` | The installer's spelling of the same dir — the other one is probed too, so a rename cannot hide the store. |
-
-The Windows app-data root is read from `%APPDATA%` on Windows, the same variable the sidecar's
-own state dir (`%APPDATA%\runway\sidecar`) reads, so a host that redirects it — a roaming
-profile, a relocated `AppData` — is probed where the app actually writes.
-`%USERPROFILE%\AppData\Roaming` is the fallback when the variable is unset, and the variable is
-ignored off Windows, where it is not a Windows variable.
-
-Each store carries its own cursor — the cursor file is keyed by database path — so several stores
-advance on their own id axes without interfering. A host that never migrated keeps `~/.mavis` as a
-**symlink** to `~/.minimax`; the two are deduplicated by resolved path, so the same requests are
-never reported twice.
-
-The store is opened **read-only** (`?mode=ro`) — the runtime owns the file, the sidecar never writes
-to it, checkpoints it or vacuums it. (SQLite itself may create the WAL sidecar files `-wal`/`-shm`
-next to it when a reader opens a WAL store — that is what any WAL reader does, and it changes
-nothing in the database.) A missing store (MiniMax Code never ran here), a locked one or a schema
-the runtime has drifted away from all degrade to *skipped source*: no events, no error card.
-
-### Checking a host
-
-Every sidecar build carries a read-only probe that reports what the host's MiniMax Code runtime
-store looks like and what the extractor would make of it:
-
-```bash
-runway-sidecar-cli --probe-minimax-code        # Linux (CLI and tray)
-Runway Sidecar.app/Contents/MacOS/RunwaySidecar --probe-minimax-code   # macOS
-RunwaySidecar.exe --probe-minimax-code         # Windows
-```
-
-```
-MiniMax Code runtime store — read-only probe
-
-  platform            : Linux
-  probed roots        : /home/x/.minimax, /home/x/Library/Application Support/MiniMax Agent, …
-  stores found        : 1
-  store               : /home/x/.minimax/v2/sqlite/runtime-state.sqlite (129.0 MiB)
-  store modified      : 2026-10-23T16:47:13.208315+00:00
-  schema              : OK
-  ledger              : 5934 requests · 96 turns · 10 sessions
-  not imported        : 0 request(s) would be skipped by a first run (it imports 90 days)
-  plan-review rows    : 2005
-  model MiniMax-M3.1-Flash         : 5000
-  cursor              : /home/x/.config/runway/sidecar/minimax_code_watermark.json
-  cursor last id      : (none)
-  skipped requests    : 0 (retried on the next cycle)
-  abandoned requests  : 0 (usage never reported)
-  this cycle would push: 5000 request(s) (a cycle reads at most 5000 rows per store)
-
-  RESULT: PASS — the sidecar on this host reports MiniMax Code usage as provider 'minimax' / app 'minimax_code'.
-```
-
-The probe opens every store read-only, runs the real extractor and prints its verdict; it
-**never commits the cursor**, so running it cannot make the sidecar skip rows. It exits 0 when a
-store was found and understood, and 1 when there is nothing to read (no store) or the schema has
-drifted. `--json` prints the same report as JSON, with one entry per store under `stores`.
-
-Two lines of the report are about *coverage* rather than about the store's shape.
-**not imported** counts the ledger rows a *first* run would not import. The first run's floor is
-on the **id axis** — the lowest id whose timestamp falls inside the window — so the rows it skips
-are the ones *before* that id, and a row with an older timestamp but a higher id is still
-imported. While the cursor advances every row is reported, but a rebuilt store or a deleted cursor
-file starts from the window, so a non-zero count is a warning that names `SIDECAR_BOOTSTRAP_DAYS` as
-the remedy. **skipped requests** and **abandoned requests** count the rows the extractor could not
-turn into events: the skipped ones are waiting for the next cycle, the abandoned ones exhausted
-their attempts and their usage was never reported.
-
-A store the probe's own run had nothing to read keeps the cursor file's counts — that is the
-steady state of an idle host, which is exactly when the probe is run to ask where the usage went.
-
-On a Windows host the same probe reports the Windows paths:
-
-```
-MiniMax Code runtime store — read-only probe
-
-  platform            : Windows
-  probed roots        : C:\Users\<you>\.minimax, C:\Users\<you>\AppData\Roaming\MiniMax Agent, …
-  stores found        : 1
-  store               : C:\Users\<you>\.minimax\v2\sqlite\runtime-state.sqlite (302.0 MiB)
-  schema              : OK
-  ledger              : 14454 requests · 186 turns · 22 sessions
-  not imported        : 0 request(s) would be skipped by a first run (it imports 90 days)
-  model MiniMax-M3.1-Flash         : 5000
-  cursor              : C:\Users\<you>\AppData\Roaming\runway\sidecar\minimax_code_watermark.json
-  skipped requests    : 0 (retried on the next cycle)
-  abandoned requests  : 0 (usage never reported)
-  this cycle would push: 5000 request(s) (a cycle reads at most 5000 rows per store)
-
-  RESULT: PASS — the sidecar on this host reports MiniMax Code usage as provider 'minimax' / app 'minimax_code'.
-```
-
-A host can hold more than one store — a profile-scoped install keeps a second ledger next to the
-default one. The report names each of them, and the counts are the whole host's, because the
-sidecar reads them all.
-
-On a windowed build (the macOS app and the Windows `.exe` have no console of their own) the probe
-attaches to the console it was launched from; with no console to attach to it writes the report to
-`minimax_code_probe.txt` next to the sidecar's config and says so in a message box.
-
-**Platform status.** The store path is identical on every platform (the runtime resolves it from
-`homedir()`), and the probe answers the question on whichever host you run it on:
-
-| Platform | Store path | Verified |
-|---|---|---|
-| Linux | `~/.minimax/v2/sqlite/runtime-state.sqlite` | Yes — full extraction verified against a live store |
-| macOS | `~/.minimax/v2/sqlite/runtime-state.sqlite` | Yes — the probe passes against a live store; 99.97 % of the ledger rows join, the model resolves for every row |
-| Windows | `%USERPROFILE%\.minimax\v2\sqlite\runtime-state.sqlite` | Yes — the probe passes against a live store; the schema matches, the model resolves for every row and the cursor lands in `%APPDATA%\runway\sidecar` |
-
-A platform that has not been confirmed reports **nothing** rather than wrong numbers: a missing
-store yields no events and a drifted schema yields no events.
-
-### What the store holds
-
-| Table | Meaning |
-|---|---|
-| `local_runtime_token_usage` | One row per **API request** — a turn issues dozens of them. `id` is an AUTOINCREMENT key, `ts` is the request time in ms, `model` is always NULL. |
-| `local_runtime_message_rows` | One row per stored message. `data_json` carries `usage`, `tool_calls`, `finish_reason`, `canonical_message_id` and `context_usage_telemetry.model`. |
-| `local_runtime_sessions` | One row per session. `workspace_dir` is the working directory, `extra_data_json` carries `effectiveModel` and `effectiveModelThinking.effort`. |
-
-The token columns are Anthropic-style **per-request** values, not deltas:
-`raw.totalTokens == input + output + cacheRead + cacheWrite` holds for every row, and
-`cache_read` grows within a turn and resets when the context is rebuilt. The events therefore
-carry the row's own values as-is — never a sum across a turn and never a delta.
-
-`cost_usd` is pushed as `None`: the runtime writes `0.0` because the M Plan is a subscription, so
-the server prices the event from the `MiniMax-M3.1-Flash` row in the table above.
-
-### Why the cursor is an id and not a timestamp
-
-`ts` is **not** globally monotonic — sessions interleave, so the ledger has hundreds of backward
-steps. A `ts > since` cursor silently drops rows: simulating this extractor's cadence over a real
-store, a timestamp cursor lost **14.3 %** of the rows at a 5-row cadence and 1.4 % even at 100
-rows per cycle, while the `id` cursor lost none.
-
-The extractor therefore keeps its own id-based cursor in
-`~/.config/runway/sidecar/minimax_code_watermark.json` (`%APPDATA%\runway\sidecar\…` on Windows —
-it sits next to the rest of the sidecar's state), keyed by the database path (`id` is only
-comparable within one file). That keying is what lets several stores coexist: each advances on
-its own id axis. The key is the **resolved** path, so the legacy `~/.mavis` → `~/.minimax`
-symlink keeps its cursor, while a data dir that is *moved* or *copied* resolves to a new key and
-starts from scratch.
-
-**The floor for a store that is seen for the first time is the bootstrap window**, never the
-sidecar's shared timestamp watermark. The watermark says "this provider's history up to T was
-pushed" — which is true for the store that was pushed and for nothing else, so it is not a floor
-for a store discovered later. It is not a safe floor for the known store either: `ts` is not
-globally monotonic, so a timestamp boundary drops the interleaved rows that fall outside it (the
-same reason the id cursor exists). The window — the same one the probe uses, so the two cannot
-disagree — is applied once, on the **id** axis, and then forgotten. Losing the cursor file
-therefore re-imports the window rather than the rows since the last push; the rows are identical,
-so the server's `(provider_id, event_id)` uniqueness makes the re-push a no-op.
-
-The cursor advances **only after the server confirms the ingest**: the advance is parked while the
-events are on their way and committed — or dropped — once the push is done. A failed push (or a
-cycle that dies mid-flight) therefore re-sends the same rows instead of skipping them; the
-server's `(provider_id, event_id)` uniqueness makes that re-send a no-op.
-
-**A row the extractor cannot turn into an event stops the cursor.** An unreadable timestamp, an
-event id that collides with an earlier row, or a payload the schema rejects used to be skipped
-silently while the cursor stepped over it — the row's usage was then gone for good. Now the
-cursor stops *in front of* such a row, so the next cycle reads it again (the rows behind it are
-re-read too, and the server deduplicates them). The row is retried on every cycle; after three
-attempts it is **abandoned** — a row that cannot become a valid push never will — and the
-abandonment is reported rather than dropped in silence. The cursor file keeps the skipped and
-abandoned row ids next to the cursor, and the probe prints their counts, so a row whose usage was
-never reported is visible to the operator.
-
-The cursor file keeps the **last 100** abandoned row ids per store; older ones are dropped from
-it. The durable record of an abandoned row is therefore its `ERROR` log line, not the cursor
-file — the log is where to look for a request whose usage was never reported.
-
-A cycle reads at most 5000 rows **per store**, so a host with N stores can emit up to N × 5000
-events in one cycle.
-
-A rebuilt store (the id axis restarts) resets the cursor and re-emits. The rebuilt store holds the
-requests made after the rebuild — usage that has not been reported yet — and a request that
-reappears with the same timestamp and the same usage keeps its event id, so the server deduplicates
-it rather than counting it twice.
-
-The event id is derived from the ledger row alone:
-`mcode:<session>:<turn>:<ts>:<input>:<output>:<cache_read>`. It must not depend on the join with
-the message rows — a request's message row can land in the store *after* the request itself, so a
-join-dependent id would change between two attempts at the same row and the server would count the
-request twice. Every part of it is content-derived, which also keeps two requests of one turn that
-share a millisecond apart (their token counts tell them apart) no matter which batch they land in.
-
-### Model resolution
-
-`local_runtime_token_usage.model` is always NULL, so the model comes from the first source that
-names one:
-
-1. the matched message row's `context_usage_telemetry.model`,
-2. the session's `messages.jsonl`,
-3. the session's `extra_data_json.effectiveModel` (`minimax/MiniMax-M3.1-Flash` — the provider
-   prefix is stripped so the id matches the pricing seed key),
-4. the session's `llm-call.json`.
-
-The message row is joined on the usage tuple
-`(session_id, turn_id, input_tokens, output_tokens, cache_read)`, which matches the ledger's
-per-request values against the message's own `usage` block. The history JSONL is **not** used for
-usage — it is pruned, so it loses rows — only as a model fallback.
-
-### Internal plan-review turns
-
-Roughly 60 % of the ledger's rows belong to the runtime's internal plan-review sub-agent
-(`turn_id` starting with `mavis-internal:plan-review:`). They are real API calls against your
-plan quota, so they are included and tagged `subagent_type="Plan"` — the Sessions view renders
-them as a separate card, split out of the session's main thread.
-
-### Background-task sessions
-
-The runtime spawns a background task as a **child session**: its own session id, a
-`parent_session_id` pointing at the session that owns the work, an `agent_name` naming the agent
-(`explore`) and a `purpose` naming the task (`local-background-task:bg_<uuid>`). The desktop app
-runs those in the background, so their requests are real calls against your plan quota — but they
-belong to the session that spawned them, not to a conversation of their own.
-
-Claude Code models the same work as a **sidechain**: the message carries the *parent's* session id
-plus an attribution agent. The extractor reproduces that shape:
-
-- the child's rows are filed under the **parent** session,
-- they are tagged `subagent_type="Explore"`, so the Sessions view renders them as the parent's
-  **Agents** card instead of listing them as a session of their own,
-- their `raw_json` carries the provenance (`source_session_id`, `parent_session_id`, `agent_name`,
-  `purpose`), so the child session stays recoverable from the stored row.
-
-Two properties keep this safe:
-
-- **The event id keeps the child's own session id.** It is derived from the ledger row alone, so it
-  does not change when the attribution changes: every row collected before this change keeps its
-  id, and the server deduplicates the re-push instead of counting it twice.
-- **The parent-link columns are optional.** A store written by a runtime that predates them keeps
-  working (no attribution, no crash). A parent that is not in the store is never invented — the
-  rows keep their own session id and are only tagged.
-
-The **turn** dimension rides along: the extractor pushes the ledger's own `turn_id`, so the Agents
-card counts *turns* (one background task = one turn) instead of API requests. A provider that
-emits one event per message (Claude Code) carries no turn id, and its numbers are unchanged.
-
-The session's own **Messages** column counts turns the same way, so a session row and its Agents
-card speak the same unit: a MiniMax Code session reports the turns you took, not the requests
-your turn was made of. The Top Projects table follows. The aggregate views (the provider's
-monthly totals, the charts) still count requests — their numbers come from the stored rollups,
-and a distinct-turn count cannot be summed incrementally across ingest batches.
-
-Two details worth knowing:
-
-- **It is not retroactive.** Rows collected before the turn id existed carry none, so they keep
-  counting as requests until the repair fills their turn id.
-- A turn is attributed to **every model it touched** — the same way its tokens are. A turn that
-  used two models therefore appears in both per-model buckets while the session row counts it
-  once.
-- A **turn id names its turn on its own**: the runtime mints them uniquely, across every
-  sidecar of the provider — not only within one host (a live store holds 130 distinct turn ids
-  across 18 sessions, none shared). That also keeps a turn's identity stable when the repair
-  moves its row from the task's session to the parent.
-
-#### Repairing the rows collected earlier
-
-Rows collected before this change still carry the background task's own session id, so they show up
-as a conversation of their own. Move them with:
-
-```bash
-python scripts/link_minimax_background_sessions.py --dry-run
-python scripts/link_minimax_background_sessions.py --apply
-```
-
-The repair reads the runtime stores (read-only), updates the attribution of the rows the server
-already holds and **never inserts**: no token count changes and no rollup move — the rollups are
-keyed by provider, account and period, never by session. A project's *session count* does drop: a
-background task was never a conversation.
-
-Every store on the host is repaired (a profile-scoped install keeps its ledger next to the default
-one, and each holds its own background tasks). Pass `--store` to repair specific ones instead.
-
-Three cases worth knowing about:
-
-- A background task whose **parent session is not in the store** keeps its own session id and is
-  only *tagged* — the same degradation the extractor applies. The repair tags it too; it does not
-  drop it.
-- A row still parked in **Untagged Credentials** (`pending_usage_events`) is outside the repair: the
-  promotion writes the payload the sidecar sent, so run the repair again after the account is
-  assigned. The run is idempotent, so that is enough.
-- A plain re-push of the same row deduplicates on its event id, so the repair stands. A re-push
-  under a **different account** is a retag: the server refreshes the stored row from the sidecar's
-  payload, so a sidecar that has not been upgraded yet puts the row back on the child. Run the
-  repair again to heal it.
-
-Run it against the dev DB or a snapshot — never the live prod DB while the server is writing
-(SQLite is single-writer).
-
-#### Rows that carry their provenance
-
-A row the extractor filed carries the parent in its `raw_json`, so the **server** can file it
-without the runtime store. The `minimax_background_sessions` Data Health check finds the rows
-whose provenance names a parent they are not filed under and offers to move them. The rows that
-carry **no** provenance — the ones collected before the extractor learned the parent link — are
-only visible to the script above.
-
-### Attribution
-
-The MiniMax Code auth bundle carries no email (its record is keyed by an opaque provider id), so
-the sidecar has no local identity to derive. The events therefore ship under the `"default"`
-sentinel, where they wait in the **Untagged Credentials** dialog — the same path OpenCode-driven
-MiniMax traffic takes.
-
-Once the operator has exactly one enabled, labeled MiniMax account, the server ships its
-`provider:minimax` auto-hint and the sidecar stamps the events with that account: they land on the
-same card as the quota gauge instead of a standalone `"default"` one. A multi-account setup has no
-auto-hint (the server refuses to guess) — the operator tags the origin explicitly there.
-
-## Configuration
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `MINIMAX_API_KEY` | Yes | MiniMax API key |
-| `MINIMAX_HOST` | Optional | Bare-domain host override. Default `minimax.io` (international); set to `minimaxi.com` for the China platform. |
-| `MINIMAX_CODE_HOME` | Optional | Data-dir override for the MiniMax Code runtime store. Default `~/.minimax`. The runtime's own overrides (`MINIMAX_DATA_DIR` and friends) are honoured too — see [Where the ledger lives](#where-the-ledger-lives). |
-
-## Sidecar Support
-
-Sidecar uses the same API key. No aggregation needed. See [sidecar documentation](../sidecar.md).
-
-The sidecar additionally reads the **MiniMax Code runtime ledger** on the host and pushes those
-requests as usage events under this provider — see
-[MiniMax Code traffic](#minimax-code-traffic) above. That path needs no API key at all: the
-ledger is a local file the runtime writes.
+Parsing rules (`_parse_api_response`):
+
+- `model_remains[]` holds one entry per quota bucket, not per billable model. `general` is the
+  text/coding bucket. A `video` bucket reports status 3 and is ignored.
+- Status 1 (available) and 2 (exhausted, 0% remaining) mean the bucket is part of the plan
+  (`ENTITLED_STATUSES`); anything else is skipped. Session and weekly entitlement are gated
+  independently, and the single account-level weekly card is built from the first entitled
+  entry.
+- Usage is `usage_count / total_count` once `total_count > 0`; before that the card uses
+  `100 - remaining_percent` and shows `—/— prompts`.
+- No entitled bucket yields one healthy "No active plan" card.
+- HTTP 200 with a non-zero `base_resp.status_code` is a failure, not an empty plan. Code 1004
+  ("login fail") becomes an `auth_failed` error card, other codes an `api_error` card.
 
 ## Troubleshooting
 
-### "Missing API key" error
-**Fix:**
-1. Get key from https://api.minimax.io (international) or https://api.minimaxi.com (China)
-2. `export MINIMAX_API_KEY="minimax-..."`
-3. If you registered on the China platform, also set `MINIMAX_HOST=minimaxi.com`.
+| Symptom | Cause and fix |
+|---|---|
+| "Missing API key" error card | No credential found. Set `MINIMAX_API_KEY`, paste a key in Settings, or run a sidecar on a host that has the opencode key or the MiniMax Code login. |
+| "MiniMax error 1004: login fail" | The credential reached the wrong host. Check that an `sk-` key and an `mmoat_` token were not swapped or edited so the prefix no longer matches. For the China platform also set `MINIMAX_HOST=minimaxi.com`. |
+| "API connection failed" | Network error, non-200 status or a rejected key; the HTTP status is in the server log (`MiniMax API error`). |
+| "No active plan" although a plan exists | Every bucket reported a status other than 1 or 2, or the key belongs to a different region. Check `MINIMAX_HOST`. |
+| App token stops working after some time | The app login expired. Sign in to MiniMax Code again; the sidecar only forwards a record whose expiry is still in the future. |
+| MiniMax usage from OpenCode missing from the cards | See [opencode.md](opencode.md): `minimax-coding-plan` events are retagged to `minimax` at ingest. |
 
-### API connection failed
-**Cause:** Network error or invalid API key.
-**Fix:** Verify your internet connection and API key validity.
-
-## Related Files
+## Related files
 
 | File | Purpose |
 |---|---|
-| `app/services/collectors/minimax.py` | Collector entry point |
+| `app/services/collectors/minimax.py` | Collector: credential kind, host selection, parser |
 | `app/services/collectors/base.py` | Collector base class |
-| `scripts/sidecar.py` | Sidecar credential rules and event dispatch |
-| `scripts/sidecar_pkg/event_extractors/minimax_code.py` | MiniMax Code local runtime store reader (parser and cursor) |
-| `scripts/sidecar_pkg/minimax_code_schema.py` | Table names and scan limits shared by the parser and the ledger |
-| `scripts/sidecar_pkg/minimax_code_roots.py` | Where a MiniMax Code runtime store can live on this host |
-| `scripts/sidecar_pkg/minimax_code_ledger.py` | Session, message, and attribution reads |
-| `scripts/sidecar_pkg/minimax_code_probe.py` | Read-only probe of the MiniMax Code store |
-
-## References
-
-- **MiniMax (international):** https://www.minimax.io
-- **MiniMax (China):** https://www.minimaxi.com
-- **API Documentation:** https://api.minimax.io/document/main (or https://api.minimaxi.com/document/main for the China platform)
+| `app/core/registry.json` | `minimax` credential rules (env, opencode file, app login file) |
+| `scripts/sidecar_pkg/event_extractors/opencode.py` | Retags OpenCode `minimax-coding-plan` events onto `minimax` |

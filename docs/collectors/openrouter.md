@@ -6,40 +6,12 @@ OpenRouter credit balance and per-key spending limit collector.
 
 ## Overview
 
-- **Collection Strategy**: api (REST)
-- **Cards**: 1 card (Credits balance) + 1 card (Key Limit, when configured)
-- **Authentication**: `OPENROUTER_API_KEY` (api)
+- **Strategy:** `api` (REST), `data_source: api`.
+- **Cards:** Credits, plus Key Limit when the key has a spending limit.
 
-## Setup Methods Quick Overview
+## Credentials
 
-The OpenRouter collector uses a single API key for authentication:
-
-1.  **API Key (OPENROUTER_API_KEY)**:
-    *   **Method**: Obtain your API key from the OpenRouter dashboard and set it as an environment variable or via the Runway UI settings.
-    *   **Details**: Refer to the [Configuration section](#configuration) for `OPENROUTER_API_KEY` and [Troubleshooting: "Missing OPENROUTER_API_KEY" error](#missing-openrouter_api_key-error).
-
-## OpenCode CLI auto-discovery
-
-If you have the [opencode CLI](opencode.md) installed and you've configured an
-OpenRouter provider there, Runway auto-discovers the key from
-`~/.local/share/opencode/auth.json["openrouter"].key` (or
-`~/.opencode/auth.json`) on every host that runs a sidecar. No
-`OPENROUTER_API_KEY` env var needed.
-
-The discovered key's origin is key-scoped exactly like opencode's own
-(`path:…/auth.json#<fingerprint>`, see *Key-scoped origins* in
-[opencode.md](opencode.md)), so two hosts — or a rotated key — can never
-share one operator tag. Paste the same key into Providers → openrouter and
-the server answers `provider:openrouter#<fingerprint>` on the next sidecar
-cycle. Cookie and `OPENROUTER_HTTP_REFERER` / `OPENROUTER_X_TITLE`
-candidates are not credentials and keep their plain origins.
-
-Token usage from opencode CLI routed through the OpenRouter backend is
-retagged from `providerID="openrouter"` to the canonical `provider_id="openrouter"`
-(see `_OC_CANONICAL_MAP` in `scripts/sidecar_pkg/event_extractors/opencode.py`),
-so it lands on the same `openrouter` quota card as the API-key quota. The
-server's `account_tag_hints` carries the operator-chosen `account_id` back
-when no in-band identity is present.
+`OPENROUTER_API_KEY` in the environment or Settings, Providers. A sidecar also discovers the key from OpenCode's `auth.json` entry `openrouter.key` ([discovery and origins](opencode.md)); paste the same key in Settings and the server recognises it by fingerprint on the next sidecar cycle. OpenCode usage routed through OpenRouter is retagged onto `openrouter` (`_OC_CANONICAL_MAP` in `scripts/sidecar_pkg/event_extractors/opencode.py`) and lands on the same account.
 
 ## Data Sources
 
@@ -83,49 +55,12 @@ usage. If the key has no spending limit configured (`limit` is null or 0), no ke
 card is emitted. If the endpoint fails or times out, the credits card is still
 returned — this is a best-effort enrichment.
 
-## Output Format
+## Cards
 
-### Card 1: Credits Balance
+- **Credits** (`variant: Credits`): remaining is `total_credits - usage`, prepaid, in USD.
+- **Key Limit** (`variant: Key Limit`): only when `/key` returns a `limit` above zero; shows the key's spend against that limit.
 
-```python
-{
-    "service_name": "OpenRouter",
-    "variant": "Credits",
-    "icon": "🚀",
-    "remaining": "$7.50",
-    "unit": "USD",
-    "reset": "Prepaid",
-    "health": "good",
-    "pace": "Stable",
-    "detail": "Used: $2.50 of $10.00 [API]",
-    "used_value": 2.5,
-    "limit_value": 10.0,
-    "unit_type": "currency",
-    "data_source": "api",
-    "updated_at": "2026-04-14T12:00:00+00:00",
-}
-```
-
-### Card 2: Key Limit (only when per-key spending limit is configured)
-
-```python
-{
-    "service_name": "OpenRouter",
-    "variant": "Key Limit",
-    "icon": "🔑",
-    "remaining": "$19.50",
-    "unit": "USD",
-    "reset": "Per-key",
-    "health": "good",
-    "pace": "Stable",
-    "detail": "Key used: $0.50 of $20.00 [API]",
-    "used_value": 0.5,
-    "limit_value": 20.0,
-    "unit_type": "currency",
-    "data_source": "api",
-    "updated_at": "2026-04-14T12:00:00+00:00",
-}
-```
+Both are `unit_type: currency`, `data_source: api`.
 
 ## Configuration
 
@@ -135,13 +70,9 @@ returned — this is a best-effort enrichment.
 | `OPENROUTER_HTTP_REFERER` | No | Sent as `HTTP-Referer` header (for OpenRouter attribution) |
 | `OPENROUTER_X_TITLE` | No | Sent as `X-Title` header, defaults to `Runway` |
 
-## Sidecar Support
-
-Sidecar uses the same API key. No aggregation needed. See [sidecar documentation](../sidecar.md).
-
 ## Troubleshooting
 
-### "Missing OPENROUTER_API_KEY" error
+### Missing key
 **Fix:**
 1. Get key from https://openrouter.ai/keys
 2. `export OPENROUTER_API_KEY="sk-or-v1-..."`
@@ -154,17 +85,10 @@ Sidecar uses the same API key. No aggregation needed. See [sidecar documentation
 **Cause:** The `/api/v1/key` endpoint returned null/0 for `limit`, or the request timed out.
 **Fix:** Set a per-key spending limit in your OpenRouter key settings.
 
-## Related Files
+## Related files
 
 | File | Purpose |
 |---|---|
 | `app/services/collectors/openrouter.py` | Collector entry point |
-| `app/services/collectors/base.py` | Collector base class |
 | `scripts/sidecar.py` | Sidecar credential rules and event dispatch |
-| `scripts/sidecar_pkg/cookie_scan.py` | Cross-platform browser cookie store discovery |
-
-## References
-
-- **OpenRouter:** https://openrouter.ai
-- **Credits API:** https://openrouter.ai/docs#credits
-- **Key API:** https://openrouter.ai/docs#key
+| `scripts/sidecar_pkg/event_extractors/opencode.py` | Retags OpenRouter events |

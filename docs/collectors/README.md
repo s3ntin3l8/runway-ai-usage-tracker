@@ -9,24 +9,24 @@ own document.
 
 ## Provider map
 
-| Registry id | Display name | Collection | Credential | Server collector | Sidecar side |
-|---|---|---|---|---|---|
-| `anthropic` | Claude Pro | OAuth → web → desktop credentials | `CLAUDE_CODE_OAUTH_TOKEN` (optional) | `anthropic.py` | `anthropic_oauth.py`, `anthropic_web.py` — see [claude.md](claude.md) |
-| `anthropic_console` | Claude Console | Web session (platform.claude.com) | session cookie | `anthropic_console.py` | — see [claude.md](claude.md) |
-| `antigravity` | Antigravity | Cloud Code Assist API | agy OAuth token (detected) | `antigravity.py` | `antigravity_api.py`, `antigravity_oauth.py` — see [antigravity.md](antigravity.md) |
-| `chatgpt` | ChatGPT Codex | OAuth → web session | `CHATGPT_OAUTH_TOKEN` (optional) | `chatgpt.py` | `chatgpt_oauth.py`, `chatgpt_web.py` — see [chatgpt.md](chatgpt.md) |
-| `deepseek` | DeepSeek | REST (balance) | `DEEPSEEK_API_KEY` | `deepseek.py` | — see [deepseek.md](deepseek.md) |
-| `gemini` | Gemini API | OAuth API | `GEMINI_OAUTH_*` (optional) | `gemini.py` | `gemini_api.py`, `gemini_oauth.py` — see [gemini.md](gemini.md) |
-| `github` | GitHub API | REST | `GITHUB_TOKEN` | `github.py` | — see [github.md](github.md) |
-| `kimi_api` | Kimi API | REST (balance) | `KIMI_API_KEY` | `kimi_api.py` | — see [kimi_api.md](kimi_api.md) |
-| `kimi_coding` | Kimi Coding | REST (IDE quotas) | `KIMI_CODE_API_KEY` or CLI login | `kimi_coding.py` | — see [kimi_coding.md](kimi_coding.md) |
-| `kimi_k2` | Kimi K2 | REST (credits) | `KIMI_K2_API_KEY` | `kimi_k2.py` | — see [kimi_k2.md](kimi_k2.md) |
-| `minimax` | MiniMax | REST (coding plan) | `MINIMAX_API_KEY` | `minimax.py` | `minimax_code` event extractor — see [minimax.md](minimax.md) |
-| `ollama` | Ollama Cloud | Web (cloud) session | `OLLAMA_SESSION_TOKEN` (optional) | `ollama.py` | — see [ollama.md](ollama.md) |
-| `opencode` | OpenCode | Web session / sidecar | browser cookie (detected) | `opencode.py` | `opencode` event extractor — see [opencode.md](opencode.md) |
-| `openrouter` | OpenRouter | REST (credits) | `OPENROUTER_API_KEY` | `openrouter.py` | — see [openrouter.md](openrouter.md) |
-| `xai` | xAI (Grok) | CLI chat proxy | `GROK_OAUTH_TOKEN` (optional) | `xai.py` | `xai` event extractor — see [xai.md](xai.md) |
-| `zai` | zAI API | REST (quota) | `ZAI_API_KEY` | `zai.py` | — see [zai.md](zai.md) |
+| Registry id | Display name | Collection | Credential | Server collector | Sidecar events (`scripts/sidecar_pkg/`) | Document |
+|---|---|---|---|---|---|---|
+| `anthropic` | Claude Pro | OAuth → web → desktop credentials | `CLAUDE_CODE_OAUTH_TOKEN` (optional) | `anthropic.py` | `event_extractors/anthropic.py`, `cowork_events.py` | [claude.md](claude.md) |
+| `anthropic_console` | Claude Console | Web session (platform.claude.com) | session cookie | `anthropic_console.py` | — | [claude.md](claude.md) |
+| `antigravity` | Antigravity | Cloud Code Assist API | agy OAuth token (detected) | `antigravity.py` | `event_extractors/antigravity.py` | [antigravity.md](antigravity.md) |
+| `chatgpt` | ChatGPT Codex | OAuth → web session | `CHATGPT_OAUTH_TOKEN` (optional) | `chatgpt.py` | `event_extractors/chatgpt.py` | [chatgpt.md](chatgpt.md) |
+| `deepseek` | DeepSeek | REST (balance) | `DEEPSEEK_API_KEY` | `deepseek.py` | — | [deepseek.md](deepseek.md) |
+| `gemini` | Gemini API | OAuth API | `GEMINI_OAUTH_*` (optional) | `gemini.py` | `event_extractors/gemini.py` | [gemini.md](gemini.md) |
+| `github` | GitHub API | REST | `GITHUB_TOKEN` | `github.py` | — | [github.md](github.md) |
+| `kimi_api` | Kimi API | REST (balance) | `KIMI_API_KEY` | `kimi_api.py` | — | [kimi_api.md](kimi_api.md) |
+| `kimi_coding` | Kimi Coding | REST (IDE quotas) | `KIMI_CODE_API_KEY` or CLI login | `kimi_coding.py` | — | [kimi_coding.md](kimi_coding.md) |
+| `kimi_k2` | Kimi K2 | REST (credits) | `KIMI_K2_API_KEY` | `kimi_k2.py` | — | [kimi_k2.md](kimi_k2.md) |
+| `minimax` | MiniMax | REST (coding plan) | `MINIMAX_API_KEY` | `minimax.py` | — | [minimax.md](minimax.md) |
+| `ollama` | Ollama Cloud | Web (cloud) session | `OLLAMA_SESSION_TOKEN` (optional) | `ollama.py` | — | [ollama.md](ollama.md) |
+| `opencode` | OpenCode | Web session / sidecar | browser cookie (detected) | `opencode.py` | `event_extractors/opencode.py` | [opencode.md](opencode.md) |
+| `openrouter` | OpenRouter | REST (credits) | `OPENROUTER_API_KEY` | `openrouter.py` | — | [openrouter.md](openrouter.md) |
+| `xai` | xAI (Grok) | CLI chat proxy | `GROK_OAUTH_TOKEN` (optional) | `xai.py` | `event_extractors/xai.py` | [xai.md](xai.md) |
+| `zai` | zAI API | REST (quota) | `ZAI_API_KEY` | `zai.py` | — | [zai.md](zai.md) |
 
 All server collectors live in `app/services/collectors/` and share
 `base.py` (the strategy loop, the enrichment merge and the card contract) and
@@ -41,7 +41,7 @@ not list them as providers:
 | Source | Sidecar module | Document |
 |---|---|---|
 | `hermes` | `scripts/sidecar_pkg/event_extractors/hermes.py` | [hermes.md](hermes.md) |
-| `minimax_code` | `scripts/sidecar_pkg/event_extractors/minimax_code.py` (helpers in `minimax_code_schema.py`, `minimax_code_roots.py`, `minimax_code_ledger.py`) | [minimax.md](minimax.md) |
+| `minimax_code` | `scripts/sidecar_pkg/event_extractors/minimax_code.py` (helpers in `minimax_code_schema.py`, `minimax_code_roots.py`, `minimax_code_ledger.py`) | [minimax_code.md](minimax_code.md) |
 
 They produce **usage events**, never quota cards. The server receives their
 events and files them under the canonical provider they map to.
@@ -57,27 +57,6 @@ One note that is easy to get wrong: **`data_source: "local"` is never emitted
 by a server collector.** The constant exists in `app/services/collectors/base.py`,
 but no collector assigns it. A card with `local` reached the server because a
 sidecar pushed it.
-
-## Documents
-
-| Document | Provider |
-|---|---|
-| [antigravity.md](antigravity.md) | Antigravity |
-| [chatgpt.md](chatgpt.md) | ChatGPT / Codex |
-| [claude.md](claude.md) | Claude and Claude Console |
-| [deepseek.md](deepseek.md) | DeepSeek |
-| [gemini.md](gemini.md) | Gemini |
-| [github.md](github.md) | GitHub Copilot |
-| [hermes.md](hermes.md) | Hermes (sidecar-only) |
-| [kimi_api.md](kimi_api.md) | Kimi API |
-| [kimi_coding.md](kimi_coding.md) | Kimi Coding |
-| [kimi_k2.md](kimi_k2.md) | Kimi K2 |
-| [minimax.md](minimax.md) | MiniMax (and MiniMax Code, sidecar-only) |
-| [ollama.md](ollama.md) | Ollama Cloud |
-| [opencode.md](opencode.md) | OpenCode |
-| [openrouter.md](openrouter.md) | OpenRouter |
-| [xai.md](xai.md) | xAI (Grok) |
-| [zai.md](zai.md) | zAI |
 
 ## Related
 

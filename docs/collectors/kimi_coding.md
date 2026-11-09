@@ -1,245 +1,74 @@
-# Kimi Coding Collector (Kimi For Coding)
+# Kimi Coding
 
 **File:** `app/services/collectors/kimi_coding.py`
 
-Kimi For Coding quota collector with 5-hour session, weekly, and monthly
-window tracking. Tracks the subscription, not the Moonshot Open Platform
-balance — those are separate providers (see *Related Files*).
+Quota for the Kimi For Coding subscription (5-hour, weekly and monthly windows). This is not the Moonshot Open Platform balance, which is a separate provider ([kimi_api.md](kimi_api.md), [kimi_k2.md](kimi_k2.md)).
 
-## Overview
+## At a glance
 
-- **Strategies** (both standalone-capable, reorderable in the UI):
-  1. **`api`** — `GET https://api.kimi.com/coding/v1/usages` with a Kimi Code
-     API key or the Kimi Code CLI access token. *Recommended.*
-  2. **`web`** — kimi.com web gateway (`GetUsages` + `GetSubscriptionStats` +
-     `GetSubscription`) with the `kimi-auth` cookie. Also the **enrichment**
-     source: it sees windows the Code API omits.
-- **Cards**: up to 4 — 5h session (counts), weekly (ratio), monthly total
-  (ratio), monthly code (ratio). **Inactive windows are suppressed**, so a
-  plan may show fewer (see *Plan realities* below).
-- **Merge semantics**: strategies run in their resolved (user-reorderable)
-  order; the **first success is the base** and each later success enriches it
-  — adding missing windows, the plan-title tier badge, and upgrading
-  ratio-only cards to real counts. A failed strategy does not block a later
-  enabled strategy from supplying quota. Reorder the strategies in Settings
-  to flip which source is authoritative.
+- **Strategies** (both can stand alone; reorderable in Settings):
+  1. `api`: `GET https://api.kimi.com/coding/v1/usages` with a Kimi Code API key or the Kimi Code CLI access token. Recommended.
+  2. `web`: the kimi.com web gateway with the `kimi-auth` cookie. It also acts as the enrichment source: it sees windows the Code API omits.
+- **Merge:** strategies run in their resolved order; the first success is the base and each later success enriches it (missing windows, the plan-title tier badge, ratio-only cards upgraded to counts). A failed strategy does not block a later one. See [collection_logic.md](../collection_logic.md).
+- **Cards:** up to four: `session` (5h, request counts), `weekly`, and `monthly` with `variant` `total` or `code` (ratios). Inactive windows are suppressed, so a plan may show fewer (see Plan differences).
+- **Labels:** `data_source` is `api` or `web`; `input_source` is `config`, `server` or `sidecar`.
 
-## Authentication
+## Credentials
 
-Priority within the `api` strategy: **DB API key (UI) → `KIMI_CODE_API_KEY`
-env → token-cache `api_key` slot → Kimi Code CLI access token**. The cache
-slot holds the same key two ways: mirrored from the dashboard paste (the
-provider PUT and the startup/reload sync both write it — this is what makes
-an account-keyed row reachable, since the DB read above only ever resolves
-the `default` row) and discovered by the sidecar from opencode's
-`auth.json` (see the table below). The CLI token is read-only, from
-`~/.kimi-code/credentials/kimi-code*.json` — kimi-cli writes a per-install
-`kimi-code-env-<hash>.json`; skipped when `expires_at` is stale
-— re-login with the CLI or set an API key). The `web` strategy uses the
-`kimi-auth` cookie: DB session cookie → `KIMI_AUTH_TOKEN` env → sidecar-pushed
-browser cookie.
+Within the `api` strategy the order is: Settings key, `KIMI_CODE_API_KEY`, the token cache's `api_key` slot (a Settings paste mirrored there, or a key the sidecar discovered), then the Kimi Code CLI access token. The `web` strategy uses the Settings cookie, then `KIMI_AUTH_TOKEN`, then a sidecar-pushed browser cookie.
 
-| Method | Where | Notes |
-|--------|-------|-------|
-| **API key (recommended)** | Settings → Kimi Coding → "API Key (Kimi Code Console)", or `KIMI_CODE_API_KEY` | Create at [kimi.com/code/console](https://www.kimi.com/code/console). Never expires; works on hosts without a browser. |
-| Kimi Code CLI | auto-discovered from `~/.kimi-code/credentials/kimi-code*.json` | Read-only reuse of the CLI's access token; the refresh token is never used. |
-| OpenCode CLI | auto-discovered from `~/.local/share/opencode/auth.json["kimi-code-plan-global"].key` | If you also use [opencode](opencode.md), the Kimi Coding Plan key it stores in its auth file feeds this collector automatically — no `KIMI_CODE_API_KEY` env or UI paste needed on hosts with the opencode CLI. The key is the same one opencode uses for its own `kimi-code-plan-global` backend. |
-| Cookie (legacy) | `KIMI_AUTH_TOKEN` env or browser `kimi-auth` cookie | Web JWT; expires. Only source that can see the weekly window + plan title on plans where the Code API omits them. |
+| Source | Where | Runs in | Notes |
+|---|---|---|---|
+| API key (recommended) | Settings, Kimi Coding, "API Key (Kimi Code Console)", or `KIMI_CODE_API_KEY` | server | Create at [kimi.com/code/console](https://www.kimi.com/code/console). Does not expire; works without a browser. |
+| Kimi Code CLI | `~/.kimi-code/credentials/kimi-code*.json` | sidecar | The access token is reused read-only and skipped when `expires_at` is within 60 seconds of now; the refresh token is never used. The sidecar also forwards the CLI's `device_id` (next to `credentials/`), which the collector sends as `X-Msh-Device-Id`; if it is missing or invalid a deterministic per-account UUID is used instead. |
+| OpenCode | `auth.json` entry `kimi-code-plan-global.key` | sidecar | Same key OpenCode uses for its own backend. Discovery: [opencode.md](opencode.md). |
+| Cookie | `KIMI_AUTH_TOKEN` or the browser `kimi-auth` cookie | server or sidecar | Web JWT; expires. The web endpoints reject API keys. |
 
-**Key-scoped origins (#349):** the two *key* sources — `KIMI_CODE_API_KEY`
-and the OpenCode `auth.json` entry — get key-scoped origins
-(`env:…` / `path:…#<fingerprint>`, see *Key-scoped origins* in
-[opencode.md](opencode.md)), so a rotated key never inherits a tag. The CLI
-access token and the `kimi-auth` cookie carry an identity upstream, not a
-bare key, and keep their plain origins. (The `kimi` provider is outside
-#349's scope entirely.)
+`KIMI_CODE_BASE_URL` overrides the Code API host for compatible proxies.
 
-> **Note:** OpenCode events served by its `kimi-code-plan-global` backend are
-> retagged onto this provider (`_OC_CANONICAL_MAP` in
-> `scripts/sidecar_pkg/event_extractors/opencode.py`) with their own account
-> kept (pass-through), so their token counts enrich the same account's quota
-> cards — set an account label on the Kimi Coding provider to match your
-> OpenCode login email if the cards split. The token-usage events coming
-> from opencode (modelID = `kimi-for-coding`, `k3-256k`, …) land on this
-> same card as long as the credential and the opencode identity resolve to
-> the same account.
+When Fleet pins a specific credential source, the collector uses that bundle's own credential type: a pinned CLI token stays a CLI token even if another source provides an API key.
+
+**Origins.** The two key sources (`KIMI_CODE_API_KEY`, the OpenCode entry) get key-scoped origins, so a rotated key never inherits a tag ([Credential origins and operator tags](../architecture.md#credential-origins-and-operator-tags)). The CLI token and the cookie keep plain origins.
+
+**OpenCode events.** Messages from OpenCode's `kimi-code-plan-global` backend are retagged onto this provider with their own account kept, so their token counts land on the same card when the OpenCode identity and this credential resolve to the same account. If the cards split, set the account label on this provider to match the OpenCode login email.
 
 ## Endpoints
 
-### Code API (api strategy)
-**Endpoint:** `GET https://api.kimi.com/coding/v1/usages` (override host via
-`KIMI_CODE_BASE_URL`)
-**Auth:** `Authorization: Bearer <api key or CLI access token>`
+| Endpoint | Auth | Purpose |
+|---|---|---|
+| `GET https://api.kimi.com/coding/v1/usages` | Bearer API key or CLI token | `limits[]` carries the 5h counts; `usages` carries ratio pools `limit_5h`, `limit_7d`, `limit_month_total`, `limit_month_code`. `booster_wallet` is ignored. |
+| `GET https://api.kimi.com/coding/v1/me` | Same | Non-fatal identity call: `email` becomes the account label, `user_level_name` the tier badge, `goods_version` 2 marks a plan with no weekly window. |
+| `POST .../BillingService/GetUsages` (kimi.com web gateway) | `kimi-auth` cookie | 5h and weekly counts |
+| `POST .../MembershipService/GetSubscriptionStats` | Cookie | `ratelimitCode5h`, `ratelimitCode7d`, monthly total and code ratios |
+| `POST .../MembershipService/GetSubscription` | Cookie | `goods.title` (tier badge) and goods version |
 
-Response (Pro plan, verified 2026-09-18): `limits[]` carries the 5h window
-counts; `usages` carries ratio pools (`limit_5h`, `limit_7d`,
-`limit_month_total`, `limit_month_code`); `booster_wallet` is ignored. The
-`limit_5h` ratio demonstrably lags the counts (0% vs a real 47%) — the
-collector never prefers it over `limits[]`.
+The `limit_5h` ratio can lag the real count, so the collector never prefers it over `limits[]`. The `user_id` in `/me` equals the `sub` claim of every Kimi JWT, one stable identity across credential types.
 
-**Identity enrichment:** after a successful `/usages`, the collector makes a
-non-fatal `GET {base}/coding/v1/me` (verified 2026-09-18 with an API key).
-The response carries the account identity end-to-end:
+## Plan differences
 
-```json
-{
-  "user_id": "d78kbuol3dc8u30k4q6g",   // == the `sub` claim of every kimi JWT
-  "email": "user@example.com",          // -> account_label (no manual label)
-  "user_level_name": "Pro",             // -> tier badge, no cookie needed
-  "goods_version": 2,                   // 2 = V2: weekly window suppressed
-  "region": "REGION_OVERSEA", "user_level": 25, "status": "USER_STATUS_NORMAL"
-}
-```
-
-`email` becomes the collector's account label, so `resolve_account_id`
-canonicalizes the quota cards onto the email account automatically — the same
-account pass-through OpenCode events land on, with no manual labeling.
-`goods_version: 2` additionally drops a vestigial weekly card from
-legacy-shape `/usages` responses.
-
-### Web gateway (web strategy)
-**Endpoints:**
-- `POST .../BillingService/GetUsages` — 5h counts + weekly counts
-- `POST .../MembershipService/GetSubscriptionStats` — `ratelimitCode5h`,
-  `ratelimitCode7d`, `subscriptionBalance` (monthly total + code ratios)
-- `POST .../MembershipService/GetSubscription` — `goods.title` → tier badge
-
-**Auth:** `kimi-auth` JWT cookie (web endpoints reject API keys with 401).
-
-## Plan realities (verified against Pro)
-
-- **Pro** (¥/$39/mo, `GOODS_VERSION_V2`, goods title "Pro"): 5h session limit
-  **100** and a monthly credit pool (ratios only). The web calls still report
-  a **vestigial weekly window** (`ratelimitCode7d` / GetUsages weekly detail)
-  and a **`limit_month_code` pool that never accrues** (coding draws from the
-  total pool) — both are suppressed so Pro renders session + monthly total
-  only:
-  - *Weekly*: hidden when `GetSubscription` reports `GOODS_VERSION_V2` (V2
-    plans are session + monthly; weekly is a legacy V1-tier quota). The Code
-    API omits it entirely on V2.
-  - *Monthly code*: hidden when the total pool has accrued usage (`>0`) but
-    the code pool sits at exactly `0` — proof the code pool isn't the binding
-    one. Both at `0` (fresh month) is ambiguous, so the card stays until
-    usage disambiguates.
-  The Code API returns **no** `usage`, `user.membership`, or `version` fields
-  — the tier badge comes from the web strategy's `GetSubscription` enrichment.
-  With API-key-only auth the tier badge is absent unless a cookie is also
-  configured.
-- Legacy China plans (`GOODS_VERSION_V1`) report `user.membership.level`
-  (`LEVEL_FREE`/`TRIAL`/`BASIC`/`INTERMEDIATE`/`ADVANCED` → Adagio/Andante/
-  Moderato/Allegretto/Allegro) and weekly request counts — the weekly card
-  stays for these.
-
-## Output Format
-
-```python
-{
-    "service_name": "Kimi Coding",
-    "window_type": "session",  # "session" (5h) | "weekly" | "monthly"
-    "variant": None,  # monthly only: "total" | "code"
-    "icon": "⏱️",
-    "remaining": "59",  # counts cards: requests left; ratio cards: "98.9%"
-    "unit": "100 req",  # ratio cards: "%"
-    "reset": "in 3h",  # from reset_at
-    "health": "good",
-    "pace": "Stable",
-    "detail": "41 used · 5h rate limit",
-    "used_value": 41.0,  # None on ratio-only cards
-    "limit_value": 100.0,  # None on ratio-only cards
-    "pct_used": 41.0,
-    "is_unlimited": False,
-    "unit_type": "requests",  # "percent" on ratio-only cards
-    "reset_at": "2026-09-18T18:52:05+00:00",
-    "tier": "Pro",  # only when known (web enrichment or V1 membership)
-    "data_source": "api",  # "api" | "web"
-    "input_source": "config",  # "config" | "server" | "sidecar"
-    "usage_url": "https://www.kimi.com/code/console",
-    "updated_at": "2026-09-18T16:00:00+00:00",
-}
-```
-
-## Configuration
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `KIMI_CODE_API_KEY` | Optional* | Kimi For Coding API key (api strategy) |
-| `KIMI_CODE_BASE_URL` | Optional | Code API host override (compatible proxies) |
-| `KIMI_AUTH_TOKEN` | Optional* | Legacy web JWT (web strategy) |
-
-*One of API key / CLI credential / cookie is required.
-
-## Migration (one-time)
-
-If you pasted your API key into the old "Auth Token (web)" field, it sits in
-the session_cookie slot (the web gateway rejects it). Move it:
-
-```bash
-RUNWAY_CONFIG_DIR=~/.config/runway APP_HOST=127.0.0.1 \
-    python scripts/migrate_kimi_coding_key.py --dry-run   # then --apply
-```
-
-Existing OpenCode kimi events (tagged `opencode-kimi-code-plan-global`) fold
-onto this card via:
-
-```bash
-RUNWAY_CONFIG_DIR=~/.config/runway APP_HOST=127.0.0.1 \
-    python scripts/reclassify_opencode_providers.py --providers opencode-kimi-code-plan-global --dry-run
-# then --apply, then:
-RUNWAY_CONFIG_DIR=~/.config/runway APP_HOST=127.0.0.1 \
-    python scripts/recost_events.py --provider kimi_coding
-RUNWAY_CONFIG_DIR=~/.config/runway APP_HOST=127.0.0.1 \
-    python scripts/cleanup_opencode_kimi_card.py --apply
-```
+- **Pro (goods version 2):** a 5h limit (100 requests) and a monthly credit pool. The web calls still report a vestigial weekly window and a `limit_month_code` pool that never accrues; both are hidden. Weekly is hidden whenever `GetSubscription` reports version 2. Monthly code is hidden when the total pool has usage but the code pool is exactly zero (when both are zero the card stays until usage disambiguates).
+- **Legacy China plans (version 1):** report `user.membership.level` (`LEVEL_FREE`, `TRIAL`, `BASIC`, `INTERMEDIATE`, `ADVANCED`, shown as Adagio, Andante, Moderato, Allegretto, Allegro) and weekly request counts; the weekly card stays.
+- With API-key-only auth the tier badge comes from `/me`; the web `GetSubscription` title is the fallback.
 
 ## Troubleshooting
 
-### "Invalid API Key (401)"
-**Cause:** The API key was rejected by the Code API.
-**Fix:** Create a fresh key at [kimi.com/code/console](https://www.kimi.com/code/console)
-and update the "API Key (Kimi Code Console)" field.
+| Symptom | Fix |
+|---|---|
+| "Invalid API Key (401)" | The Code API rejected the key. Create a fresh key at [kimi.com/code/console](https://www.kimi.com/code/console) and update the field. |
+| "Kimi auth token invalid or expired" | The `kimi-auth` JWT expired. Re-login at [kimi.com/code](https://www.kimi.com/code) and refresh the cookie, or use an API key. |
+| An API key pasted in the old "Auth Token (web)" field is rejected | That field is the cookie slot and the web gateway rejects keys. Move the key to the API key field. |
+| No weekly card | Expected on version 2 plans such as Pro. |
+| No tier badge | `/coding/v1/me` failed (it needs the same bearer as `/usages`), and no cookie is configured for the web fallback. |
+| "Kimi Code CLI token expired" | Re-login with the CLI or set an API key. |
+| "No Auth" | One of API key, CLI credential or cookie is required. |
 
-### "Kimi auth token invalid or expired"
-**Cause:** The `kimi-auth` web JWT expired.
-**Fix:** Re-login at [kimi.com/code](https://www.kimi.com/code) and refresh the
-cookie (or set an API key — the API key does not expire).
-
-### No tier badge / no weekly card
-**No weekly card on a V2 plan (Pro) is expected** — V2 plans have no real
-weekly quota; the collector suppresses the vestigial window the web API still
-reports. The **tier badge and account identity come from the api strategy's
-`/coding/v1/me` call** — if it's missing, check that the call isn't being
-blocked (it needs the same Bearer credential as `/usages`); the web
-`GetSubscription` goods title remains the fallback. On V1-tier plans (cookie
-auth) the weekly card is the primary quota and stays.
-
-## Related Files
+## Related files
 
 | File | Purpose |
 |---|---|
-| `app/services/collectors/kimi_coding.py` | Collector entry point |
-| `app/services/collectors/base.py` | Collector base class |
-| `scripts/sidecar.py` | Sidecar credential rules and event dispatch |
-| `scripts/migrate_kimi_coding_key.py` | One-shot migration of the key stored in the `session_cookie` slot |
-
-## References
-
-- **Kimi For Coding:** https://www.kimi.com/code
-- **API key console:** https://www.kimi.com/code/console
-- **Kimi API pricing (notional cost seed):** https://platform.kimi.ai/docs/pricing/chat
-
-The sidecar reads the Kimi Code CLI's `device_id` beside its `credentials/`
-directory and forwards it with that CLI access token. CLI requests use that
-identifier in `X-Msh-Device-Id`. Missing, unreadable, blank, non-ASCII, control
-character, or longer-than-256-character identifiers are omitted; Runway uses
-the existing deterministic per-account UUID instead. The sidecar never writes
-or creates this file. API-key and browser-cookie requests do not use the CLI
-identifier, and the server never reads the CLI's files.
-
-The CLI access token, expiry and device identifier stay together when sources
-are selected, updated or promoted. A replacement CLI bundle without a device
-identifier clears the previous one, including pushes from older sidecars.
-
-When Fleet selects a specific credential source, the collector uses that
-bundle's own credential type. A pinned CLI token remains a CLI token even when
-another source provides an API key; the general priority list applies to
-unpinned resolution.
+| `app/services/collectors/kimi_coding.py` | Collector |
+| `app/core/kimi_device.py` | Device id validation |
+| `scripts/sidecar.py` | Credential rules, CLI token and device id discovery |
+| `scripts/sidecar_pkg/event_extractors/opencode.py` | Retags `kimi-code-plan-global` events onto this provider |
+| `scripts/reclassify_opencode_providers.py` | Re-applies the retag to already ingested events |
+| `app/core/registry.json` (`providers.kimi_coding`) | Credential rules and UI help text |

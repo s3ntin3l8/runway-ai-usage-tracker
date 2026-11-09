@@ -1,108 +1,58 @@
-# Gemini Collector
+# Gemini
 
-**File:** `app/services/collectors/gemini.py` (server) · `scripts/sidecar.py` (sidecar)
-**Sidecar:** `scripts/sidecar.py` + `sidecar_app/` (local enrichment: session logs)
+**File:** `app/services/collectors/gemini.py`
 
-Google Gemini CLI quota collector. The server-side `api` strategy hits Google Cloud Code endpoints with an OAuth bundle the sidecar pushed (the server refreshes it into its token cache); the `local` enrichment strategy that reads `~/.gemini/tmp/*/chats/session-*.json` executes inside the sidecar and ships per-message events to the server.
+Google Gemini CLI quota from Google Cloud Code, plus per-message usage events the sidecar extracts from Gemini CLI session logs.
 
-## Overview
+## At a glance
 
-- **Collection Strategy**: api (Google Cloud Code) + local enrichment (session logs, via sidecar)
-- **Cards**: 1-7 cards (one per model family: Flash, Pro, Flash Lite, etc.)
-- **Authentication**: OAuth credentials pushed by the sidecar, or an access token pasted in Settings → Providers (api). The server never reads `~/.gemini/oauth_creds.json` itself. Local session logs are discovered by the sidecar.
+- **Strategies** (`STRATEGIES` in `gemini.py`): `api` only, run on the server. No enrichment strategy is declared; token breakdowns arrive as sidecar usage events (see [Strategy Types](../collection_logic.md#strategy-types)).
+- **Cards:** one per model class the quota response reports (`Gemini Flash`, `Gemini Pro`, `Gemini Flash Lite`, or the raw model id), deduplicated per class, preferring the bucket that carries concrete numbers. Percent-only buckets use `unit_type: percent`; buckets with a limit use the token type.
+- **Labels:** `data_source=api`; `input_source` is `sidecar` or `config` by where the OAuth bundle came from.
 
-## Setup Methods Quick Overview
+## Credentials
 
-The Gemini collector supports the following authentication methods:
+| Source | Where it comes from | Runs in | Notes |
+|---|---|---|---|
+| `~/.gemini/oauth_creds.json` | Gemini CLI login | sidecar | Also `<Gemini config dir>/oauth_creds.json`. Maps `access_token`, `refresh_token`, `id_token`, `expiry_date`, `client_id`. The only way a CLI login reaches the server. |
+| Settings, OAuth Token | Pasted manually | server | An access token. |
+| `GEMINI_OAUTH_CLIENT_ID`, `GEMINI_OAUTH_CLIENT_SECRET` | Environment | server | Optional overrides for refresh. Client id resolves from the env var, then the bundle, then the `id_token` audience, then the well-known Gemini CLI client. |
 
-1.  **OAuth Credentials (Preferred)**:
-    *   **Method**: Log in via the Gemini CLI, which stores credentials in `~/.gemini/oauth_creds.json`, and run the [sidecar](../sidecar.md) on that machine. The sidecar reads the file and pushes the bundle; the server never reads it from its own host (`make dev` alone does not see it, use `make dev-all`).
-    *   **Details**: See [Primary: api (Google Cloud Code)](#primary-api-google-cloud-code).
+Google does not rotate Gemini's refresh token, so the server refreshes an expired access token itself (`oauth2.googleapis.com/token`) and writes it to its own token cache, never to the CLI's file.
 
-2.  **Custom OAuth Client ID/Secret**: Required if token auto-refresh fails.
-    *   **Method**: Set `GEMINI_OAUTH_CLIENT_ID` and `GEMINI_OAUTH_CLIENT_SECRET` environment variables.
-    *   **Details**: See [Configuration](#configuration) and [Troubleshooting: Token refresh fails](#token-refresh-fails).
+## Endpoints
 
-## Data Sources
+| Endpoint | Notes |
+|---|---|
+| `POST cloudcode-pa.googleapis.com/v1internal:loadCodeAssist` | Project discovery (`cloudaicompanionProject`) and tier. |
+| `POST cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota` | Per-model quota buckets (`remainingFraction`, optional `quotaLimit`/`quotaRemaining`, `resetTime`). |
 
-### Primary: api (Google Cloud Code)
-**Endpoints:**
-- `cloudcode-pa.googleapis.com/...:loadCodeAssist` (project discovery)
-- `cloudcode-pa.googleapis.com/...:retrieveUserQuota` (quotas)
-**Auth:** the cached OAuth bundle (sidecar push or Settings). Google does not rotate Gemini's refresh token, so the server refreshes an expired access token itself and writes it back to its token cache (not to the CLI's file).
-**Behavior:** Primary source for model-specific quotas (Flash, Pro, etc.).
+## Usage events (sidecar)
 
-### Enrichment: local (Session Logs) — sidecar-only
-**Runs in:** the sidecar. The server-side collector is HTTP-only.
-**Location (sidecar):** `~/.gemini/tmp/*/chats/session-*.json`
-**Tracks:** prompt + completion tokens, cached tokens, thoughts tokens.
-**Behavior:** The sidecar parses local session logs and pushes per-message events to `/api/v1/fleet/ingest`. The server merges these with the API quota card — token breakdown and session counts come from this tier. Enrichment rows are tagged `data_source=local`, `input_source=sidecar`.
+Source: `~/.gemini/tmp/<project>/chats/session-*.jsonl` (plus `~/.gemini/sessions` and `~/.config/gemini/sessions`), parsed by `scripts/sidecar_pkg/event_extractors/gemini.py`.
 
-## Output Format
-
-```python
-{
-    "service_name": "Gemini 2.5 Flash",
-    "icon": "🔵",
-    "remaining": "0%",  # % used (0% = fresh quota)
-    "unit": "used",
-    "reset": "Resets at 13:44",
-    "health": "good",
-    "pace": "Stable",
-    "detail": "100% remaining | Model: gemini-2.5-flash",
-    "used_value": 0.0,
-    "limit_value": 100.0,
-    "is_unlimited": False,
-    "unit_type": "percent",
-    "reset_at": "2026-04-08T13:44:00+00:00",
-    "data_source": "api",
-    "input_source": "config",
-    "tier": "pro",
-    "usage_url": "https://one.google.com/settings",
-    "updated_at": "2026-04-08T10:30:00+00:00",
-}
-```
-
-## Configuration
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `GEMINI_OAUTH_CLIENT_ID` | Optional* | OAuth client ID for token refresh |
-| `GEMINI_OAUTH_CLIENT_SECRET` | Optional* | OAuth client secret |
-
-*Required for token refresh. Extract from Gemini CLI: `node_modules/@google/gemini-cli-core/dist/src/code_assist/oauth2.js`
-
-## Sidecar Support
-
-Sidecar extracts the OAuth bundle from `~/.gemini/oauth_creds.json` — the only way a CLI login reaches the server. See [sidecar documentation](../sidecar.md).
+- **Records:** `type: "gemini"` records with a non-empty `tokens` dict (`input`, `output`, `cached`, `thoughts`). `input` includes `cached`, so fresh input is `input - cached`; `cached` is cache read and `thoughts` is reasoning. Gemini has no cache-write billing.
+- **Event id:** the record's own `id`, else `<session>|line_<n>`. The file stem is the session id; the project root comes from the sibling `.project_root` file.
+- **Model:** `normalize_gemini_model` maps raw names to versioned cost buckets (tier and major version), unlike the coarser pro/flash/flash-lite quota cards.
 
 ## Troubleshooting
 
-### Missing gemini-3 models
-**Cause:** Project parameter not provided
-**Fix:** Ensure `loadCodeAssist` returns valid `cloudaicompanionProject`
+| Symptom | Fix |
+|---|---|
+| Missing gemini-3 models | `loadCodeAssist` must return a valid `cloudaicompanionProject`; the project parameter is required for them. |
+| Token refresh fails | Set `GEMINI_OAUTH_CLIENT_ID` and `GEMINI_OAUTH_CLIENT_SECRET` (the values are in the Gemini CLI's `oauth2.js`). |
+| Always 0% used | Expected on a generous tier. |
+| `make dev` shows no Gemini login | The server reads no credential files; use `make dev-all`. |
 
-### Token refresh fails
-**Cause:** Missing client ID/secret
-**Fix:** Set `GEMINI_OAUTH_CLIENT_ID` and `GEMINI_OAUTH_CLIENT_SECRET` env vars
-
-### Always shows 0% used
-**Expected:** Standard tier typically shows 100% remaining (0% used) as quotas are generous
-
-## Related Files
+## Related files
 
 | File | Purpose |
 |---|---|
-| `app/services/collectors/gemini.py` | Collector entry point |
-| `app/services/collectors/gemini_api.py` | Google Cloud Code API strategy |
-| `app/services/collectors/gemini_oauth.py` | Gemini OAuth token handling |
-| `app/services/collectors/base.py` | Collector base class |
+| `app/services/collectors/gemini.py` | Collector entry point and strategy table |
+| `app/services/collectors/gemini_api.py` | Cloud Code quota strategy and card shaping |
+| `app/services/collectors/gemini_oauth.py` | OAuth bundle handling and refresh |
 | `app/services/collectors/oauth_base.py` | Shared OAuth token handling |
-| `scripts/sidecar.py` | Sidecar credential rules and event dispatch |
-| `scripts/sidecar_pkg/event_extractors/gemini.py` | Local Gemini CLI usage events |
-| `scripts/sidecar_pkg/cookie_scan.py` | Cross-platform browser cookie store discovery |
-
-## References
-
-- **Gemini:** https://gemini.google.com
-- **Google Cloud:** https://console.cloud.google.com
+| `app/services/collectors/base.py` | Collector base class |
+| `app/services/model_normalization.py` | Gemini model bucketing |
+| `scripts/sidecar.py` | Credential rules, session discovery, event dispatch |
+| `scripts/sidecar_pkg/event_extractors/gemini.py` | Gemini CLI usage events |
