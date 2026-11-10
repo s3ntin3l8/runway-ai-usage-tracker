@@ -34,7 +34,12 @@ credential there means the app is mid-refresh and this renewer stays out of the 
 
 The write-back updates only the token fields and the expiry. The ``generation`` is deliberately
 left alone on both sides: the two files must never disagree, and a write that bumped one of them
-would break the login for the user.
+would break the login for the user. The state's ``status`` becomes ``authenticated`` again (the
+app reads the live/expired state from the credential's expiry, not from that field).
+
+A write that could not be saved is queued and retried as a *save* -- never as a new exchange, so
+a refresh token is never spent twice. The queue keeps the renewer ``due``, which is what lets the
+keep-alive thread give the repair a tick.
 
 ``MiniMaxCodeRenewer`` plugs into ``KeepAliveThread`` (``--keep-alive`` / ``"keep_alive": true``).
 It never logs token material.
@@ -148,7 +153,7 @@ def read_logins(path: Path) -> list[Login]:
 
     A record without a refresh token is not a renewable login and is skipped. The region's
     directory decides which account service the login belongs to; the state file's own ``region``
-    wins when it names one.
+    overrides it (see :meth:`MiniMaxCodeRenewer._discovered`), because the app writes both.
     """
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -331,8 +336,15 @@ def write_back(login: Login, response: dict[str, Any]) -> str:
         record["expiresAtMs"] = expires_at_ms
         if not atomic_replace_json(login.path, data, mode, prefix=".auth-"):
             return "failed"
+    else:
+        # Our own earlier write landed: the credential carries the expiry it was given, and the
+        # state takes that same value -- the two files must not disagree about it.
+        expires_at_ms = record.get("expiresAtMs") or expires_at_ms
 
     state["expiresAtMs"] = expires_at_ms
+    # The token is fresh again, so the login is authenticated; the app reads the live/expired
+    # state from the credential's expiry, not from this field.
+    state["status"] = "authenticated"
     try:
         state_mode = login.state_path.stat().st_mode & 0o777
     except OSError:
@@ -381,6 +393,11 @@ class MiniMaxCodeRenewer:
                 logger.debug("MiniMax Code keep-alive: no %s next to %s", STATE_FILE, path)
                 continue
             for login in read_logins(Path(path)):
+                # The state file names the region the app itself uses; it wins over the
+                # directory's name.
+                region = state.get("region")
+                if isinstance(region, str) and region.strip():
+                    login.region = region.strip().lower()
                 found.append((login, state))
         return found
 
@@ -413,7 +430,13 @@ class MiniMaxCodeRenewer:
         return logins
 
     def due(self) -> bool:
-        return bool(self._due_logins())
+        """Whether this renewer has work to do: a due login, or a save that is still queued.
+
+        The queued save counts: the keep-alive thread only calls :meth:`renew` when this is
+        true, so a write that could not be saved would otherwise wait for the next renewal
+        window (hours) instead of the next tick.
+        """
+        return bool(self._due_logins()) or bool(self._unsaved)
 
     def renew(self) -> bool:
         """Renew every due login; True unless one failed. Nothing due is not a failure."""
@@ -455,19 +478,10 @@ class MiniMaxCodeRenewer:
     def _renew_due_logins(self) -> bool:
         ok = True
         for login in self._due_logins():
-            pending = self._unsaved.get(_key(login))
-            if pending is not None and pending[0] == login.refresh:
-                outcome = write_back(login, pending[1])  # don't spend another token
-                if outcome == "failed":
-                    ok = False
-                    continue
-                self._unsaved.pop(_key(login), None)
-                if outcome == "written":
-                    logger.info(
-                        "MiniMax Code keep-alive: saved the renewed login to %s (retry)", login.path
-                    )
+            if _key(login) in self._unsaved:
+                # A response is queued for this login: its save is retried by _finish_unsaved,
+                # and another exchange would spend a second refresh token.
                 continue
-            self._unsaved.pop(_key(login), None)  # the file moved on: the stored response is stale
             try:
                 response = request_refresh(login)
             except RefreshRejectedError as exc:

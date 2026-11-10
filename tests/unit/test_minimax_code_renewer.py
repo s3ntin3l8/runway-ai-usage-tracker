@@ -62,6 +62,7 @@ def _write_state(
     status: str = "authenticated",
     store_kind: str = "file",
     generation: int = 7,
+    region: str = "en",
     extra: dict | None = None,
 ) -> Path:
     """A MiniMax Code ``auth-state.json`` (mode 0600)."""
@@ -73,7 +74,7 @@ def _write_state(
         "scopes": ["agent.default"],
         "audience": "agent-backend",
         "buildEnv": "prod",
-        "region": "en",
+        "region": region,
         "generation": generation,
         "expiresAtMs": int((time.time() + TOKEN_LIFETIME) * 1000),
     }
@@ -87,9 +88,10 @@ def _write_state(
 
 def _login(tmp_path: Path, **kwargs) -> Path:
     """A login directory with both files; returns the ``auth.json`` path."""
+    region = kwargs.get("region", "en")
     directory = _client_dir(tmp_path, **kwargs)
     path = _write_login(directory)
-    _write_state(directory)
+    _write_state(directory, region=region)
     return path
 
 
@@ -297,12 +299,24 @@ class TestRequestRefresh:
                 return False
 
         monkeypatch.setattr(
-            mcr.urllib.request, "urlopen", lambda req, timeout: (seen.update(req=req), _Resp())[1]
+            mcr.urllib.request,
+            "urlopen",
+            lambda req, timeout: (seen.update(req=req), _Resp())[1],
         )
         directory = _client_dir(tmp_path, region="cn")
         path = _write_login(directory)
+        _write_state(directory, region="cn")
         mcr.request_refresh(mcr.read_logins(path)[0])
         assert seen["req"].full_url == "https://account.minimax.cn/oauth2/token"
+
+    def test_the_state_file_names_the_region_the_app_uses(self, tmp_path):
+        """The state file wins over the directory's name: the app writes both."""
+        directory = _client_dir(tmp_path, region="en")
+        path = _write_login(directory)
+        _write_state(directory, region="cn")
+        renewer = _renewer(path)
+        discovered = renewer._discovered()
+        assert [login.region for login, _state in discovered] == ["cn"]
 
     @pytest.mark.parametrize("code", [400, 401, 403])
     def test_a_dead_expired_or_revoked_token_is_a_rejection(self, monkeypatch, tmp_path, code):
@@ -620,21 +634,14 @@ class TestRenew:
 
         monkeypatch.setattr(mcr.urllib.request, "urlopen", fake)
         real_write = mcr.write_back
-        state_writes = []
-
-        def flaky(login, response):
-            # Fail only the state write: the credential write lands first.
-            if not state_writes:
-                state_writes.append(True)
-                return real_write(login, response)
-            return "failed"
 
         def fail_state(login, response):
-            outcome = flaky(login, response)
+            outcome = real_write(login, response)
             if outcome == "written":
                 # Undo the state write to simulate the file write failing after the credential.
                 state = _read(state_path)
                 state["expiresAtMs"] = 0
+                state["status"] = "expired"
                 state_path.write_text(json.dumps(state))
                 return "failed"
             return outcome
@@ -646,10 +653,73 @@ class TestRenew:
         assert _read(state_path)["expiresAtMs"] == 0  # the state did not
 
         monkeypatch.setattr(mcr, "write_back", real_write)
+        # The keep-alive thread only calls renew() when due() is true, so a queued save has to
+        # keep the renewer due -- otherwise the repair would wait for the next renewal window.
+        assert renewer.due() is True
         assert renewer.renew() is True
         assert len(calls) == 1  # the token was spent once
         assert _read(state_path)["expiresAtMs"] == _record(path)["expiresAtMs"]
         assert _read(state_path)["generation"] == 7
+        assert _read(state_path)["status"] == "authenticated"
+
+    def test_a_queued_save_keeps_the_renewer_due(self, tmp_path, monkeypatch):
+        """A pending save is work: due() says so, so the thread gives it a tick."""
+        directory = _client_dir(tmp_path)
+        path = _write_login(directory, expires_in=TOKEN_LIFETIME)  # fresh: not due on its own
+        _write_state(directory)
+        renewer = _renewer(path)
+        assert renewer.due() is False
+        renewer._unsaved[("k", "r")] = ("r", _response())
+        assert renewer.due() is True
+
+    def test_the_keep_alive_thread_repairs_a_queued_save(self, tmp_path, monkeypatch):
+        """The thread only calls renew() when due() is true -- the queued save must reach it."""
+        from scripts.sidecar_pkg import keep_alive
+
+        directory = _client_dir(tmp_path)
+        path = _write_login(directory, expires_in=-60)
+        state_path = _write_state(directory)
+        calls = []
+
+        def fake(req, timeout):
+            calls.append(req)
+            return type(
+                "R",
+                (),
+                {
+                    "read": lambda self: json.dumps(_response()).encode(),
+                    "__enter__": lambda self: self,
+                    "__exit__": lambda self, *e: False,
+                },
+            )()
+
+        monkeypatch.setattr(mcr.urllib.request, "urlopen", fake)
+        real_write = mcr.write_back
+
+        def fail_state(login, response):
+            outcome = real_write(login, response)
+            if outcome == "written":
+                state = _read(state_path)
+                state["expiresAtMs"] = 0
+                state_path.write_text(json.dumps(state))
+                return "failed"
+            return outcome
+
+        monkeypatch.setattr(mcr, "write_back", fail_state)
+        renewer = _renewer(path)
+        thread = keep_alive.KeepAliveThread(renewers=[renewer])
+
+        thread._cycle_renewers()  # the exchange happens, the state write fails
+        assert _record(path)["accessToken"] == "a-new"
+        assert _read(state_path)["expiresAtMs"] == 0
+
+        monkeypatch.setattr(mcr, "write_back", real_write)
+        thread._renewer_resume_at.clear()  # the back-off has passed
+        thread._cycle_renewers()  # the queued save is repaired
+
+        assert len(calls) == 1  # the token was spent once
+        assert _read(state_path)["expiresAtMs"] == _record(path)["expiresAtMs"]
+        assert _read(state_path)["status"] == "authenticated"
 
     def test_no_token_material_reaches_the_log(self, tmp_path, monkeypatch, caplog):
         directory = _client_dir(tmp_path)

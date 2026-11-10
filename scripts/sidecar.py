@@ -977,16 +977,19 @@ def _minimax_code_login_paths() -> list[Path]:
 
     The MiniMax provider's file rules also cover OpenCode's ``auth.json`` (a static coding-plan
     key), which is not a login this renewer can renew -- only the app's own store
-    (``~/.minimax/auth/*/*/mcode-public/auth.json``) is. A callable, because the login dirs
-    change on reload.
+    (``~/.minimax/auth/*/*/mcode-public/auth.json``) is. The directory name comes from the
+    renewer itself, so a rename there cannot silently leave the discovery empty. A callable,
+    because the login dirs change on reload.
     """
+    from scripts.sidecar_pkg.minimax_code_renewer import CLIENT_DIR
+
     rules = __REGISTRY__["providers"].get("minimax", {}).get("rules", [])
     paths = [
         p
         for rule in rules
         if rule.get("type") == "file"
         for p in rule.get("paths", [])
-        if "mcode-public" in p
+        if CLIENT_DIR in p
     ]
     return expand_file_rule_paths(paths)
 
