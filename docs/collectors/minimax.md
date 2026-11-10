@@ -88,6 +88,32 @@ Parsing rules (`_parse_api_response`):
 - HTTP 200 with a non-zero `base_resp.status_code` is a failure, not an empty plan. Code 1004
   ("login fail") becomes an `auth_failed` error card, other codes an `api_error` card.
 
+## Token lifetime and keep-alive
+
+The MiniMax Code access token lives **twelve hours**, and only the MiniMax Code CLI or the
+desktop app renews it — when one of them next runs. A host where neither runs leaves the login
+expired, and the collector's app-token requests fail with `auth_failed` ("MiniMax error 1004:
+login fail") until the user signs in again.
+
+With the sidecar's [keep-alive](../sidecar.md#keep-alive-for-antigravity-claude-code-codex-minimax-code-and-xai-opt-in)
+on, the sidecar renews the login itself, 90 minutes before the token lapses, and writes the result
+back into the app's own store (`scripts/sidecar_pkg/minimax_code_renewer.py`). It refreshes at the
+account service of the login's region — `https://account.minimax.io/oauth2/token` for `en`,
+`https://account.minimax.cn/oauth2/token` for `cn` — with the CLI's own request
+(`grant_type=refresh_token`, `refresh_token`, `client_id=mcode-public`, `scope=agent.default`,
+`audience=agent-backend`).
+
+The app keeps its login in two files, `auth.json` (the credential) and `auth-state.json` (the
+state), whose `generation` counters must match — the app answers "login error" when they do not.
+The write-back therefore updates only the token, the expiry and the status, and never bumps the
+generation. If
+the app refreshes at the same moment, the sidecar stands down (the state says `refreshing`, or a
+credential is staged in `refresh/`) and drops its own result when the app got there first.
+
+Two cases the keep-alive does not cover yet: a login kept in the OS keyring instead of a file
+(`storeKind: "os-keyring"`), and the refresh token's own lifetime — the live behaviour of the
+account service is still to be proven against a throwaway login.
+
 ## Troubleshooting
 
 | Symptom | Cause and fix |
@@ -96,7 +122,7 @@ Parsing rules (`_parse_api_response`):
 | "MiniMax error 1004: login fail" | The credential reached the wrong host. Check that an `sk-` key and an `mmoat_` token were not swapped or edited so the prefix no longer matches. For the China platform also set `MINIMAX_HOST=minimaxi.com`. |
 | "API connection failed" | Network error, non-200 status or a rejected key; the HTTP status is in the server log (`MiniMax API error`). |
 | "No active plan" although a plan exists | Every bucket reported a status other than 1 or 2, or the key belongs to a different region. Check `MINIMAX_HOST`. |
-| App token stops working after some time | The app login expired. Sign in to MiniMax Code again; the sidecar only forwards a record whose expiry is still in the future. |
+| App token stops working after some time | The app login expired. Sign in to MiniMax Code again; the sidecar only forwards a record whose expiry is still in the future. With the sidecar's keep-alive on, the sidecar renews the login before it lapses — see [Token lifetime and keep-alive](#token-lifetime-and-keep-alive). |
 | MiniMax usage from OpenCode missing from the cards | See [opencode.md](opencode.md): `minimax-coding-plan` events are retagged to `minimax` at ingest. |
 
 ## Related files
@@ -106,4 +132,5 @@ Parsing rules (`_parse_api_response`):
 | `app/services/collectors/minimax.py` | Collector: credential kind, host selection, parser |
 | `app/services/collectors/base.py` | Collector base class |
 | `app/core/registry.json` | `minimax` credential rules (env, opencode file, app login file) |
+| `scripts/sidecar_pkg/minimax_code_renewer.py` | Sidecar keep-alive: renews the app login in place |
 | `scripts/sidecar_pkg/event_extractors/opencode.py` | Retags OpenCode `minimax-coding-plan` events onto `minimax` |

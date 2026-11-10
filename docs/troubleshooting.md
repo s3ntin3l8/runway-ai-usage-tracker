@@ -121,10 +121,10 @@ environment variable, then re-enable ABE.
 
 ## A login on a CLI-managed machine goes stale
 
-Antigravity, xAI, Claude Code and Codex logins are renewed only by their own
+Antigravity, xAI, Claude Code, Codex and MiniMax Code logins are renewed only by their own
 CLI. On a host where the CLI rarely runs the card goes stale about an hour
-past expiry. Turn on keep-alive:
-[sidecar.md](sidecar.md#keep-alive-for-antigravity-claude-code-codex-and-xai-opt-in).
+past expiry (the MiniMax Code token lasts twelve hours). Turn on keep-alive:
+[sidecar.md](sidecar.md#keep-alive-for-antigravity-claude-code-codex-minimax-code-and-xai-opt-in).
 The tray app does not support it; use the headless CLI.
 
 ## Dashboard cards or account attribution look wrong

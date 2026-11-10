@@ -444,18 +444,25 @@ def test_sidecar_applies_the_fleet_default_from_an_ingest_response(monkeypatch):
     assert calls == [True, False]
 
 
-def test_sidecar_builds_its_keep_alive_thread_with_the_xai_claude_and_codex_renewers():
+def test_sidecar_builds_its_keep_alive_thread_with_the_xai_claude_codex_and_minimax_renewers():
     from scripts import sidecar
     from scripts.sidecar_pkg.anthropic_renewer import AnthropicRenewer
     from scripts.sidecar_pkg.codex_renewer import CodexRenewer
+    from scripts.sidecar_pkg.minimax_code_renewer import MiniMaxCodeRenewer
     from scripts.sidecar_pkg.xai_renewer import XaiRenewer
 
     thread = sidecar._make_keep_alive_thread()
-    assert [type(r) for r in thread._renewers] == [XaiRenewer, AnthropicRenewer, CodexRenewer]
-    # The Claude and Codex renewers are handed the sidecar's own discovery, re-evaluated on
-    # every tick.
+    assert [type(r) for r in thread._renewers] == [
+        XaiRenewer,
+        AnthropicRenewer,
+        CodexRenewer,
+        MiniMaxCodeRenewer,
+    ]
+    # The Claude, Codex and MiniMax renewers are handed the sidecar's own discovery, re-evaluated
+    # on every tick.
     assert thread._renewers[1]._targets is sidecar._claude_login_paths
     assert thread._renewers[2]._targets is sidecar._codex_login_paths
+    assert thread._renewers[3]._targets is sidecar._minimax_code_login_paths
 
 
 def test_codex_login_paths_follow_the_chatgpt_file_rule(tmp_path, monkeypatch):
@@ -480,6 +487,30 @@ def test_codex_login_paths_follow_the_chatgpt_file_rule(tmp_path, monkeypatch):
 
     monkeypatch.delenv("CODEX_HOME")
     assert extra.resolve() not in {p.resolve() for p in sidecar._codex_login_paths()}
+
+
+def test_minimax_code_login_paths_follow_the_minimax_file_rule(tmp_path, monkeypatch):
+    """The renewer keeps exactly the app logins the sidecar pushes: the MiniMax Code auth.json
+    under ~/.minimax/auth/<env>/<region>/mcode-public/, re-read on each call. OpenCode's
+    auth.json is a static key, not a login, and is left out."""
+    from scripts import sidecar
+
+    home = tmp_path / "home"
+    login_dir = home / ".minimax" / "auth" / "prod" / "en" / "mcode-public"
+    login_dir.mkdir(parents=True)
+    default = login_dir / "auth.json"
+    default.write_text("{}")
+    opencode = home / ".opencode"
+    opencode.mkdir(parents=True)
+    opencode_auth = opencode / "auth.json"
+    opencode_auth.write_text("{}")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+
+    paths = {p.resolve() for p in sidecar._minimax_code_login_paths()}
+    assert default.resolve() in paths
+    assert opencode_auth.resolve() not in paths
 
 
 def test_claude_login_paths_follow_the_claude_file_rule(tmp_path, monkeypatch):

@@ -117,6 +117,7 @@ def test_keep_alive_providers_are_the_ones_with_a_sidecar_renewer():
     from scripts.sidecar_pkg import keep_alive
     from scripts.sidecar_pkg.anthropic_renewer import AnthropicRenewer
     from scripts.sidecar_pkg.codex_renewer import CodexRenewer
+    from scripts.sidecar_pkg.minimax_code_renewer import MiniMaxCodeRenewer
     from scripts.sidecar_pkg.xai_renewer import XaiRenewer
 
     thread = sidecar._make_keep_alive_thread()
@@ -125,6 +126,7 @@ def test_keep_alive_providers_are_the_ones_with_a_sidecar_renewer():
         XaiRenewer.name,
         AnthropicRenewer.name,
         CodexRenewer.name,
+        MiniMaxCodeRenewer.name,
         "antigravity",
     }
     assert KEEP_ALIVE_PROVIDERS == renewer_providers

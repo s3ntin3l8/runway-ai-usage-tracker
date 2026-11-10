@@ -32,7 +32,7 @@ The sidecar adds `data_source=local`, `input_source=sidecar` data: the statuslin
 | `sessionKey` cookie for `platform.claude.com` | Browser cookie stores, or pasted in Settings (Claude, Console API credits) | sidecar / server | Console only. A bare value or a full Cookie header is accepted. |
 | `~/.claude/statusline.json` | Claude Code statusline | sidecar | Used only when modified in the last 5 minutes; emits Session and Weekly cards tagged `local`. |
 
-A login on a machine's own `~/.claude` is never refreshed by the server (Anthropic's refresh tokens are single-use). With the sidecar's `--keep-alive` the sidecar renews it and writes it back; see [Keep-alive](../sidecar.md#keep-alive-for-antigravity-claude-code-codex-and-xai-opt-in). A login the server holds itself (Settings or env) is refreshed by the server.
+A login on a machine's own `~/.claude` is never refreshed by the server (Anthropic's refresh tokens are single-use). With the sidecar's `--keep-alive` the sidecar renews it and writes it back; see [Keep-alive](../sidecar.md#keep-alive-for-antigravity-claude-code-codex-minimax-code-and-xai-opt-in). A login the server holds itself (Settings or env) is refreshed by the server.
 
 When a discovered email matches an enabled Claude account, the origin is attached to it. Otherwise the source shows in Fleet for assignment, and in Settings → Credentials as unassigned. A manually assigned origin wins over the discovered email.
 

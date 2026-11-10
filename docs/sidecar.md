@@ -138,7 +138,7 @@ Anything not listed is not a flag; unknown flags exit with status 2.
 | `--config PATH` | Use this config file. |
 | `--run-once` | One collection cycle, then exit. |
 | `--daemon` | Run continuously (the default when no mode flag is given). |
-| `--keep-alive` | Daemon: renew CLI logins that only their own CLI renews, see [Keep-alive](#keep-alive-for-antigravity-claude-code-codex-and-xai-opt-in). |
+| `--keep-alive` | Daemon: renew CLI logins that only their own CLI renews, see [Keep-alive](#keep-alive-for-antigravity-claude-code-codex-minimax-code-and-xai-opt-in). |
 | `--self-update` (`--update`) | Download, verify and install the latest build, then exit. |
 | `--rollback` | Restore the build the last self-update replaced, then exit. |
 | `--pair LINK_OR_SERVER [CODE]` | Pair and write `api_url`/`api_key`, then exit. |
@@ -215,7 +215,7 @@ Safety rules:
 - The replaced build is kept next to the install as `<name>.previous`; **Roll Back** or `--rollback` restores it (one backup is kept).
 - Remote server URLs must use HTTPS (loopback HTTP is allowed). Signed requests and pairing never follow redirects. See [SECURITY.md](SECURITY.md).
 
-## Keep-alive for Antigravity, Claude Code, Codex and xAI (opt-in)
+## Keep-alive for Antigravity, Claude Code, Codex, MiniMax Code and xAI (opt-in)
 
 These logins are renewed only by their own CLI, so on a host where that CLI runs rarely the quota card goes stale. With keep-alive the sidecar renews them and writes the new tokens back into the CLI's own credential file, touching only the renewed entry and keeping file mode:
 
@@ -225,8 +225,11 @@ These logins are renewed only by their own CLI, so on a host where that CLI runs
 | xAI (Grok) | Refreshes shortly before expiry and writes `~/.grok/auth.json` or OpenCode's `auth.json` (opencode v2: the `credential` row in `opencode.db`, compare-and-swap). |
 | Claude Code | Refreshes about 15 minutes before expiry into `~/.claude/.credentials.json` and every `CLAUDE_CONFIG_DIR` / `claude_config_dirs` login. |
 | Codex (ChatGPT) | Refreshes a day before expiry into `~/.codex/auth.json` and every `CODEX_HOME` / `codex_home` login. |
+| MiniMax Code | Refreshes 90 minutes before expiry into the CLI's own `~/.minimax/auth/<env>/<region>/mcode-public/auth.json`, and keeps its `auth-state.json` in step (compare-and-swap on the refresh token and the generation). |
 
-The server never refreshes a login a sidecar pushed, because these providers rotate refresh tokens and a server-side refresh would sign the CLI out. If a CLI refreshed first, the sidecar drops its result; a rejected refresh token is logged once, and you fix it by logging in again with the CLI. Claude Code logins held in the macOS Keychain are renewed only with `claude_keychain_renewal` (above). Provider details: [Antigravity](collectors/antigravity.md#token-lifetime--keep-alive), [Claude](collectors/claude.md), [ChatGPT](collectors/chatgpt.md), [xAI](collectors/xai.md).
+The server never refreshes a login a sidecar pushed, because these providers rotate refresh tokens and a server-side refresh would sign the CLI out. If a CLI refreshed first, the sidecar drops its result; a rejected refresh token is logged once, and you fix it by logging in again with the CLI. Claude Code logins held in the macOS Keychain are renewed only with `claude_keychain_renewal` (above). Provider details: [Antigravity](collectors/antigravity.md#token-lifetime--keep-alive), [Claude](collectors/claude.md), [ChatGPT](collectors/chatgpt.md), [MiniMax](collectors/minimax.md), [xAI](collectors/xai.md).
+
+**MiniMax Code.** The MiniMax Code access token lives twelve hours, and only the CLI or the desktop app renews it — when one of them next runs. The sidecar refreshes it at the account service of the login's region (`account.minimax.io` for `en`, `account.minimax.cn` for `cn`) with the CLI's own request, and writes the result back into the app's store. The app keeps that store in two files, `auth.json` and `auth-state.json`, whose `generation` counters must stay equal — the app answers "login error" when they do not — so the sidecar updates only the token, the expiry and the status — never the generation. If the app is refreshing at the same moment, the sidecar stands down (the state says so, or a credential is staged in `refresh/`) and drops its own result when the app got there first. A login kept in the OS keyring instead of a file (`storeKind: "os-keyring"`) is not renewed yet.
 
 **Turn it on**
 

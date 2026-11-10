@@ -259,12 +259,19 @@ credentials file and signs that CLI out. Google does not rotate Gemini's.
   collectors, the Refresh action).
 - The server reads no CLI login file from its own host, so a rotating provider's
   CLI login always arrives as a machine-owned bundle, and the sidecar
-  [keep-alive](sidecar.md) (xAI, Claude Code, Codex, agy) renews it.
-- **MiniMax Code** is machine-owned with no keep-alive: the desktop app renews the
-  token in place whenever it runs, and there is no MiniMax entry in
-  `REFRESH_ENDPOINTS` (`app/services/token_refresher.py`), so the server cannot
-  rotate it by accident. `minimax` is in `ROTATING_REFRESH_PROVIDERS` so the
-  ownership is explicit in the inventory.
+  [keep-alive](sidecar.md) (xAI, Claude Code, Codex, MiniMax Code, agy) renews it.
+- **MiniMax Code** is machine-owned and the sidecar's keep-alive renews it: the
+  desktop app owns `~/.minimax/auth/<env>/<region>/mcode-public/auth.json` and
+  renews the token in place (the stored `generation` counter increments) whenever it
+  runs, and the sidecar renews it when the app does not — 90 minutes before the
+  twelve-hour access token lapses, writing the result back into the app's own store
+  (`scripts/sidecar_pkg/minimax_code_renewer.py`). The write updates only the token,
+  the expiry and the status: the app's two files carry matching `generation` counters
+  and answer "login error" when they disagree, so the sidecar never bumps one of them.
+  There is no MiniMax entry in `REFRESH_ENDPOINTS`
+  (`app/services/token_refresher.py`), so the server cannot rotate it by accident.
+  `minimax` is in `ROTATING_REFRESH_PROVIDERS` so the ownership is explicit in the
+  inventory.
 - A machine-renewed login that stays expired for more than 3 days raises the
   credential alert. While a machine's access token is expired and its CLI is idle,
   collection skips that source (no API call, so no false "revoked") and fails
