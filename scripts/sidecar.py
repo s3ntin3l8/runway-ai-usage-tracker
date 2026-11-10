@@ -972,6 +972,25 @@ def _codex_login_paths() -> list[Path]:
     return expand_file_rule_paths(paths)
 
 
+def _minimax_code_login_paths() -> list[Path]:
+    """Every MiniMax Code ``auth.json`` the sidecar pushes, evaluated on each keep-alive tick.
+
+    The MiniMax provider's file rules also cover OpenCode's ``auth.json`` (a static coding-plan
+    key), which is not a login this renewer can renew -- only the app's own store
+    (``~/.minimax/auth/*/*/mcode-public/auth.json``) is. A callable, because the login dirs
+    change on reload.
+    """
+    rules = __REGISTRY__["providers"].get("minimax", {}).get("rules", [])
+    paths = [
+        p
+        for rule in rules
+        if rule.get("type") == "file"
+        for p in rule.get("paths", [])
+        if "mcode-public" in p
+    ]
+    return expand_file_rule_paths(paths)
+
+
 # Bound to the current runner, so replacement on local config reload is observed.
 _CLAUDE_KEYCHAIN_PERMISSION: Callable[[], bool] | None = None
 
@@ -985,6 +1004,7 @@ def _make_keep_alive_renewers() -> list:
     from scripts.sidecar_pkg.claude_keychain_renewer import KeychainRenewer
     from scripts.sidecar_pkg.codex_renewer import CodexRenewer
     from scripts.sidecar_pkg.keep_alive import is_enabled
+    from scripts.sidecar_pkg.minimax_code_renewer import MiniMaxCodeRenewer
     from scripts.sidecar_pkg.xai_renewer import XaiRenewer
 
     return [
@@ -997,6 +1017,7 @@ def _make_keep_alive_renewers() -> list:
             ),
         ),
         CodexRenewer(_codex_login_paths),
+        MiniMaxCodeRenewer(_minimax_code_login_paths),
     ]
 
 
@@ -5962,8 +5983,9 @@ def main():
         action="store_true",
         help=(
             "Daemon mode: renew the Antigravity (agy) access token with "
-            "`agy models` whenever it lapses, and refresh the xAI (Grok), Claude Code "
-            "and Codex (ChatGPT) logins in their CLIs' own credential files before they expire (opt-in; config "
+            "`agy models` whenever it lapses, and refresh the xAI (Grok), Claude Code, "
+            "Codex (ChatGPT) and MiniMax Code logins in their CLIs' own credential files "
+            "before they expire (opt-in; config "
             '"keep_alive": true is the same on/off switch for all renewers; it can also be '
             "toggled per sidecar from the Fleet page)"
         ),

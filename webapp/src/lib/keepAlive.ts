@@ -4,19 +4,26 @@ import { fetchAppConfig } from '@/api/endpoints';
 
 // Which CLI logins a sidecar's keep-alive renews. Mirrors KEEP_ALIVE_LABELS in
 // app/services/refresh_policy.py (tests/unit/test_keep_alive_copy_contract.py keeps the two in sync).
-export const KEEP_ALIVE_LOGINS = ['Antigravity (agy)', 'Claude Code', 'Codex (ChatGPT)', 'xAI (Grok)'] as const;
+export const KEEP_ALIVE_LOGINS = [
+  'Antigravity (agy)',
+  'Claude Code',
+  'Codex (ChatGPT)',
+  'MiniMax Code',
+  'xAI (Grok)',
+] as const;
 
 /** Provider id -> the login's name. Mirrors KEEP_ALIVE_LABELS (the contract test keeps them equal). */
 export const KEEP_ALIVE_PROVIDER_LABELS = {
   antigravity: 'Antigravity (agy)',
   anthropic: 'Claude Code',
   chatgpt: 'Codex (ChatGPT)',
+  minimax: 'MiniMax Code',
   xai: 'xAI (Grok)',
 } as const;
 
 export type KeepAliveProvider = keyof typeof KEEP_ALIVE_PROVIDER_LABELS;
 
-/** "Antigravity (agy), Claude Code, Codex (ChatGPT) and xAI (Grok)" — human list for tooltips. */
+/** "Antigravity (agy), Claude Code, Codex (ChatGPT), MiniMax Code and xAI (Grok)" — human list for tooltips. */
 export function keepAliveLoginsText(): string {
   const names = [...KEEP_ALIVE_LOGINS];
   if (names.length <= 1) return names.join('');

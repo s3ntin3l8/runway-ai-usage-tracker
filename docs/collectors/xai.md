@@ -23,7 +23,7 @@ The collector needs an access bearer (`xai_access`). A refresh token (`xai_refre
 
 **Origins and tags.** Sidecar sources get key-scoped origins. Because xAI issues a new refresh token on every refresh and the access JWT lasts about six hours, the fingerprint is taken from a stable claim of the access JWT, not from either token. Details: [Credential origins and operator tags](../architecture.md#credential-origins-and-operator-tags).
 
-**Who refreshes.** xAI rotates its refresh token, so the server never refreshes a login a sidecar pushed; that would sign the CLI out. The login renews when the CLI next runs, or automatically when the sidecar runs with `--keep-alive`, which refreshes shortly before expiry and writes the result back to the CLI's own file (or the OpenCode v2 database). Logins configured on the server (Settings paste, environment) are refreshed by the server when a refresh token is present. See [Who refreshes an OAuth login](../architecture.md#who-refreshes-an-oauth-login) and [keep-alive](../sidecar.md#keep-alive-for-antigravity-claude-code-codex-and-xai-opt-in).
+**Who refreshes.** xAI rotates its refresh token, so the server never refreshes a login a sidecar pushed; that would sign the CLI out. The login renews when the CLI next runs, or automatically when the sidecar runs with `--keep-alive`, which refreshes shortly before expiry and writes the result back to the CLI's own file (or the OpenCode v2 database). Logins configured on the server (Settings paste, environment) are refreshed by the server when a refresh token is present. See [Who refreshes an OAuth login](../architecture.md#who-refreshes-an-oauth-login) and [keep-alive](../sidecar.md#keep-alive-for-antigravity-claude-code-codex-minimax-code-and-xai-opt-in).
 
 ## Endpoints
 

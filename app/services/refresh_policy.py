@@ -30,8 +30,8 @@ from __future__ import annotations
 ROTATING_REFRESH_PROVIDERS = frozenset({"anthropic", "chatgpt", "minimax", "xai"})
 
 # Providers whose sidecar can renew a machine-owned login itself (``--keep-alive``):
-# agy via ``agy models``; xAI, Claude Code and Codex by refreshing and writing the token back to
-# the CLI's own credentials file.
+# agy via ``agy models``; xAI, Claude Code, Codex and MiniMax Code by refreshing and writing the
+# token back to the CLI's own credentials file.
 # The single source of truth for *which* logins that covers: the Fleet tooltip
 # (webapp/src/lib/keepAlive.ts) and the sidecar's ``--keep-alive`` help text must name the
 # same logins; tests/unit/test_keep_alive_copy_contract.py pins them together.
@@ -40,6 +40,7 @@ KEEP_ALIVE_LABELS = {
     "antigravity": "Antigravity (agy)",
     "anthropic": "Claude Code",
     "chatgpt": "Codex (ChatGPT)",
+    "minimax": "MiniMax Code",
 }
 KEEP_ALIVE_PROVIDERS = frozenset(KEEP_ALIVE_LABELS)
 

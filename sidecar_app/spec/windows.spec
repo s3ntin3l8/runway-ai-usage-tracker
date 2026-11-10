@@ -132,6 +132,7 @@ a = Analysis(
         "scripts.sidecar_pkg.claude_renewal_lock",
         "scripts.sidecar_pkg.agy_version",
         "scripts.sidecar_pkg.codex_renewer",
+        "scripts.sidecar_pkg.minimax_code_renewer",
         "scripts.sidecar_pkg.oauth_renewal",
         # The expiry reader, imported by the renewers and by sidecar.py.
         "scripts.sidecar_pkg.expiry",

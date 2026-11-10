@@ -22,7 +22,7 @@ Resolved in this order: a refreshed in-memory bearer, then the env/Settings cred
 | `CHATGPT_SESSION_TOKEN` | Environment variable | sidecar | Session cookie value. |
 | Settings, Bearer Token / Web Session | Pasted manually | server | Bearer: the `Authorization` header of a `/wham/usage` request in DevTools. Cookie: paste the full `chatgpt.com` cookie string, including the `.0`/`.1` chunks and `oai-sc` if present. |
 
-The Codex access token lives about ten days and its refresh token rotates on every refresh, so the server never refreshes a login a sidecar pushed. It renews when `codex` next runs, or with the sidecar's `--keep-alive` (see [Keep-alive](../sidecar.md#keep-alive-for-antigravity-claude-code-codex-and-xai-opt-in)), which refreshes a day before expiry and writes `auth.json` back.
+The Codex access token lives about ten days and its refresh token rotates on every refresh, so the server never refreshes a login a sidecar pushed. It renews when `codex` next runs, or with the sidecar's `--keep-alive` (see [Keep-alive](../sidecar.md#keep-alive-for-antigravity-claude-code-codex-minimax-code-and-xai-opt-in)), which refreshes a day before expiry and writes `auth.json` back.
 
 ## Endpoints
 
