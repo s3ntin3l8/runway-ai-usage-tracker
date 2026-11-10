@@ -173,12 +173,13 @@ def test_the_guard_catches_what_it_guards():
 def test_rel_key_spells_a_windows_path_with_forward_slashes():
     """On Windows ``path.relative_to(ROOT)`` has backslashes; the key must still match.
 
-    Linux cannot run the Windows suite, so call the real ``rel_key`` with a Windows path.
+    Linux cannot run the Windows suite, so call the real ``rel_key`` with Windows paths:
+    every allowlisted read failed there for the same reason, so every entry must
+    round-trip, not just one.
     """
     root = PureWindowsPath("C:/repo")
-    path = root / "app" / "core" / "log_redaction.py"
 
-    assert str(path.relative_to(root)) == "app\\core\\log_redaction.py"
-    assert rel_key(path, root) == "app/core/log_redaction.py"
-    assert (rel_key(path, root), "parts._replace") in ALLOWED
+    # ``str(root / "app/core/x.py")`` is ``C:\repo\app\core\x.py`` here: the premise.
+    for rel, read in ALLOWED:
+        assert (rel_key(root / rel, root), read) in ALLOWED
     assert all("\\" not in file for file, _ in ALLOWED)
