@@ -110,9 +110,41 @@ generation. If
 the app refreshes at the same moment, the sidecar stands down (the state says `refreshing`, or a
 credential is staged in `refresh/`) and drops its own result when the app got there first.
 
-Two cases the keep-alive does not cover yet: a login kept in the OS keyring instead of a file
-(`storeKind: "os-keyring"`), and the refresh token's own lifetime — the live behaviour of the
-account service is still to be proven against a throwaway login.
+### Live behaviour (checked 2026-11-10, `en` region)
+
+The renewer's request was run once against the live account service, through the renewer's own
+`request_refresh` and `write_back`. It ran on the operator's own login, in use at the time (a
+MiniMax Code CLI session was running on it), with a backup taken first — no throwaway account was
+used, so the issue's throwaway-login condition was not met. Only the `en` host received a real
+refresh token:
+
+- **The request works.** `POST https://account.minimax.io/oauth2/token` answered with
+  `access_token`, `refresh_token`, `token_type: Bearer`, `expires_in: 43200` and
+  `scope: agent.default`. Negative probes with a bogus refresh token (and, for `invalid_client`, a bogus
+  `client_id`) were sent to both `account.minimax.io` and `account.minimax.cn`: an unknown
+  `client_id` is refused with `invalid_client`, and a dead refresh token with `400 invalid_grant`
+  ("this refresh token can no longer be used"). The `cn` host was probed this way only; no real
+  login was refreshed there.
+- **The refresh token rotates.** The response carried a new one and the old one was rejected
+  straight away, so a refresh that is not written back loses the login.
+- **The store accepts the write.** A running MiniMax Code CLI on the same login picked up the
+  written token within seconds, refreshed from it, and committed `generation` 89 → 90 on both files
+  with status `authenticated`. This is one observation, not proof the CLI reacted to the write
+  rather than refreshing on its own.
+- A fresh access token worked against `GET platform.minimax.io/v1/api/openplatform/coding_plan/remains`
+  (the app-token endpoint, not the API-secret one). By then the CLI had refreshed again, so this
+  was the CLI's token rather than the one the sidecar wrote.
+
+Not yet observed: the desktop app's behaviour after a sidecar renewal, a renewal that lands while
+the app is mid-refresh (the window between the app's read and its commit is not closed by the
+`refreshing` / `refresh/` checks), and the refresh token's own lifetime (it needs an idle login). The OS-keyring store
+(`storeKind: "os-keyring"`) is not covered either.
+
+Because the refresh token rotates, the exchange spends the old one before `write_back` re-reads the
+store. If `write_back` then returns `superseded` (the credential or generation moved, the state is
+not renewable, or the app is mid-refresh), the new refresh token is dropped while the old one is
+already dead: that login is signed out unless the app's own refresh produced a valid one. The
+decision in #1306 about keeping the MiniMax Code keep-alive opt-in rests on this.
 
 ## Troubleshooting
 
