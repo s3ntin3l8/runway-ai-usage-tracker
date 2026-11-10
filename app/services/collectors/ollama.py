@@ -25,6 +25,7 @@ Collection Strategies:
 """
 
 import asyncio
+import html as html_lib
 import logging
 import math
 import re
@@ -43,7 +44,7 @@ from app.core.utils import (
     human_delta,
     scrub_log,
 )
-from app.services.collectors.base import BaseCollector
+from app.services.collectors.base import BaseCollector, normalize_account_id
 from app.services.credential_provider import credential_provider
 from app.services.token_cache import token_cache
 
@@ -133,6 +134,18 @@ class OllamaCollector(BaseCollector):
     # (`data-usage-async`) and shows the free-usage model list in
     # `#free-plan-models`, but carries no allowance meter, plan badge or email.
     RE_USAGE_PAGE = re.compile(r"data-usage-async|id=[\"']free-plan-models[\"']", re.IGNORECASE)
+
+    # The account's sign-in email, as the profile page shows it. The usage page
+    # no longer carries `header-email`, and its nav shows the email only in
+    # class-based elements, so identity is read from the profile page's ids.
+    PROFILE_URL = "https://ollama.com/settings/profile"
+    RE_PROFILE_EMAIL = re.compile(
+        r"id=[\"']email-content[\"'][^>]*>\s*([^<\s]+@[^<\s]+)\s*<", re.IGNORECASE
+    )
+    RE_PROFILE_EMAIL_INPUT = re.compile(
+        r"<input\b[^>]*\bid=[\"']email-input[\"'][^>]*>", re.IGNORECASE
+    )
+    RE_VALUE_ATTR = re.compile(r"\bvalue=[\"']([^\"']+)[\"']", re.IGNORECASE)
 
     # Patterns for detecting logged-out state (case-insensitive)
     RE_SIGN_IN_HEADING = re.compile(r"sign in to ollama|log in to ollama", re.IGNORECASE)
@@ -453,6 +466,7 @@ class OllamaCollector(BaseCollector):
             self.current_input_source = api_source
         if not cookie_header or not self._validate_cookie_header(cookie_header):
             return
+        await self._promote_cookie_identity(client, cookie_header)
         try:
             resp = await http_request_with_retry(
                 client,
@@ -478,6 +492,44 @@ class OllamaCollector(BaseCollector):
             card["free_models"] = models
         if plan:
             card["tier"] = plan.lower()
+
+    def _parse_profile_email(self, html: str) -> str | None:
+        """The sign-in email from the profile page, or ``None`` when it is not there."""
+        match = self.RE_PROFILE_EMAIL.search(html)
+        if match:
+            candidate = match.group(1)
+        else:
+            tag = self.RE_PROFILE_EMAIL_INPUT.search(html)
+            value = self.RE_VALUE_ATTR.search(tag.group(0)) if tag else None
+            candidate = value.group(1) if value else ""
+        candidate = html_lib.unescape(candidate).strip()
+        return candidate if re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", candidate) else None
+
+    async def _promote_cookie_identity(self, client: httpx.AsyncClient, cookie_header: str) -> None:
+        """Record which account the cookie is signed into as ``verified_identity``.
+
+        The server compares it with the account the cookie's origin is tagged to and
+        drops the tag when the browser switched users (#462). Best effort: a failed,
+        signed-out or unreadable profile page leaves the identity unset and never
+        affects the card.
+        """
+        try:
+            resp = await http_request_with_retry(
+                client,
+                "GET",
+                self.PROFILE_URL,
+                headers={**self.STATIC_HEADERS, "Cookie": cookie_header},
+                timeout=self.TIMEOUT_SECONDS,
+                follow_redirects=True,
+            )
+            if resp.status_code != 200 or self._looks_signed_out(resp.text):
+                return
+            email = self._parse_profile_email(resp.text)
+        except Exception as exc:
+            logger.debug("Ollama profile identity lookup failed: %s", scrub_log(str(exc)))
+            return
+        if email:
+            self.verified_identity = normalize_account_id(email)
 
     def _parse_free_models(self, html: str) -> list[str]:
         """Model names from the ``#free-plan-models`` element of the settings page."""
@@ -840,6 +892,7 @@ class OllamaCollector(BaseCollector):
         # Merge static headers with dynamic Cookie
         headers = {**self.STATIC_HEADERS, "Cookie": cookie_header}
         self._api_key_configured = await self._has_api_key()
+        await self._promote_cookie_identity(client, cookie_header)
 
         try:
             # CRITICAL: set follow_redirects=True as Ollama often redirects to www. or /
@@ -929,8 +982,6 @@ class OllamaCollector(BaseCollector):
             )
             self.account_label = email
         if email and "@" in email:
-            from app.services.collectors.base import normalize_account_id
-
             self.verified_identity = normalize_account_id(email)
 
         # 3. Build cards using already-parsed blocks (session/weekly first)
