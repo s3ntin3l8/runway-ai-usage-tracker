@@ -265,9 +265,9 @@ credentials file and signs that CLI out. Google does not rotate Gemini's.
   renews the token in place (the stored `generation` counter increments) whenever it
   runs, and the sidecar renews it when the app does not — 90 minutes before the
   twelve-hour access token lapses, writing the result back into the app's own store
-  (`scripts/sidecar_pkg/minimax_code_renewer.py`). The write updates only the token
-  and the expiry: the app's two files carry matching `generation` counters and
-  answer "login error" when they disagree, so the sidecar never bumps one of them.
+  (`scripts/sidecar_pkg/minimax_code_renewer.py`). The write updates only the token,
+  the expiry and the status: the app's two files carry matching `generation` counters
+  and answer "login error" when they disagree, so the sidecar never bumps one of them.
   There is no MiniMax entry in `REFRESH_ENDPOINTS`
   (`app/services/token_refresher.py`), so the server cannot rotate it by accident.
   `minimax` is in `ROTATING_REFRESH_PROVIDERS` so the ownership is explicit in the

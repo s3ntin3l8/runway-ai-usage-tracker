@@ -32,10 +32,10 @@ stay equal -- the CLI answers ``status: "error"`` when they do not:
 A sibling ``refresh/`` directory holds the CLI's staged credential while it refreshes; a pending
 credential there means the app is mid-refresh and this renewer stays out of the way.
 
-The write-back updates only the token fields and the expiry. The ``generation`` is deliberately
-left alone on both sides: the two files must never disagree, and a write that bumped one of them
-would break the login for the user. The state's ``status`` becomes ``authenticated`` again (the
-app reads the live/expired state from the credential's expiry, not from that field).
+The write-back updates only the token fields, the expiry and the status. The ``generation`` is
+deliberately left alone on both sides: the two files must never disagree, and a write that bumped
+one of them would break the login for the user. The state's ``status`` becomes ``authenticated``
+again (the app reads the live/expired state from the credential's expiry, not from that field).
 
 A write that could not be saved is queued and retried as a *save* -- never as a new exchange, so
 a refresh token is never spent twice. The queue keeps the renewer ``due``, which is what lets the
@@ -328,8 +328,8 @@ def write_back(login: Login, response: dict[str, Any]) -> str:
     if _app_is_refreshing(state, login):
         return "superseded"  # the app is mid-refresh
 
-    expires_at_ms = int(time.time() * 1000 + float(response["expires_in"]) * 1000)
     if not credential_written:
+        expires_at_ms = int(time.time() * 1000 + float(response["expires_in"]) * 1000)
         record["accessToken"] = new_access
         record["refreshToken"] = new_refresh
         record["tokenType"] = str(response.get("token_type") or "Bearer")
@@ -339,7 +339,9 @@ def write_back(login: Login, response: dict[str, Any]) -> str:
     else:
         # Our own earlier write landed: the credential carries the expiry it was given, and the
         # state takes that same value -- the two files must not disagree about it.
-        expires_at_ms = record.get("expiresAtMs") or expires_at_ms
+        expires_at_ms = record.get("expiresAtMs")
+        if not isinstance(expires_at_ms, int):
+            expires_at_ms = int(time.time() * 1000 + float(response["expires_in"]) * 1000)
 
     state["expiresAtMs"] = expires_at_ms
     # The token is fresh again, so the login is authenticated; the app reads the live/expired
@@ -394,9 +396,10 @@ class MiniMaxCodeRenewer:
                 continue
             for login in read_logins(Path(path)):
                 # The state file names the region the app itself uses; it wins over the
-                # directory's name.
+                # directory's name -- but only when it names a region we know, so a typo or a
+                # new region falls back to the directory instead of to the wrong account service.
                 region = state.get("region")
-                if isinstance(region, str) and region.strip():
+                if isinstance(region, str) and region.strip().lower() in TOKEN_ENDPOINT_BY_REGION:
                     login.region = region.strip().lower()
                 found.append((login, state))
         return found

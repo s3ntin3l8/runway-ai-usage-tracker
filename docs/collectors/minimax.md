@@ -105,7 +105,8 @@ account service of the login's region — `https://account.minimax.io/oauth2/tok
 
 The app keeps its login in two files, `auth.json` (the credential) and `auth-state.json` (the
 state), whose `generation` counters must match — the app answers "login error" when they do not.
-The write-back therefore updates only the token and the expiry and never bumps the generation. If
+The write-back therefore updates only the token, the expiry and the status, and never bumps the
+generation. If
 the app refreshes at the same moment, the sidecar stands down (the state says `refreshing`, or a
 credential is staged in `refresh/`) and drops its own result when the app got there first.
 

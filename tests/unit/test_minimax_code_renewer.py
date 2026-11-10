@@ -318,6 +318,15 @@ class TestRequestRefresh:
         discovered = renewer._discovered()
         assert [login.region for login, _state in discovered] == ["cn"]
 
+    def test_an_unknown_region_in_the_state_falls_back_to_the_directory(self, tmp_path):
+        """A typo or a new region must not send the login to the wrong account service."""
+        directory = _client_dir(tmp_path, region="cn")
+        path = _write_login(directory)
+        _write_state(directory, region="china")
+        renewer = _renewer(path)
+        discovered = renewer._discovered()
+        assert [login.region for login, _state in discovered] == ["cn"]
+
     @pytest.mark.parametrize("code", [400, 401, 403])
     def test_a_dead_expired_or_revoked_token_is_a_rejection(self, monkeypatch, tmp_path, code):
         import urllib.error
