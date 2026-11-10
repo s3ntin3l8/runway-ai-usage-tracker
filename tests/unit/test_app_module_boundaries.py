@@ -12,13 +12,22 @@ catches it and must not be dropped as redundant with the lint rule.
 """
 
 import ast
-from pathlib import Path
+from pathlib import Path, PurePath, PureWindowsPath
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 MODULES = sorted(ROOT.glob("app/**/*.py"))
 SELF_NAMES = {"self", "cls", "mcs"}
+
+
+def rel_key(path: PurePath, root: PurePath = ROOT) -> str:
+    """``path`` relative to the repo root with forward slashes, on every platform.
+
+    ``ALLOWED`` is keyed by forward-slash paths; ``str(path)`` gives backslashes on
+    Windows, so the allowlist never matched there and the three allowlisted reads failed.
+    """
+    return path.relative_to(root).as_posix()
 
 
 def dunder(name: str) -> bool:
@@ -125,9 +134,9 @@ def declaring_classes(tree: ast.Module) -> set[str]:
     return {n.name for n in ast.walk(tree) if isinstance(n, ast.ClassDef)}
 
 
-@pytest.mark.parametrize("path", MODULES, ids=lambda p: str(p.relative_to(ROOT)))
+@pytest.mark.parametrize("path", MODULES, ids=rel_key)
 def test_module_reads_no_private_member_of_another_module(path: Path):
-    rel = str(path.relative_to(ROOT))
+    rel = rel_key(path)
     tree = ast.parse(path.read_text())
     imported = private_imports(tree, list(path.relative_to(ROOT).with_suffix("").parts[:-1]))
     assert not imported, f"{rel} imports the private {imported}"
@@ -159,3 +168,17 @@ def test_the_guard_catches_what_it_guards():
     assert foreign_private_reads(parse("mod.obj._hidden"))
     assert not foreign_private_reads(parse("self.part._hidden"))
     assert string_private_reads(parse("getattr(mod, '_hidden')"))
+
+
+def test_rel_key_spells_a_windows_path_with_forward_slashes():
+    """On Windows ``path.relative_to(ROOT)`` has backslashes; the key must still match.
+
+    Linux cannot run the Windows suite, so call the real ``rel_key`` with a Windows path.
+    """
+    root = PureWindowsPath("C:/repo")
+    path = root / "app" / "core" / "log_redaction.py"
+
+    assert str(path.relative_to(root)) == "app\\core\\log_redaction.py"
+    assert rel_key(path, root) == "app/core/log_redaction.py"
+    assert (rel_key(path, root), "parts._replace") in ALLOWED
+    assert all("\\" not in file for file, _ in ALLOWED)
