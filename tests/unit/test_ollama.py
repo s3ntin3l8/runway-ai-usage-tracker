@@ -1284,22 +1284,134 @@ def test_a_blank_signed_in_page_stays_a_parse_failure():
     assert collector._last_error_reason == "missing_data"
 
 
+DASHBOARD_FIXTURE = Path(__file__).parent.parent / "fixtures" / "ollama-dashboard.html"
+
+
+def _page_response(text, status=200):
+    resp = _make_response({}, status)
+    resp.text = text
+    return resp
+
+
+def _dashboard_html(balance="$0", used="&lt;$0.01"):
+    return f'<span id="extra-usage-balance">{balance}</span><p id="dashboard-usage">{used}</p>'
+
+
+def test_parse_dashboard_fixture():
+    cards = OllamaCollector()._parse_dashboard(DASHBOARD_FIXTURE.read_text(encoding="utf-8"))
+
+    assert len(cards) == 1
+    card = cards[0]
+    assert card["variant"] == "credits"
+    assert card["remaining"] == "$0.00"
+    assert card["data_source"] == "web"
+    assert card["usage_url"] == OllamaCollector.DASHBOARD_URL
+    assert card["detail"].endswith("Used this month <$0.01")
+
+
+def test_parse_dashboard_plain_amounts():
+    card = OllamaCollector()._parse_dashboard(_dashboard_html("$12.50", "$3.20"))[0]
+
+    assert card["remaining"] == "$12.50"
+    assert card["detail"].endswith("Used this month $3.20")
+
+
+def test_parse_dashboard_matches_the_api_credits_card():
+    api = OllamaCollector()._make_credits_card(12.5)
+    web = OllamaCollector()._parse_dashboard(_dashboard_html("$12.50"))[0]
+
+    differing = {k for k in api if k not in ("updated_at",) and api[k] != web.get(k)}
+    assert differing == {"data_source", "usage_url", "detail"}
+
+
+def test_parse_dashboard_missing_or_unreadable_usage_keeps_the_card():
+    collector = OllamaCollector()
+
+    card = collector._parse_dashboard('<span id="extra-usage-balance">$4.00</span>')[0]
+    assert card["remaining"] == "$4.00"
+    assert "Used this month" not in card["detail"]
+    card = collector._parse_dashboard(_dashboard_html("$4.00", "lots"))[0]
+    assert "Used this month" not in card["detail"]
+
+
+@pytest.mark.parametrize("balance", ["", "n/a", "€4", "$"])
+def test_parse_dashboard_unreadable_balance_yields_no_card(balance):
+    assert OllamaCollector()._parse_dashboard(_dashboard_html(balance)) == []
+
+
+def test_parse_dashboard_missing_element():
+    assert OllamaCollector()._parse_dashboard("<html><body>Dashboard</body></html>") == []
+
+
+def test_parse_dashboard_signed_out_page():
+    collector = OllamaCollector()
+
+    assert collector._parse_dashboard("<html><h1>Sign in to Ollama</h1></html>") == []
+    assert collector._last_error_reason == "not_logged_in"
+
+
+def _web_transport(dashboard):
+    """Settings page = the live usage report; ``dashboard`` answers /dashboard."""
+    requested: list[str] = []
+
+    async def fake_http(client, method, url, **kwargs):
+        requested.append(url)
+        if url == OllamaCollector.DASHBOARD_URL:
+            if isinstance(dashboard, Exception):
+                raise dashboard
+            return dashboard
+        return _page_response(SETTINGS_FIXTURE.read_text(encoding="utf-8"))
+
+    return fake_http, requested
+
+
 @pytest.mark.asyncio
-async def test_cookie_only_account_gets_a_specific_error_card_not_a_parse_error():
-    """Entry point: cookie only, no API key, the live page -> the web strategy and the
-    error handler end in a ``missing_config`` card that points at the API key."""
+async def test_cookie_only_account_gets_the_dashboard_credits_card():
+    """Entry point: cookie only, settings page shows no figure -> the dashboard credits
+    card, and the profile lookup still sets ``verified_identity``."""
     collector = OllamaCollector(account_id="acc_test")
-    resp = _make_response({})
-    resp.text = SETTINGS_FIXTURE.read_text(encoding="utf-8")
+    collector.current_input_source = "sidecar"
+    html = DASHBOARD_FIXTURE.read_text(encoding="utf-8")
+    profile = PROFILE_FIXTURE.read_text(encoding="utf-8")
+    dashboard_resp = _page_response(html)
+    fake_http, requested = _web_transport(dashboard_resp)
+
+    async def routed(client, method, url, **kwargs):
+        if url == OllamaCollector.PROFILE_URL:
+            requested.append(url)
+            return _page_response(profile)
+        return await fake_http(client, method, url, **kwargs)
 
     with (
         patch.object(
             collector, "_get_cookie_header", new=AsyncMock(return_value="session=abc.def-123")
         ),
-        patch(
-            "app.services.collectors.ollama.http_request_with_retry",
-            new=AsyncMock(return_value=resp),
+        patch("app.services.collectors.ollama.http_request_with_retry", new=routed),
+    ):
+        cards = await collector._get_ollama_web(MagicMock())
+
+    assert [c["variant"] for c in cards] == ["credits"]
+    assert cards[0]["input_source"] == "sidecar"
+    assert collector.verified_identity == "user@example.com"
+    assert OllamaCollector.DASHBOARD_URL in requested
+    assert not any("usage/report" in u for u in requested)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "dashboard",
+    [_page_response("", 500), _page_response("<html></html>"), httpx.ConnectError("boom")],
+    ids=["http-500", "no-figure", "unreachable"],
+)
+async def test_unreachable_dashboard_falls_back_to_the_existing_error(dashboard):
+    collector = OllamaCollector(account_id="acc_test")
+    fake_http, _ = _web_transport(dashboard)
+
+    with (
+        patch.object(
+            collector, "_get_cookie_header", new=AsyncMock(return_value="session=abc.def-123")
         ),
+        patch("app.services.collectors.ollama.http_request_with_retry", new=fake_http),
     ):
         assert await collector._get_ollama_web(MagicMock()) == []
         cards = await collector._error_handler()
@@ -1307,8 +1419,31 @@ async def test_cookie_only_account_gets_a_specific_error_card_not_a_parse_error(
     assert len(cards) == 1
     assert cards[0]["error_type"] == "missing_config"
     assert cards[0]["detail"] == OllamaCollector.ERROR_MESSAGES["usage_not_on_page"]
-    assert "API key" in cards[0]["detail"]
-    assert "Could not parse usage data" not in cards[0]["detail"]
+
+
+@pytest.mark.asyncio
+async def test_api_card_wins_and_the_dashboard_is_not_requested():
+    collector = OllamaCollector(account_id="acc_test")
+    requested: list[str] = []
+
+    async def fake_http(client, method, url, **kwargs):
+        requested.append(url)
+        if url == OllamaCollector.BALANCE_URL:
+            return _make_response(_balance_body(balance=40, allowance=60))
+        return _page_response("")
+
+    with (
+        patch.object(collector, "_get_api_key", new=AsyncMock(return_value="k")),
+        patch.object(
+            collector, "_get_cookie_header", new=AsyncMock(return_value="session=abc.def-123")
+        ),
+        patch("app.services.collectors.ollama.http_request_with_retry", new=fake_http),
+    ):
+        cards = await collector.collect(MagicMock())
+
+    assert len(cards) == 1
+    assert cards[0]["data_source"] == "api"
+    assert OllamaCollector.DASHBOARD_URL not in requested
 
 
 SETTINGS_FIXTURE = Path(__file__).parent.parent / "fixtures" / "ollama-settings-included-usage.html"
@@ -1735,7 +1870,13 @@ class TestOllamaCookieIdentity:
         ):
             await collector._get_ollama_web(MagicMock())
 
-        assert requested == ["https://ollama.com/settings", OllamaCollector.PROFILE_URL]
+        # The settings page shows no figure here, so the dashboard is read before
+        # the identity lookup.
+        assert requested == [
+            "https://ollama.com/settings",
+            OllamaCollector.DASHBOARD_URL,
+            OllamaCollector.PROFILE_URL,
+        ]
 
     @pytest.mark.asyncio
     async def test_a_hanging_profile_is_cut_off_and_never_costs_more_than_the_bound(self):
