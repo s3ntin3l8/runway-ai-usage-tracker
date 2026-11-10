@@ -434,7 +434,11 @@ class OllamaCollector(BaseCollector):
             # No balance endpoint on this deployment — fall back to the legacy
             # monthly-limit shape of /api/usage.
             logger.debug("Ollama balance endpoint unavailable — falling back to /api/usage")
-            return await self._get_ollama_usage_legacy(client, headers)
+            legacy_cards = await self._get_ollama_usage_legacy(client, headers)
+            # Same as the balance path: a signed-in cookie identifies the account
+            # whichever usage endpoint answered.
+            await self._record_cookie_identity(client)
+            return legacy_cards
         if resp.status_code != 200:
             return []
         try:
@@ -955,6 +959,8 @@ class OllamaCollector(BaseCollector):
             logger.debug(f"Ollama fetch error: {e}")
 
         # Side information, after the data request and bounded, so it never gates the quota.
+        # The profile address deliberately wins over a `header-email` the usage page
+        # reported: the profile page is the one source that names the signed-in cookie.
         await self._promote_cookie_identity(client, cookie_header)
         return cards
 

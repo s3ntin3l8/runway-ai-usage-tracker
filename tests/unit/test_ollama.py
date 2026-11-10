@@ -1666,6 +1666,31 @@ class TestOllamaCookieIdentity:
         assert requested == [OllamaCollector.BALANCE_URL, OllamaCollector.PROFILE_URL]
 
     @pytest.mark.asyncio
+    async def test_the_legacy_usage_fallback_still_records_the_identity(self):
+        """A deployment without /api/balance takes the /api/usage path; the cookie is
+        just as signed in there."""
+        collector = OllamaCollector(account_id="acc_test")
+        fake_http, requested = self._routes(
+            balance=MagicMock(status_code=404), profile=self._profile()
+        )
+        legacy = AsyncMock(return_value=[{"variant": "percent"}])
+
+        with (
+            patch.object(collector, "_get_api_key", new=AsyncMock(return_value="k")),
+            patch.object(
+                collector, "_get_cookie_header", new=AsyncMock(return_value="session=abc.def-123")
+            ),
+            patch.object(collector, "_get_ollama_usage_legacy", new=legacy),
+            patch("app.services.collectors.ollama.http_request_with_retry", new=fake_http),
+        ):
+            cards = await collector._get_ollama_api(MagicMock())
+
+        assert cards == [{"variant": "percent"}]
+        legacy.assert_awaited_once()
+        assert collector.verified_identity == "user@example.com"
+        assert requested == [OllamaCollector.BALANCE_URL, OllamaCollector.PROFILE_URL]
+
+    @pytest.mark.asyncio
     async def test_a_signed_in_profile_with_an_email_form_and_a_login_link_still_reads(self):
         """``_looks_signed_out`` fires on any email form plus a /login link; the profile
         page has both, so the email element itself decides."""
