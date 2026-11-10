@@ -173,6 +173,9 @@ class OllamaCollector(BaseCollector):
     # Upstream endpoints. `/api/balance` carries the quota; `/api/usage` is a
     # spend report and only used as a fallback for the legacy limit shape.
     BALANCE_URL = "https://ollama.com/api/balance"
+    # The signed-in dashboard renders the credits balance and the month's usage
+    # server-side (the settings page loads its figures client-side).
+    DASHBOARD_URL = "https://ollama.com/dashboard"
     USAGE_URL = "https://ollama.com/api/usage"
 
     # Error handling
@@ -188,8 +191,8 @@ class OllamaCollector(BaseCollector):
         "not_logged_in": "Not logged in. Please log in at ollama.com",
         "missing_data": "Could not parse usage data",
         # Error-card detail is cut at 40 characters: keep this short and put the
-        # reason (the settings page no longer shows the allowance) in the docs.
-        "usage_not_on_page": "Add an Ollama API key for the quota",
+        # reason (neither page shows a figure) in the docs.
+        "usage_not_on_page": "No usage figure on ollama.com pages",
         "invalid_credential_type": "API Key detected. Quota tracking requires a Session Cookie (ollama_session).",
     }
 
@@ -809,6 +812,85 @@ class OllamaCollector(BaseCollector):
             return []
         return cards
 
+    # Dashboard elements, by id. The inner text is read up to the closing tag, nested
+    # markup stripped afterwards.
+    RE_DASHBOARD_BALANCE = re.compile(
+        r"id=[\"']extra-usage-balance[\"'][^>]*>(.*?)</", re.IGNORECASE | re.DOTALL
+    )
+    RE_DASHBOARD_USAGE = re.compile(
+        r"id=[\"']dashboard-usage[\"'][^>]*>(.*?)</", re.IGNORECASE | re.DOTALL
+    )
+    RE_DASHBOARD_MONEY = re.compile(r"(<)?\s*\$\s*(\d[\d,]*(?:\.\d+)?)")
+
+    @classmethod
+    def _dashboard_text(cls, pattern: re.Pattern[str], html: str) -> str | None:
+        match = pattern.search(html)
+        if not match:
+            return None
+        text = html_lib.unescape(re.sub(r"<[^>]+>", "", match.group(1)))
+        return " ".join(text.split()) or None
+
+    @classmethod
+    def _dashboard_money(cls, text: str | None) -> tuple[float, bool] | None:
+        """``(amount, under_one_cent)`` from "$12.50" or "<$0.01"; ``None`` if unreadable."""
+        if text is None:
+            return None
+        match = cls.RE_DASHBOARD_MONEY.fullmatch(text.strip())
+        if not match:
+            return None
+        try:
+            return float(match.group(2).replace(",", "")), bool(match.group(1))
+        except ValueError:
+            return None
+
+    def _parse_dashboard(self, html: str) -> list[dict[str, Any]]:
+        """The ``credits`` card from the dashboard's balance and month usage.
+
+        Only the known element ids are read. An unreadable balance yields no card (a
+        guess at an unseen layout could retire a working one); an unreadable month
+        usage just leaves it out of the detail.
+        """
+        if self._looks_signed_out(html):
+            self._set_error_reason("not_logged_in")
+            return []
+        balance = self._dashboard_money(self._dashboard_text(self.RE_DASHBOARD_BALANCE, html))
+        if balance is None:
+            logger.debug("Ollama: dashboard shows no readable credits balance")
+            return []
+        card = self._make_credits_card(balance[0])
+        card["data_source"] = self.DATA_SOURCE_WEB
+        card["usage_url"] = self.DASHBOARD_URL
+        used = self._dashboard_money(self._dashboard_text(self.RE_DASHBOARD_USAGE, html))
+        if used is not None:
+            amount, under = used
+            text = "<$0.01" if under else f"${amount:.2f}"
+            card["detail"] = f"{card['detail']} · Used this month {text}"
+        return [card]
+
+    async def _fetch_dashboard_cards(
+        self, client: httpx.AsyncClient, headers: dict[str, str]
+    ) -> list[dict[str, Any]]:
+        """GET the dashboard with the cookie; ``[]`` on any failure."""
+        try:
+            resp = await http_request_with_retry(
+                client,
+                "GET",
+                self.DASHBOARD_URL,
+                headers=headers,
+                timeout=self.TIMEOUT_SECONDS,
+                follow_redirects=True,
+            )
+        except Exception as exc:
+            logger.debug("Ollama dashboard fetch error: %s", scrub_log(str(exc)))
+            return []
+        if resp.status_code == 200:
+            return self._parse_dashboard(resp.text)
+        if resp.status_code in (401, 403):
+            self._set_error_reason("not_logged_in")
+        else:
+            logger.debug("Ollama dashboard fetch failed with status %s", resp.status_code)
+        return []
+
     def _make_credits_card(self, purchased: float) -> dict[str, Any]:
         """Card for a pay-as-you-go account: purchased credits, no allowance."""
         now = datetime.now(UTC)
@@ -957,6 +1039,10 @@ class OllamaCollector(BaseCollector):
                 logger.debug(f"Ollama fetch failed with status {resp.status_code} at {resp.url}")
         except Exception as e:
             logger.debug(f"Ollama fetch error: {e}")
+
+        if not cards:
+            # The settings page no longer carries the quota: read it from the dashboard.
+            cards = await self._fetch_dashboard_cards(client, headers)
 
         # Side information, after the data request and bounded, so it never gates the quota.
         # The profile address deliberately wins over a `header-email` the usage page

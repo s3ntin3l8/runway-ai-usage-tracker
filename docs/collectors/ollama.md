@@ -51,7 +51,8 @@ server answer `provider:ollama#<fingerprint>`. Cookie candidates keep plain orig
 |---|---|---|
 | `api` | `GET https://ollama.com/api/balance`, `Authorization: Bearer <key>` | Quota source. `included.balance_usd`, `included.allowance_usd` and `included.period` give the allowance card; `included.session` / `included.weekly` (`remaining_percent`, `resets_at`) give legacy cards |
 | `api` fallback | `GET https://ollama.com/api/usage` | Only on 404/405 from `/api/balance`, and only its legacy `limits.monthly.usage` shape; its spend report is ignored because spend comes from the CLI via the sidecar |
-| `web` | `GET https://ollama.com/settings` | Parses each `data-usage-track` meter's `aria-label` (percent used) and nearby `data-time` (reset); legacy `Session usage` / `Weekly usage` blocks are still read. The plan tier comes from the `Included usage` (legacy `Cloud Usage`) badge. **As of the redesigned Usage page (captured 2026-11-09) the signed-in page carries none of these:** its figures load through a script, the raw response has no meter, plan badge or account email, and `/settings/billing` shows no allowance either. The strategy then returns no cards and the account gets the specific error below (the meters are still parsed if the markup returns, e.g. on paid plans) |
+| `web` | `GET https://ollama.com/settings` | Parses each `data-usage-track` meter's `aria-label` (percent used) and nearby `data-time` (reset); legacy `Session usage` / `Weekly usage` blocks are still read. The plan tier comes from the `Included usage` (legacy `Cloud Usage`) badge. **As of the redesigned Usage page (captured 2026-11-09) the signed-in page carries none of these:** its figures load through a script, the raw response has no meter, plan badge or account email, and `/settings/billing` shows no allowance either. The meters are still parsed if the markup returns, e.g. on paid plans; when the page yields no card the strategy reads `/dashboard` (next row) |
+| `web` fallback | `GET https://ollama.com/dashboard` | Server-rendered, no client fetch. Reads `#extra-usage-balance` (credits, USD), `#dashboard-usage` ("Used this month"; `<$0.01` means under one cent) and builds the same `credits` card as the `api` path (`data_source` web). `#dashboard-plan` is not used: a paid plan's allowance markup is unverified and not parsed. Only the unreadable balance case yields no card. Never requests `/settings/usage/report` |
 
 **Plan tier.** The `api` allowance card derives `tier` from `included.allowance_usd`: $60 is
 `pro`, $300 `max`, $1000 `team`, up to $10 `free`; any other amount keeps `cloud`. The table
@@ -125,10 +126,10 @@ every event costs $0.
 | Symptom | Fix |
 |---|---|
 | "API key detected" in the cookie field | An `sk-…` key was pasted where the session cookie belongs. Use the key field, or paste the cookie (below). |
-| "API key was rejected" | The key is invalid or revoked; replace it in Settings. Removing it does not help: the cookie path no longer reads the quota (see below). |
+| "API key was rejected" | The key is invalid or revoked; replace it in Settings. Removing it does not help: a cookie-only account shows the dashboard credits instead. |
 | Card is empty or the `web` path fails | The cookie is expired or the page redirected to sign-in. Capture a fresh cookie (below). |
-| "Add an Ollama API key for the quota" | A cookie-only account: the signed-in settings page no longer shows the allowance (`usage_not_on_page`, error type `missing_config`). Add an Ollama API key in Settings; the quota then comes from `/api/balance`. The cookie stays useful only for the free-usage model list. |
-| Unexpected balance shape | Anything other than the shapes above is malformed quota data; collection falls back to `web`, which needs a cookie and, on the current settings page, finds no allowance (see the row above). |
+| "No usage figure on ollama.com pages" | `usage_not_on_page` (error type `missing_config`): neither the settings page nor `/dashboard` yielded a number for a cookie-only account (the dashboard markup changed, or the account shows no balance element). Add an Ollama API key in Settings for the quota from `/api/balance`. |
+| Unexpected balance shape | Anything other than the shapes above is malformed quota data; collection falls back to `web`, which needs a cookie and reads the credits from `/dashboard`. |
 
 Getting the cookie: sign in at `https://ollama.com/settings`, open DevTools, Network tab,
 refresh, select the `settings` request and copy the `Cookie` request header (or just the
