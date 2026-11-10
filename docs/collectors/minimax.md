@@ -137,14 +137,14 @@ refresh token:
 
 Not yet observed: the desktop app's behaviour after a sidecar renewal, a renewal that lands while
 the app is mid-refresh (the window between the app's read and its commit is not closed by the
-`refreshing` / `refresh/` checks), and the refresh token's own lifetime (it needs an idle login).
+`refreshing` / `refresh/` checks), and the refresh token's own lifetime (it needs an idle login). The OS-keyring store
+(`storeKind: "os-keyring"`) is not covered either.
 
 Because the refresh token rotates, the exchange spends the old one before `write_back` re-reads the
 store. If `write_back` then returns `superseded` (the credential or generation moved, the state is
 not renewable, or the app is mid-refresh), the new refresh token is dropped while the old one is
 already dead: that login is signed out unless the app's own refresh produced a valid one. The
 decision in #1306 about keeping the MiniMax Code keep-alive opt-in rests on this.
-The OS-keyring store (`storeKind: "os-keyring"`) is not covered either.
 
 ## Troubleshooting
 
