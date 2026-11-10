@@ -1,3 +1,4 @@
+import asyncio
 import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -1368,7 +1369,12 @@ class TestOllamaSettingsEnrichment:
         assert cards[0]["free_models"] == FIXTURE_MODELS
         assert cards[0]["tier"] == "pro"
         assert cards[0]["input_source"] == "config"
-        assert requested[-1] == collector.target_url
+        # The identity lookup is side information: it follows the data requests.
+        assert requested == [
+            OllamaCollector.BALANCE_URL,
+            collector.target_url,
+            OllamaCollector.PROFILE_URL,
+        ]
 
     @pytest.mark.asyncio
     async def test_plan_badge_wins_over_allowance_tier(self):
@@ -1467,3 +1473,286 @@ def test_usage_page_marker_accepts_either_quote_style():
         assert collector._parse_html(html) == []
         assert collector._last_error_reason == "usage_not_on_page"
         collector._last_error_reason = "unknown"
+
+
+# --- cookie identity from the profile page (#462) --------------------------
+
+PROFILE_FIXTURE = Path(__file__).parent.parent / "fixtures" / "ollama-settings-profile.html"
+
+
+def _html_response(text, status=200):
+    resp = _make_response({}, status)
+    resp.text = text
+    return resp
+
+
+class TestOllamaCookieIdentity:
+    """The usage page has no ``header-email``; the profile page names the account."""
+
+    @staticmethod
+    def _routes(*, profile=None, settings=None, balance=None):
+        """A transport keyed by URL; ``None`` for a route means the request must not happen."""
+        requested: list[str] = []
+
+        async def fake_http(client, method, url, **kwargs):
+            requested.append(url)
+            routes = {
+                OllamaCollector.BALANCE_URL: balance,
+                OllamaCollector.PROFILE_URL: profile,
+                "https://ollama.com/settings": settings,
+            }
+            route = routes.get(url)
+            assert route is not None, f"unexpected request to {url}"
+            if isinstance(route, Exception):
+                raise route
+            return route
+
+        return fake_http, requested
+
+    @staticmethod
+    def _profile():
+        return _html_response(PROFILE_FIXTURE.read_text(encoding="utf-8"))
+
+    @staticmethod
+    def _settings():
+        return _html_response(SETTINGS_FIXTURE.read_text(encoding="utf-8"))
+
+    def test_the_profile_element_yields_the_normalised_email(self):
+        html = PROFILE_FIXTURE.read_text(encoding="utf-8")
+
+        assert OllamaCollector()._parse_profile_email(html) == "User@Example.com"
+
+    def test_the_email_input_is_the_fallback(self):
+        html = '<input id="email-input" type="email" value="a.b@example.org">'
+
+        assert OllamaCollector()._parse_profile_email(html) == "a.b@example.org"
+
+    @pytest.mark.parametrize(
+        "html",
+        [
+            "",
+            "<html><body>Profile</body></html>",
+            '<span id="email-content">not an email</span>',
+            '<span id="email-content">a@b</span>',
+            '<input id="email-input" value="nope">',
+        ],
+    )
+    def test_anything_that_is_not_an_email_is_ignored(self, html):
+        assert OllamaCollector()._parse_profile_email(html) is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "profile",
+        [
+            _make_response({}, 403),
+            _make_response({}, 500),
+            httpx.TimeoutException("slow"),
+            _html_response("<html><h1>Sign in to Ollama</h1></html>"),
+            _html_response("<html><body>Profile</body></html>"),
+        ],
+        ids=["403", "500", "timeout", "signed-out", "no-email"],
+    )
+    async def test_an_unreadable_profile_leaves_the_identity_unset(self, profile):
+        collector = OllamaCollector(account_id="acc_test")
+        fake_http, _ = self._routes(profile=profile)
+
+        with patch("app.services.collectors.ollama.http_request_with_retry", new=fake_http):
+            await collector._promote_cookie_identity(MagicMock(), "session=abc.def-123")
+
+        assert collector.verified_identity is None
+
+    @pytest.mark.asyncio
+    async def test_a_key_and_a_cookie_report_the_cookies_account(self):
+        """Entry point: the API path fetches the settings page for the cookie, and now
+        also records which account that cookie is signed into."""
+        collector = OllamaCollector(account_id="acc_test")
+        fake_http, requested = self._routes(
+            balance=_make_response(_balance_body(balance=40, allowance=60)),
+            settings=self._settings(),
+            profile=self._profile(),
+        )
+
+        with (
+            patch.object(collector, "_get_api_key", new=AsyncMock(return_value="k")),
+            patch.object(
+                collector, "_get_cookie_header", new=AsyncMock(return_value="session=abc.def-123")
+            ),
+            patch("app.services.collectors.ollama.http_request_with_retry", new=fake_http),
+        ):
+            collector.current_input_source = "config"
+            cards = await collector._get_ollama_api(MagicMock())
+
+        assert collector.verified_identity == "user@example.com"
+        assert cards[0]["free_models"] == FIXTURE_MODELS
+        assert cards[0]["input_source"] == "config"
+        assert OllamaCollector.PROFILE_URL in requested
+
+    @pytest.mark.asyncio
+    async def test_a_failing_profile_does_not_cost_the_card_its_free_models(self):
+        collector = OllamaCollector(account_id="acc_test")
+        fake_http, _ = self._routes(
+            balance=_make_response(_balance_body(balance=40, allowance=60)),
+            settings=self._settings(),
+            profile=httpx.TimeoutException("slow"),
+        )
+
+        with (
+            patch.object(collector, "_get_api_key", new=AsyncMock(return_value="k")),
+            patch.object(
+                collector, "_get_cookie_header", new=AsyncMock(return_value="session=abc.def-123")
+            ),
+            patch("app.services.collectors.ollama.http_request_with_retry", new=fake_http),
+        ):
+            cards = await collector._get_ollama_api(MagicMock())
+
+        assert collector.verified_identity is None
+        assert cards[0]["free_models"] == FIXTURE_MODELS
+
+    @pytest.mark.asyncio
+    async def test_a_cookie_only_account_still_reports_its_identity_through_collect(self):
+        """The usage page yields no cards (an error card), but the identity is recorded."""
+        collector = OllamaCollector(account_id="acc_test")
+        fake_http, _ = self._routes(settings=self._settings(), profile=self._profile())
+
+        with (
+            patch.object(collector, "_get_api_key", new=AsyncMock(return_value=None)),
+            patch.object(
+                collector, "_get_cookie_header", new=AsyncMock(return_value="session=abc.def-123")
+            ),
+            patch("app.services.collectors.ollama.http_request_with_retry", new=fake_http),
+        ):
+            cards = await collector.collect(MagicMock())
+
+        assert cards[0]["error_type"] == "missing_config"
+        assert collector.verified_identity == "user@example.com"
+
+    @pytest.mark.asyncio
+    async def test_no_cookie_never_requests_the_profile(self):
+        collector = OllamaCollector(account_id="acc_test")
+        fake_http, requested = self._routes(
+            balance=_make_response(_balance_body(balance=40, allowance=60))
+        )
+
+        with (
+            patch.object(collector, "_get_api_key", new=AsyncMock(return_value="k")),
+            patch.object(collector, "_get_cookie_header", new=AsyncMock(return_value=None)),
+            patch("app.services.collectors.ollama.http_request_with_retry", new=fake_http),
+        ):
+            await collector._get_ollama_api(MagicMock())
+
+        assert requested == [OllamaCollector.BALANCE_URL]
+        assert collector.verified_identity is None
+
+    @pytest.mark.asyncio
+    async def test_a_prepaid_only_balance_still_records_the_identity(self):
+        """No allowance card, so no settings fetch, but the cookie is still signed in."""
+        collector = OllamaCollector(account_id="acc_test")
+        fake_http, requested = self._routes(
+            balance=_make_response({"purchased": {"balance_usd": 25}}),
+            profile=self._profile(),
+        )
+
+        with (
+            patch.object(collector, "_get_api_key", new=AsyncMock(return_value="k")),
+            patch.object(
+                collector, "_get_cookie_header", new=AsyncMock(return_value="session=abc.def-123")
+            ),
+            patch("app.services.collectors.ollama.http_request_with_retry", new=fake_http),
+        ):
+            cards = await collector._get_ollama_api(MagicMock())
+
+        assert [c["variant"] for c in cards] == ["credits"]
+        assert collector.verified_identity == "user@example.com"
+        assert requested == [OllamaCollector.BALANCE_URL, OllamaCollector.PROFILE_URL]
+
+    @pytest.mark.asyncio
+    async def test_the_legacy_usage_fallback_still_records_the_identity(self):
+        """A deployment without /api/balance takes the /api/usage path; the cookie is
+        just as signed in there."""
+        collector = OllamaCollector(account_id="acc_test")
+        fake_http, requested = self._routes(
+            balance=MagicMock(status_code=404), profile=self._profile()
+        )
+        legacy = AsyncMock(return_value=[{"variant": "percent"}])
+
+        with (
+            patch.object(collector, "_get_api_key", new=AsyncMock(return_value="k")),
+            patch.object(
+                collector, "_get_cookie_header", new=AsyncMock(return_value="session=abc.def-123")
+            ),
+            patch.object(collector, "_get_ollama_usage_legacy", new=legacy),
+            patch("app.services.collectors.ollama.http_request_with_retry", new=fake_http),
+        ):
+            cards = await collector._get_ollama_api(MagicMock())
+
+        assert cards == [{"variant": "percent"}]
+        legacy.assert_awaited_once()
+        assert collector.verified_identity == "user@example.com"
+        assert requested == [OllamaCollector.BALANCE_URL, OllamaCollector.PROFILE_URL]
+
+    @pytest.mark.asyncio
+    async def test_a_signed_in_profile_with_an_email_form_and_a_login_link_still_reads(self):
+        """``_looks_signed_out`` fires on any email form plus a /login link; the profile
+        page has both, so the email element itself decides."""
+        html = (
+            PROFILE_FIXTURE.read_text(encoding="utf-8")
+            + '<form><input type="email" name="email"></form><a href="/login">Log in</a>'
+        )
+        assert OllamaCollector()._looks_signed_out(html) is True
+        collector = OllamaCollector(account_id="acc_test")
+        fake_http, _ = self._routes(profile=_html_response(html))
+
+        with patch("app.services.collectors.ollama.http_request_with_retry", new=fake_http):
+            await collector._promote_cookie_identity(MagicMock(), "session=abc.def-123")
+
+        assert collector.verified_identity == "user@example.com"
+
+    def test_an_unrelated_attribute_cannot_name_the_account(self):
+        collector = OllamaCollector()
+
+        assert (
+            collector._parse_profile_email('<input id="email-input" data-value="d@evil.example">')
+            is None
+        )
+        assert (
+            collector._parse_profile_email(
+                '<input id="email-input" data-value="d@evil.example" value="real@example.org">'
+            )
+            == "real@example.org"
+        )
+
+    @pytest.mark.asyncio
+    async def test_the_web_strategy_requests_the_profile_after_the_settings_page(self):
+        collector = OllamaCollector(account_id="acc_test")
+        fake_http, requested = self._routes(settings=self._settings(), profile=self._profile())
+
+        with (
+            patch.object(collector, "_get_api_key", new=AsyncMock(return_value=None)),
+            patch.object(
+                collector, "_get_cookie_header", new=AsyncMock(return_value="session=abc.def-123")
+            ),
+            patch("app.services.collectors.ollama.http_request_with_retry", new=fake_http),
+        ):
+            await collector._get_ollama_web(MagicMock())
+
+        assert requested == ["https://ollama.com/settings", OllamaCollector.PROFILE_URL]
+
+    @pytest.mark.asyncio
+    async def test_a_hanging_profile_is_cut_off_and_never_costs_more_than_the_bound(self):
+        """A slow /settings/profile must not hold the quota collection back for the
+        15 s page timeout: the lookup is bounded and leaves the identity unset."""
+        collector = OllamaCollector(account_id="acc_test")
+
+        async def hanging_http(client, method, url, **kwargs):
+            await asyncio.sleep(30)
+
+        with (
+            patch.object(OllamaCollector, "IDENTITY_TIMEOUT_SECONDS", 0.05),
+            patch("app.services.collectors.ollama.http_request_with_retry", new=hanging_http),
+        ):
+            started = asyncio.get_running_loop().time()
+            await collector._promote_cookie_identity(MagicMock(), "session=abc.def-123")
+            elapsed = asyncio.get_running_loop().time() - started
+
+        assert elapsed < 2
+        assert collector.verified_identity is None

@@ -64,6 +64,23 @@ applies to: …" in the UI). A plan badge found on that page overrides the deriv
 failed, non-200 or signed-out fetch is logged at debug and the card is returned without the
 list. Hosts without a cookie keep the tier but get no list, and never request the settings page.
 
+**Cookie identity (#462).** When a session cookie is available, the collector reads
+`GET https://ollama.com/settings/profile` and records the sign-in email from the
+`#email-content` element (fallback: the `#email-input` value) as `verified_identity`. The
+server compares it with the account the cookie's origin is tagged to and drops the tag when
+the browser switched accounts. The usage page no longer carries `header-email`, so this
+page is the source. It runs after the data requests, from the `api` strategy for every
+successful balance call (including a prepaid-only account with no allowance card) and from
+the `web` strategy. It is bounded by `IDENTITY_TIMEOUT_SECONDS` (5 s, well under the page
+timeout) so a slow profile cannot hold the quota card back, and it is one extra request per
+collection that has a cookie. The email element itself decides whether the page is signed
+in (the generic signed-out check would misfire on the profile's own email form). A failed,
+slow, non-200 or unreadable profile leaves the identity unset and never affects the card.
+`verified_identity` therefore describes the cookie, not the API key that produced the card.
+The server's check only runs for a source that produced usable data, so a cookie-only
+account (whose web path now ends in the "Add an Ollama API key" error) is not covered until
+it has a key.
+
 A 401/403 from the balance call sets an "API key was rejected" error reason; an unparseable
 body is treated as missing data. The cards link to `https://ollama.com/settings/billing`
 (`api`) or `https://ollama.com/settings` (`web`).
