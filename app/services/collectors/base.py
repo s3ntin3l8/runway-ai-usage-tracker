@@ -105,7 +105,9 @@ class BaseCollector(ABC):
     # Concrete collectors must opt in after verifying they report full snapshots.
     COMPLETE_SNAPSHOT: bool = False
     # The email the provider itself reported for the credential used by the latest request
-    # (``None`` when it did not say). Unlike ``account_label`` it is never configured, so it
+    # (``None`` when it did not say). A collector may report it for a second credential it
+    # also uses (Ollama: the session cookie behind an API-key card), since what the server
+    # compares is the cookie source's tagged account. Unlike ``account_label`` it is never configured, so it
     # is proof: CollectorManager compares it with a cookie source's tagged account to catch
     # a browser switching accounts. The manager resets it before every source attempt.
     verified_identity: str | None = None

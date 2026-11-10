@@ -145,7 +145,8 @@ class OllamaCollector(BaseCollector):
     RE_PROFILE_EMAIL_INPUT = re.compile(
         r"<input\b[^>]*\bid=[\"']email-input[\"'][^>]*>", re.IGNORECASE
     )
-    RE_VALUE_ATTR = re.compile(r"\bvalue=[\"']([^\"']+)[\"']", re.IGNORECASE)
+    # `value=` as its own attribute: `\b` would also match `data-value=`.
+    RE_VALUE_ATTR = re.compile(r"(?:^|\s)value=[\"']([^\"']+)[\"']", re.IGNORECASE)
 
     # Patterns for detecting logged-out state (case-insensitive)
     RE_SIGN_IN_HEADING = re.compile(r"sign in to ollama|log in to ollama", re.IGNORECASE)
@@ -165,6 +166,9 @@ class OllamaCollector(BaseCollector):
     WINDOW_PLAN = 400
     WINDOW_USAGE = 800
     TIMEOUT_SECONDS = 15
+    # The identity lookup is side information next to a quota collection: bounded
+    # well below TIMEOUT_SECONDS so a slow profile page cannot hold the card back.
+    IDENTITY_TIMEOUT_SECONDS = 5
 
     # Upstream endpoints. `/api/balance` carries the quota; `/api/usage` is a
     # spend report and only used as a fallback for the legacy limit shape.
@@ -445,6 +449,9 @@ class OllamaCollector(BaseCollector):
         allowance_card = next((c for c in cards if c.get("variant") == "allowance"), None)
         if allowance_card is not None:
             await self._enrich_from_settings_page(client, allowance_card)
+        # After the data requests, and for every successful balance (a prepaid-only
+        # account has no allowance card but is signed in with the same cookie).
+        await self._record_cookie_identity(client)
         return cards
 
     async def _enrich_from_settings_page(
@@ -466,7 +473,6 @@ class OllamaCollector(BaseCollector):
             self.current_input_source = api_source
         if not cookie_header or not self._validate_cookie_header(cookie_header):
             return
-        await self._promote_cookie_identity(client, cookie_header)
         try:
             resp = await http_request_with_retry(
                 client,
@@ -505,31 +511,65 @@ class OllamaCollector(BaseCollector):
         candidate = html_lib.unescape(candidate).strip()
         return candidate if re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", candidate) else None
 
+    async def _record_cookie_identity(self, client: httpx.AsyncClient) -> None:
+        """Resolve the cookie, if any, and record the account it is signed into.
+
+        Used by the api path, whose card describes the API key: the cookie lookup
+        sets ``current_input_source`` to the cookie's origin, so restore it.
+        """
+        api_source = getattr(self, "current_input_source", "unknown")
+        try:
+            cookie_header = await self._get_cookie_header()
+        except Exception as exc:
+            logger.debug("Ollama identity cookie lookup failed: %s", scrub_log(str(exc)))
+            return
+        finally:
+            self.current_input_source = api_source
+        if cookie_header and self._validate_cookie_header(cookie_header):
+            await self._promote_cookie_identity(client, cookie_header)
+
     async def _promote_cookie_identity(self, client: httpx.AsyncClient, cookie_header: str) -> None:
         """Record which account the cookie is signed into as ``verified_identity``.
 
         The server compares it with the account the cookie's origin is tagged to and
-        drops the tag when the browser switched users (#462). Best effort: a failed,
-        signed-out or unreadable profile page leaves the identity unset and never
-        affects the card.
+        drops the tag when the browser switched users (#462). Best effort and bounded
+        by ``IDENTITY_TIMEOUT_SECONDS``: a failed, slow, signed-out or unreadable
+        profile page leaves the identity unset and never affects the card.
         """
         try:
-            resp = await http_request_with_retry(
-                client,
-                "GET",
-                self.PROFILE_URL,
-                headers={**self.STATIC_HEADERS, "Cookie": cookie_header},
-                timeout=self.TIMEOUT_SECONDS,
-                follow_redirects=True,
+            email = await asyncio.wait_for(
+                self._fetch_profile_email(client, cookie_header),
+                timeout=self.IDENTITY_TIMEOUT_SECONDS,
             )
-            if resp.status_code != 200 or self._looks_signed_out(resp.text):
-                return
-            email = self._parse_profile_email(resp.text)
         except Exception as exc:
-            logger.debug("Ollama profile identity lookup failed: %s", scrub_log(str(exc)))
+            logger.debug(
+                "Ollama profile identity lookup failed: %s",
+                scrub_log(str(exc) or type(exc).__name__),
+            )
             return
         if email:
             self.verified_identity = normalize_account_id(email)
+
+    async def _fetch_profile_email(
+        self, client: httpx.AsyncClient, cookie_header: str
+    ) -> str | None:
+        """The sign-in email from ``/settings/profile``, or ``None``.
+
+        Whether the page is signed in is decided by the email element itself: a
+        signed-out page has none, and ``_looks_signed_out`` would misfire on the
+        profile page's own email form and any ``/login`` link.
+        """
+        resp = await http_request_with_retry(
+            client,
+            "GET",
+            self.PROFILE_URL,
+            headers={**self.STATIC_HEADERS, "Cookie": cookie_header},
+            timeout=self.IDENTITY_TIMEOUT_SECONDS,
+            follow_redirects=True,
+        )
+        if resp.status_code != 200:
+            return None
+        return self._parse_profile_email(resp.text)
 
     def _parse_free_models(self, html: str) -> list[str]:
         """Model names from the ``#free-plan-models`` element of the settings page."""
@@ -892,8 +932,8 @@ class OllamaCollector(BaseCollector):
         # Merge static headers with dynamic Cookie
         headers = {**self.STATIC_HEADERS, "Cookie": cookie_header}
         self._api_key_configured = await self._has_api_key()
-        await self._promote_cookie_identity(client, cookie_header)
 
+        cards: list[dict[str, Any]] = []
         try:
             # CRITICAL: set follow_redirects=True as Ollama often redirects to www. or /
             resp = await http_request_with_retry(
@@ -905,8 +945,8 @@ class OllamaCollector(BaseCollector):
                 follow_redirects=True,
             )
             if resp.status_code == 200:
-                return self._parse_html(resp.text)
-            if resp.status_code in (401, 403):
+                cards = self._parse_html(resp.text)
+            elif resp.status_code in (401, 403):
                 self._set_error_reason("not_logged_in")
                 logger.debug("Ollama auth failed (401/403)")
             else:
@@ -914,7 +954,9 @@ class OllamaCollector(BaseCollector):
         except Exception as e:
             logger.debug(f"Ollama fetch error: {e}")
 
-        return []
+        # Side information, after the data request and bounded, so it never gates the quota.
+        await self._promote_cookie_identity(client, cookie_header)
+        return cards
 
     def _parse_html(self, html: str) -> list[dict[str, Any]]:
         """Parse the settings page HTML for usage data.
