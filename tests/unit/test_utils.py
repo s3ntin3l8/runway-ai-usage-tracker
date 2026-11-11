@@ -409,6 +409,55 @@ class TestHttpRequestWithRetry:
             None,
         ]
 
+    async def test_redirect_uses_rotated_cookie_without_unrelated_jar_cookie(self):
+        requests: list[httpx.Request] = []
+
+        def upstream(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            if len(requests) == 1:
+                return httpx.Response(
+                    302, headers={"Location": "/next", "Set-Cookie": "session=rotated; Path=/"}
+                )
+            if len(requests) == 2:
+                return httpx.Response(302, headers={"Location": "/last"})
+            return httpx.Response(200)
+
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(upstream), cookies={"unrelated": "jar"}
+        ) as client:
+            await http_request_with_retry(
+                client,
+                "GET",
+                "https://origin.test/",
+                headers={"Cookie": "session=stale; other=kept"},
+                follow_redirects=True,
+            )
+        assert [r.headers.get("cookie") for r in requests] == [
+            "session=stale; other=kept",
+            "other=kept; session=rotated",
+            "other=kept; session=rotated",
+        ]
+
+    async def test_redirect_with_invalid_port_drops_cookie(self):
+        requests: list[httpx.Request] = []
+
+        def upstream(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            if len(requests) == 1:
+                return httpx.Response(302, headers={"Location": "https://origin.test:99999/next"})
+            return httpx.Response(200)
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(upstream)) as client:
+            await http_request_with_retry(
+                client,
+                "GET",
+                "https://origin.test/",
+                headers={"Cookie": "session=fixture"},
+                follow_redirects=True,
+            )
+        assert requests[0].headers["cookie"] == "session=fixture"
+        assert "cookie" not in requests[1].headers
+
     @pytest.mark.parametrize("location", ["http://origin.test/", "https://origin.test:444/"])
     async def test_scheme_or_port_change_drops_cookie(self, location):
         requests: list[httpx.Request] = []

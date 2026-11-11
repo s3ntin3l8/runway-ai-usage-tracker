@@ -536,21 +536,38 @@ async def http_request_with_retry(
         next_request = response.next_request
         current = original
         target = urlsplit(urljoin(str(response.request.url), response.headers["location"]))
-        current_host = current.hostname or ""
-        target_host = target.hostname or ""
-        if not (
-            current.scheme in ("http", "https")
-            and current.scheme == target.scheme
-            and (current.port or (443 if current.scheme == "https" else 80))
-            == (target.port or (443 if target.scheme == "https" else 80))
-            and current_host
-            and (
-                current_host == target_host
-                or current_host == "www." + target_host
-                or target_host == "www." + current_host
+        try:
+            current_host = current.hostname or ""
+            target_host = target.hostname or ""
+            same_site = (
+                current.scheme in ("http", "https")
+                and current.scheme == target.scheme
+                and (current.port or (443 if current.scheme == "https" else 80))
+                == (target.port or (443 if target.scheme == "https" else 80))
+                and bool(current_host)
+                and (
+                    current_host == target_host
+                    or current_host == "www." + target_host
+                    or target_host == "www." + current_host
+                )
             )
-        ):
+        except ValueError:
+            same_site = False
+        if not same_site:
             cookie = ""
+        elif cookie and "set-cookie" in response.headers:
+            # Keep explicitly supplied cookies unless this response replaced them.
+            # Only admit response-set names from the jar, not unrelated jar cookies.
+            replaced = {
+                value.partition(";")[0].partition("=")[0].strip()
+                for value in response.headers.get_list("set-cookie")
+            }
+            original_parts = [part.strip() for part in cookie.split(";")]
+            jar_parts = [part.strip() for part in next_request.headers.get("cookie", "").split(";")]
+            cookie = "; ".join(
+                [part for part in original_parts if part.partition("=")[0].strip() not in replaced]
+                + [part for part in jar_parts if part.partition("=")[0].strip() in replaced]
+            )
         if cookie:
             next_request.headers["cookie"] = cookie
         else:
