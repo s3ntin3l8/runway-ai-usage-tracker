@@ -116,20 +116,23 @@ class KeychainClient:
                 self._process = process
             return self._process
 
-    @staticmethod
-    def _ready(fd: int, event: int, deadline: float) -> None:
-        left = deadline - time.monotonic()
-        if left <= 0:
-            raise KeychainError("timed_out")
+    def _ready(self, fd: int, event: int, deadline: float, generation: int) -> None:
         with selectors.DefaultSelector() as selector:
             selector.register(fd, event)
-            if not selector.select(left):
-                raise KeychainError("timed_out")
+            while True:
+                if self._cancelled(generation):
+                    raise KeychainError("cancelled")
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    raise KeychainError("timed_out")
+                # Closing a registered fd in another thread need not wake epoll.
+                if selector.select(min(left, 0.1)):
+                    return
 
-    def _write(self, fd: int, data: bytes, deadline: float) -> None:
+    def _write(self, fd: int, data: bytes, deadline: float, generation: int) -> None:
         view = memoryview(data)
         while view:
-            self._ready(fd, selectors.EVENT_WRITE, deadline)
+            self._ready(fd, selectors.EVENT_WRITE, deadline, generation)
             try:
                 count = os.write(fd, view)
             except BlockingIOError:
@@ -138,10 +141,10 @@ class KeychainClient:
                 raise KeychainError("unavailable")
             view = view[count:]
 
-    def _read(self, fd: int, size: int, deadline: float) -> bytes:
+    def _read(self, fd: int, size: int, deadline: float, generation: int) -> bytes:
         data = bytearray()
         while len(data) < size:
-            self._ready(fd, selectors.EVENT_READ, deadline)
+            self._ready(fd, selectors.EVENT_READ, deadline, generation)
             try:
                 chunk = os.read(fd, size - len(data))
             except BlockingIOError:
@@ -187,11 +190,15 @@ class KeychainClient:
             assert process.stdin is not None and process.stdout is not None
             if operation != "copy" and (allowed is None or allowed() is not True):
                 raise KeychainError("permission disabled")
-            self._write(process.stdin.fileno(), frame, deadline)
-            size = struct.unpack(">I", self._read(process.stdout.fileno(), 4, deadline))[0]
+            self._write(process.stdin.fileno(), frame, deadline, generation)
+            size = struct.unpack(
+                ">I", self._read(process.stdout.fileno(), 4, deadline, generation)
+            )[0]
             if not 0 < size <= MAX_FRAME:
                 raise KeychainError("unavailable")
-            response = plistlib.loads(self._read(process.stdout.fileno(), size, deadline))
+            response = plistlib.loads(
+                self._read(process.stdout.fileno(), size, deadline, generation)
+            )
             if not isinstance(response, dict) or set(response) not in (
                 {"result"},
                 {"error"},

@@ -177,6 +177,34 @@ def test_shutdown_interrupts_active_io(client_factory):
         assert process.poll() is not None
 
 
+def test_shutdown_interrupts_selector_that_does_not_wake(client_factory, monkeypatch):
+    import selectors
+    import time
+
+    client = client_factory()
+    waits = []
+
+    class QuietSelector:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def register(self, fd, event):
+            pass
+
+        def select(self, timeout):
+            waits.append(timeout)
+            client.close()
+            return []  # Closing a registered fd does not necessarily wake epoll.
+
+    monkeypatch.setattr(selectors, "DefaultSelector", QuietSelector)
+    with pytest.raises(store.KeychainError, match="^cancelled$"):
+        client._ready(0, selectors.EVENT_READ, time.monotonic() + 10, client._generation)
+    assert len(waits) == 1 and waits[0] <= 0.1
+
+
 def test_waiting_timeout_does_not_kill_another_request(client_factory):
     # The client's deadline is 0.2 s, so the wait for its outcome has to
     # outlast that: on a loaded machine the thread that raises the timeout can
