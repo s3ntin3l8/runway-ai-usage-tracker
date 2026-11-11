@@ -11,6 +11,13 @@ Runway is local-first: its primary topology is a developer machine, its secondar
 
 [`.env.example`](../.env.example) is the contract for every supported variable. Every variable is optional on a loopback bind; the app starts with no `.env`.
 
+Collector session credentials passed as explicit `Cookie` headers through
+`http_request_with_retry` are retained on redirects to the same host or its `www.`
+counterpart only when the scheme and effective port also match. Once a redirect
+leaves that site, the helper removes the cookie for the rest of the chain. This
+protection applies only to explicit `Cookie` request headers; collectors must not
+move session cookies to `client.cookies` or the `cookies=` parameter.
+
 ## Operator checklist
 
 - Bind to a network only behind a reverse proxy that terminates TLS, and satisfy the [startup gates](#multi-host-startup-gates).

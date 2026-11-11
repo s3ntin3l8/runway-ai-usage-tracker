@@ -9,6 +9,7 @@ import tempfile
 from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urljoin, urlsplit
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -441,68 +442,141 @@ async def http_request_with_retry(
     Returns:
         httpx.Response: The successful response or the final failed response
     """
-    for attempt in range(max_retries):
-        try:
-            response = await client.request(method, url, **kwargs)
+    headers = httpx.Headers(kwargs.get("headers"))
+    # Leave all requests without an explicit cookie on httpx's normal path.
+    follow_redirects = kwargs.get("follow_redirects")
+    manage_redirects = "cookie" in headers and (
+        getattr(client, "follow_redirects", False) if follow_redirects is None else follow_redirects
+    )
+    request_kwargs = dict(kwargs)
+    if manage_redirects:
+        request_kwargs["follow_redirects"] = False
 
-            # If not rate limited, return immediately
-            if response.status_code != 429:
-                return response
-
-            # If retry_on_429 is disabled, return 429 immediately so the
-            # caller can inspect Retry-After and apply its own backoff.
-            if not retry_on_429:
-                return response
-
-            # If this was the last attempt, return the 429 response
-            if attempt == max_retries - 1:
-                logger.warning(
-                    f"Rate limited (429) on {method.upper()} {url} after {max_retries} attempts"
-                )
-                return response
-
-            # Calculate backoff: check Retry-After header first, then exponential with jitter
-            retry_after = response.headers.get("Retry-After")
+    async def request_with_retry(request: httpx.Request | None) -> httpx.Response:
+        for attempt in range(max_retries):
             try:
-                if retry_after:
-                    if retry_after.isdigit():
-                        wait_time = float(retry_after)
-                    else:
-                        # Handle HTTP-date format (optional but good practice)
-                        from email.utils import parsedate_to_datetime
-
-                        retry_date = parsedate_to_datetime(retry_after)
-                        wait_time = (retry_date - datetime.now(UTC)).total_seconds()
-
-                    # Add a small buffer
-                    wait_time = max(0.1, wait_time + 0.5)
+                if request is None:
+                    response = await client.request(method, url, **request_kwargs)
                 else:
+                    response = await client.send(request, follow_redirects=False, auth=None)
+
+                # If not rate limited, return immediately
+                if response.status_code != 429:
+                    return response
+
+                # If retry_on_429 is disabled, return 429 immediately so the
+                # caller can inspect Retry-After and apply its own backoff.
+                if not retry_on_429:
+                    return response
+
+                # If this was the last attempt, return the 429 response
+                if attempt == max_retries - 1:
+                    logger.warning(
+                        f"Rate limited (429) on {method.upper()} {url} after {max_retries} attempts"
+                    )
+                    return response
+
+                # Calculate backoff: check Retry-After header first, then exponential with jitter
+                retry_after = response.headers.get("Retry-After")
+                try:
+                    if retry_after:
+                        if retry_after.isdigit():
+                            wait_time = float(retry_after)
+                        else:
+                            # Handle HTTP-date format (optional but good practice)
+                            from email.utils import parsedate_to_datetime
+
+                            retry_date = parsedate_to_datetime(retry_after)
+                            wait_time = (retry_date - datetime.now(UTC)).total_seconds()
+
+                        # Add a small buffer
+                        wait_time = max(0.1, wait_time + 0.5)
+                    else:
+                        wait_time = (2**attempt) * initial_delay + random.uniform(
+                            0, 0.1 * (2**attempt)
+                        )
+                except Exception:
                     wait_time = (2**attempt) * initial_delay + random.uniform(0, 0.1 * (2**attempt))
-            except Exception:
-                wait_time = (2**attempt) * initial_delay + random.uniform(0, 0.1 * (2**attempt))
 
-            # CRITICAL: Cap wait time. If it's too long (e.g. 1 hour),
-            # don't block the collector task (which now has a 20s timeout).
-            if wait_time > 5.0:
-                logger.warning(
-                    f"Rate limit wait time too long ({wait_time:.1f}s), aborting retries for {method.upper()} {url}"
+                # CRITICAL: Cap wait time. If it's too long (e.g. 1 hour),
+                # don't block the collector task (which now has a 20s timeout).
+                if wait_time > 5.0:
+                    logger.warning(
+                        f"Rate limit wait time too long ({wait_time:.1f}s), aborting retries for {method.upper()} {url}"
+                    )
+                    return response
+
+                logger.info(
+                    f"Rate limited (429) on {method.upper()} {url}, retrying in {wait_time:.2f}s (attempt {attempt + 1}/{max_retries})"
                 )
-                return response
+                await asyncio.sleep(wait_time)
 
-            logger.info(
-                f"Rate limited (429) on {method.upper()} {url}, retrying in {wait_time:.2f}s (attempt {attempt + 1}/{max_retries})"
+            except Exception as e:
+                if attempt == max_retries - 1:
+                    raise
+                # For non-rate-limit errors, log and retry with shorter delay
+                logger.warning(f"Request failed on attempt {attempt + 1}: {e}, retrying...")
+                await asyncio.sleep(initial_delay * (attempt + 1))
+
+        # This shouldn't be reached but just in case
+        raise RuntimeError(f"Max retries ({max_retries}) exceeded for {method.upper()} {url}")
+
+    response = await request_with_retry(None)
+    if not manage_redirects:
+        return response
+
+    cookie = headers["cookie"]
+    history: list[httpx.Response] = []
+    original = urlsplit(str(response.request.url))
+    while response.next_request is not None:
+        if len(history) >= client.max_redirects:
+            raise httpx.TooManyRedirects(
+                "Exceeded maximum allowed redirects.", request=response.request
             )
-            await asyncio.sleep(wait_time)
-
-        except Exception as e:
-            if attempt == max_retries - 1:
-                raise
-            # For non-rate-limit errors, log and retry with shorter delay
-            logger.warning(f"Request failed on attempt {attempt + 1}: {e}, retrying...")
-            await asyncio.sleep(initial_delay * (attempt + 1))
-
-    # This shouldn't be reached but just in case
-    raise RuntimeError(f"Max retries ({max_retries}) exceeded for {method.upper()} {url}")
+        next_request = response.next_request
+        current = original
+        target = urlsplit(urljoin(str(response.request.url), response.headers["location"]))
+        try:
+            current_host = current.hostname or ""
+            target_host = target.hostname or ""
+            same_site = (
+                current.scheme in ("http", "https")
+                and current.scheme == target.scheme
+                and (current.port or (443 if current.scheme == "https" else 80))
+                == (target.port or (443 if target.scheme == "https" else 80))
+                and bool(current_host)
+                and (
+                    current_host == target_host
+                    or current_host == "www." + target_host
+                    or target_host == "www." + current_host
+                )
+            )
+        except ValueError:
+            same_site = False
+        if not same_site:
+            cookie = ""
+        elif cookie and "set-cookie" in response.headers:
+            # Keep explicitly supplied cookies unless this response replaced them.
+            # Only admit response-set names from the jar, not unrelated jar cookies.
+            replaced = {
+                value.partition(";")[0].partition("=")[0].strip()
+                for value in response.headers.get_list("set-cookie")
+            }
+            original_parts = [part.strip() for part in cookie.split(";")]
+            jar_parts = [part.strip() for part in next_request.headers.get("cookie", "").split(";")]
+            cookie = "; ".join(
+                [part for part in original_parts if part.partition("=")[0].strip() not in replaced]
+                + [part for part in jar_parts if part.partition("=")[0].strip() in replaced]
+            )
+        if cookie:
+            next_request.headers["cookie"] = cookie
+        else:
+            next_request.headers.pop("cookie", None)
+        await response.aread()
+        history.append(response)
+        response = await request_with_retry(next_request)
+    response.history = history
+    return response
 
 
 def safe_write_json(path: str, data: dict) -> None:
