@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0-beta.17](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v3.0.0-beta.16...v3.0.0-beta.17) (2026-11-11)
+
+
+### Features
+
+* **claude:** compare local scraping with the cloud usage block for bridge sessions ([f18df1b](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/f18df1b58ac1600f56afeaffba3fd11c8ca36d66))
+* **claude:** enable the cloud-runner collector from the UI instead of an env var ([a6506f0](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/a6506f047a2dd5d5bf1646e3b22baec7202138a1))
+* **claude:** feed the bridge-session comparison from the live session list ([52e2286](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/52e228635bada12281f3f131ef4d97a4fe65f604))
+* **claude:** surface cloud-runner collector health in the app ([3d3b681](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/3d3b681d9a8f0eb16f8cbed9fe9af36a8fb2c47f))
+* **data-health:** log how long a locked batch waited, so a stuck apply can be diagnosed ([fdec264](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/fdec26462854734df324624e53f2b4631f1e546e))
+* **fleet:** show session names in the top-sessions card ([f0f4237](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/f0f423735ca5d412870bb3466791a77d7b2f229f))
+* **ollama:** report the plan tier and the free-usage model list ([1ff627d](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/1ff627da521c8760abc1de86603ebf46381c31ad))
+* **ollama:** show allowance spend that no tracked event explains ([53e9503](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/53e950325411254073d75939d6af379f046aadf9))
+* **pricing:** price Ollama Cloud models at ollama.com/pricing rates ([7e2cad6](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/7e2cad60403481c0d0f1609f832dd29f6484b478))
+* **pricing:** time-of-day rates for DeepSeek peak hours and Ollama off-peak ([eea53d4](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/eea53d472fdb12fbc7cf898f1d10f84b9c86a27f))
+* **sidecar:** add a structure-only reader for a Kimi Code data directory ([f2c3455](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/f2c34559b4b3ef11afa8fc9b8681c8ab48f84e51))
+* **sidecar:** keep the MiniMax Code login alive ([#1308](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1308)) ([8c9b18a](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/8c9b18ae317531758b7054b13668bd7c954efb5d))
+* **webapp:** show the session name on the recent-session cards ([#1256](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1256)) ([71c31e7](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/71c31e7d6eaf5641b981065c600f1c1f3249fcfa))
+
+
+### Bug Fixes
+
+* **ci:** make the app module-boundary test match its allowlist on Windows ([#1298](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1298)) ([8210547](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/8210547e003e8e63af53ab2296fd4d3abc811de8))
+* **ollama:** read the cookie's account from the profile page ([#1300](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1300)) ([28000e5](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/28000e55d0464e4b846bf9c96f5a5974a107c13b))
+* **ollama:** read the credits and monthly usage from /dashboard for cookie-only accounts ([0e46d38](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/0e46d384926850913f08a9f21e63349d3037bfe1))
+* **ollama:** report that the settings page no longer shows the allowance ([#1297](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1297)) ([d02cc92](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/d02cc923f1f4220a080fb8757643d52dfc02dfc8))
+* **security:** do not forward session cookies to a different origin on redirect ([7351e7e](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/7351e7eea8f0f1939508b0973c01dbe3afa42328))
+* **security:** record unfixed Debian image findings instead of failing ([#1220](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1220)) ([d7c18b2](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/d7c18b2bc9650d16df9c9a422245b919922a6f37))
+* **security:** retry the DNS helper's UDP port reservation on Windows access-denied (WinError 10013) ([9ca959d](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/9ca959d833284ec034ad55fb73def53ae0a002be))
+* **sidecar:** normalize the providerID before the OpenRouter gateway fold ([f3d1ddc](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/f3d1ddca58c7b2109839508bac237e9c4d63093f))
+
 ## [3.0.0-beta.16](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v3.0.0-beta.15...v3.0.0-beta.16) (2026-11-02)
 
 
