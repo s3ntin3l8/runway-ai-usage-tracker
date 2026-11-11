@@ -319,6 +319,51 @@ class TestExtractTokenRegex:
 
 
 class TestHttpRequestWithRetry:
+    @pytest.mark.parametrize("header_form", ["dict", "tuples", "headers"])
+    @pytest.mark.parametrize("redirect_status", [302, 307, 308])
+    async def test_explicit_cookie_is_not_forwarded_across_origins(
+        self, header_form, redirect_status
+    ):
+        # Exercise the real httpx redirect machinery, rather than mocking request().
+        # httpx 0.28.1 drops explicit Cookie headers when building redirect requests.
+        headers = {"cOoKiE": "session=redirect-test"}
+        if header_form == "tuples":
+            headers = list(headers.items())
+        elif header_form == "headers":
+            headers = httpx.Headers(headers)
+        requests = []
+
+        def handle(request):
+            requests.append(request)
+            if len(requests) == 1:
+                return httpx.Response(
+                    redirect_status, headers={"Location": "https://other.example/redirect"}
+                )
+            if len(requests) == 2:
+                return httpx.Response(
+                    redirect_status, headers={"Location": "https://original.example/returned"}
+                )
+            return httpx.Response(200)
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+            response = await http_request_with_retry(
+                client,
+                "GET",
+                "https://original.example/start",
+                headers=headers,
+                follow_redirects=True,
+            )
+
+        assert response.status_code == 200
+        assert [str(request.url) for request in requests] == [
+            "https://original.example/start",
+            "https://other.example/redirect",
+            "https://original.example/returned",
+        ]
+        assert requests[0].headers["cookie"] == "session=redirect-test"
+        assert "cookie" not in requests[1].headers
+        assert "cookie" not in requests[2].headers
+
     async def test_success_on_first_try(self):
         client = MagicMock(spec=httpx.AsyncClient)
         resp = _make_mock_response(200)
