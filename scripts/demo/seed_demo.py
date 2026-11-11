@@ -332,7 +332,10 @@ def events() -> Iterator[UsageEventPush]:
     # a replay of the first row.
     identities = [(provider, account) for provider, account, *_ in EVENT_PLAN]
     if len(identities) != len(set(identities)):
-        raise ValueError("EVENT_PLAN must have unique provider/account pairs")
+        duplicates = sorted({key for key in identities if identities.count(key) > 1})
+        raise ValueError(
+            f"EVENT_PLAN must have unique provider/account pairs; duplicated: {duplicates}"
+        )
     for provider, account, models, (lo, hi), unit_cost in EVENT_PLAN:
         rng = section_rng("events", provider, account)
         # Both draws and identities must survive inserting/reordering plan rows.

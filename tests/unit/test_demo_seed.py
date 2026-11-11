@@ -50,7 +50,8 @@ with time_machine.travel("2026-10-15T10:00:00Z", tick=False) as clock:
         iterator = seed.events()
         try:
             next(iterator)
-        except ValueError:
+        except ValueError as exc:
+            assert repr(seed.EVENT_PLAN[0][:2]) in str(exc)
             print("SEED_RESULT={\"duplicate_rejected_before_yield\": true}")
         else:
             raise AssertionError("duplicate provider/account plan row yielded an event")
