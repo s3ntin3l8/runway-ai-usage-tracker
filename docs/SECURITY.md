@@ -12,12 +12,11 @@ Runway is local-first: its primary topology is a developer machine, its secondar
 [`.env.example`](../.env.example) is the contract for every supported variable. Every variable is optional on a loopback bind; the app starts with no `.env`.
 
 Collector session credentials passed as explicit `Cookie` headers through
-`http_request_with_retry` are not forwarded cross-origin on redirects. The pinned
-httpx 0.28.1 removes explicit cookie headers on every redirect (including same-origin
-and `www.` redirects), then derives cookies from its cookie store. A MockTransport
-regression test in `tests/unit/test_utils.py` verifies that an explicit session
-cookie reaches the initial host only, including a redirect chain that returns to
-that host. No custom redirect policy is needed for these explicit headers.
+`http_request_with_retry` are retained on redirects to the same host or its `www.`
+counterpart only when the scheme and effective port also match. Once a redirect
+leaves that site, the helper removes the cookie for the rest of the chain. This
+protection applies only to explicit `Cookie` request headers; collectors must not
+move session cookies to `client.cookies` or the `cookies=` parameter.
 
 ## Operator checklist
 

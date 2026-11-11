@@ -347,6 +347,45 @@ class TestGetOpencodeWeb:
     """Console-cookie 2-step handshake against mocked endpoints."""
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("fetcher", ["workspaces", "go_status"])
+    @pytest.mark.parametrize(
+        "redirect_host,expect_cookie",
+        [("www.opencode.ai", True), ("redirect.example", False)],
+    )
+    async def test_console_redirect_cookie_scope(self, fetcher, redirect_host, expect_cookie):
+        collector = OpenCodeCollector(account_id="acc_test")
+        seen: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            if request.url.host == "opencode.ai":
+                return httpx.Response(302, headers={"Location": f"https://{redirect_host}/console"})
+            if fetcher == "workspaces":
+                return httpx.Response(200, json=[])
+            return httpx.Response(200, json=_go_status_body())
+
+        headers = {
+            "Cookie": "auth=auth-secret; __Host-console_session=session-secret",
+            "Referer": "https://opencode.ai/console/",
+        }
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            if fetcher == "workspaces":
+                result = await collector._fetch_workspaces(client, headers)
+                assert result == []
+            else:
+                result = await collector._fetch_go_status(client, headers, "wrk_test")
+                assert result == _go_status_body()
+
+        assert [request.url.host for request in seen] == ["opencode.ai", redirect_host]
+        assert "auth=auth-secret" in seen[0].headers["cookie"]
+        assert "__Host-console_session=session-secret" in seen[0].headers["cookie"]
+        if expect_cookie:
+            assert "auth=auth-secret" in seen[1].headers["cookie"]
+            assert "__Host-console_session=session-secret" in seen[1].headers["cookie"]
+        else:
+            assert "cookie" not in seen[1].headers
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize(
         "tokens",
         [

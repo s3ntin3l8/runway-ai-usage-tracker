@@ -68,6 +68,38 @@ async def test_ollama_parsing(ollama_html):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "redirect_host,expected_cookie",
+    [("www.ollama.com", "ollama_session=secret"), ("redirect.example", None)],
+)
+async def test_ollama_web_redirect_cookie_scope(
+    monkeypatch, ollama_html, redirect_host, expected_cookie
+):
+    collector = OllamaCollector()
+    collector.target_url = "https://ollama.com/settings"
+    monkeypatch.setattr(
+        collector, "_get_cookie_header", AsyncMock(return_value="ollama_session=secret")
+    )
+    monkeypatch.setattr(collector, "_has_api_key", AsyncMock(return_value=False))
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if request.url.host == "ollama.com":
+            return httpx.Response(302, headers={"Location": f"https://{redirect_host}/settings"})
+        return httpx.Response(200, text=ollama_html)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        cards = await collector._get_ollama_web(client)
+
+    assert [request.url.host for request in seen[:2]] == ["ollama.com", redirect_host]
+    assert seen[0].headers["cookie"] == "ollama_session=secret"
+    assert seen[1].headers.get("cookie") == expected_cookie
+    if expected_cookie:
+        assert cards
+
+
+@pytest.mark.asyncio
 async def test_ollama_remaining_bars_and_free_tier():
     """Real-world: Ollama bars show remaining width; free badge has full class string."""
     collector = OllamaCollector()

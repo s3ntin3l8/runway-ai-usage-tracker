@@ -324,8 +324,7 @@ class TestHttpRequestWithRetry:
     async def test_explicit_cookie_is_not_forwarded_across_origins(
         self, header_form, redirect_status
     ):
-        # Exercise the real httpx redirect machinery, rather than mocking request().
-        # httpx 0.28.1 drops explicit Cookie headers when building redirect requests.
+        # Exercise the shared helper with real httpx redirect machinery.
         headers = {"cOoKiE": "session=redirect-test"}
         if header_form == "tuples":
             headers = list(headers.items())
@@ -362,6 +361,141 @@ class TestHttpRequestWithRetry:
         ]
         assert requests[0].headers["cookie"] == "session=redirect-test"
         assert "cookie" not in requests[1].headers
+        assert "cookie" not in requests[2].headers
+
+    @pytest.mark.parametrize("location", ["/settings2", "https://www.origin.test/x"])
+    async def test_same_site_redirect_keeps_cookie(self, location):
+        requests: list[httpx.Request] = []
+
+        def upstream(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            if len(requests) == 1:
+                return httpx.Response(302, headers={"Location": location})
+            return httpx.Response(200)
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(upstream)) as client:
+            response = await http_request_with_retry(
+                client,
+                "GET",
+                "https://origin.test/settings",
+                headers={"cookie": "session=fixture"},
+                follow_redirects=True,
+            )
+        assert response.status_code == 200
+        assert [r.headers.get("cookie") for r in requests] == ["session=fixture"] * 2
+
+    async def test_www_prefix_cannot_extend_the_original_site(self):
+        requests: list[httpx.Request] = []
+
+        def upstream(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            if len(requests) == 1:
+                return httpx.Response(302, headers={"Location": "https://www.origin.test/"})
+            if len(requests) == 2:
+                return httpx.Response(302, headers={"Location": "https://www.www.origin.test/"})
+            return httpx.Response(200)
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(upstream)) as client:
+            await http_request_with_retry(
+                client,
+                "GET",
+                "https://origin.test/",
+                headers={"Cookie": "session=fixture"},
+                follow_redirects=True,
+            )
+        assert [r.headers.get("cookie") for r in requests] == [
+            "session=fixture",
+            "session=fixture",
+            None,
+        ]
+
+    @pytest.mark.parametrize("location", ["http://origin.test/", "https://origin.test:444/"])
+    async def test_scheme_or_port_change_drops_cookie(self, location):
+        requests: list[httpx.Request] = []
+
+        def upstream(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            if len(requests) == 1:
+                return httpx.Response(302, headers={"Location": location})
+            return httpx.Response(200)
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(upstream)) as client:
+            await http_request_with_retry(
+                client,
+                "GET",
+                "https://origin.test/",
+                headers={"Cookie": "session=fixture"},
+                follow_redirects=True,
+            )
+        assert requests[0].headers["cookie"] == "session=fixture"
+        assert "cookie" not in requests[1].headers
+
+    @pytest.mark.parametrize(
+        "location,expected_cookie",
+        [
+            ("/next", "session=fixture"),
+            ("https://other.test/next", None),
+        ],
+    )
+    async def test_post_redirect_retry_preserves_method_and_cookie_policy(
+        self, location, expected_cookie
+    ):
+        requests: list[httpx.Request] = []
+
+        def upstream(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            if len(requests) == 1:
+                return httpx.Response(307, headers={"Location": location})
+            if len(requests) == 2:
+                return httpx.Response(429)
+            return httpx.Response(200)
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(upstream)) as client:
+            with patch("asyncio.sleep", new_callable=AsyncMock):
+                response = await http_request_with_retry(
+                    client,
+                    "POST",
+                    "https://origin.test/",
+                    content=b"payload",
+                    headers={"Cookie": "session=fixture"},
+                    follow_redirects=True,
+                )
+        assert response.status_code == 200
+        assert [r.method for r in requests] == ["POST"] * 3
+        assert [r.content for r in requests] == [b"payload"] * 3
+        assert [r.headers.get("cookie") for r in requests] == [
+            "session=fixture",
+            expected_cookie,
+            expected_cookie,
+        ]
+
+    async def test_redirect_preserves_httpx_authorization_policy_and_blocks_jar_cookie(self):
+        requests: list[httpx.Request] = []
+
+        def upstream(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            if len(requests) == 1:
+                return httpx.Response(302, headers={"Location": "/same"})
+            if len(requests) == 2:
+                return httpx.Response(302, headers={"Location": "https://other.test/"})
+            return httpx.Response(200)
+
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(upstream), cookies={"jar": "fixture"}
+        ) as client:
+            await http_request_with_retry(
+                client,
+                "GET",
+                "https://origin.test/",
+                headers={"Cookie": "session=fixture", "Authorization": "Bearer fixture"},
+                follow_redirects=True,
+            )
+        assert [r.headers.get("authorization") for r in requests] == [
+            "Bearer fixture",
+            "Bearer fixture",
+            None,
+        ]
+        assert requests[1].headers["cookie"] == "session=fixture"
         assert "cookie" not in requests[2].headers
 
     async def test_success_on_first_try(self):
