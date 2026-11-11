@@ -38,6 +38,23 @@ with time_machine.travel("2026-10-15T10:00:00Z", tick=False) as clock:
     elif mode == "account":
         provider, _, models, volume, cost = seed.EVENT_PLAN[0]
         seed.EVENT_PLAN.insert(0, (provider, "other@example.com", models, volume, cost))
+    elif mode == "insert":
+        # Put a new stream before the existing plan to catch accidental use of
+        # one shared RNG whose consumption shifts every later account.
+        seed.EVENT_PLAN.insert(
+            0,
+            ("inserted-provider", "inserted@example.com", [("demo-model", 1.0)], (2, 4), None),
+        )
+    elif mode == "duplicate":
+        seed.EVENT_PLAN.insert(0, seed.EVENT_PLAN[0])
+        iterator = seed.events()
+        try:
+            next(iterator)
+        except ValueError:
+            print("SEED_RESULT={\"duplicate_rejected_before_yield\": true}")
+        else:
+            raise AssertionError("duplicate provider/account plan row yielded an event")
+        raise SystemExit(0)
     elif mode == "history":
         provider, _, models, volume, cost = seed.EVENT_PLAN[0]
         seed.EVENT_PLAN.append((provider, "other@example.com", models, volume, cost))
@@ -74,7 +91,7 @@ with time_machine.travel("2026-10-15T10:00:00Z", tick=False) as clock:
 
     result = {}
     with seed.engine.connect() as connection:
-        for table in ("usage_events", "quota_snapshots", "usage_windows"):
+        for table in ("usage_events", "quota_snapshots", "usage_windows", "usage_period_rollup"):
             groups = defaultdict(list)
             for row in connection.execute(text("SELECT * FROM " + table)).mappings():
                 payload = dict(row)
@@ -84,10 +101,14 @@ with time_machine.travel("2026-10-15T10:00:00Z", tick=False) as clock:
                 elif table == "quota_snapshots":
                     key = (payload["provider_id"], payload["account_id"],
                            payload["window_type"], payload["variant"], payload["model_id"])
-                else:
+                elif table == "usage_windows":
                     key = (payload["provider_id"], payload["account_id"],
                            payload["window_type"], payload["series_variant"],
                            payload["series_model_id"])
+                else:
+                    key = (payload["provider_id"], payload["account_id"],
+                           payload["period_type"], payload["period_key"],
+                           payload["model_id"], payload["sidecar_id"])
                 groups[json.dumps(key)].append(payload)
             result[table] = {key: {"count": len(rows), "sha256": digest(rows)}
                              for key, rows in groups.items()}
@@ -137,17 +158,29 @@ def test_current_quota_snapshot_uses_seed_clock_after_slow_history(seeded) -> No
     assert {series["latest_ts"] for series in snapshots.values()} == {"2026-10-15 10:00:00.000000"}
 
 
-@pytest.mark.parametrize("mode", ["append", "reorder", "account"])
+@pytest.mark.parametrize("mode", ["append", "reorder", "account", "insert"])
 def test_event_plan_changes_preserve_existing_accounts(seeded, mode: str) -> None:
     root, baseline = seeded
     original = baseline["usage_events"]
-    changed = _seed(root, mode)["usage_events"]
+    result = _seed(root, mode)
+    changed = result["usage_events"]
     assert original
     assert {key: changed[key] for key in original} == original
+    # Period rollups are maintained by EventIngestor from those events; they
+    # must retain the same values for all original provider/account pairs.
+    rollups = result["usage_period_rollup"]
+    original_rollups = baseline["usage_period_rollup"]
+    assert {key: rollups[key] for key in original_rollups} == original_rollups
     if mode != "reorder":
         assert len(changed) == len(original) + 1
     else:
         assert changed == original
+
+
+def test_duplicate_provider_account_plan_is_rejected_before_first_event(seeded) -> None:
+    root, _ = seeded
+    result = _seed(root, "duplicate")
+    assert result == {"duplicate_rejected_before_yield": True}
 
 
 def test_extra_history_card_preserves_other_streams(seeded) -> None:

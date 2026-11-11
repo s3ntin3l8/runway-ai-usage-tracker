@@ -327,6 +327,12 @@ def _pick(rng: random.Random, models: list[tuple[str, float]]) -> str:
 
 
 def events() -> Iterator[UsageEventPush]:
+    # Provider/account identifies both the stream and its event IDs. Reject a
+    # duplicate before yielding anything, rather than silently ingesting it as
+    # a replay of the first row.
+    identities = [(provider, account) for provider, account, *_ in EVENT_PLAN]
+    if len(identities) != len(set(identities)):
+        raise ValueError("EVENT_PLAN must have unique provider/account pairs")
     for provider, account, models, (lo, hi), unit_cost in EVENT_PLAN:
         rng = section_rng("events", provider, account)
         # Both draws and identities must survive inserting/reordering plan rows.
