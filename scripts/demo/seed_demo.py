@@ -19,6 +19,7 @@ The data goes through Runway's own code paths wherever they exist:
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import random
 import sys
@@ -62,7 +63,7 @@ PROJECTS = ["aurora-web", "orbit-api", "beacon-cli"]
 HISTORY_DAYS = 60
 
 NOW = datetime.now(UTC).replace(second=0, microsecond=0)
-rng = random.Random(42)
+SEED = 42
 
 WINDOW = {
     "session": timedelta(hours=5),
@@ -77,6 +78,23 @@ STEP = {
     "weekly": timedelta(hours=1),
     "monthly": timedelta(hours=6),
 }
+
+
+def section_rng(section: str, *identity: str) -> random.Random:
+    """A fresh stream per stable identity, independent of call/iteration order."""
+    return random.Random(f"{SEED}:{json.dumps([section, *identity])}")
+
+
+def card_rng(section: str, card: dict[str, Any]) -> random.Random:
+    variant = card.get("variant") or ""
+    return section_rng(
+        section,
+        card["provider_id"],
+        card["account_id"],
+        card.get("window_type") or "weekly",
+        "" if variant == "default" else variant,
+        card.get("model_id") or "",
+    )
 
 
 def iso(dt: datetime) -> str:
@@ -239,6 +257,7 @@ def _card_pct(card: dict[str, Any]) -> float | None:
 
 def history(card: dict[str, Any]) -> Iterator[tuple[datetime, float, datetime]]:
     """(ts, pct_used, reset_at) every STEP for HISTORY_DAYS, ending on the card's value."""
+    rng = card_rng("history", card)
     window_type = card.get("window_type") or "weekly"
     duration, step = WINDOW.get(window_type), STEP.get(window_type)
     pct_now, reset_raw = _card_pct(card), card.get("reset_at")
@@ -303,13 +322,24 @@ EVENT_PLAN: list[tuple[str, str, list[tuple[str, float]], tuple[int, int], float
 ]
 
 
-def _pick(models: list[tuple[str, float]]) -> str:
+def _pick(rng: random.Random, models: list[tuple[str, float]]) -> str:
     return rng.choices([m for m, _ in models], weights=[w for _, w in models])[0]
 
 
 def events() -> Iterator[UsageEventPush]:
-    n = 0
+    # Provider/account identifies both the stream and its event IDs. Reject a
+    # duplicate before yielding anything, rather than silently ingesting it as
+    # a replay of the first row.
+    identities = [(provider, account) for provider, account, *_ in EVENT_PLAN]
+    if len(identities) != len(set(identities)):
+        duplicates = sorted({key for key in identities if identities.count(key) > 1})
+        raise ValueError(
+            f"EVENT_PLAN must have unique provider/account pairs; duplicated: {duplicates}"
+        )
     for provider, account, models, (lo, hi), unit_cost in EVENT_PLAN:
+        rng = section_rng("events", provider, account)
+        # Both draws and identities must survive inserting/reordering plan rows.
+        n = 0
         for day in range(HISTORY_DAYS, -1, -1):
             date = NOW - timedelta(days=day)
             # Quieter weekends, a little growth over the period.
@@ -340,9 +370,9 @@ def events() -> Iterator[UsageEventPush]:
                     provider_id=provider,
                     account_id=account,
                     account_source="local",
-                    event_id=f"demo-{provider}-{n}",
+                    event_id=f"demo-{provider}-{account}-{n}",
                     ts=iso(ts),
-                    model_id=_pick(models),
+                    model_id=_pick(rng, models),
                     session_id=session_id,
                     cwd=f"/home/dev/projects/{rng.choice(PROJECTS)}",
                     git_branch="main",
@@ -369,6 +399,7 @@ def seed_events(session: Session) -> None:
 def close_past_windows(session: Session, cards: list[dict[str, Any]]) -> None:
     """Closed weekly windows for the History page's quota-window table."""
     for card in cards:
+        rng = card_rng("closed-windows", card)
         if card.get("window_type") != "weekly" or card.get("model_id") or not card.get("reset_at"):
             continue
         reset = datetime.fromisoformat(str(card["reset_at"]).replace("Z", "+00:00"))
@@ -435,8 +466,12 @@ def main() -> None:
             )
         seed_history(s, cards)
         seed_events(s)
-        for card in cards:
-            upsert_latest_usage(s, card, sidecar_id_override=SIDECAR)
+        # The current quota sample is fixture data too: stamp it at NOW rather
+        # than at the end of a seed run whose duration varies with host load.
+        with patch("app.services.accumulator.datetime", wraps=datetime) as clock:
+            clock.now.return_value = NOW
+            for card in cards:
+                upsert_latest_usage(s, card, sidecar_id_override=SIDECAR)
         s.commit()
         close_past_windows(s, cards)
     verify()
