@@ -52,6 +52,17 @@ PRICING_SEED: list[dict] = [
     },
     {
         "provider_id": "anthropic",
+        "model_id": "fable-5.2",
+        "effective_from": "2026-01-01",
+        "input_per_mtok": 8.00,
+        "output_per_mtok": 40.00,
+        "cache_read_per_mtok": 0.20,  # 0.025x input
+        "cache_create_per_mtok": 10.00,  # 5m TTL writes: 1.25x input
+        "cache_create_1h_per_mtok": 16.00,  # 1h TTL writes: 2x input
+        "notes": "Fable 5.2 — $8/$40, cheaper than Fable 5.1 ($10/$50); cache reads at 0.025x input",
+    },
+    {
+        "provider_id": "anthropic",
         "model_id": "opus-5.5",
         "effective_from": "2026-01-01",
         "input_per_mtok": 4.00,
