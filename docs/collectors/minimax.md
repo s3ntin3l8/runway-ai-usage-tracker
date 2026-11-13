@@ -162,7 +162,10 @@ not renewable, or the app is mid-refresh), the new refresh token is dropped whil
 already dead: that login is signed out unless the app's own refresh produced a valid one.
 
 **Decision (2026-11-13, #1306):** the MiniMax Code keep-alive stays opt-in like the other
-keep-alives (`--keep-alive` / `"keep_alive": true`), with no extra restriction for MiniMax Code. The
+keep-alives, with no extra restriction for MiniMax Code: it is switched on the same ways (the
+`--keep-alive` flag, a per-login override, or the fleet-wide default; see
+[Turn it on](../sidecar.md#keep-alive-for-antigravity-claude-code-codex-minimax-code-and-xai-opt-in)),
+and has no MiniMax-specific switch. The
 race above is a known, unmeasured residual risk. The sidecar only renews 90 minutes before expiry
 and stands down while the app is refreshing, so it mostly acts on logins nobody is using, and the
 worst case is a sign-in. Revisit if a login is ever signed out by a renewal.
