@@ -26,7 +26,9 @@ def atomic_replace_json(path: Path, data: Any, mode: int, *, prefix: str = ".cre
     target = Path(os.path.realpath(path))
     fd, tmp = tempfile.mkstemp(dir=target.parent, prefix=prefix, suffix=".tmp")
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
+        # newline="\n": text mode would write "\r\n" on Windows, and the CLIs that own these files
+        # write "\n" -- a renewal must not change a file's line endings under them.
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
             json.dump(data, f, indent=2)
         os.chmod(tmp, mode)
         os.replace(tmp, target)
