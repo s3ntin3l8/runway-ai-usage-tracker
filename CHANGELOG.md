@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0-beta.18](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v3.0.0-beta.17...v3.0.0-beta.18) (2026-11-13)
+
+
+### Features
+
+* **pricing:** add Fable 5.2 rates ([#1314](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1314)) ([a223293](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/a2232939384e9504cac2d53b7ff400b41824838b))
+
+
+### Bug Fixes
+
+* **demo:** isolate random streams by seed section ([28e93b4](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/28e93b48e4d8b624f950f4e37196a6aaebe3bbda))
+* **sidecar:** keep LF line endings when a renewal rewrites a login on Windows ([#1313](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1313)) ([92b5d86](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/92b5d86e9e02d8101221e2e572f1e25302031e41))
+
 ## [3.0.0-beta.17](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v3.0.0-beta.16...v3.0.0-beta.17) (2026-11-11)
 
 
