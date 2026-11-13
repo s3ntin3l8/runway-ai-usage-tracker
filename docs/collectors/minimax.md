@@ -112,11 +112,11 @@ credential is staged in `refresh/`) and drops its own result when the app got th
 
 ### Live behaviour (checked 2026-11-10 and 2026-11-13, `en` region)
 
-The renewer's request was run once against the live account service, through the renewer's own
-`request_refresh` and `write_back`. It ran on the operator's own login, in use at the time (a
+The renewer's request was first run against the live account service on 2026-11-10, through the
+renewer's own `request_refresh` and `write_back`. It ran on the operator's own login, in use at the time (a
 MiniMax Code CLI session was running on it), with a backup taken first — no throwaway account was
-used, so the issue's throwaway-login condition was not met. A second run on 2026-11-13 used a
-separate login on a Windows host (see below). Only the `en` host received a real refresh token:
+used, so the issue's throwaway-login condition was not met. A second run on 2026-11-13 used the
+operator's other login, on a Windows host (see below). Only the `en` host received a real refresh token:
 
 - **The request works.** `POST https://account.minimax.io/oauth2/token` answered with
   `access_token`, `refresh_token`, `token_type: Bearer`, `expires_in: 43200` and
@@ -135,18 +135,21 @@ separate login on a Windows host (see below). Only the `en` host received a real
   (the app-token endpoint, not the API-secret one). By then the CLI had refreshed again, so this
   was the CLI's token rather than the one the sidecar wrote.
 
-**Windows login, idle for 66 hours (2026-11-13).** A separate login on a Windows host, with no
+**Windows login, idle for 66 hours (2026-11-13).** The operator's own second login, on a Windows
+host (again not a throwaway, again a plain refresh with the old files backed up first), with no
 MiniMax Code CLI, desktop app or sidecar running, had not been written for 65.9 hours; its access
 token had lapsed 53.9 hours earlier. The renewer, run from the Windows checkout, got the same answer
 as above (`Bearer`, `expires_in: 43200`, `agent.default`, a rotated refresh token) and `write_back`
 returned `written`, with the generation unchanged on both files. The MiniMax Code desktop app was
 then opened on that login and was still signed in, with no "login error". Two things follow:
 
-- **The refresh token outlives an idle access token by at least ~66 hours.** That is a lower bound:
-  the real lifetime is longer and still unmeasured.
+- **The refresh token survived at least ~66 hours without a write**, about 54 of them after the
+  access token had already lapsed. Both are lower bounds: the real lifetime is longer and still
+  unmeasured.
 - **Line endings.** The renewer's first Windows write turned the app's LF files into CRLF
   (`atomic_replace_json` opened its temp file in text mode). The app tolerated it, but the writer
-  now pins `newline="\n"` so a renewal does not change the file's shape under the app.
+  now pins `newline="\n"` so a renewal keeps the app's line endings (it still reflows the JSON with
+  `indent=2` and no trailing newline).
 
 Not yet observed: a renewal that lands while the app is mid-refresh (the window between the app's
 read and its commit is not closed by the `refreshing` / `refresh/` checks), and the refresh token's

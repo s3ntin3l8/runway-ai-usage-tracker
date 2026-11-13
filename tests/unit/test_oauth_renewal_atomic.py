@@ -4,7 +4,13 @@ import json
 import os
 from pathlib import Path
 
+import pytest
+
 from scripts.sidecar_pkg import oauth_renewal
+
+# The native Windows gate runs the modules marked ``windows`` (see `scripts/dev_checks.py
+# test-windows`); the CRLF regression this guards only shows up there.
+pytestmark = pytest.mark.windows
 
 
 def test_writes_lf_line_endings(tmp_path: Path) -> None:
