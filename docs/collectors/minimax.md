@@ -110,13 +110,13 @@ generation. If
 the app refreshes at the same moment, the sidecar stands down (the state says `refreshing`, or a
 credential is staged in `refresh/`) and drops its own result when the app got there first.
 
-### Live behaviour (checked 2026-11-10, `en` region)
+### Live behaviour (checked 2026-11-10 and 2026-11-13, `en` region)
 
-The renewer's request was run once against the live account service, through the renewer's own
-`request_refresh` and `write_back`. It ran on the operator's own login, in use at the time (a
+The renewer's request was first run against the live account service on 2026-11-10, through the
+renewer's own `request_refresh` and `write_back`. It ran on the operator's own login, in use at the time (a
 MiniMax Code CLI session was running on it), with a backup taken first — no throwaway account was
-used, so the issue's throwaway-login condition was not met. Only the `en` host received a real
-refresh token:
+used, so the issue's throwaway-login condition was not met. A second run on 2026-11-13 used the
+operator's other login, on a Windows host (see below). Only the `en` host received a real refresh token:
 
 - **The request works.** `POST https://account.minimax.io/oauth2/token` answered with
   `access_token`, `refresh_token`, `token_type: Bearer`, `expires_in: 43200` and
@@ -135,16 +135,40 @@ refresh token:
   (the app-token endpoint, not the API-secret one). By then the CLI had refreshed again, so this
   was the CLI's token rather than the one the sidecar wrote.
 
-Not yet observed: the desktop app's behaviour after a sidecar renewal, a renewal that lands while
-the app is mid-refresh (the window between the app's read and its commit is not closed by the
-`refreshing` / `refresh/` checks), and the refresh token's own lifetime (it needs an idle login). The OS-keyring store
+**Windows login, idle for 66 hours (2026-11-13).** The operator's own second login, on a Windows
+host (again not a throwaway, again a plain refresh with the old files backed up first), with no
+MiniMax Code CLI, desktop app or sidecar running, had not been written for 65.9 hours; its access
+token had lapsed 53.9 hours earlier. The renewer, run from the Windows checkout, got the same answer
+as above (`Bearer`, `expires_in: 43200`, `agent.default`, a rotated refresh token) and `write_back`
+returned `written`, with the generation unchanged on both files. The MiniMax Code desktop app was
+then opened on that login and was still signed in, with no "login error". Two things follow:
+
+- **The refresh token survived at least ~66 hours without a write**, about 54 of them after the
+  access token had already lapsed. Both are lower bounds: the real lifetime is longer and still
+  unmeasured.
+- **Line endings.** The renewer's first Windows write turned the app's LF files into CRLF
+  (`atomic_replace_json` opened its temp file in text mode). The app tolerated it, but the writer
+  now pins `newline="\n"` so a renewal keeps the app's line endings (it still reflows the JSON with
+  `indent=2` and no trailing newline).
+
+Not yet observed: a renewal that lands while the app is mid-refresh (the window between the app's
+read and its commit is not closed by the `refreshing` / `refresh/` checks), and the refresh token's
+real lifetime (it needs a login idle for longer than ~66 hours). The OS-keyring store
 (`storeKind: "os-keyring"`) is not covered either.
 
 Because the refresh token rotates, the exchange spends the old one before `write_back` re-reads the
 store. If `write_back` then returns `superseded` (the credential or generation moved, the state is
 not renewable, or the app is mid-refresh), the new refresh token is dropped while the old one is
-already dead: that login is signed out unless the app's own refresh produced a valid one. The
-decision in #1306 about keeping the MiniMax Code keep-alive opt-in rests on this.
+already dead: that login is signed out unless the app's own refresh produced a valid one.
+
+**Decision (2026-11-13, #1306):** the MiniMax Code keep-alive stays opt-in like the other
+keep-alives, with no extra restriction for MiniMax Code: it is switched on the same ways (the
+`--keep-alive` flag, a per-login override, or the fleet-wide default; see
+[Turn it on](../sidecar.md#keep-alive-for-antigravity-claude-code-codex-minimax-code-and-xai-opt-in)),
+and has no MiniMax-specific switch. The
+race above is a known, unmeasured residual risk. The sidecar only renews 90 minutes before expiry
+and stands down while the app is refreshing, so it mostly acts on logins nobody is using, and the
+worst case is a sign-in. Revisit if a login is ever signed out by a renewal.
 
 ## Troubleshooting
 
