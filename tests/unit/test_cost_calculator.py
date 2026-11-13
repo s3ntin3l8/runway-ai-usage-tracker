@@ -1229,6 +1229,7 @@ def test_preloaded_index_snapshots_survive_session_commit():
         # Unseeded suffixes segment-trim onto the seeded sibling, not $0.
         ("chatgpt", "gpt-6.1-sol-preview", 2.00, 0.10),
         ("anthropic", "fable-5.1", 10.00, 0.25),
+        ("anthropic", "fable-5.2", 8.00, 0.20),
         ("anthropic", "opus-5.5", 4.00, 0.20),
         ("anthropic", "sonnet-5", 2.00, 0.20),
         ("anthropic", "sonnet-5.5", 2.00, 0.10),

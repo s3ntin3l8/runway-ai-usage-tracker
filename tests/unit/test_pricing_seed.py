@@ -307,6 +307,16 @@ def test_seed_anthropic_fable_5_1_cache_read_is_discounted():
     assert row.cache_create_1h_per_mtok == 20.00
 
 
+def test_seed_anthropic_fable_5_2_rates():
+    """Fable 5.2 is $8/$40, below Fable 5.1's $10/$50; cache hits 0.025x input."""
+    row = _anthropic_row("fable-5.2")
+    assert row.input_per_mtok == 8.00
+    assert row.output_per_mtok == 40.00
+    assert row.cache_read_per_mtok == 0.20
+    assert row.cache_create_per_mtok == 10.00
+    assert row.cache_create_1h_per_mtok == 16.00
+
+
 def test_seed_anthropic_opus_5_5_rates():
     """Opus 5.5 is $4/$20, not the bare `opus` family's $5/$25."""
     row = _anthropic_row("opus-5.5")
