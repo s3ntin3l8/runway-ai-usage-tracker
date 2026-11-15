@@ -26,8 +26,10 @@ stay equal -- the CLI answers ``status: "error"`` when they do not:
 ``auth-state.json``
     ``{"schemaVersion": 2, "status": "authenticated", "storeKind": "file", ...,
     "generation": <same number>, "expiresAtMs": <epoch ms>}``. ``storeKind`` may be
-    ``"os-keyring"`` instead of ``"file"`` -- that store is not supported here (no keychain
-    access), so such a login is skipped.
+    ``"os-keyring"`` instead of ``"file"``, but only in a legacy ``schemaVersion`` 1 state. Current
+    MiniMax Code (CLI 0.7.6, desktop 3.1.6) has only the file store and rewrites such a state
+    to an anonymous file-store state when it starts, which signs that login out. Such a login
+    is skipped here, not renewed.
 
 A sibling ``refresh/`` directory holds the CLI's staged credential while it refreshes; a pending
 credential there means the app is mid-refresh and this renewer stays out of the way.
@@ -411,8 +413,9 @@ class MiniMaxCodeRenewer:
                 if os.path.realpath(login.path) not in self._unsupported_noted:
                     self._unsupported_noted.add(os.path.realpath(login.path))
                     logger.info(
-                        "MiniMax Code keep-alive: the login in %s is in the %s store, which the "
-                        "keep-alive does not support yet",
+                        "MiniMax Code keep-alive: the login in %s is a legacy %s login, which "
+                        "MiniMax Code signs out when it next starts; sign in again and the "
+                        "keep-alive takes over the file-store login",
                         login.path,
                         state.get("storeKind"),
                     )
