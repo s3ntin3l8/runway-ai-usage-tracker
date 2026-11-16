@@ -421,7 +421,7 @@ class MiniMaxCodeRenewer:
                         )
                     else:
                         logger.info(
-                            "MiniMax Code keep-alive: the login in %s is in a %r store, which "
+                            "MiniMax Code keep-alive: the login in %s has store kind %r, which "
                             "the keep-alive does not renew",
                             login.path,
                             state.get("storeKind"),

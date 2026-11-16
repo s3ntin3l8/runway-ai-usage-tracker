@@ -164,6 +164,11 @@ race above is a known, unmeasured residual risk. The sidecar only renews 90 minu
 and stands down while the app is refreshing, so it mostly acts on logins nobody is using, and the
 worst case is a sign-in. Revisit if a login is ever signed out by a renewal.
 
+Because the refresh token rotates, the exchange spends the old one before `write_back` re-reads the
+store. If `write_back` then returns `superseded` (the credential or generation moved, the state is
+not renewable, or the app is mid-refresh), the new refresh token is dropped while the old one is
+already dead: that login is signed out unless the app's own refresh produced a valid one.
+
 ### OS-keyring logins (checked 2026-11-15, #1307)
 
 `auth-state.json` can say `storeKind: "os-keyring"`, but no current build writes it. The
@@ -178,14 +183,10 @@ the file store (`schemaVersion` 2, generation 81) and a keychain listing (attrib
 no MiniMax or mcode item. The checks were read-only; no credential was read or changed.
 
 **Decision (2026-11-15, #1307):** the keep-alive does not renew or read a keyring login, and no
-consent ticket, Keychain worker group or write path is added. It skips the login and logs that it
-is a legacy login the app signs out. Revisit only if a MiniMax Code release writes
+consent ticket, Keychain worker group or write path is added. It skips the login and, for the observed
+`schemaVersion` 1 shape, logs that it is a legacy login the app signs out; any other non-file
+store gets a neutral "does not renew" line. Revisit only if a MiniMax Code release writes
 `storeKind: "os-keyring"` with `schemaVersion` 2 or later.
-
-Because the refresh token rotates, the exchange spends the old one before `write_back` re-reads the
-store. If `write_back` then returns `superseded` (the credential or generation moved, the state is
-not renewable, or the app is mid-refresh), the new refresh token is dropped while the old one is
-already dead: that login is signed out unless the app's own refresh produced a valid one.
 
 ## Troubleshooting
 
