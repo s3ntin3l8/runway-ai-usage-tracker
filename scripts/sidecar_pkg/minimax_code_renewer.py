@@ -26,8 +26,10 @@ stay equal -- the CLI answers ``status: "error"`` when they do not:
 ``auth-state.json``
     ``{"schemaVersion": 2, "status": "authenticated", "storeKind": "file", ...,
     "generation": <same number>, "expiresAtMs": <epoch ms>}``. ``storeKind`` may be
-    ``"os-keyring"`` instead of ``"file"`` -- that store is not supported here (no keychain
-    access), so such a login is skipped.
+    ``"os-keyring"`` instead of ``"file"``, but only in a legacy ``schemaVersion`` 1 state. Current
+    MiniMax Code (CLI 0.7.6, desktop 3.1.6) has only the file store and rewrites such a state
+    to an anonymous file-store state when it starts, which signs that login out. Such a login
+    is skipped here, not renewed.
 
 A sibling ``refresh/`` directory holds the CLI's staged credential while it refreshes; a pending
 credential there means the app is mid-refresh and this renewer stays out of the way.
@@ -376,8 +378,8 @@ class MiniMaxCodeRenewer:
         # login -> (the refresh token we spent, the response we could not save yet): retry the
         # *save* next tick instead of exchanging again.
         self._unsaved: dict[tuple[str, str], tuple[str, dict[str, Any]]] = {}
-        # The logins whose store the keep-alive does not support, so the note is logged once.
-        self._unsupported_noted: set[str] = set()
+        # The logins skipped for their store kind, so the note is logged once per login.
+        self._skipped_noted: set[str] = set()
 
     def _discovered(self) -> list[tuple[Login, dict[str, Any]]]:
         """Every login the sidecar discovers, with the state file that belongs to it."""
@@ -408,14 +410,22 @@ class MiniMaxCodeRenewer:
         logins: list[Login] = []
         for login, state in self._discovered():
             if state.get("storeKind") != "file":
-                if os.path.realpath(login.path) not in self._unsupported_noted:
-                    self._unsupported_noted.add(os.path.realpath(login.path))
-                    logger.info(
-                        "MiniMax Code keep-alive: the login in %s is in the %s store, which the "
-                        "keep-alive does not support yet",
-                        login.path,
-                        state.get("storeKind"),
-                    )
+                if os.path.realpath(login.path) not in self._skipped_noted:
+                    self._skipped_noted.add(os.path.realpath(login.path))
+                    if state.get("storeKind") == "os-keyring" and state.get("schemaVersion") == 1:
+                        logger.info(
+                            "MiniMax Code keep-alive: the login in %s is a legacy os-keyring "
+                            "login, which MiniMax Code signs out when it next starts; sign in "
+                            "again and the keep-alive takes over the file-store login",
+                            login.path,
+                        )
+                    else:
+                        logger.info(
+                            "MiniMax Code keep-alive: the login in %s has store kind %r, which "
+                            "the keep-alive does not renew",
+                            login.path,
+                            state.get("storeKind"),
+                        )
                 continue
             if state.get("status") not in RENEWABLE_STATES:
                 continue

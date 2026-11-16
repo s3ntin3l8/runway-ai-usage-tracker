@@ -153,13 +153,7 @@ then opened on that login and was still signed in, with no "login error". Two th
 
 Not yet observed: a renewal that lands while the app is mid-refresh (the window between the app's
 read and its commit is not closed by the `refreshing` / `refresh/` checks), and the refresh token's
-real lifetime (it needs a login idle for longer than ~66 hours). The OS-keyring store
-(`storeKind: "os-keyring"`) is not covered either.
-
-Because the refresh token rotates, the exchange spends the old one before `write_back` re-reads the
-store. If `write_back` then returns `superseded` (the credential or generation moved, the state is
-not renewable, or the app is mid-refresh), the new refresh token is dropped while the old one is
-already dead: that login is signed out unless the app's own refresh produced a valid one.
+real lifetime (it needs a login idle for longer than ~66 hours).
 
 **Decision (2026-11-13, #1306):** the MiniMax Code keep-alive stays opt-in like the other
 keep-alives, with no extra restriction for MiniMax Code: it is switched on the same ways (the
@@ -169,6 +163,30 @@ and has no MiniMax-specific switch. The
 race above is a known, unmeasured residual risk. The sidecar only renews 90 minutes before expiry
 and stands down while the app is refreshing, so it mostly acts on logins nobody is using, and the
 worst case is a sign-in. Revisit if a login is ever signed out by a renewal.
+
+Because the refresh token rotates, the exchange spends the old one before `write_back` re-reads the
+store. If `write_back` then returns `superseded` (the credential or generation moved, the state is
+not renewable, or the app is mid-refresh), the new refresh token is dropped while the old one is
+already dead: that login is signed out unless the app's own refresh produced a valid one.
+
+### OS-keyring logins (checked 2026-11-15, #1307)
+
+`auth-state.json` can say `storeKind: "os-keyring"`, but no current build writes it. The
+validator in the MiniMax Code CLI 0.7.6 (Linux) and the desktop app 3.1.6 (macOS 26.6.2, arm64)
+accepts `os-keyring` only for a `schemaVersion` 1 state; a `schemaVersion` 2 state must say
+`file`, and the only credential store class in either build is the file store. On start, both
+rewrite any older state to `{schemaVersion: 2, status: "anonymous", storeKind: "file",
+generation: old + 1}`, so a legacy keyring login is signed out and the user signs in again into
+the file store. Neither build uses a keyring library for the OAuth login (the CLI's
+`@napi-rs/keyring` belongs to a separate provider-key store). On the macOS host the live login is
+the file store (`schemaVersion` 2, generation 81) and a keychain listing (attributes only) shows
+no MiniMax or mcode item. The checks were read-only; no credential was read or changed.
+
+**Decision (2026-11-15, #1307):** the keep-alive does not renew or read a keyring login, and no
+consent ticket, Keychain worker group or write path is added. It skips the login and, for the observed
+`schemaVersion` 1 shape, logs that it is a legacy login the app signs out; any other non-file
+store gets a neutral "does not renew" line. Revisit only if a MiniMax Code release writes
+`storeKind: "os-keyring"` with `schemaVersion` 2 or later.
 
 ## Troubleshooting
 
