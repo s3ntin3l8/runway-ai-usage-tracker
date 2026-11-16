@@ -8,13 +8,18 @@ boundaries, early returns, and log messages match the previous inline body.
 import json
 import logging
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlmodel import Session, col, delete, or_, select
 
 from app.core.date_utils import parse_iso8601_utc
 from app.services.account_merges import resolve_merged_account
+
+# A default-account error card that no poll has rewritten for this long is a
+# leftover, not a live failure: a failing collector rewrites its error card every
+# cycle. Matches the one-hour staleness window of latest-usage contributions.
+_STALE_DEFAULT_ERROR_AFTER = timedelta(hours=1)
 
 # Same logger object as accumulator.py (__name__ there is this name) so
 # caplog filters and log routing do not move with the split.
@@ -392,6 +397,23 @@ def evict_superseded_error_rows(session: Session, prepared: _PreparedLatestUsage
                 ).all()
                 for row in slot_default_errors:
                     if is_error_card_json(row.card_json):
+                        session.delete(row)
+
+                # A default collector that failed once and later succeeded under
+                # the real account's own slots leaves its error card behind (the
+                # slot never matches). A fresh one may be a genuinely failing
+                # default credential, so only drop the ones nothing has rewritten.
+                cutoff = datetime.now(UTC) - _STALE_DEFAULT_ERROR_AFTER
+                for row in session.exec(
+                    select(LatestUsage).where(
+                        LatestUsage.provider_id == card.provider_id,
+                        LatestUsage.account_id == "default",
+                    )
+                ).all():
+                    updated_at = row.updated_at
+                    if updated_at.tzinfo is None:
+                        updated_at = updated_at.replace(tzinfo=UTC)
+                    if updated_at < cutoff and is_error_card_json(row.card_json):
                         session.delete(row)
     except Exception as e:
         logger.warning(
