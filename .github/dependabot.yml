@@ -10,6 +10,12 @@ updates:
       github-actions:
         patterns:
           - "*"
+        # Minor and patch only, like the other groups: a major action bump
+        # is a migration, not a weekly batch. A major still arrives as its
+        # own pull request.
+        update-types:
+          - minor
+          - patch
 
   - package-ecosystem: pip
     directory: /
