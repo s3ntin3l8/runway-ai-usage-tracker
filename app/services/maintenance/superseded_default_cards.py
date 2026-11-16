@@ -30,6 +30,7 @@ from sqlmodel import Session, col, select
 
 from app.models.db import LatestUsage, LatestUsageContribution, ProviderConfig
 from app.services.accumulator import is_error_card_json
+from app.services.maintenance.account_merge import DeleteResult
 from app.services.maintenance.chunked_sql import chunked_delete
 
 # Matches the one-hour staleness window of latest-usage contributions and of
@@ -46,12 +47,6 @@ class SupersededDefaultCards:
     last_updated: datetime
     live_accounts: list[str] = field(default_factory=list)
     slots: list[str] = field(default_factory=list)
-
-
-@dataclass
-class DeleteResult:
-    latest_usage_deleted: int = 0
-    contributions_deleted: int = 0
 
 
 def _aware(value: datetime) -> datetime:
@@ -143,14 +138,22 @@ def plan_delete(session: Session, *, provider_id: str) -> SupersededDefaultCards
 
 
 def apply_delete(session: Session, *, provider_id: str) -> DeleteResult:
-    """Delete the provider's `default` cards and their contributions."""
+    """Delete the provider's `default` cards and their contributions.
+
+    The DELETE statements carry the staleness predicate themselves: `plan_delete`
+    only proves the rule at read time and `chunked_delete` commits per batch, so a
+    card refreshed in between must not be swept up. Quota snapshots are never
+    touched (`snapshots_deleted` stays 0).
+    """
     plan_delete(session, provider_id=provider_id)
+    cutoff = datetime.now(UTC) - STALE_AFTER
     latest_deleted = chunked_delete(
         session,
         LatestUsage,
         [
             col(LatestUsage.provider_id) == provider_id,
             col(LatestUsage.account_id) == DEFAULT_ACCOUNT,
+            col(LatestUsage.updated_at) < cutoff,
         ],
     )
     contributions_deleted = chunked_delete(
@@ -159,6 +162,7 @@ def apply_delete(session: Session, *, provider_id: str) -> DeleteResult:
         [
             col(LatestUsageContribution.provider_id) == provider_id,
             col(LatestUsageContribution.account_id) == DEFAULT_ACCOUNT,
+            col(LatestUsageContribution.updated_at) < cutoff,
         ],
     )
     return DeleteResult(

@@ -58,7 +58,7 @@ applied until it's fixed — the dependency order below reflects that.
 | `stale_credential_sources` · Warn | Credential sources no machine reports any more | A machine-reported source not seen for 14 days. | Forget the rows; a live credential is re-reported. |
 | `stale_credential_rules` · Warn | Assignment rules no machine matches | A user-created assignment rule for an origin no machine reported for 14 days. | Delete the unused rules. |
 | `orphan_gauge_series` · Warn | Quota history belongs to an inactive account | A quota series with no config or activity for 30 days. | Merge into a configured account or delete. |
-| `superseded_default_cards` · Warn | A stale generic card sits next to the live one | Cards under `default` not refreshed for an hour while a real account's card for the provider is current. | Delete the stale cards (history and events stay). |
+| `superseded_default_cards` · Warn | A stale generic card sits next to the live one | Cards under `default` not refreshed for an hour while a real account has a healthy card from the last hour. A provider with a configured `default` account is left alone. | Delete the stale cards (history and events stay). |
 | `misidentified_gauge_series` · Error | Gauge data has no supporting evidence | Quota history for an account with no events, credentials or config. | Merge or delete the series. |
 | `unpriced_models` · Warn | Some token usage has no reliable cost | Token-bearing events with zero stored cost (free-tier ids are never listed). | Recompute once a rate exists, or add a pricing seed. |
 | `stale_priced_models` · Warn | Some stored cost estimates use an outdated rate | Estimates that differ from the rate in effect at the event's date. | Recompute the estimates. |
@@ -79,7 +79,9 @@ Dependencies are declared per check (`blocked_by`): `config_default_keyed` block
 `lone_default_events`, `orphan_credential_tags`, `orphan_credential_sources` and
 `openrouter_model_events`; `legacy_provider_ids` blocks `openrouter_model_events`,
 `unpriced_models`, `stale_priced_models`, `fallback_priced_events` and
-`rollup_drift`; `cloud_events_reset` blocks `cloud_session_lead_repo`. A
+`rollup_drift`; `cloud_events_reset` blocks `cloud_session_lead_repo`; and
+`superseded_default_cards` also blocks `lone_default_events`, whose fixer merges
+`default` quota cards onto the live account, so the stale cards are deleted first. A
 **Blocked** badge names the prerequisite.
 
 **Pricing rule behind `stale_priced_models`.** A real price change is a new

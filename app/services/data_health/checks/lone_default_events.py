@@ -38,7 +38,10 @@ class LoneDefaultEventsCheck(Check):
     impact = "Usage may be missing from the account that actually generated it."
     recommended_action = "Preview and move default history to the correct account. Choose a target when more than one identity exists."
     severity = Severity.ERROR
-    blocked_by = ("config_default_keyed",)
+    # Its fixer merges `default` quota cards onto the live account, which would
+    # copy a stale card over the live one: let `superseded_default_cards` delete
+    # those cards first.
+    blocked_by = ("config_default_keyed", "superseded_default_cards")
 
     def detect(self, session: Session) -> CheckReport:
         active_default_configs = set(
