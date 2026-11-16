@@ -40,6 +40,7 @@ from app.services.data_health.checks.rollup_drift import RollupDriftCheck
 from app.services.data_health.checks.stale_credential_rules import StaleCredentialRulesCheck
 from app.services.data_health.checks.stale_credential_sources import StaleCredentialSourcesCheck
 from app.services.data_health.checks.stale_priced_models import StalePricedModelsCheck
+from app.services.data_health.checks.superseded_default_cards import SupersededDefaultCardsCheck
 from app.services.data_health.checks.unpriced_claude_accounts import (
     UnpricedClaudeAccountsCheck,
 )
@@ -52,6 +53,7 @@ REGISTRY: list[Check] = [
     ConfigDefaultKeyedCheck(),
     LegacyProviderIdsCheck(),
     OpenRouterModelEventsCheck(),
+    SupersededDefaultCardsCheck(),
     LoneDefaultEventsCheck(),
     OrphanCredentialTagsCheck(),
     OrphanCredentialSourcesCheck(),
