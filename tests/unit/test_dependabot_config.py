@@ -28,7 +28,7 @@ MANIFESTS: dict[str, list[str]] = {
 }
 # The ecosystems docs/ci-cd.md says Dependabot covers. Pinned so an empty or
 # shrunken ``updates:`` list fails instead of passing vacuously.
-EXPECTED_ECOSYSTEMS = set(MANIFESTS)
+EXPECTED_ECOSYSTEMS = {"github-actions", "pip", "npm", "docker", "pre-commit"}
 
 
 def _load(path: Path) -> list[dict[str, Any]]:
