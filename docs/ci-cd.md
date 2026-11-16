@@ -33,7 +33,7 @@ check on `main`; everything else is advisory.
 | `claude.yml` | `@claude` mentions on issues and PRs | Routes to the shared Claude Code workflow. | no |
 | `cleanup-ghcr.yml` | weekly, manual (`dry-run`) | Prunes old GHCR image versions. | no |
 
-Dependabot updates GitHub Actions, pip, npm and Docker weekly.
+Dependabot updates GitHub Actions, pip, npm, pre-commit hooks and Docker weekly.
 `.secrets.baseline` is tracked in git because CI's detect-secrets gate needs it.
 
 ### CI/CD jobs
