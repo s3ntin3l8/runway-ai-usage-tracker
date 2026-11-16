@@ -98,6 +98,8 @@ class CollectorManager(CollectorFailover, CollectorClaudeIdentity):
         self.smart_collectors: dict[str, SmartCollector] = {}
         self._client = None
         self.last_sync_time: float = 0.0
+        # After a failed config load, retry soon but not on every request.
+        self._sync_retry_at: float = 0.0
         self.credential_source_preferences: dict[tuple[str, str], dict[str, tuple[bool, int]]] = {}
         # (provider, account) -> source_id -> (last health, next_retry_at): what failover needs
         # to push a rejected credential behind working ones and rest it between retries.
@@ -114,6 +116,10 @@ class CollectorManager(CollectorFailover, CollectorClaudeIdentity):
             f"CollectorManager initialized with {len(self.collector_registry)} registered providers"
         )
 
+    def _sync_throttled(self) -> bool:
+        now = time.time()
+        return now < self._sync_retry_at or now - self.last_sync_time < 60.0
+
     async def sync_collectors(  # noqa: PLR0915 — known-debt: smart-collector lifecycle, refactor tracked separately
         self, *, force: bool = False
     ):
@@ -124,12 +130,12 @@ class CollectorManager(CollectorFailover, CollectorClaudeIdentity):
         pass ``force=True`` so an enable/disable takes effect immediately
         instead of waiting out the throttle.
         """
-        if not force and time.time() - self.last_sync_time < 60.0:
+        if not force and self._sync_throttled():
             return
         async with self._sync_lock:
             # Re-check inside lock to avoid double-sync when multiple requests
             # are waiting on the lock simultaneously.
-            if not force and time.time() - self.last_sync_time < 60.0:
+            if not force and self._sync_throttled():
                 return
             # Load DB provider configs: provider_id -> account_id -> ProviderConfig
             # We use a nested map to handle multi-account overrides correctly.
@@ -138,22 +144,23 @@ class CollectorManager(CollectorFailover, CollectorClaudeIdentity):
             source_preferences: dict[tuple[str, str], dict[str, tuple[bool, int]]] = {}
             source_state: dict[tuple[str, str], dict[str, tuple[str, datetime | None]]] = {}
             try:
-                from sqlmodel import Session
+                from types import SimpleNamespace
+
+                from sqlmodel import Session, col
                 from sqlmodel import select as sqlselect
 
                 from app.core.db import engine
                 from app.models.db import CredentialSource, ProviderConfig, SystemConfig
 
+                has_manual_credentials = False
                 with Session(engine) as _s:
                     for r in _s.exec(sqlselect(ProviderConfig)).all():
                         if r.provider_id not in db_configs:
                             db_configs[r.provider_id] = {}
-                        # Keep a detached value snapshot. The session commits
-                        # and closes below; retaining ORM instances here makes
-                        # later attribute reads fail when expire_on_commit is
+                        # Keep a detached value snapshot. The session closes
+                        # below; retaining ORM instances here makes later
+                        # attribute reads fail when expire_on_commit is
                         # enabled (and can trigger implicit DB access).
-                        from types import SimpleNamespace
-
                         db_configs[r.provider_id][r.account_id] = SimpleNamespace(
                             enabled=r.enabled,
                             archived=r.archived,
@@ -161,11 +168,27 @@ class CollectorManager(CollectorFailover, CollectorClaudeIdentity):
                             account_label=r.account_label,
                             strategies=r.strategies,
                         )
-
-                        # Sync manual tokens to cache to survive reloads/restarts
                         if r.enabled and (r.api_key or r.session_cookie):
-                            await self._sync_manual_config_to_cache(r, _s)
+                            has_manual_credentials = True
 
+                # Sync manual tokens to cache to survive reloads/restarts. This
+                # writes (``touch_source``), so it runs after the config snapshot
+                # is complete: a busy database here must never leave
+                # ``db_configs`` partial, because a provider missing from it is
+                # treated as unconfigured and gets a blanket ``default`` collector.
+                if has_manual_credentials:
+                    try:
+                        with Session(engine) as _s:
+                            for cfg in _s.exec(
+                                sqlselect(ProviderConfig).where(col(ProviderConfig.enabled))
+                            ).all():
+                                if cfg.api_key or cfg.session_cookie:
+                                    await self._sync_manual_config_to_cache(cfg, _s)
+                            _s.commit()
+                    except Exception as e:
+                        logger.warning("Could not sync manual provider credentials: %s", e)
+
+                with Session(engine) as _s:
                     for row in _s.exec(sqlselect(CredentialSource)).all():
                         account_sources = source_preferences.setdefault(
                             (row.provider_id, row.account_id), {}
@@ -179,10 +202,15 @@ class CollectorManager(CollectorFailover, CollectorClaudeIdentity):
                     if sys_cfg and sys_cfg.default_poll_interval_seconds:
                         global_poll_interval = sys_cfg.default_poll_interval_seconds
 
-                    _s.commit()
-
             except Exception as e:
-                logger.debug(f"Could not load provider configs from DB: {e}")
+                # Without the saved configs every provider looks unconfigured and
+                # would get a blanket ``default`` collector whose cards nothing
+                # retires. Keep the current collectors and retry shortly
+                # (``last_sync_time`` is deliberately left alone).
+                logger.warning("Could not load provider configs from DB; keeping collectors: %s", e)
+                self._sync_retry_at = time.time() + 5.0
+                return
+            self._sync_retry_at = 0.0
             # A saved configuration is an explicit opt-in boundary. If every
             # account is disabled or archived, credentials arriving from a
             # sidecar must not silently reactivate collection under a newly

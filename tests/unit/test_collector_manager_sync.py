@@ -234,6 +234,114 @@ class TestCollectorManagerInitialization:
         assert "gemini:default" in manager.smart_collectors
 
     @pytest.mark.asyncio
+    async def test_failed_config_load_does_not_spawn_default_collectors(
+        self, manager, mock_db_session
+    ):
+        """A locked DB must not make every provider look unconfigured.
+
+        With no ``provider_configs`` loaded, step 1 would spawn a blanket
+        ``{pid}:default`` collector for every provider — including ones whose
+        only config is account-keyed. Those collectors write ``default`` cards
+        that nothing ever retires (prod, 2026-11-14: opencode/ollama/deepseek).
+        """
+        from sqlalchemy.exc import OperationalError
+
+        manager.smart_collectors = {}
+        manager.last_sync_time = 0.0
+        locked = OperationalError("SELECT", {}, Exception("database is locked"))
+
+        # conftest's autouse ``mock_db_session`` stands in for the DB session.
+        mock_db_session.exec.side_effect = locked
+        await manager.sync_collectors(force=True)
+
+        assert manager.smart_collectors == {}
+        # The failure is not recorded as a successful sync...
+        assert manager.last_sync_time == 0.0
+        # ...and the retry horizon is short, not the 60 s success throttle.
+        assert 0 < manager._sync_retry_at - time.time() <= 5.0
+
+    @pytest.mark.asyncio
+    async def test_failed_config_load_retries_soon_without_hammering(
+        self, manager, mock_db_session
+    ):
+        """The real callers (system_health, source_probe) call without force=True."""
+        from sqlalchemy.exc import OperationalError
+
+        manager.smart_collectors = {}
+        mock_db_session.exec.side_effect = OperationalError(
+            "SELECT", {}, Exception("database is locked")
+        )
+        await manager.sync_collectors()
+        failed_attempts = mock_db_session.exec.call_count
+        assert failed_attempts >= 1
+
+        # Immediately afterwards: throttled, the DB is not touched again.
+        await manager.sync_collectors()
+        assert mock_db_session.exec.call_count == failed_attempts
+        assert manager.smart_collectors == {}
+
+        # Once the short horizon has passed the load is retried and recovers.
+        manager._sync_retry_at = time.time() - 1
+        mock_db_session.exec.side_effect = None
+        mock_db_session.exec.return_value.all.return_value = []
+        mock_db_session.exec.return_value.first.return_value = None
+        await manager.sync_collectors()
+        assert "gemini:default" in manager.smart_collectors
+        assert manager._sync_retry_at == 0.0
+
+    @pytest.mark.asyncio
+    async def test_failed_manual_credential_sync_keeps_the_config_snapshot_complete(
+        self, manager, mock_db_session
+    ):
+        """touch_source writes must not truncate db_configs (the root cause)."""
+        from sqlalchemy.exc import OperationalError
+
+        cfg = SimpleNamespace(
+            provider_id="opencode",
+            account_id="alice@example.com",
+            enabled=True,
+            archived=False,
+            poll_interval_seconds=None,
+            account_label=None,
+            strategies=None,
+            api_key="placeholder",  # pragma: allowlist secret
+            session_cookie=None,
+        )
+        results = [MagicMock() for _ in range(4)]
+        results[0].all.return_value = [cfg]  # ProviderConfig snapshot
+        results[1].all.return_value = [cfg]  # manual-credential pass
+        results[2].all.return_value = []  # CredentialSource rows
+        results[3].first.return_value = None  # SystemConfig
+        mock_db_session.exec.side_effect = results
+        manager.smart_collectors = {}
+        manager._sync_manual_config_to_cache = AsyncMock(
+            side_effect=OperationalError("INSERT", {}, Exception("database is locked"))
+        )
+
+        await manager.sync_collectors(force=True)
+
+        manager._sync_manual_config_to_cache.assert_awaited_once()
+        # The load itself completed: the account-keyed provider gets no blanket
+        # default, while providers with no config at all still do.
+        assert "opencode:default" not in manager.smart_collectors
+        assert "gemini:default" in manager.smart_collectors
+        assert manager._sync_retry_at == 0.0
+        assert manager.last_sync_time > 0
+
+    @pytest.mark.asyncio
+    async def test_failed_config_load_keeps_existing_collectors(self, manager, mock_db_session):
+        from sqlalchemy.exc import OperationalError
+
+        existing = MagicMock(collector=SimpleNamespace(account_label=None, user_strategies=None))
+        manager.smart_collectors = {"opencode:alice@example.com": existing}
+        locked = OperationalError("SELECT", {}, Exception("database is locked"))
+
+        mock_db_session.exec.side_effect = locked
+        await manager.sync_collectors(force=True)
+
+        assert manager.smart_collectors == {"opencode:alice@example.com": existing}
+
+    @pytest.mark.asyncio
     async def test_default_collectors_pin_credential_account_id(self, manager):
         """Auth-failure flagging attributes a rejected default key to `default`,
         not to whatever identity the collector resolved for its cards."""
@@ -489,10 +597,11 @@ class TestCollectorManagerInitialization:
             mock_accounts.return_value = []
             inner = MagicMock()
             # Order inside sync_collectors: ProviderConfig.all(),
-            # SystemConfig.first(), LatestUsage.all().
+            # CredentialSource.all(), SystemConfig.first(). This config has no
+            # manual credential, so the extra manual-sync query is skipped.
             inner.exec.return_value.all.side_effect = [
                 [_Cfg()],  # ProviderConfig rows
-                [],  # LatestUsage identities
+                [],  # CredentialSource rows
             ]
             inner.exec.return_value.first.return_value = None  # SystemConfig
             mock_session_cls.return_value.__enter__.return_value = inner
