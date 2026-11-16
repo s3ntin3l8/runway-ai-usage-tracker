@@ -58,6 +58,26 @@ updates:
       - dependency-name: "typescript"
         versions: [">=7.0.0"]
 
+  # The ruff-pre-commit `rev:` in .pre-commit-config.yaml. Nothing else bumps it, so it drifted behind the ruff pin in
+  # requirements-lint.txt that CI runs, and a local `ruff --fix` could then rewrite code differently from the CI gate.
+  - package-ecosystem: pre-commit
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      pre-commit-hooks:
+        patterns:
+          - "*"
+        # Minor and patch only, like the groups above: a major is a migration,
+        # not a weekly batch. It matters most for detect-secrets, whose
+        # internals scripts/check_secrets.py imports and string-matches, so a
+        # v2 must arrive as its own pull request, not inside this one. A major
+        # is not ignored, just not grouped.
+        update-types:
+          - minor
+          - patch
+
   # The visual-kit image `make screenshots` / `make visual-check` render in (visual/Dockerfile). A bump moves the
   # browser and fonts, so it recaptures the check's base and makes the committed baselines stale: regenerate them
   # (`make visual-baseline`, or `/update-baselines` on the PR) in the same change.
