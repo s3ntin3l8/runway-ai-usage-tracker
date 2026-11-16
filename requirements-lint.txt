@@ -11,6 +11,6 @@
 # `requirements-dev.txt`.
 ruff==0.17.5
 mypy==2.4.1
-types-PyYAML==6.0.12.20261111
+types-PyYAML==6.0.12.20261113
 pip-audit==2.10.1
 pre-commit==4.7.0
