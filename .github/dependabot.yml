@@ -72,7 +72,8 @@ updates:
         # Minor and patch only, like the groups above: a major is a migration,
         # not a weekly batch. It matters most for detect-secrets, whose
         # internals scripts/check_secrets.py imports and string-matches, so a
-        # v2 must arrive as its own pull request, not inside this one.
+        # v2 must arrive as its own pull request, not inside this one. A major
+        # is not ignored, just not grouped.
         update-types:
           - minor
           - patch
