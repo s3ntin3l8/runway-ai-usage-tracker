@@ -11,7 +11,7 @@
 #
 # These are the versions a fresh install resolves to today. To move one, let
 # Dependabot propose it, or edit the pin and run `make install`.
-fastapi==0.162.0
+fastapi==0.162.5
 uvicorn[standard]==0.54.0
 httpx==0.28.1
 # `httpx` requires `certifi`, but only with a floor -- so without this the
@@ -27,5 +27,5 @@ cryptography==50.0.2
 secretstorage==3.5.0
 PyYAML==6.0.3
 slowapi==0.1.10
-sqlmodel==0.0.48
+sqlmodel==0.0.49
 tzdata==2026.6; sys_platform == "win32"
