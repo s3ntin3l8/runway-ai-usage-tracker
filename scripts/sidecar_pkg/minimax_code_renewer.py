@@ -378,8 +378,8 @@ class MiniMaxCodeRenewer:
         # login -> (the refresh token we spent, the response we could not save yet): retry the
         # *save* next tick instead of exchanging again.
         self._unsaved: dict[tuple[str, str], tuple[str, dict[str, Any]]] = {}
-        # The logins whose store the keep-alive does not support, so the note is logged once.
-        self._unsupported_noted: set[str] = set()
+        # The logins skipped for their store kind, so the note is logged once per login.
+        self._skipped_noted: set[str] = set()
 
     def _discovered(self) -> list[tuple[Login, dict[str, Any]]]:
         """Every login the sidecar discovers, with the state file that belongs to it."""
@@ -410,15 +410,22 @@ class MiniMaxCodeRenewer:
         logins: list[Login] = []
         for login, state in self._discovered():
             if state.get("storeKind") != "file":
-                if os.path.realpath(login.path) not in self._unsupported_noted:
-                    self._unsupported_noted.add(os.path.realpath(login.path))
-                    logger.info(
-                        "MiniMax Code keep-alive: the login in %s is a legacy %s login, which "
-                        "MiniMax Code signs out when it next starts; sign in again and the "
-                        "keep-alive takes over the file-store login",
-                        login.path,
-                        state.get("storeKind"),
-                    )
+                if os.path.realpath(login.path) not in self._skipped_noted:
+                    self._skipped_noted.add(os.path.realpath(login.path))
+                    if state.get("storeKind") == "os-keyring" and state.get("schemaVersion") == 1:
+                        logger.info(
+                            "MiniMax Code keep-alive: the login in %s is a legacy os-keyring "
+                            "login, which MiniMax Code signs out when it next starts; sign in "
+                            "again and the keep-alive takes over the file-store login",
+                            login.path,
+                        )
+                    else:
+                        logger.info(
+                            "MiniMax Code keep-alive: the login in %s is in a %r store, which "
+                            "the keep-alive does not renew",
+                            login.path,
+                            state.get("storeKind"),
+                        )
                 continue
             if state.get("status") not in RENEWABLE_STATES:
                 continue

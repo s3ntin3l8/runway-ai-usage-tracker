@@ -201,10 +201,10 @@ class TestDue:
         _write_state(directory, store_kind="os-keyring")
         assert _renewer(path).due() is False
 
-    def test_a_keyring_login_is_reported_once_as_legacy(self, tmp_path, caplog):
+    def test_a_legacy_keyring_login_is_reported_once_as_legacy(self, tmp_path, caplog):
         directory = _client_dir(tmp_path)
         path = _write_login(directory, expires_in=-60)
-        _write_state(directory, store_kind="os-keyring")
+        _write_state(directory, store_kind="os-keyring", extra={"schemaVersion": 1})
         renewer = _renewer(path)
         with caplog.at_level(logging.INFO):
             renewer.due()
@@ -213,6 +213,17 @@ class TestDue:
         assert len(notes) == 1
         assert "os-keyring" in notes[0]
         assert "does not support" not in notes[0]
+
+    def test_a_keyring_login_in_a_current_state_is_not_called_legacy(self, tmp_path, caplog):
+        # Only a schemaVersion 1 keyring state was observed to be signed out; claim no more.
+        directory = _client_dir(tmp_path)
+        path = _write_login(directory, expires_in=-60)
+        _write_state(directory, store_kind="os-keyring")
+        with caplog.at_level(logging.INFO):
+            assert _renewer(path).due() is False
+        messages = [r.getMessage() for r in caplog.records]
+        assert not any("legacy" in m or "signs out" in m for m in messages)
+        assert any("os-keyring" in m and "does not renew" in m for m in messages)
 
     @pytest.mark.parametrize("status", ["refreshing", "authorizing", "error", "anonymous"])
     def test_not_due_while_the_app_is_otherwise_busy(self, tmp_path, status):
