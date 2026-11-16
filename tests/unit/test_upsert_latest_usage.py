@@ -456,6 +456,95 @@ def test_success_does_not_evict_default_orphan_in_different_slot(session: Sessio
     assert by_variant == {"Codex": "alice@example.com", "default": "default"}
 
 
+def _age_default_error_rows(session: Session, *, hours: float) -> None:
+    for row in session.exec(select(LatestUsage).where(LatestUsage.account_id == "default")).all():
+        row.updated_at = datetime.now(UTC) - timedelta(hours=hours)
+        session.add(row)
+    session.commit()
+
+
+def test_success_evicts_unrefreshed_default_error_in_other_slot(session: Session):
+    """A default error card nothing has rewritten for over an hour is a leftover.
+
+    A genuinely failing default credential rewrites its error card every poll
+    cycle, so it stays fresh. Prod (github, 2026-11-14): the default collector
+    failed once, later succeeded under the real account's own variants, and the
+    ``default``/``default`` error card stayed forever.
+    """
+    upsert_latest_usage(session, _error_card())
+    session.commit()
+    _age_default_error_rows(session, hours=2)
+
+    upsert_latest_usage(session, _success_card(account_id="alice@example.com", variant="Codex"))
+    session.commit()
+
+    assert [(r["account_id"], r["variant"]) for r in _rows(session)] == [
+        ("alice@example.com", "Codex")
+    ]
+
+
+def test_success_keeps_recently_refreshed_default_error_in_other_slot(session: Session):
+    upsert_latest_usage(session, _error_card())
+    session.commit()
+    _age_default_error_rows(session, hours=0.5)
+
+    upsert_latest_usage(session, _success_card(account_id="alice@example.com", variant="Codex"))
+    session.commit()
+
+    assert sorted((r["account_id"], r["variant"]) for r in _rows(session)) == [
+        ("alice@example.com", "Codex"),
+        ("default", "default"),
+    ]
+
+
+def test_success_keeps_another_providers_old_default_error(
+    session: Session, caplog: pytest.LogCaptureFixture
+):
+    """The eviction is scoped to the provider the healthy card belongs to."""
+    upsert_latest_usage(session, _error_card(provider_id="chatgpt"))
+    upsert_latest_usage(session, _error_card(provider_id="github"))
+    session.commit()
+    _age_default_error_rows(session, hours=2)
+
+    with caplog.at_level(logging.INFO, logger="app.services.accumulator"):
+        upsert_latest_usage(session, _success_card(account_id="alice@example.com", variant="Codex"))
+        session.commit()
+
+    assert sorted((r["json"]["provider_id"], r["account_id"]) for r in _rows(session)) == [
+        ("chatgpt", "alice@example.com"),
+        ("github", "default"),
+    ]
+    # The eviction is not silent: it names what it removed.
+    assert "Evicting stale default error card chatgpt/default" in caplog.text
+    assert "github/default" not in caplog.text
+
+
+def test_success_keeps_old_default_healthy_card_in_other_slot(session: Session):
+    """Only error cards are leftovers: an old *healthy* default card is data."""
+    # Inserted directly: the upsert path folds a healthy default card into the real account.
+    healthy = _success_card(account_id="default", variant="Chat")
+    session.add(
+        LatestUsage(
+            provider_id=healthy["provider_id"],
+            account_id="default",
+            window_type=healthy["window_type"],
+            variant="Chat",
+            model_id="",
+            card_json=json.dumps(healthy),
+        )
+    )
+    session.commit()
+    _age_default_error_rows(session, hours=5)
+
+    upsert_latest_usage(session, _success_card(account_id="alice@example.com", variant="Codex"))
+    session.commit()
+
+    assert sorted((r["account_id"], r["variant"]) for r in _rows(session)) == [
+        ("alice@example.com", "Codex"),
+        ("default", "Chat"),
+    ]
+
+
 def test_success_evicts_cross_variant_error_on_write(session: Session):
     """Success card (variant=Codex) evicts stale error card with a different variant."""
     stale = _error_card(
