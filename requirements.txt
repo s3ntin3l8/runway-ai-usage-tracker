@@ -11,7 +11,7 @@
 #
 # These are the versions a fresh install resolves to today. To move one, let
 # Dependabot propose it, or edit the pin and run `make install`.
-fastapi==0.162.5
+fastapi==0.162.6
 uvicorn[standard]==0.54.0
 httpx==0.28.1
 # `httpx` requires `certifi`, but only with a floor -- so without this the
@@ -21,7 +21,7 @@ certifi==2026.10.23
 python-dotenv==1.2.4
 aiosqlite==0.22.1
 pydantic==2.14.3
-pydantic-settings==2.16.2
+pydantic-settings==2.16.3
 keyring==25.7.0
 cryptography==50.0.2
 secretstorage==3.5.0
