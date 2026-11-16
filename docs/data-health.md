@@ -58,6 +58,7 @@ applied until it's fixed — the dependency order below reflects that.
 | `stale_credential_sources` · Warn | Credential sources no machine reports any more | A machine-reported source not seen for 14 days. | Forget the rows; a live credential is re-reported. |
 | `stale_credential_rules` · Warn | Assignment rules no machine matches | A user-created assignment rule for an origin no machine reported for 14 days. | Delete the unused rules. |
 | `orphan_gauge_series` · Warn | Quota history belongs to an inactive account | A quota series with no config or activity for 30 days. | Merge into a configured account or delete. |
+| `superseded_default_cards` · Warn | A stale generic card sits next to the live one | Cards under `default` not refreshed for an hour while a real account's card for the provider is current. | Delete the stale cards (history and events stay). |
 | `misidentified_gauge_series` · Error | Gauge data has no supporting evidence | Quota history for an account with no events, credentials or config. | Merge or delete the series. |
 | `unpriced_models` · Warn | Some token usage has no reliable cost | Token-bearing events with zero stored cost (free-tier ids are never listed). | Recompute once a rate exists, or add a pricing seed. |
 | `stale_priced_models` · Warn | Some stored cost estimates use an outdated rate | Estimates that differ from the rate in effect at the event's date. | Recompute the estimates. |
