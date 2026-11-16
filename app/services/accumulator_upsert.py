@@ -16,9 +16,12 @@ from sqlmodel import Session, col, delete, or_, select
 from app.core.date_utils import parse_iso8601_utc
 from app.services.account_merges import resolve_merged_account
 
-# A default-account error card that no poll has rewritten for this long is a
-# leftover, not a live failure: a failing collector rewrites its error card every
-# cycle. Matches the one-hour staleness window of latest-usage contributions.
+# A default-account error card in a slot the healthy card does not cover is only
+# evicted once no poll has rewritten it for this long: a failing collector
+# rewrites its error card every cycle, so a fresh one may be a live failure and
+# stays. (The same-slot rule above still removes a fresh one: the healthy card
+# there supersedes it outright.) Matches the one-hour staleness window of
+# latest-usage contributions.
 _STALE_DEFAULT_ERROR_AFTER = timedelta(hours=1)
 
 # Same logger object as accumulator.py (__name__ there is this name) so
@@ -414,6 +417,15 @@ def evict_superseded_error_rows(session: Session, prepared: _PreparedLatestUsage
                     if updated_at.tzinfo is None:
                         updated_at = updated_at.replace(tzinfo=UTC)
                     if updated_at < cutoff and is_error_card_json(row.card_json):
+                        logger.info(
+                            "Evicting stale default error card %s/default %s/%s/%s "
+                            "(not updated since %s)",
+                            card.provider_id,
+                            row.window_type,
+                            row.variant,
+                            row.model_id,
+                            updated_at.isoformat(),
+                        )
                         session.delete(row)
     except Exception as e:
         logger.warning(
