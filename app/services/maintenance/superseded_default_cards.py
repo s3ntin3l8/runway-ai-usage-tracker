@@ -14,8 +14,8 @@ usage events and rollups under `default` are history, handled by
 A provider qualifies only when all of these hold (re-checked by `plan` and
 `apply`, so a stale preview cannot delete a card that came back to life):
 
-- no `ProviderConfig` row is keyed `default` for it (a configured `default`
-  account owns its cards);
+- no active `ProviderConfig` (enabled, not archived) is keyed `default` for it, the
+  same test `lone_default_events` uses (an active `default` account owns its cards);
 - none of its `default` cards has been refreshed within `STALE_AFTER`;
 - a real (non-`default`) account has a healthy card refreshed within
   `STALE_AFTER`, i.e. the provider is demonstrably alive under a real identity.
@@ -69,6 +69,8 @@ def _inspect(
             select(ProviderConfig.id).where(
                 col(ProviderConfig.provider_id) == provider_id,
                 col(ProviderConfig.account_id) == DEFAULT_ACCOUNT,
+                col(ProviderConfig.enabled).is_(True),
+                col(ProviderConfig.archived).is_(False),
             )
         ).first()
         is not None

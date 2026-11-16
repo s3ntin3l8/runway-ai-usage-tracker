@@ -90,11 +90,20 @@ def test_detect_ignores_a_real_account_that_only_has_a_fresh_error_card(session)
     assert _check().detect(session).total_count == 0
 
 
-def test_detect_ignores_a_configured_default_account(session):
+def test_detect_ignores_an_active_default_account(session):
     make_config(session, provider_id="opencode", account_id="default")
     _seed_duplicate(session)
 
     assert _check().detect(session).total_count == 0
+
+
+@pytest.mark.parametrize("overrides", [{"enabled": False}, {"archived": True}])
+def test_a_disabled_or_archived_default_account_does_not_protect_its_cards(session, overrides):
+    """Same active-only test as `lone_default_events`: a retired default owns nothing."""
+    make_config(session, provider_id="opencode", account_id="default", **overrides)
+    _seed_duplicate(session)
+
+    assert [g.key for g in _check().detect(session).groups] == ["opencode"]
 
 
 def test_detect_reports_a_stale_default_error_card(session):
