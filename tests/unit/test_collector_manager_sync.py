@@ -234,6 +234,44 @@ class TestCollectorManagerInitialization:
         assert "gemini:default" in manager.smart_collectors
 
     @pytest.mark.asyncio
+    async def test_failed_config_load_does_not_spawn_default_collectors(
+        self, manager, mock_db_session
+    ):
+        """A locked DB must not make every provider look unconfigured.
+
+        With no ``provider_configs`` loaded, step 1 would spawn a blanket
+        ``{pid}:default`` collector for every provider — including ones whose
+        only config is account-keyed. Those collectors write ``default`` cards
+        that nothing ever retires (prod, 2026-11-14: opencode/ollama/deepseek).
+        """
+        from sqlalchemy.exc import OperationalError
+
+        manager.smart_collectors = {}
+        manager.last_sync_time = 0.0
+        locked = OperationalError("SELECT", {}, Exception("database is locked"))
+
+        # conftest's autouse ``mock_db_session`` stands in for the DB session.
+        mock_db_session.exec.side_effect = locked
+        await manager.sync_collectors(force=True)
+
+        assert manager.smart_collectors == {}
+        # The throttle must not swallow the retry: the next tick syncs again.
+        assert manager.last_sync_time == 0.0
+
+    @pytest.mark.asyncio
+    async def test_failed_config_load_keeps_existing_collectors(self, manager, mock_db_session):
+        from sqlalchemy.exc import OperationalError
+
+        existing = MagicMock(collector=SimpleNamespace(account_label=None, user_strategies=None))
+        manager.smart_collectors = {"opencode:alice@example.com": existing}
+        locked = OperationalError("SELECT", {}, Exception("database is locked"))
+
+        mock_db_session.exec.side_effect = locked
+        await manager.sync_collectors(force=True)
+
+        assert manager.smart_collectors == {"opencode:alice@example.com": existing}
+
+    @pytest.mark.asyncio
     async def test_default_collectors_pin_credential_account_id(self, manager):
         """Auth-failure flagging attributes a rejected default key to `default`,
         not to whatever identity the collector resolved for its cards."""
