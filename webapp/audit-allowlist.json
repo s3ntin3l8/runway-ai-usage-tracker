@@ -1,0 +1,9 @@
+[
+  {
+    "id": "GHSA-fc5q-39xc-vjpf",
+    "package": "picomatch",
+    "reason": "ReDoS through repeated extglobs needs an attacker-chosen glob pattern; vite and rollup only match globs from this repo's own config at build time. picomatch 4.0.7 is the latest release and the advisory has no patched version, so no upgrade or override can clear it.",
+    "issue": "#1362",
+    "expires": "2027-02-15"
+  }
+]

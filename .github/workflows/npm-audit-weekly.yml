@@ -1,8 +1,8 @@
 name: npm audit (weekly)
 
 # Advisory only. `dependency-audit` in ci-cd.yml blocks on the shipped tree at any
-# severity and on the whole tree at moderate and up, so a low-severity finding in
-# the dev-only tree shows up only in a job log that expires. This run lists every
+# severity and on build tooling at moderate and up (dev-only tooling only warns), so a
+# low-severity finding, or a dev-only one, shows up only in a job log that expires. This run lists every
 # finding, at every severity, in the job summary and keeps it in one tracking issue
 # that it edits, closes and reopens rather than opening a new issue per run. Nothing
 # needs this workflow and it is not a required check (#1035).
