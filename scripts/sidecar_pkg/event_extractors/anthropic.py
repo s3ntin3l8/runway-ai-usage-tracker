@@ -32,10 +32,11 @@ def parse_anthropic_events(
 ) -> list[UsageEventPush]:
     """Extract UsageEventPush records from Claude JSONL log files.
 
-    Filters to assistant messages with ts > since. Deduplicates by (msg_id, req_id).
+    Filters to assistant messages with ts > since. Deduplicates by (msg_id, req_id),
+    taking usage from the largest output count (later record on ties), while
+    preserving the first record's timestamp and identity.
     """
-    seen: set[tuple[str, str]] = set()
-    events: list[UsageEventPush] = []
+    events: dict[tuple[str, str], UsageEventPush] = {}
     for fp in jsonl_paths:
         try:
             with open(fp, "rb") as f:
@@ -68,8 +69,6 @@ def parse_anthropic_events(
                         if not event_id:
                             continue
                         dedup_key = (msg_id, req_id)
-                        if dedup_key in seen:
-                            continue
 
                         usage = msg.get("usage") or {}
                         content = msg.get("content") or []
@@ -89,54 +88,69 @@ def parse_anthropic_events(
                         cache_creation = usage.get("cache_creation") or {}
                         server_tool_use = usage.get("server_tool_use") or {}
 
-                        events.append(
-                            UsageEventPush(
-                                provider_id="anthropic",
-                                source_app=CLAUDE_CODE,
-                                account_id=account_id,
-                                event_id=event_id,
-                                ts=ts.isoformat(),
-                                model_id=_normalize_anthropic_model(msg.get("model", "")),
-                                session_id=e.get("sessionId"),
-                                cwd=e.get("cwd"),
-                                git_branch=e.get("gitBranch"),
-                                tool_names=tool_names or None,
-                                subagent_type=subagent_type,
-                                tokens_input=int(usage.get("input_tokens", 0)),
-                                tokens_output=int(usage.get("output_tokens", 0)),
-                                tokens_cache_read=int(usage.get("cache_read_input_tokens", 0)),
-                                tokens_cache_create=int(
-                                    usage.get("cache_creation_input_tokens", 0)
-                                ),
-                                tokens_cache_create_1h=int(
-                                    cache_creation.get("ephemeral_1h_input_tokens", 0)
-                                ),
-                                tokens_cache_create_5m=int(
-                                    cache_creation.get("ephemeral_5m_input_tokens", 0)
-                                ),
-                                tokens_reasoning=0,
-                                stop_reason=msg.get("stop_reason"),
-                                tool_calls=tool_calls,
-                                effort=e.get("effort"),
-                                speed=usage.get("speed"),
-                                service_tier=usage.get("service_tier"),
-                                entrypoint=e.get("entrypoint"),
-                                app_version=e.get("version"),
-                                web_search_requests=int(
-                                    server_tool_use.get("web_search_requests", 0)
-                                ),
-                                web_fetch_requests=int(
-                                    server_tool_use.get("web_fetch_requests", 0)
-                                ),
-                            )
+                        event = UsageEventPush(
+                            provider_id="anthropic",
+                            source_app=CLAUDE_CODE,
+                            account_id=account_id,
+                            event_id=event_id,
+                            ts=ts.isoformat(),
+                            model_id=_normalize_anthropic_model(msg.get("model", "")),
+                            session_id=e.get("sessionId"),
+                            cwd=e.get("cwd"),
+                            git_branch=e.get("gitBranch"),
+                            tool_names=tool_names or None,
+                            subagent_type=subagent_type,
+                            tokens_input=int(usage.get("input_tokens", 0)),
+                            tokens_output=int(usage.get("output_tokens", 0)),
+                            tokens_cache_read=int(usage.get("cache_read_input_tokens", 0)),
+                            tokens_cache_create=int(usage.get("cache_creation_input_tokens", 0)),
+                            tokens_cache_create_1h=int(
+                                cache_creation.get("ephemeral_1h_input_tokens", 0)
+                            ),
+                            tokens_cache_create_5m=int(
+                                cache_creation.get("ephemeral_5m_input_tokens", 0)
+                            ),
+                            tokens_reasoning=0,
+                            stop_reason=msg.get("stop_reason"),
+                            tool_calls=tool_calls,
+                            effort=e.get("effort"),
+                            speed=usage.get("speed"),
+                            service_tier=usage.get("service_tier"),
+                            entrypoint=e.get("entrypoint"),
+                            app_version=e.get("version"),
+                            web_search_requests=int(server_tool_use.get("web_search_requests", 0)),
+                            web_fetch_requests=int(server_tool_use.get("web_fetch_requests", 0)),
                         )
-                        seen.add(dedup_key)
+                        first = events.get(dedup_key)
+                        if first is None:
+                            events[dedup_key] = event
+                        elif event.tokens_output >= first.tokens_output:
+                            # Streaming updates replace usage as a unit. Keep the
+                            # first timestamp/identity so the event stays on its day.
+                            events[dedup_key] = first.model_copy(
+                                update={
+                                    field: getattr(event, field)
+                                    for field in (
+                                        "tokens_input",
+                                        "tokens_output",
+                                        "tokens_cache_read",
+                                        "tokens_cache_create",
+                                        "tokens_cache_create_1h",
+                                        "tokens_cache_create_5m",
+                                        "stop_reason",
+                                        "tool_names",
+                                        "tool_calls",
+                                        "web_search_requests",
+                                        "web_fetch_requests",
+                                    )
+                                }
+                            )
                     except (AttributeError, TypeError, ValueError):
                         continue
 
         except Exception:
             continue
-    return events
+    return list(events.values())
 
 
 _NAME_MARKERS = (b'"agent-name"', b'"ai-title"')
