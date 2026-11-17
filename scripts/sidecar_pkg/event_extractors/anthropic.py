@@ -137,6 +137,8 @@ def parse_anthropic_events(
                                         "tokens_cache_create",
                                         "tokens_cache_create_1h",
                                         "tokens_cache_create_5m",
+                                        "speed",
+                                        "service_tier",
                                         "stop_reason",
                                         "tool_names",
                                         "tool_calls",

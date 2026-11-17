@@ -207,6 +207,8 @@ def test_streamed_usage_keeps_maximum_output_and_first_identity(tmp_path, output
                     "usage": {
                         "input_tokens": 10 + index,
                         "output_tokens": output,
+                        "speed": f"speed-{index}" if index else None,
+                        "service_tier": f"tier-{index}" if index else None,
                         "cache_read_input_tokens": 20 + index,
                         "cache_creation_input_tokens": 70 + 2 * index,
                         "cache_creation": {
@@ -236,6 +238,8 @@ def test_streamed_usage_keeps_maximum_output_and_first_identity(tmp_path, output
     assert event.tokens_cache_create == 70 + 2 * winner
     assert event.tokens_cache_create_1h == 30 + winner
     assert event.tokens_cache_create_5m == 40 + winner
+    assert event.speed == (f"speed-{winner}" if winner else None)
+    assert event.service_tier == (f"tier-{winner}" if winner else None)
     assert event.stop_reason == (None if winner == 0 else "tool_use")
     assert event.tool_names == ([f"tool-{winner}-{tool}" for tool in range(winner)] or None)
     assert event.tool_calls == winner
