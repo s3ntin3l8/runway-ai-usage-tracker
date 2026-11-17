@@ -10,6 +10,7 @@ import {
   evaluate,
   ghsaOf,
   missingRoots,
+  reportLines,
 } from './audit-build-deps-core.mjs';
 
 const NOW = new Date('2026-11-17T12:00:00Z');
@@ -261,5 +262,32 @@ describe('allowlist validation', () => {
 describe('escapeWorkflowCommand', () => {
   it('neutralises %, CR and LF so registry text cannot start another command', () => {
     expect(escapeWorkflowCommand('a\n::error::boom\r100%')).toBe('a%0A::error::boom%0D100%25');
+  });
+});
+
+describe('reportLines', () => {
+  it('escapes every message at the printer, so a registry title cannot inject a command', () => {
+    const lines = reportLines({
+      errors: ['bad\n::error::injected'],
+      warnings: ['50%\r::warning::x'],
+      notices: ['n\n::notice::y'],
+    });
+    expect(lines.slice(0, 3)).toEqual([
+      '::notice::n%0A::notice::y',
+      '::warning::50%25%0D::warning::x',
+      '::error::bad%0A::error::injected',
+    ]);
+    // Exactly one command per message, plus the summary line.
+    expect(lines).toHaveLength(4);
+    expect(lines[3]).toBe('build-tooling audit: 1 blocking, 1 dev-only warning(s), 1 notice(s)');
+  });
+});
+
+describe('an empty dependency tree', () => {
+  it('is reported once as a missing install, not as seven stale build roots', () => {
+    const r = evaluate({ audit: { vulnerabilities: {} }, lsTree: {}, allowlist: [], now: NOW });
+    expect(r.errors).toHaveLength(1);
+    expect(r.errors[0]).toContain('npm --prefix webapp ci');
+    expect(r.errors[0]).not.toContain('BUILD_ROOTS');
   });
 });

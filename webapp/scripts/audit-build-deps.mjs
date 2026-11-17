@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { escapeWorkflowCommand, evaluate } from './audit-build-deps-core.mjs';
+import { evaluate, reportLines } from './audit-build-deps-core.mjs';
 
 function runJson(webappDir, args) {
   // `npm audit` exits 1 when it finds anything and `npm ls` exits 1 on any tree
@@ -32,19 +32,9 @@ function main() {
   const lsTree = runJson(webappDir, ['ls', '--all', '--json']);
   if (audit.error) throw new Error(`npm audit failed: ${JSON.stringify(audit.error)}`);
 
-  const { errors, warnings, notices } = evaluate({
-    audit,
-    lsTree,
-    allowlist,
-    now: new Date(),
-  });
-  for (const m of notices) console.log(`::notice::${escapeWorkflowCommand(m)}`);
-  for (const m of warnings) console.log(`::warning::${escapeWorkflowCommand(m)}`);
-  for (const m of errors) console.log(`::error::${escapeWorkflowCommand(m)}`);
-  console.log(
-    `build-tooling audit: ${errors.length} blocking, ${warnings.length} dev-only warning(s), ${notices.length} notice(s)`,
-  );
-  process.exit(errors.length > 0 ? 1 : 0);
+  const result = evaluate({ audit, lsTree, allowlist, now: new Date() });
+  for (const line of reportLines(result)) console.log(line);
+  process.exit(result.errors.length > 0 ? 1 : 0);
 }
 
 main();

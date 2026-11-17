@@ -113,18 +113,40 @@ export function rootAdvisories(audit) {
  * Classify every moderate+ advisory. Pure: `now` is a Date so tests can move time.
  * Returns { errors, warnings, notices } as plain strings.
  */
+/**
+ * The log lines for an `evaluate` result, as GitHub workflow commands. Registry
+ * text is escaped here, at the one place that prints, so a test can pin it.
+ */
+export function reportLines({ errors, warnings, notices }) {
+  return [
+    ...notices.map((m) => `::notice::${escapeWorkflowCommand(m)}`),
+    ...warnings.map((m) => `::warning::${escapeWorkflowCommand(m)}`),
+    ...errors.map((m) => `::error::${escapeWorkflowCommand(m)}`),
+    `build-tooling audit: ${errors.length} blocking, ${warnings.length} dev-only warning(s), ${notices.length} notice(s)`,
+  ];
+}
+
 export function evaluate({ audit, lsTree, allowlist, now }) {
   const errors = [];
   const warnings = [];
   const notices = [];
-  const paths = buildPaths(dependencyGraph(lsTree));
+  const graph = dependencyGraph(lsTree);
+  const paths = buildPaths(graph);
   const used = new Set();
 
-  for (const root of missingRoots(dependencyGraph(lsTree))) {
+  // An empty tree is a missing install (no node_modules, or `npm ls` produced
+  // nothing), not a stale list: say so once instead of blaming every root.
+  if (graph.size === 0) {
     errors.push(
-      `BUILD_ROOTS lists "${root}" but it is not installed, so its subtree would silently drop ` +
-        'to the warn tier. Update BUILD_ROOTS in webapp/scripts/audit-build-deps-core.mjs.',
+      '`npm ls --all` returned no packages: run `npm --prefix webapp ci` first; nothing can be classified.',
     );
+  } else {
+    for (const root of missingRoots(graph)) {
+      errors.push(
+        `BUILD_ROOTS lists "${root}" but it is not installed, so its subtree would silently drop ` +
+          'to the warn tier. Update BUILD_ROOTS in webapp/scripts/audit-build-deps-core.mjs.',
+      );
+    }
   }
 
   for (const entry of allowlist) {
