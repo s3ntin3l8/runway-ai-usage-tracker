@@ -47,7 +47,6 @@ def _persist_last_state(
     config: dict[str, Any] | None = None,
     *,
     dismissed: str | None = None,
-    preserve_rearmed: bool = False,
 ) -> None:
     """Persist the latest Safari access state in config when it changes."""
     path = _sidecar_config_path()
@@ -62,32 +61,43 @@ def _persist_last_state(
             cfg_last = config.get("safari_fda_last_state")
             if isinstance(cfg_last, str):
                 prev_state = cfg_last
+        changed = prev_state != state or current.get("safari_fda_last_state") != state
         cur_dismissed = (
-            config.get("safari_fda_notice_dismissed_state") if config is not None else None
+            dismissed
+            if dismissed is not None
+            else config.get("safari_fda_notice_dismissed_state")
+            if config is not None
+            else None
         )
         if not isinstance(cur_dismissed, str):
             disk_dismissed = current.get("safari_fda_notice_dismissed_state")
             if isinstance(disk_dismissed, str):
                 cur_dismissed = disk_dismissed
-        else:
+        elif current.get("safari_fda_notice_dismissed_state") != cur_dismissed:
             current["safari_fda_notice_dismissed_state"] = cur_dismissed
-        changed = prev_state != state or current.get("safari_fda_last_state") != state
-        current["safari_fda_last_state"] = state
-        if dismissed is not None:
-            if current.get("safari_fda_notice_dismissed_state") != dismissed:
-                current["safari_fda_notice_dismissed_state"] = dismissed
-                changed = True
-            if not preserve_rearmed and current.pop("safari_fda_notice_rearmed", None) is not None:
-                changed = True
-        elif isinstance(prev_state, str) and prev_state != state:
-            if cur_dismissed == "full_disk_access_missing":
-                current["safari_fda_notice_rearmed"] = True
-            if cur_dismissed == "full_disk_access_missing" and state != "full_disk_access_missing":
-                current["safari_fda_notice_dismissed_state"] = ""
             changed = True
+        current["safari_fda_last_state"] = state
+        if current.pop("safari_fda_notice_rearmed", None) is not None:
+            changed = True
+        if dismissed is None:
+            if (
+                cur_dismissed == "full_disk_access_missing"
+                and (
+                    state != "full_disk_access_missing"
+                    or (isinstance(prev_state, str) and prev_state != state)
+                )
+                and current.get("safari_fda_notice_dismissed_state") != ""
+            ):
+                current["safari_fda_notice_dismissed_state"] = ""
+                changed = True
+            if isinstance(prev_state, str) and prev_state != state:
+                changed = True
         if config is not None:
+            config.pop("safari_fda_notice_rearmed", None)
             config["safari_fda_last_state"] = state
-            if isinstance(current.get("safari_fda_notice_dismissed_state"), str):
+            if dismissed is not None:
+                config["safari_fda_notice_dismissed_state"] = dismissed
+            elif isinstance(current.get("safari_fda_notice_dismissed_state"), str):
                 config["safari_fda_notice_dismissed_state"] = current[
                     "safari_fda_notice_dismissed_state"
                 ]

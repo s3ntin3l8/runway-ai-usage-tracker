@@ -589,16 +589,41 @@ def test_safari_row_and_first_open_notice_lifecycle(settings, monkeypatch):
     assert _report(server)["safari"]["notice"] is True
 
     # Also test when the caller's in-memory config stays stale while probe_access
-    # flips missing -> readable -> missing on disk.
+    # flips missing -> readable -> missing on disk, and when another /sources POST
+    # or watch_config reload happens in between.
     assert send(server, "POST", "/sources", {"action": "dismiss_safari_notice"})[0] == 200
     stale_snapshot = dict(config)
     state[0] = "readable"
     assert safari_cookies.probe_access() == "readable"
-    state[0] = "full_disk_access_missing"
-    assert safari_cookies.probe_access() == "full_disk_access_missing"
+    # Even if in-memory config is stale when a /sources POST happens between grant and loss,
+    # update() syncs the on-disk Safari state before saving so the transition is not erased.
     config.clear()
     config.update(stale_snapshot)
+    assert (
+        send(server, "POST", "/sources", {"action": "enable", "source_id": "anthropic.chrome"})[0]
+        == 200
+    )
+    assert config["safari_fda_last_state"] == "readable"
+    assert config["safari_fda_notice_dismissed_state"] == ""
+    state[0] = "full_disk_access_missing"
+    assert safari_cookies.probe_access() == "full_disk_access_missing"
     assert _report(server)["safari"]["notice"] is True
+
+    # Dismissing again after a disk reload stays dismissed on subsequent GET polls,
+    # even if a legacy safari_fda_notice_rearmed flag was present in live/disk config.
+    loaded_from_disk = json.loads(safari_cookies._sidecar_config_path().read_text(encoding="utf-8"))
+    loaded_from_disk["safari_fda_notice_rearmed"] = True
+    safari_cookies._sidecar_config_path().write_text(json.dumps(loaded_from_disk), encoding="utf-8")
+    config.clear()
+    config.update(loaded_from_disk)
+    assert _report(server)["safari"]["notice"] is True
+    assert send(server, "POST", "/sources", {"action": "dismiss_safari_notice"})[0] == 200
+    assert "safari_fda_notice_rearmed" not in config
+    assert "safari_fda_notice_rearmed" not in json.loads(
+        safari_cookies._sidecar_config_path().read_text(encoding="utf-8")
+    )
+    assert _report(server)["safari"]["notice"] is False
+    assert _report(server)["safari"]["notice"] is False
 
     # Not-used state maps cleanly too.
     state[0] = "not_used"
