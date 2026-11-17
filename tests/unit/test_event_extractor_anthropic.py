@@ -170,6 +170,93 @@ def test_sidechain_event_captures_attribution_agent():
     assert explore.model_id == "opus-4.7"
 
 
+@pytest.mark.parametrize(
+    "outputs, winner",
+    [
+        ([4, 300, 1158], 2),
+        ([1158, 4], 0),
+        ([1158, 300, 4], 0),
+        ([4, 1158, 300], 1),
+        ([4, 1158, 1158], 2),
+    ],
+)
+def test_streamed_usage_keeps_maximum_output_and_first_identity(tmp_path, outputs, winner):
+    records = []
+    for index, output in enumerate(outputs):
+        records.append(
+            {
+                "type": "assistant",
+                "timestamp": f"2026-01-{index + 1:02d}T23:59:59Z",
+                "sessionId": f"session-{index}",
+                "cwd": f"/repo-{index}",
+                "gitBranch": f"branch-{index}",
+                "isSidechain": True,
+                "attributionAgent": f"agent-{index}",
+                "version": f"version-{index}",
+                "entrypoint": f"entrypoint-{index}",
+                "effort": f"effort-{index}",
+                "message": {
+                    "id": "streamed-message",
+                    "requestId": "request-1",
+                    "model": f"model-{index}",
+                    "stop_reason": None if index == 0 else "tool_use",
+                    "content": [
+                        {"type": "tool_use", "name": f"tool-{index}-{tool}"}
+                        for tool in range(index)
+                    ],
+                    "usage": {
+                        "input_tokens": 10 + index,
+                        "output_tokens": output,
+                        "speed": f"speed-{index}" if index else None,
+                        "service_tier": f"tier-{index}" if index else None,
+                        "cache_read_input_tokens": 20 + index,
+                        "cache_creation_input_tokens": 70 + 2 * index,
+                        "cache_creation": {
+                            "ephemeral_1h_input_tokens": 30 + index,
+                            "ephemeral_5m_input_tokens": 40 + index,
+                        },
+                        "server_tool_use": {
+                            "web_search_requests": index,
+                            "web_fetch_requests": index + 1,
+                        },
+                    },
+                },
+            }
+        )
+    path = tmp_path / "streamed.jsonl"
+    _write_transcript(path, records)
+
+    events = parse_anthropic_events(
+        [path], account_id="u@x", since=datetime(2020, 1, 1, tzinfo=UTC)
+    )
+
+    assert len(events) == 1
+    event = events[0]
+    assert event.tokens_output == 1158
+    assert event.tokens_input == 10 + winner
+    assert event.tokens_cache_read == 20 + winner
+    assert event.tokens_cache_create == 70 + 2 * winner
+    assert event.tokens_cache_create_1h == 30 + winner
+    assert event.tokens_cache_create_5m == 40 + winner
+    assert event.speed == (f"speed-{winner}" if winner else None)
+    assert event.service_tier == (f"tier-{winner}" if winner else None)
+    assert event.stop_reason == (None if winner == 0 else "tool_use")
+    assert event.tool_names == ([f"tool-{winner}-{tool}" for tool in range(winner)] or None)
+    assert event.tool_calls == winner
+    assert event.web_search_requests == winner
+    assert event.web_fetch_requests == winner + 1
+    assert event.ts == "2026-01-01T23:59:59+00:00"
+    assert event.event_id == "streamed-message|request-1"
+    assert event.session_id == "session-0"
+    assert event.cwd == "/repo-0"
+    assert event.git_branch == "branch-0"
+    assert event.model_id == "model-0"
+    assert event.subagent_type == "agent-0"
+    assert event.app_version == "version-0"
+    assert event.entrypoint == "entrypoint-0"
+    assert event.effort == "effort-0"
+
+
 # --- session names -----------------------------------------------------------
 
 import json  # noqa: E402
