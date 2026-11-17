@@ -29,9 +29,11 @@ a supported write path. Claude Desktop OAuth is read-only.
 
 The sidecar's local settings page has a **Keychain scrapers** section: one row
 per app or CLI, one row per browser-cookie service, a **Read from** selector
-for which browsers' cookie stores may be read (unticking a browser turns its
-sources off; ticking it again turns nothing on), **Enable all**, **Disable
-all** and a separate Claude renewal control.
+for which browsers' cookie stores may be read (on macOS, browsers that are not
+installed appear as disabled **Not installed** chips and default off until
+installed or explicitly opted in; unticking a browser turns its sources off;
+ticking it again turns nothing on), **Enable all**, **Disable all** and a
+separate Claude renewal control.
 
 Saving a choice, status requests and background ticks never open an OS
 prompt. Only an explicit local **Authorize** (or **Authorize all enabled**)
@@ -58,11 +60,11 @@ native helper before update persistence can be claimed (tracked in #1346).
 
 ## States
 
-Each source shows one of: **Off**, **Setup required**, **Connecting**,
-**Ready**, **Limited**, **Action required**, **Withdrawal pending**. Read
-access alone does not prove renewal, API acceptance or that a permission
-survives an app update. Old peers that cannot report source state appear as
-**Limited**.
+Each source shows one of: **Off**, **Not installed**, **Setup required**,
+**Connecting**, **Ready**, **Limited**, **Action required**, **Withdrawal
+pending**. Read access alone does not prove renewal, API acceptance or that a
+permission survives an app update. Old peers that cannot report source state
+appear as **Limited**.
 
 ## What Fleet can and cannot do
 

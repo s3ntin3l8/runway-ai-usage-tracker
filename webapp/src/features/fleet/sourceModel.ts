@@ -13,7 +13,7 @@ const BROWSERS: Record<string, string> = { chrome: 'Chrome', edge: 'Edge', chrom
 const RANK: Record<MacStatus, number> = { off: 0, ok: 1, busy: 2, need: 3, err: 4 };
 
 export function macStatus(s: FleetSourceStatus): MacStatus {
-  if (!s.read) return 'off';
+  if (!s.read || s.state === 'Not installed') return 'off';
   if (s.revoked || s.state === 'Action required') return 'err';
   if (s.state === 'Connecting') return 'busy';
   if (s.state === 'Setup required') return 'need';

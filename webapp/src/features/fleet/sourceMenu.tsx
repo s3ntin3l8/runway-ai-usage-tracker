@@ -43,7 +43,7 @@ export function SourceMenu({ source, actions }: { source: FleetSourceStatus; act
           {actions.macOS ? (
             <DropdownMenu.Item
               className={item}
-              disabled={actions.busy}
+              disabled={actions.busy || source.state === 'Not installed'}
               onSelect={() => actions.run(source, 'request_setup')}
             >
               Ask Mac to set up
@@ -51,7 +51,7 @@ export function SourceMenu({ source, actions }: { source: FleetSourceStatus; act
           ) : null}
           <DropdownMenu.Item
             className={cn(item, 'text-critical')}
-            disabled={actions.busy || source.revoked}
+            disabled={actions.busy || source.revoked || source.state === 'Not installed'}
             onSelect={() => actions.revoke(source)}
           >
             Revoke contribution…

@@ -10,7 +10,14 @@ from sidecar_app.settings_server import _SettingsServer
 
 
 @pytest.fixture
-def settings():
+def settings(monkeypatch):
+    from scripts.sidecar_pkg import source_settings
+
+    monkeypatch.setattr(
+        source_settings,
+        "installed_browsers",
+        lambda: {"chrome": True, "edge": True, "chromium": True},
+    )
     config = {"api_url": "https://runway.example", "api_key": "synthetic-private"}
     server = _SettingsServer(
         "127.0.0.1",
@@ -174,14 +181,14 @@ def test_unticking_a_browser_turns_off_its_sources_and_keeps_the_choice(settings
         send(server, "POST", "/sources", {"action": "set_browsers", "value": {"edge": False}})[0]
         == 200
     )
-    assert config["keychain_browsers"] == {"chrome": True, "edge": False, "chromium": True}
+    assert config["keychain_browsers"] == {"edge": False}
     edge = [i for i in config["keychain_sources"] if i.endswith(".edge")]
     assert edge and all(config["keychain_sources"][i]["read"] is False for i in edge)
     assert set(edge) <= set(config["keychain_withdrawals"])
     chrome = [i for i in config["keychain_sources"] if i.endswith(".chrome")]
     assert all(config["keychain_sources"][i]["read"] is True for i in chrome)
     assert config["keychain_sources"]["anthropic.claude-code"]["read"] is True
-    assert _report(server)["browsers"]["edge"] is False
+    assert _report(server)["browsers"] == {"chrome": True, "edge": False, "chromium": True}
 
 
 def test_enable_all_leaves_unticked_browsers_off(settings):
@@ -274,3 +281,261 @@ def test_page_script_parses(settings):
         path.write_text(script, encoding="utf-8")
         result = subprocess.run([node, "--check", str(path)], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
+
+
+def _patch_darwin_dirs(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    from scripts.sidecar_pkg import source_settings
+
+    home = tmp_path / "home"
+    apps = tmp_path / "Applications"
+    home.mkdir(parents=True, exist_ok=True)
+    apps.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(source_settings, "sys", SimpleNamespace(platform="darwin", frozen=False))
+    monkeypatch.setattr(source_settings.Path, "home", staticmethod(lambda: home))
+    monkeypatch.setattr(source_settings, "_APPLICATIONS_DIR", apps)
+    return home, apps, source_settings
+
+
+def test_installed_browsers_and_default_selection_with_fake_dirs(tmp_path, monkeypatch):
+    from scripts.sidecar_pkg.source_catalog import BROWSERS
+
+    _home, apps, source_settings = _patch_darwin_dirs(monkeypatch, tmp_path)
+    assert set(BROWSERS) == set(source_settings._BROWSER_INSTALL_TARGETS)
+    (apps / "Google Chrome.app").mkdir()
+
+    assert source_settings.installed_browsers() == {
+        "chrome": True,
+        "edge": False,
+        "chromium": False,
+    }
+    assert source_settings.browsers({}) == {
+        "chrome": True,
+        "edge": False,
+        "chromium": False,
+    }
+    assert source_settings.browsers({"keychain_browsers": {"edge": True}}) == {
+        "chrome": True,
+        "edge": True,
+        "chromium": False,
+    }
+    assert source_settings.browsers({"keychain_browsers": {"chrome": False}}) == {
+        "chrome": False,
+        "edge": False,
+        "chromium": False,
+    }
+    rep = source_settings.report({})
+    assert rep["installed"] == {"chrome": True, "edge": False, "chromium": False}
+    assert rep["browsers"] == {"chrome": True, "edge": False, "chromium": False}
+
+
+def test_installed_browsers_detects_user_dirs_and_is_not_cached(tmp_path, monkeypatch):
+    home, apps, source_settings = _patch_darwin_dirs(monkeypatch, tmp_path)
+    (apps / "Google Chrome.app").mkdir()
+
+    assert source_settings.report({})["installed"] == {
+        "chrome": True,
+        "edge": False,
+        "chromium": False,
+    }
+    # Toggling one browser must not persist derived False for uninstalled ones.
+    updated = source_settings.update({}, {"action": "set_browsers", "value": {"chrome": False}})
+    assert updated["keychain_browsers"] == {"chrome": False}
+
+    (home / "Applications" / "Microsoft Edge.app").mkdir(parents=True)
+    (home / "Library" / "Application Support" / "Chromium").mkdir(parents=True)
+
+    rep = source_settings.report(updated)
+    assert rep["installed"] == {"chrome": True, "edge": True, "chromium": True}
+    assert rep["browsers"] == {"chrome": False, "edge": True, "chromium": True}
+
+
+def test_non_darwin_browsers_default_true_and_report_off(monkeypatch):
+    from types import SimpleNamespace
+
+    from scripts.sidecar_pkg import source_settings
+
+    monkeypatch.setattr(source_settings, "sys", SimpleNamespace(platform="linux", frozen=False))
+    assert source_settings.browsers({}) == {"chrome": True, "edge": True, "chromium": True}
+    rows = {row["id"]: row for row in source_settings.report({})["sources"]}
+    assert rows["kimi_coding.chrome"]["state"] == "Off"
+
+
+def test_enable_all_and_set_sources_skip_uninstalled_browsers_and_never_action_required(
+    tmp_path, monkeypatch
+):
+    _home, apps, source_settings = _patch_darwin_dirs(monkeypatch, tmp_path)
+    (apps / "Google Chrome.app").mkdir()
+
+    from scripts.sidecar_pkg import keychain_client, source_protocol
+
+    client = keychain_client.KeychainClient(command=["synthetic-never-started"])
+    client.block_access("storage:Microsoft Edge Safe Storage", "denied")
+    monkeypatch.setattr(keychain_client, "_CLIENT", client)
+
+    updated = source_settings.update({}, {"action": "enable_all"})
+    assert "anthropic.chrome" in updated["keychain_sources"]
+    assert "anthropic.edge" not in updated["keychain_sources"]
+    assert "anthropic.chromium" not in updated["keychain_sources"]
+
+    # set_sources also skips uninstalled browsers when enabling.
+    set_updated = source_settings.update(
+        {},
+        {
+            "action": "set_sources",
+            "source_ids": ["anthropic.chrome", "anthropic.edge"],
+            "value": True,
+        },
+    )
+    assert "anthropic.chrome" in set_updated["keychain_sources"]
+    assert "anthropic.edge" not in set_updated["keychain_sources"]
+
+    rows = {row["id"]: row for row in source_settings.report(updated)["sources"]}
+    assert rows["anthropic.chrome"]["read"] is True
+    assert rows["anthropic.edge"]["read"] is False
+    assert rows["anthropic.edge"]["state"] == "Not installed"
+    assert rows["anthropic.edge"]["new"] is False
+    assert rows["anthropic.chromium"]["state"] == "Not installed"
+
+    proto_client = source_protocol.SourceClient(
+        {"device_id": "device-" + "a" * 32, "api_url": "https://runway.example"},
+        tmp_path / "state.json",
+    )
+    payload_rows = {row["source_id"]: row for row in proto_client.payload(updated)["sources"]}
+    assert payload_rows["anthropic.edge"]["state"] == "Not installed"
+    assert payload_rows["anthropic.edge"]["read"] is False
+    assert payload_rows["anthropic.chromium"]["state"] == "Not installed"
+
+    # Explicit override in keychain_browsers still allows enable_all to select Edge.
+    with_edge = source_settings.update(
+        {"keychain_browsers": {"edge": True}}, {"action": "enable_all"}
+    )
+    assert "anthropic.edge" in with_edge["keychain_sources"]
+
+
+def test_settings_page_labels_uninstalled_browser_chips_and_excludes_from_counts(
+    tmp_path, monkeypatch
+):
+    import shutil
+    import subprocess
+
+    from sidecar_app.settings_server import _CSS, _HTML
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+
+    html = _HTML.substitute(
+        css=_CSS,
+        api_url="https://runway.example",
+        version="0.0.0",
+        sidecar_id="test",
+    )
+    script = html.rsplit("<script>", 1)[1].split("</script>", 1)[0]
+
+    _home, apps, source_settings = _patch_darwin_dirs(monkeypatch, tmp_path)
+    (apps / "Google Chrome.app").mkdir()
+    updated = source_settings.update({}, {"action": "enable_all"})
+    report = source_settings.report(updated)
+    expected_live = [
+        s
+        for s in report["sources"]
+        if s["compatible"] and (s["group"] == "app" or s["group"] == "chrome")
+    ]
+    assert len(expected_live) > 0
+
+    probe = """
+const vm = require('vm');
+const report = JSON.parse(process.argv[1]);
+const script = process.argv[2];
+const byId = new Map();
+function makeEl(tag) {
+  const el = {
+    tagName: tag.toUpperCase(),
+    children: [],
+    className: '',
+    textContent: '',
+    title: '',
+    hidden: false,
+    disabled: false,
+    checked: false,
+    _id: '',
+    style: {},
+    setAttribute() {},
+    append(...nodes) {
+      for (const n of nodes) {
+        if (typeof n === 'string') {
+          this.children.push({ textContent: n, children: [] });
+        } else if (n) {
+          this.children.push(n);
+        }
+      }
+    },
+    replaceChildren(...nodes) {
+      this.children = [];
+      this.append(...nodes);
+    },
+    get firstChild() { return this.children[0] || null; },
+  };
+  Object.defineProperty(el, 'id', {
+    get() { return this._id; },
+    set(v) { this._id = v; if (v) byId.set(v, el); },
+  });
+  return el;
+}
+function collectText(node) {
+  if (!node) return '';
+  return (node.textContent || '') + (node.children || []).map(collectText).join('');
+}
+function findAll(node, pred, out = []) {
+  if (pred(node)) out.push(node);
+  for (const c of node.children || []) findAll(c, pred, out);
+  return out;
+}
+const card = makeEl('section'); card.id = 'sources-card';
+const body = makeEl('div'); body.id = 'sources-body';
+const ctx = {
+  document: {
+    getElementById: (id) => byId.get(id) || makeEl('div'),
+    createElement: (tag) => makeEl(tag),
+    createTextNode: (t) => ({ textContent: String(t), children: [] }),
+  },
+  window: {},
+  fetch: async () => ({ ok: true, json: async () => ({}) }),
+  setTimeout: () => 0, clearTimeout: () => {}, setInterval: () => 0,
+  URLSearchParams, Map, Set, Math, JSON,
+};
+vm.runInNewContext(script, ctx);
+ctx.renderSources(report);
+const labels = findAll(body, n => n.tagName === 'LABEL' && (n.children || []).some(c => c._id && c._id.startsWith('browser-')));
+const chips = {};
+for (const l of labels) {
+  const box = l.children.find(c => c._id && c._id.startsWith('browser-'));
+  chips[box._id] = { disabled: box.disabled, checked: box.checked, text: collectText(l) };
+}
+const summary = findAll(body, n => n.className === 'kc-summary').map(collectText)[0] || '';
+const authBtn = byId.get('authorize-all');
+console.log(JSON.stringify({ chips, summary, authText: authBtn ? collectText(authBtn) : '' }));
+"""
+    res = subprocess.run(
+        [node, "-e", probe, json.dumps(report), script],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    rendered = json.loads(res.stdout)
+    assert rendered["chips"]["browser-chrome"]["disabled"] is False
+    assert rendered["chips"]["browser-chrome"]["checked"] is True
+    assert "Not installed" not in rendered["chips"]["browser-chrome"]["text"]
+    for key in ("browser-edge", "browser-chromium"):
+        assert rendered["chips"][key]["disabled"] is True
+        assert rendered["chips"][key]["checked"] is False
+        assert "Not installed" in rendered["chips"][key]["text"]
+    expected_items = len({s["item"] for s in expected_live})
+    assert f"{len(expected_live)} of {len(expected_live)} on" in rendered["summary"]
+    assert f"{len(expected_live)} need authorization" in rendered["summary"]
+    assert (
+        f"Authorize {len(expected_live)} enabled · {expected_items} Keychain item"
+        in rendered["authText"]
+    )
