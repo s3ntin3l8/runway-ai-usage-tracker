@@ -34,11 +34,14 @@ def installed_browsers(
     apps_dir = applications_dir if applications_dir is not None else _APPLICATIONS_DIR
     return {
         key: (
-            _path_exists(apps_dir / app_name)
-            or _path_exists(user_home / "Applications" / app_name)
-            or _path_exists(user_home / "Library" / "Application Support" / profile_rel)
+            (target := _BROWSER_INSTALL_TARGETS.get(key)) is not None
+            and (
+                _path_exists(apps_dir / target[0])
+                or _path_exists(user_home / "Applications" / target[0])
+                or _path_exists(user_home / "Library" / "Application Support" / target[1])
+            )
         )
-        for key, (app_name, profile_rel) in _BROWSER_INSTALL_TARGETS.items()
+        for key in BROWSERS
     }
 
 
@@ -66,7 +69,7 @@ def report(config: dict[str, Any]) -> dict[str, Any]:
     sources = []
     for source in catalog().values():
         browser_key = source.browser_key
-        browser_installed = True if browser_key is None else inst[browser_key]
+        browser_installed = True if browser_key is None else inst.get(browser_key, False)
         browser_selected = True if browser_key is None else selected[browser_key]
         has_ticket = policy.ticket(source.id) is not None
         withdrawal_pending = source.id in pending and pending[source.id] > withdrawals.get(
@@ -76,7 +79,12 @@ def report(config: dict[str, Any]) -> dict[str, Any]:
             state = _authorization_state(source.id, source.services, SETUP.state(source.id))
         elif withdrawal_pending:
             state = "Withdrawal pending"
-        elif browser_key is not None and not browser_installed and not browser_selected:
+        elif (
+            sys.platform == "darwin"
+            and browser_key is not None
+            and not browser_installed
+            and not browser_selected
+        ):
             state = "Not installed"
         else:
             state = "Off"
@@ -84,7 +92,6 @@ def report(config: dict[str, Any]) -> dict[str, Any]:
             {
                 "id": source.id,
                 "compatible": sys.platform in source.platforms,
-                "installed": browser_installed,
                 "label": source.label,
                 # How the page groups it: apps and CLIs one row each, cookie sources one row per
                 # service. Sources with the same ``item`` read the same Keychain item.
@@ -130,10 +137,12 @@ def report(config: dict[str, Any]) -> dict[str, Any]:
 def browsers(
     config: dict[str, Any], *, installed: dict[str, bool] | None = None
 ) -> dict[str, bool]:
-    """Which browsers' cookie stores may be read; uninstalled browsers are off unless ticked."""
-    inst = installed if installed is not None else installed_browsers()
+    """Which browsers' cookie stores may be read; uninstalled macOS browsers are off unless ticked."""
     saved = config.get("keychain_browsers")
     saved = saved if isinstance(saved, dict) else {}
+    if sys.platform != "darwin":
+        return {key: saved.get(key) is not False for key in BROWSERS}
+    inst = installed if installed is not None else installed_browsers()
     result: dict[str, bool] = {}
     for key in BROWSERS:
         override = saved.get(key)
@@ -182,7 +191,8 @@ def update(config: dict[str, Any], command: dict[str, Any]) -> dict[str, Any]:
             or any(key not in BROWSERS or type(flag) is not bool for key, flag in value.items())
         ):
             raise ValueError("Invalid browser selection")
-        updated["keychain_browsers"] = {**browsers(config), **value}
+        prior = config.get("keychain_browsers")
+        updated["keychain_browsers"] = {**(prior if isinstance(prior, dict) else {}), **value}
         # A browser that is no longer read must not keep its sources on.
         for source_id, descriptor in catalog().items():
             if descriptor.browser_key and value.get(descriptor.browser_key) is False:
