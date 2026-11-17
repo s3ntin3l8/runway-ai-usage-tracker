@@ -20,7 +20,9 @@ class HelperReadAPI:
     """Foreground reads use the same signed principal as background reads."""
 
     def __init__(self) -> None:
-        self.client = KeychainClient(command=[str(native_helper_path()), "--interactive"])
+        self.client = KeychainClient(
+            command=[str(native_helper_path()), "--interactive"], timeout=AUTHORIZATION_TIMEOUT
+        )
 
     def call(self, operation: str, query: dict[str, Any], values: dict[str, Any]) -> Any:
         return self.client.call(operation, query, values, group="authorization")

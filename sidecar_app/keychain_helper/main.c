@@ -13,6 +13,7 @@
 
 #define MAX_FRAME 4194304
 #define TIMEOUT 30
+#define INTERACTIVE_TIMEOUT 60
 #define MAX_REFERENCES 4096
 
 static const char *SERVICES[] = {
@@ -249,7 +250,7 @@ int main(int argc, char **argv) {
         uint32_t size;
         /* An idle reusable worker has no deadline; a partial frame does. */
         if (!read_exact(&size, 1)) break;
-        alarm(TIMEOUT);
+        alarm(interactive ? INTERACTIVE_TIMEOUT : TIMEOUT);
         if (!read_exact((char *)&size + 1, sizeof(size) - 1)) break;
         size = ntohl(size);
         if (!size || size > MAX_FRAME) break;

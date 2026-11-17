@@ -109,6 +109,15 @@ def test_search_then_same_process_read(native_harness, tmp_path, interactive):
     ) + ["data", "interaction:off"]
 
 
+@pytest.mark.parametrize("interactive, maximum", [(False, 30), (True, 60)])
+def test_native_read_deadline(native_harness, tmp_path, interactive, maximum):
+    responses, calls = run(native_harness, tmp_path, "deadline", interactive=interactive)
+    assert responses[-1]["result"]["data"] == b"synthetic-secret"
+    remaining = int(next(call for call in calls if call.startswith("deadline:")).split(":")[1])
+    # Inspect the live OS timer at the Security call without waiting for a prompt.
+    assert maximum - 5 < remaining <= maximum
+
+
 @pytest.mark.parametrize(
     "scenario", ["search-denied", "metadata-denied", "data-denied", "data-interaction-denied"]
 )

@@ -24,6 +24,13 @@ OSStatus RunwayTestCopy(CFDictionaryRef query, CFTypeRef *output) {
     bool search = CFDictionaryContainsKey(query, kSecAttrService);
     bool data = CFDictionaryContainsKey(query, kSecReturnData);
     record(search ? "search" : data ? "data" : "metadata");
+    if (data && !strcmp(scenario, "deadline")) {
+        unsigned int remaining = alarm(0);
+        char event[32];
+        snprintf(event, sizeof(event), "deadline:%u", remaining);
+        record(event);
+        alarm(remaining);
+    }
     if (!CFEqual(CFDictionaryGetValue(query, kSecClass), kSecClassGenericPassword) ||
         CFDictionaryGetValue(query, kSecUseDataProtectionKeychain) != kCFBooleanFalse ||
         CFDictionaryGetValue(query, kSecReturnAttributes) != kCFBooleanTrue ||

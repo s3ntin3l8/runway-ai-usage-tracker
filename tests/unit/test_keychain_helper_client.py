@@ -164,6 +164,7 @@ def test_foreground_adapter_uses_native_identity(monkeypatch, tmp_path):
     monkeypatch.setattr(authorization, "native_helper_path", lambda: fake)
     api = HelperReadAPI()
     try:
+        assert api.client._timeout == authorization.AUTHORIZATION_TIMEOUT
         authorization.authorize_once(api, ["fixture"], "fixture-user")
         process = api.client._process
         assert process.args == [str(fake), "--interactive"]

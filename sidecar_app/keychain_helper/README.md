@@ -31,6 +31,9 @@ this helper as part of an ordinary release. Bundle-signing and packaging
 preservation are tracked separately in #1346; the current CI deep-signing step
 still needs that change before release-to-release grants can be preserved.
 PyInstaller must also preserve the committed helper's signature and bytes.
+The packaged reader is `_MEIPASS/keychain_helper/kc_helper`, located at
+`Contents/Frameworks/keychain_helper/kc_helper` in the PyInstaller 6 macOS app.
+The signing and golden-hash checks in #1346 must target that path.
 
 Inspect and verify each architecture:
 
@@ -49,7 +52,7 @@ different bytes; installing a new toolchain is not a reason to update the
 committed binary or golden hashes.
 
 On the macOS worker, three consecutive clean builds produced identical
-universal SHA-256 `55c17ef439b61f2250f8bc6f8a3bc9ea1de1a867169750d46c6c454fee839e3e`
+universal SHA-256 `5f74469cd1a582362f688dcfaf9888bc31c14e294bcef92df32a4a2e9c4f1849`
 and identical per-slice CDHashes as recorded in the golden file. The linker's
 normal content-derived UUID is retained: removing LC_UUID prevents execution
 on current macOS. No build timestamp or random signing timestamp is embedded.
@@ -62,8 +65,9 @@ Requests have exactly `operation`, `query`, and `values`. Only the `copy`
 operation is accepted; `values` must be empty. Unknown fields, selectors,
 operations, and services return only `{"error": "unavailable"}`. Invalid framing
 closes the process silently. EOF exits; incomplete requests, blocked writes and
-native calls are bounded by `TIMEOUT` (30 seconds). An idle worker may remain
-alive indefinitely. There are no error messages, native diagnostics or values
+native calls are bounded by `TIMEOUT` (30 seconds), or 60 seconds for an explicit
+`--interactive` request so the user can answer the consent dialog. An idle worker
+may remain alive indefinitely. There are no error messages, native diagnostics or values
 printed to a terminal or log. Results (including secret bytes and required item
 identity) travel only in protocol frames over the parent's private stdout pipe.
 The caller discards stderr; never run a real read with stdout connected to a
