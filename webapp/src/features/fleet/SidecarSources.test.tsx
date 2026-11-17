@@ -356,7 +356,12 @@ describe('credential sources on other systems', () => {
     const user = userEvent.setup();
     respond([
       src('anthropic.claude-code', 'Claude Code'),
-      src('anthropic.edge', 'Claude Pro · Edge cookies', { ...off, state: 'Not installed' }),
+      src('anthropic.edge', 'Claude Pro · Edge cookies', {
+        ...off,
+        state: 'Not installed',
+        revoked: true,
+        collection_health: 'withdrawn',
+      }),
     ]);
     renderMac();
     expect(await screen.findByText('Claude Code')).toBeInTheDocument();

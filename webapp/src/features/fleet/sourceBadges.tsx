@@ -18,12 +18,12 @@ export function MacBadge({ status, device, source }: { status: MacStatus; device
   const s = STATUS[status];
   const withdrawing = source?.state === 'Withdrawal pending';
   const notInstalled = source?.state === 'Not installed';
-  const label = source?.revoked
-    ? 'Revoked'
-    : withdrawing
-      ? 'Withdrawing'
-      : notInstalled
-        ? 'Not installed'
+  const label = notInstalled
+    ? 'Not installed'
+    : source?.revoked
+      ? 'Revoked'
+      : withdrawing
+        ? 'Withdrawing'
         : s.label === 'Setup on Mac'
           ? `Setup on ${device}`
           : s.label;
