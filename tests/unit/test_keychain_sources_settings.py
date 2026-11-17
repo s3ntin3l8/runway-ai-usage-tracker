@@ -501,7 +501,7 @@ const ctx = {
     createElement: (tag) => makeEl(tag),
     createTextNode: (t) => ({ textContent: String(t), children: [] }),
   },
-  window: {},
+  window: { addEventListener() {} },
   fetch: async () => ({ ok: true, json: async () => ({}) }),
   setTimeout: () => 0, clearTimeout: () => {}, setInterval: () => 0,
   URLSearchParams, Map, Set, Math, JSON,
