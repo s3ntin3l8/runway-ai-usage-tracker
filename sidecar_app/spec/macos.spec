@@ -29,8 +29,8 @@ a = Analysis(
         (os.path.join(_ROOT, "scripts", "sidecar.py"), "scripts"),
         (os.path.join(_ROOT, "sidecar_app", "assets"), "assets"),
         # Ship the separately built and signed Keychain helper at the path
-        # keychain_client resolves beneath sys._MEIPASS. Its release signing
-        # and preservation across packaging are handled separately (#1346).
+        # keychain_client resolves beneath sys._MEIPASS. The release workflow signs it
+        # on its own (never --deep) and scripts/check_helper_cdhash.py guards its CDHash.
         (
             os.path.join(_ROOT, "sidecar_app", "keychain_helper", "bin", "kc_helper"),
             "keychain_helper",
