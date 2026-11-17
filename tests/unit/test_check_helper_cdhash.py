@@ -101,7 +101,12 @@ def test_workflows_never_deep_and_helper_not_resigned_after_bundle():
     after = text.split('codesign --force --sign - "$app"', 1)[1].split("- name:")[0]
     sign_cmds = [ln for ln in after.splitlines() if "codesign" in ln and "--verify" not in ln]
     assert not [ln for ln in sign_cmds if "helper" in ln]
-    assert "--deep" not in (chk.ROOT / "Makefile").read_text().replace("Never --deep", "")
+    mk = [
+        ln
+        for ln in (chk.ROOT / "Makefile").read_text().splitlines()
+        if not ln.lstrip().lstrip("@").startswith("#")
+    ]
+    assert not [ln for ln in mk if "--deep" in ln]
 
 
 def test_main_reports_broken_golden_distinctly(tmp_path, capsys):
