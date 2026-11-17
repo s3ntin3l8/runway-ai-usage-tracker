@@ -45,6 +45,94 @@ def installed_browsers(
     }
 
 
+_SAFARI_STATE_LABELS = {
+    "full_disk_access_missing": "Full Disk Access needed",
+    "readable": "Readable",
+    "not_used": "Safari not used",
+}
+
+
+def _safari_probe_state(*, persist: bool = True) -> str:
+    if sys.platform != "darwin":
+        return "not_used"
+    from scripts.sidecar_pkg import safari_cookies
+
+    try:
+        return safari_cookies.probe_access(persist=persist)
+    except TypeError:
+        return safari_cookies.probe_access()
+
+
+def _sync_safari_state_from_disk(config: dict[str, Any], *, from_update: bool = False) -> None:
+    if sys.platform != "darwin":
+        return
+    import json
+
+    from scripts.sidecar_pkg import safari_cookies
+
+    try:
+        saved = json.loads(safari_cookies._sidecar_config_path().read_text(encoding="utf-8"))
+        if isinstance(saved, dict):
+            disk_last = saved.get("safari_fda_last_state")
+            disk_dismissed = saved.get("safari_fda_notice_dismissed_state")
+            mem_last = config.get("safari_fda_last_state")
+            mem_dismissed = config.get("safari_fda_notice_dismissed_state")
+            if isinstance(disk_last, str) and (
+                from_update or not isinstance(mem_last, str) or disk_dismissed == ""
+            ):
+                config["safari_fda_last_state"] = disk_last
+            if isinstance(disk_dismissed, str) and (
+                not isinstance(mem_dismissed, str)
+                or disk_dismissed == ""
+                or (from_update and disk_last == disk_dismissed)
+            ):
+                config["safari_fda_notice_dismissed_state"] = disk_dismissed
+    except (OSError, ValueError):
+        # Missing or malformed on-disk config falls back to the in-memory config dict.
+        pass
+
+
+def _safari_report(config: dict[str, Any]) -> dict[str, Any]:
+    _sync_safari_state_from_disk(config)
+    config.pop("safari_fda_notice_rearmed", None)
+    probe_state = _safari_probe_state(persist=False)
+    dismissed = config.get("safari_fda_notice_dismissed_state")
+    last_state = config.get("safari_fda_last_state")
+    if (
+        sys.platform == "darwin"
+        and dismissed == "full_disk_access_missing"
+        and (
+            probe_state != "full_disk_access_missing"
+            or (isinstance(last_state, str) and last_state != "full_disk_access_missing")
+        )
+    ):
+        dismissed = ""
+        config["safari_fda_notice_dismissed_state"] = ""
+    notice = (
+        sys.platform == "darwin"
+        and probe_state == "full_disk_access_missing"
+        and (
+            dismissed != probe_state or (isinstance(last_state, str) and last_state != probe_state)
+        )
+    )
+    config["safari_fda_last_state"] = probe_state
+    if sys.platform == "darwin":
+        from scripts.sidecar_pkg import safari_cookies
+
+        safari_cookies._persist_last_state(
+            probe_state,
+            config,
+            dismissed=dismissed if isinstance(dismissed, str) else None,
+        )
+    return {
+        "id": "safari",
+        "label": "Safari",
+        "probe_state": probe_state,
+        "state": _SAFARI_STATE_LABELS[probe_state],
+        "notice": notice,
+    }
+
+
 def report(config: dict[str, Any]) -> dict[str, Any]:
     from scripts.sidecar_pkg import source_protocol
     from scripts.sidecar_pkg.source_consent import POLICY
@@ -120,6 +208,7 @@ def report(config: dict[str, Any]) -> dict[str, Any]:
         "sources": sources,
         "installed": inst,
         "browsers": selected,
+        "safari": _safari_report(config),
         "run": SETUP.run_report(),
         "forwarding_supported": bool(client and client.accepted),
         "re_pair_required": bool(
@@ -158,8 +247,10 @@ def update(config: dict[str, Any], command: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("Invalid source action")
     source_id, action = command.get("source_id"), command.get("action")
     updated = dict(config)
+    _sync_safari_state_from_disk(updated, from_update=True)
+    updated.pop("safari_fda_notice_rearmed", None)
     if action == "enable_all":
-        selected = browsers(config)
+        selected = browsers(updated)
         for source_id, descriptor in catalog().items():
             if descriptor.browser_key is None or selected[descriptor.browser_key]:
                 updated = SourcePolicy.change(updated, source_id, read=True)
@@ -191,7 +282,7 @@ def update(config: dict[str, Any], command: dict[str, Any]) -> dict[str, Any]:
             or any(key not in BROWSERS or type(flag) is not bool for key, flag in value.items())
         ):
             raise ValueError("Invalid browser selection")
-        prior = config.get("keychain_browsers")
+        prior = updated.get("keychain_browsers")
         updated["keychain_browsers"] = {**(prior if isinstance(prior, dict) else {}), **value}
         # A browser that is no longer read must not keep its sources on.
         for source_id, descriptor in catalog().items():
@@ -206,22 +297,31 @@ def update(config: dict[str, Any], command: dict[str, Any]) -> dict[str, Any]:
     if action == "renewal":
         if type(command.get("value")) is not bool:
             raise ValueError("Renewal permission must be boolean")
-        if command["value"] and SourcePolicy(config).ticket("anthropic.claude-code") is None:
+        if command["value"] and SourcePolicy(updated).ticket("anthropic.claude-code") is None:
             raise ValueError("Enable Claude Code Keychain reading first")
         updated["claude_keychain_renewal"] = command["value"]
+        return updated
+    if action == "dismiss_safari_notice":
+        probe_state = _safari_probe_state(persist=False)
+        updated["safari_fda_notice_dismissed_state"] = probe_state
+        updated["safari_fda_last_state"] = probe_state
+        if sys.platform == "darwin":
+            from scripts.sidecar_pkg import safari_cookies
+
+            safari_cookies._persist_last_state(probe_state, updated, dismissed=probe_state)
         return updated
     if not isinstance(source_id, str) or source_id not in catalog():
         raise ValueError("Unknown scraper")
     if action in {"enable", "disable"}:
-        updated = SourcePolicy.change(config, source_id, read=action == "enable")
+        updated = SourcePolicy.change(updated, source_id, read=action == "enable")
         if action == "disable":
-            pending = config.get("keychain_withdrawals", {})
+            pending = updated.get("keychain_withdrawals", {})
             pending = dict(pending) if isinstance(pending, dict) else {}
             pending[source_id] = updated["keychain_sources"][source_id]["generation"]
             updated["keychain_withdrawals"] = pending
         return updated
     if action == "dismiss":
-        dismissed = config.get("keychain_announcements", {})
+        dismissed = updated.get("keychain_announcements", {})
         dismissed = dict(dismissed) if isinstance(dismissed, dict) else {}
         dismissed[source_id] = catalog()[source_id].revision
         updated["keychain_announcements"] = dismissed

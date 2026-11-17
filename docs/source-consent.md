@@ -98,6 +98,14 @@ from the server takes effect there immediately.
 A local checkbox does not retroactively revoke a credential the server already
 holds; revoke it from Fleet.
 
+## macOS permissions
+
+macOS splits credential access across two OS permissions:
+
+- **Keychain ("Always Allow")**: Chrome, Edge, Chromium, Claude Code, Claude Desktop, Antigravity and GitHub CLI read secrets from the macOS Keychain. Enable them in **Keychain scrapers**, click **Authorize**, and choose **Always Allow** on the macOS prompt so background collection does not re-prompt.
+- **Full Disk Access (Safari)**: Safari stores session cookies in protected locations (`~/Library/Cookies/Cookies.binarycookies` and `~/Library/Containers/com.apple.Safari/...`) without using the Keychain. Reading them requires **Full Disk Access** for Runway Sidecar in **System Settings → Privacy & Security → Full Disk Access**. The **Web sessions** section shows Safari's state (**Full Disk Access needed**, **Readable**, or **Safari not used**) and links directly to that pane.
+- **Browsers**: The **Read from** selector controls which Keychain-backed browsers (Chrome, Edge, Chromium) are read. Firefox and Safari do not use the Keychain.
+
 ## Windows Credential Manager
 
 The Windows Credential Manager entries for GitHub (`git:https://github.com`)

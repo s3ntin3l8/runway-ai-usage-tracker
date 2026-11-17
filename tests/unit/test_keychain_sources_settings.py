@@ -501,7 +501,7 @@ const ctx = {
     createElement: (tag) => makeEl(tag),
     createTextNode: (t) => ({ textContent: String(t), children: [] }),
   },
-  window: {},
+  window: { addEventListener() {} },
   fetch: async () => ({ ok: true, json: async () => ({}) }),
   setTimeout: () => 0, clearTimeout: () => {}, setInterval: () => 0,
   URLSearchParams, Map, Set, Math, JSON,
@@ -539,3 +539,172 @@ console.log(JSON.stringify({ chips, summary, authText: authBtn ? collectText(aut
         f"Authorize {len(expected_live)} enabled · {expected_items} Keychain item"
         in rendered["authText"]
     )
+
+
+def test_safari_row_and_first_open_notice_lifecycle(settings, monkeypatch):
+    import sys
+
+    from scripts.sidecar_pkg import safari_cookies
+
+    server, config = settings
+    state = ["full_disk_access_missing"]
+    monkeypatch.setattr(sys, "platform", "darwin")
+    safari_cookies._sidecar_config_path().unlink(missing_ok=True)
+    monkeypatch.setattr(safari_cookies, "_evaluate_access", lambda home=None: state[0])
+
+    # First open with missing Full Disk Access shows the notice and the Safari row.
+    first = _report(server)["safari"]
+    assert first == {
+        "id": "safari",
+        "label": "Safari",
+        "probe_state": "full_disk_access_missing",
+        "state": "Full Disk Access needed",
+        "notice": True,
+    }
+
+    # Dismissing remembers the state in config and hides the notice while unchanged.
+    assert send(server, "POST", "/sources", {"action": "dismiss_safari_notice"})[0] == 200
+    assert config["safari_fda_notice_dismissed_state"] == "full_disk_access_missing"
+    assert config["safari_fda_last_state"] == "full_disk_access_missing"
+    assert _report(server)["safari"]["notice"] is False
+
+    # Transitioning to readable updates the row and keeps the notice hidden.
+    state[0] = "readable"
+    readable = _report(server)["safari"]
+    assert readable["state"] == "Readable"
+    assert readable["notice"] is False
+
+    # Transitioning back to missing re-shows the notice.
+    state[0] = "full_disk_access_missing"
+    assert _report(server)["safari"]["notice"] is True
+
+    # Dismiss again, then flip missing -> readable -> missing via background probe_access
+    # without opening /sources in between: the persisted state re-arms the notice.
+    assert send(server, "POST", "/sources", {"action": "dismiss_safari_notice"})[0] == 200
+    assert _report(server)["safari"]["notice"] is False
+    state[0] = "readable"
+    assert safari_cookies.probe_access() == "readable"
+    state[0] = "full_disk_access_missing"
+    assert safari_cookies.probe_access() == "full_disk_access_missing"
+    assert _report(server)["safari"]["notice"] is True
+
+    # Also test when the caller's in-memory config stays stale while probe_access
+    # flips missing -> readable -> missing on disk, and when another /sources POST
+    # or watch_config reload happens in between.
+    assert send(server, "POST", "/sources", {"action": "dismiss_safari_notice"})[0] == 200
+    stale_snapshot = dict(config)
+    state[0] = "readable"
+    assert safari_cookies.probe_access() == "readable"
+    # Even if in-memory config is stale when a /sources POST happens between grant and loss,
+    # update() syncs the on-disk Safari state before saving so the transition is not erased.
+    config.clear()
+    config.update(stale_snapshot)
+    assert (
+        send(server, "POST", "/sources", {"action": "enable", "source_id": "anthropic.chrome"})[0]
+        == 200
+    )
+    assert config["safari_fda_last_state"] == "readable"
+    assert config["safari_fda_notice_dismissed_state"] == ""
+    state[0] = "full_disk_access_missing"
+    assert safari_cookies.probe_access() == "full_disk_access_missing"
+    assert _report(server)["safari"]["notice"] is True
+
+    # Dismissing again after a disk reload stays dismissed on subsequent GET polls,
+    # even if a legacy safari_fda_notice_rearmed flag was present in live/disk config.
+    loaded_from_disk = json.loads(safari_cookies._sidecar_config_path().read_text(encoding="utf-8"))
+    loaded_from_disk["safari_fda_notice_rearmed"] = True
+    safari_cookies._sidecar_config_path().write_text(json.dumps(loaded_from_disk), encoding="utf-8")
+    config.clear()
+    config.update(loaded_from_disk)
+    assert _report(server)["safari"]["notice"] is True
+    assert send(server, "POST", "/sources", {"action": "dismiss_safari_notice"})[0] == 200
+    assert "safari_fda_notice_rearmed" not in config
+    assert "safari_fda_notice_rearmed" not in json.loads(
+        safari_cookies._sidecar_config_path().read_text(encoding="utf-8")
+    )
+    assert _report(server)["safari"]["notice"] is False
+    assert _report(server)["safari"]["notice"] is False
+
+    # Not-used state maps cleanly too.
+    state[0] = "not_used"
+    not_used = _report(server)["safari"]
+    assert not_used["state"] == "Safari not used"
+    assert not_used["notice"] is False
+
+
+def test_safari_notice_rearms_when_grant_observed_only_via_get_sources(settings, monkeypatch):
+    import sys
+
+    from scripts.sidecar_pkg import safari_cookies
+    from sidecar_app.config import save_local_config
+
+    server, config = settings
+    state = ["full_disk_access_missing"]
+    monkeypatch.setattr(sys, "platform", "darwin")
+    config_path = safari_cookies._sidecar_config_path()
+    config_path.unlink(missing_ok=True)
+    monkeypatch.setattr(safari_cookies, "_evaluate_access", lambda home=None: state[0])
+
+    def _save_config(value: dict) -> None:
+        config.update(value)
+        save_local_config(config_path, config)
+
+    monkeypatch.setattr(server, "save_config", _save_config)
+
+    # 1. Dismiss while Full Disk Access is missing.
+    assert _report(server)["safari"]["notice"] is True
+    assert send(server, "POST", "/sources", {"action": "dismiss_safari_notice"})[0] == 200
+    assert _report(server)["safari"]["notice"] is False
+
+    # 2. Grant observed only via GET /sources persists re-arm state to disk,
+    #    so an intervening POST /sources does not erase it before access is lost.
+    state[0] = "readable"
+    readable = _report(server)["safari"]
+    assert readable["state"] == "Readable"
+    assert readable["notice"] is False
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+    assert saved["safari_fda_last_state"] == "readable"
+    assert saved["safari_fda_notice_dismissed_state"] == ""
+
+    assert (
+        send(server, "POST", "/sources", {"action": "enable", "source_id": "anthropic.chrome"})[0]
+        == 200
+    )
+    after_post = json.loads(config_path.read_text(encoding="utf-8"))
+    assert after_post["safari_fda_last_state"] == "readable"
+    assert after_post["safari_fda_notice_dismissed_state"] == ""
+    state[0] = "full_disk_access_missing"
+    assert _report(server)["safari"]["notice"] is True
+
+    # 3. Repeat with a simulated sidecar restart (reload config from disk) between grant and loss.
+    assert send(server, "POST", "/sources", {"action": "dismiss_safari_notice"})[0] == 200
+    assert _report(server)["safari"]["notice"] is False
+    state[0] = "readable"
+    assert _report(server)["safari"]["state"] == "Readable"
+
+    reloaded = json.loads(config_path.read_text(encoding="utf-8"))
+    config.clear()
+    config.update(reloaded)
+
+    state[0] = "full_disk_access_missing"
+    assert _report(server)["safari"]["notice"] is True
+
+
+def test_full_disk_access_action_and_page_markers(settings, monkeypatch):
+    server, _config = settings
+    called = []
+    monkeypatch.setattr(server, "open_full_disk_access", lambda: called.append(True))
+
+    assert send(server, "POST", "/action/full_disk_access", origin=False)[0] == 403
+    assert send(server, "POST", "/action/full_disk_access")[0] == 200
+    assert called == [True]
+
+    html = send(server, "GET", "/")[1].decode()
+    for marker in (
+        "safari-row",
+        "safari-fda-notice",
+        "dismiss_safari_notice",
+        "/action/full_disk_access",
+        "window.addEventListener('focus'",
+    ):
+        assert marker in html

@@ -452,8 +452,9 @@ class BrowserCookieExtractor:
 
         # 4. Safari (legacy, sandbox container and separate profile stores).
         if system == "Darwin":
-            from scripts.sidecar_pkg.safari_cookies import stores
+            from scripts.sidecar_pkg.safari_cookies import probe_access, stores
 
+            probe_access(home)
             results.extend(stores(home))
 
         return results
