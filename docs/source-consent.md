@@ -44,6 +44,18 @@ logged. Turning a source off or changing consent cancels any waiting helper.
 A denied or timed-out Keychain prompt suppresses further access to that item
 until a successful explicit setup.
 
+On macOS, Keychain reads use the sidecar's native `kc_helper`. In the macOS
+prompt, **Always Allow** grants that helper continuing access to the selected
+item; **Allow** grants access only for that request and may prompt again next
+time. **Deny** grants no access. These OS choices are separate from each
+scraper's local read consent.
+
+An **Always Allow** grant is intended to survive sidecar updates that preserve
+the helper's bytes and signing identity. Rebuilding, changing or re-signing the
+helper can require a new grant; an existing grant to the previous Python
+helper does not transfer automatically. Release packaging must preserve the
+native helper before update persistence can be claimed (tracked in #1346).
+
 ## States
 
 Each source shows one of: **Off**, **Setup required**, **Connecting**,

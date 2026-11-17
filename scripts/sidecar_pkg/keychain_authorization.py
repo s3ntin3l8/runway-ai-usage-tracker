@@ -10,13 +10,29 @@ from pathlib import Path
 from typing import Any
 
 from scripts.sidecar_pkg.claude_code_keychain import account_name, service_candidates
+from scripts.sidecar_pkg.keychain_client import KeychainClient, native_helper_path
 from scripts.sidecar_pkg.keychain_protocol import KeychainError, keychain_reason
-from scripts.sidecar_pkg.macos_keychain_store import _NativeAPI
 
 AUTHORIZATION_TIMEOUT = 60
 
 
-def authorize_once(api: _NativeAPI, services: list[str], account: str | None) -> None:
+class HelperReadAPI:
+    """Foreground reads use the same signed principal as background reads."""
+
+    def __init__(self) -> None:
+        self.client = KeychainClient(command=[str(native_helper_path()), "--interactive"])
+
+    def call(self, operation: str, query: dict[str, Any], values: dict[str, Any]) -> Any:
+        return self.client.call(operation, query, values, group="authorization")
+
+    def authorize_read(self, reference: bytes) -> Any:
+        return self.call("copy", {"persistent": reference}, {})
+
+    def close(self) -> None:
+        self.client.close()
+
+
+def authorize_once(api: Any, services: list[str], account: str | None) -> None:
     """Select without UI, then allow consent for exactly one existing item read."""
     selected: list[tuple[str, dict[str, Any]]] = []
     for service in services:
@@ -80,7 +96,11 @@ def authorization_command(argv: list[str]) -> bool:
     try:
         directory = os.getenv("CLAUDE_CONFIG_DIR")
         services = service_candidates([Path(directory).expanduser()] if directory else [])
-        authorize_once(_NativeAPI(), services, account_name())
+        api = HelperReadAPI()
+        try:
+            authorize_once(api, services, account_name())
+        finally:
+            api.close()
     except KeychainError as exc:
         print(f"Claude Code Keychain: {keychain_reason(exc)}", file=sys.stderr)
         raise SystemExit(1) from None

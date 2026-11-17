@@ -895,6 +895,6 @@ def forbid_native_keychain_access(monkeypatch):
 
     monkeypatch.setattr(subprocess, "run", guarded_run)
     monkeypatch.setattr(_WorkerAPI, "call", forbidden)
-    monkeypatch.setattr(keychain_authorization, "_NativeAPI", forbidden)
+    monkeypatch.setattr(keychain_authorization, "HelperReadAPI", forbidden)
     yield
     keychain_client.close_keychain_client()
