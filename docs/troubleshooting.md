@@ -88,7 +88,7 @@ blocker.
 
 ### What works
 
-- **macOS: Safari.** Its cookie store is unencrypted; sign in there. Safari fallback covers Claude, OpenCode, ChatGPT, Kimi and Ollama.
+- **macOS: Safari.** Its cookie store is unencrypted; sign in there, and grant Runway Sidecar **Full Disk Access** in **System Settings → Privacy & Security → Full Disk Access** (see [macOS permissions](source-consent.md#macos-permissions)). Safari fallback covers Claude, OpenCode, ChatGPT, Kimi and Ollama.
 - **Windows and Linux: Firefox.** Its cookie database is unencrypted and stays readable while the browser runs; no restart or policy change. Edge has the same restriction as Chrome.
 - **Environment variables or the Settings paste.** These work in any browser and in Docker. Copy the cookie value from DevTools → Application → Cookies for the provider's domain.
 

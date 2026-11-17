@@ -544,13 +544,13 @@ console.log(JSON.stringify({ chips, summary, authText: authBtn ? collectText(aut
 def test_safari_row_and_first_open_notice_lifecycle(settings, monkeypatch):
     import sys
 
-    from scripts.sidecar_pkg import safari_cookies, source_settings
+    from scripts.sidecar_pkg import safari_cookies
 
     server, config = settings
     state = ["full_disk_access_missing"]
     monkeypatch.setattr(sys, "platform", "darwin")
-    monkeypatch.setitem(source_settings._safari_notice_state, "left_dismissed", False)
-    monkeypatch.setattr(safari_cookies, "probe_access", lambda home=None: state[0])
+    safari_cookies._sidecar_config_path().unlink(missing_ok=True)
+    monkeypatch.setattr(safari_cookies, "_evaluate_access", lambda home=None: state[0])
 
     # First open with missing Full Disk Access shows the notice and the Safari row.
     first = _report(server)["safari"]
@@ -565,6 +565,7 @@ def test_safari_row_and_first_open_notice_lifecycle(settings, monkeypatch):
     # Dismissing remembers the state in config and hides the notice while unchanged.
     assert send(server, "POST", "/sources", {"action": "dismiss_safari_notice"})[0] == 200
     assert config["safari_fda_notice_dismissed_state"] == "full_disk_access_missing"
+    assert config["safari_fda_last_state"] == "full_disk_access_missing"
     assert _report(server)["safari"]["notice"] is False
 
     # Transitioning to readable updates the row and keeps the notice hidden.
@@ -575,6 +576,28 @@ def test_safari_row_and_first_open_notice_lifecycle(settings, monkeypatch):
 
     # Transitioning back to missing re-shows the notice.
     state[0] = "full_disk_access_missing"
+    assert _report(server)["safari"]["notice"] is True
+
+    # Dismiss again, then flip missing -> readable -> missing via background probe_access
+    # without opening /sources in between: the persisted state re-arms the notice.
+    assert send(server, "POST", "/sources", {"action": "dismiss_safari_notice"})[0] == 200
+    assert _report(server)["safari"]["notice"] is False
+    state[0] = "readable"
+    assert safari_cookies.probe_access() == "readable"
+    state[0] = "full_disk_access_missing"
+    assert safari_cookies.probe_access() == "full_disk_access_missing"
+    assert _report(server)["safari"]["notice"] is True
+
+    # Also test when the caller's in-memory config stays stale while probe_access
+    # flips missing -> readable -> missing on disk.
+    assert send(server, "POST", "/sources", {"action": "dismiss_safari_notice"})[0] == 200
+    stale_snapshot = dict(config)
+    state[0] = "readable"
+    assert safari_cookies.probe_access() == "readable"
+    state[0] = "full_disk_access_missing"
+    assert safari_cookies.probe_access() == "full_disk_access_missing"
+    config.clear()
+    config.update(stale_snapshot)
     assert _report(server)["safari"]["notice"] is True
 
     # Not-used state maps cleanly too.

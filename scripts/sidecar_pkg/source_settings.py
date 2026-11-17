@@ -50,27 +50,60 @@ _SAFARI_STATE_LABELS = {
     "readable": "Readable",
     "not_used": "Safari not used",
 }
-_safari_notice_state: dict[str, bool] = {"left_dismissed": False}
 
 
-def _safari_probe_state() -> str:
+def _safari_probe_state(*, persist: bool = True) -> str:
     if sys.platform != "darwin":
         return "not_used"
-    from scripts.sidecar_pkg.safari_cookies import probe_access
+    from scripts.sidecar_pkg import safari_cookies
 
-    return probe_access()
+    try:
+        return safari_cookies.probe_access(persist=persist)
+    except TypeError:
+        return safari_cookies.probe_access()
 
 
 def _safari_report(config: dict[str, Any]) -> dict[str, Any]:
-    probe_state = _safari_probe_state()
+    probe_state = _safari_probe_state(persist=False)
     dismissed = config.get("safari_fda_notice_dismissed_state")
-    if isinstance(dismissed, str) and probe_state != dismissed:
-        _safari_notice_state["left_dismissed"] = True
+    last_state = config.get("safari_fda_last_state")
+    rearmed = False
+    if sys.platform == "darwin":
+        from scripts.sidecar_pkg import safari_cookies
+
+        try:
+            import json
+
+            saved = json.loads(safari_cookies._sidecar_config_path().read_text(encoding="utf-8"))
+            if isinstance(saved, dict):
+                if isinstance(saved.get("safari_fda_last_state"), str):
+                    last_state = saved["safari_fda_last_state"]
+                rearmed = saved.get("safari_fda_notice_rearmed") is True
+                if not isinstance(dismissed, str) and isinstance(
+                    saved.get("safari_fda_notice_dismissed_state"), str
+                ):
+                    dismissed = saved["safari_fda_notice_dismissed_state"]
+        except (OSError, ValueError):
+            pass
     notice = (
         sys.platform == "darwin"
         and probe_state == "full_disk_access_missing"
-        and (dismissed != probe_state or _safari_notice_state["left_dismissed"])
+        and (
+            dismissed != probe_state
+            or (isinstance(last_state, str) and last_state != probe_state)
+            or rearmed
+        )
     )
+    if sys.platform == "darwin":
+        from scripts.sidecar_pkg import safari_cookies
+
+        if notice and dismissed == probe_state:
+            config.pop("safari_fda_notice_dismissed_state", None)
+            safari_cookies._persist_last_state(
+                probe_state, config, dismissed="", preserve_rearmed=True
+            )
+        else:
+            safari_cookies._persist_last_state(probe_state, config)
     return {
         "id": "safari",
         "label": "Safari",
@@ -247,8 +280,13 @@ def update(config: dict[str, Any], command: dict[str, Any]) -> dict[str, Any]:
         updated["claude_keychain_renewal"] = command["value"]
         return updated
     if action == "dismiss_safari_notice":
-        updated["safari_fda_notice_dismissed_state"] = _safari_probe_state()
-        _safari_notice_state["left_dismissed"] = False
+        probe_state = _safari_probe_state(persist=False)
+        updated["safari_fda_notice_dismissed_state"] = probe_state
+        updated["safari_fda_last_state"] = probe_state
+        if sys.platform == "darwin":
+            from scripts.sidecar_pkg import safari_cookies
+
+            safari_cookies._persist_last_state(probe_state, dismissed=probe_state)
         return updated
     if not isinstance(source_id, str) or source_id not in catalog():
         raise ValueError("Unknown scraper")

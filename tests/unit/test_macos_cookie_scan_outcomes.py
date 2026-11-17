@@ -488,3 +488,46 @@ def test_safari_probe_access_classifies_eperm_enoent_and_readable(
     with caplog.at_level(logging.WARNING):
         assert safari_cookies.probe_access(tmp_path) == "full_disk_access_missing"
     assert len([r for r in caplog.records if r.levelno == logging.WARNING]) == 2
+
+
+@pytest.mark.parametrize("hook_target", ["iterdir", "is_dir"])
+def test_safari_probe_access_directory_enumeration_eperm(
+    tmp_path, monkeypatch, caplog, hook_target
+):
+    import errno
+    import logging
+    from pathlib import Path
+
+    from scripts.sidecar_pkg import safari_cookies
+
+    monkeypatch.setitem(safari_cookies._probe_log_state, "last", None)
+    root = tmp_path / "Library/Containers/com.apple.Safari/Data/Library/WebKit/WebsiteDataStore"
+    profile = root / "profile-one"
+    profile.mkdir(parents=True, exist_ok=True)
+
+    if hook_target == "iterdir":
+        real_iterdir = Path.iterdir
+
+        def deny_iterdir(self):
+            if self == root:
+                raise PermissionError(errno.EPERM, "denied")
+            return real_iterdir(self)
+
+        monkeypatch.setattr(Path, "iterdir", deny_iterdir)
+    else:
+        real_is_dir = Path.is_dir
+
+        def deny_is_dir(self):
+            if self == profile:
+                raise PermissionError(errno.EPERM, "denied")
+            return real_is_dir(self)
+
+        monkeypatch.setattr(Path, "is_dir", deny_is_dir)
+
+    with caplog.at_level(logging.WARNING):
+        assert safari_cookies.probe_access(tmp_path) == "full_disk_access_missing"
+        assert safari_cookies.probe_access(tmp_path) == "full_disk_access_missing"
+
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "Full Disk Access" in warnings[0].message

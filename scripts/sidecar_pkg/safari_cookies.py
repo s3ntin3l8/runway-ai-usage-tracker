@@ -1,9 +1,13 @@
 """Read-only Safari binary-cookie discovery and bounded structural decoding."""
 
 import errno
+import json
 import logging
 import math
+import os
+import platform
 import struct
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -21,12 +25,114 @@ _logger = logging.getLogger(__name__)
 _probe_log_state: dict[str, str | None] = {"last": None}
 
 
+def _sidecar_config_path() -> Path:
+    """Return the sidecar config.json path without importing scripts.sidecar."""
+    override = os.getenv("RUNWAY_CONFIG_DIR")
+    if override:
+        base = Path(override) / "sidecar"
+    elif platform.system() == "Windows":
+        app_data = os.getenv("APPDATA")
+        base = (
+            Path(app_data) / "runway" / "sidecar"
+            if app_data
+            else Path.home() / "AppData" / "Roaming" / "runway" / "sidecar"
+        )
+    else:
+        base = Path.home() / ".config" / "runway" / "sidecar"
+    return base / "config.json"
+
+
+def _persist_last_state(
+    state: str,
+    config: dict[str, Any] | None = None,
+    *,
+    dismissed: str | None = None,
+    preserve_rearmed: bool = False,
+) -> None:
+    """Persist the latest Safari access state in config when it changes."""
+    path = _sidecar_config_path()
+    try:
+        current: dict[str, Any] = {}
+        if path.is_file():
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                current = loaded
+        prev_state = current.get("safari_fda_last_state")
+        if not isinstance(prev_state, str) and config is not None:
+            cfg_last = config.get("safari_fda_last_state")
+            if isinstance(cfg_last, str):
+                prev_state = cfg_last
+        cur_dismissed = (
+            config.get("safari_fda_notice_dismissed_state") if config is not None else None
+        )
+        if not isinstance(cur_dismissed, str):
+            disk_dismissed = current.get("safari_fda_notice_dismissed_state")
+            if isinstance(disk_dismissed, str):
+                cur_dismissed = disk_dismissed
+        else:
+            current["safari_fda_notice_dismissed_state"] = cur_dismissed
+        changed = prev_state != state or current.get("safari_fda_last_state") != state
+        current["safari_fda_last_state"] = state
+        if dismissed is not None:
+            if current.get("safari_fda_notice_dismissed_state") != dismissed:
+                current["safari_fda_notice_dismissed_state"] = dismissed
+                changed = True
+            if not preserve_rearmed and current.pop("safari_fda_notice_rearmed", None) is not None:
+                changed = True
+        elif isinstance(prev_state, str) and prev_state != state:
+            if cur_dismissed == "full_disk_access_missing":
+                current["safari_fda_notice_rearmed"] = True
+            if cur_dismissed == "full_disk_access_missing" and state != "full_disk_access_missing":
+                current["safari_fda_notice_dismissed_state"] = ""
+            changed = True
+        if config is not None:
+            config["safari_fda_last_state"] = state
+            if isinstance(current.get("safari_fda_notice_dismissed_state"), str):
+                config["safari_fda_notice_dismissed_state"] = current[
+                    "safari_fda_notice_dismissed_state"
+                ]
+        if not changed:
+            return
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        fd, temporary = tempfile.mkstemp(prefix=".config-", dir=path.parent)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as output:
+                json.dump(current, output, indent=2)
+                output.flush()
+                os.fsync(output.fileno())
+            if os.name == "posix":
+                os.chmod(temporary, 0o600)
+            os.replace(temporary, path)
+        finally:
+            try:
+                os.unlink(temporary)
+            except FileNotFoundError:
+                pass
+    except (OSError, ValueError):
+        pass
+
+
 def _is_access_denied(exc: OSError) -> bool:
     return isinstance(exc, PermissionError) or exc.errno in _ACCESS_DENIED_ERRNOS
 
 
-def probe_access(home: Path | None = None) -> str:
+def probe_access(
+    home: Path | None = None,
+    *,
+    config: dict[str, Any] | None = None,
+    persist: bool = True,
+) -> str:
     """Classify Safari cookie access as full_disk_access_missing, readable, or not_used."""
+    state = _evaluate_access(home)
+    if state == "full_disk_access_missing" and _probe_log_state.get("last") != state:
+        _logger.warning(_FULL_DISK_ACCESS_WARNING)
+    _probe_log_state["last"] = state
+    if persist:
+        _persist_last_state(state, config)
+    return state
+
+
+def _evaluate_access(home: Path | None = None) -> str:
     base = home if home is not None else Path.home()
     container = base / "Library/Containers/com.apple.Safari/Data/Library"
     paths = [
@@ -67,9 +173,6 @@ def probe_access(home: Path | None = None) -> str:
                     break
         if state is None:
             state = "readable" if has_readable else "not_used"
-    if state == "full_disk_access_missing" and _probe_log_state.get("last") != state:
-        _logger.warning(_FULL_DISK_ACCESS_WARNING)
-    _probe_log_state["last"] = state
     return state
 
 
