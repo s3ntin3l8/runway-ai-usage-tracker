@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0-beta.18](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v3.0.0-beta.17...v3.0.0-beta.18) (2026-11-17)
+
+
+### Features
+
+* **pricing:** add Fable 5.2 rates ([#1314](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1314)) ([a223293](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/a2232939384e9504cac2d53b7ff400b41824838b))
+* **sidecar:** tell the user when Safari needs Full Disk Access, and ask on first open ([c1e75b7](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/c1e75b7fbbe3323b8d70b4591362493db5932c2d))
+
+
+### Bug Fixes
+
+* **accumulator:** drop default-account error cards nothing has rewritten for an hour ([#1322](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1322)) ([910833b](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/910833b30a5289becacdcc00b97add071e6e2f2f))
+* **claude:** keep the final streamed usage of a message when extracting output tokens ([c6882ee](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/c6882eec33d1f595548ea0adb962e2c723eab02e))
+* **collectors:** keep the current collectors when the provider config load fails ([#1321](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1321)) ([ef9468d](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/ef9468d10a05fed6d79c925cd71093fd8c338ad7))
+* **data-health:** add a check that retires stale default cards next to a live real one ([#1323](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1323)) ([c68ed0a](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/c68ed0a4f7a4e44fe0588c5bf12b8674bf688aa5))
+* **demo:** isolate random streams by seed section ([28e93b4](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/28e93b48e4d8b624f950f4e37196a6aaebe3bbda))
+* **sidecar:** don't offer Keychain scrapers for browsers that are not installed ([51ba69d](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/51ba69d798a6b9e07ca5f4177eb7deb8bf95bae3))
+* **sidecar:** isolate Keychain reads in a stable native helper ([da3e7bd](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/da3e7bdc9618cc0d40524e822ca74d08fb766e8d))
+* **sidecar:** keep LF line endings when a renewal rewrites a login on Windows ([#1313](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1313)) ([92b5d86](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/92b5d86e9e02d8101221e2e572f1e25302031e41))
+* **sidecar:** treat MiniMax Code os-keyring logins as legacy, not unsupported ([#1315](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1315)) ([ebb2fda](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/ebb2fdaf11d75e2101b627b2da516e06e65e02f4))
+
 ## [3.0.0-beta.17](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v3.0.0-beta.16...v3.0.0-beta.17) (2026-11-11)
 
 
