@@ -1,5 +1,7 @@
 """Read-only Safari binary-cookie discovery and bounded structural decoding."""
 
+import errno
+import logging
 import math
 import struct
 import time
@@ -10,6 +12,66 @@ from scripts.sidecar_pkg.cookie_scan import StoreScan
 
 _APPLE_EPOCH = 978307200
 _MAX_STORE_BYTES = 64 * 1024 * 1024
+_ACCESS_DENIED_ERRNOS = frozenset({errno.EPERM, errno.EACCES})
+_FULL_DISK_ACCESS_WARNING = (
+    "Safari cookies cannot be read: Full Disk Access is needed for Runway Sidecar "
+    "(System Settings -> Privacy & Security -> Full Disk Access)"
+)
+_logger = logging.getLogger(__name__)
+_last_logged_state: str | None = None
+
+
+def _is_access_denied(exc: OSError) -> bool:
+    return isinstance(exc, PermissionError) or exc.errno in _ACCESS_DENIED_ERRNOS
+
+
+def probe_access(home: Path | None = None) -> str:
+    """Classify Safari cookie access as full_disk_access_missing, readable, or not_used."""
+    global _last_logged_state
+    base = home if home is not None else Path.home()
+    container = base / "Library/Containers/com.apple.Safari/Data/Library"
+    paths = [
+        base / "Library/Cookies/Cookies.binarycookies",
+        container / "Cookies/Cookies.binarycookies",
+    ]
+    state: str | None = None
+    for root in (container / "WebKit/WebsiteDataStore", base / "Library/WebKit/WebsiteDataStore"):
+        try:
+            for profile in sorted(root.iterdir()):
+                try:
+                    if profile.is_dir():
+                        paths.append(profile / "Cookies/Cookies.binarycookies")
+                except OSError as exc:
+                    if _is_access_denied(exc):
+                        state = "full_disk_access_missing"
+                        break
+            if state is not None:
+                break
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            if _is_access_denied(exc):
+                state = "full_disk_access_missing"
+                break
+    if state is None:
+        has_readable = False
+        for path in paths:
+            try:
+                with path.open("rb") as stream:
+                    stream.read(1)
+                has_readable = True
+            except FileNotFoundError:
+                continue
+            except OSError as exc:
+                if _is_access_denied(exc):
+                    state = "full_disk_access_missing"
+                    break
+        if state is None:
+            state = "readable" if has_readable else "not_used"
+    if state == "full_disk_access_missing" and _last_logged_state != state:
+        _logger.warning(_FULL_DISK_ACCESS_WARNING)
+    _last_logged_state = state
+    return state
 
 
 def stores(home: Path) -> list[dict[str, Any]]:

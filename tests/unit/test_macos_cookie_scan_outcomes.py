@@ -445,3 +445,46 @@ def test_legacy_desktop_cookie_path_reports_scan_outcome(tmp_path, monkeypatch, 
         )
     assert "macOS cookie scan summary: scans=1" in caplog.text
     assert "synthetic-session" not in caplog.text
+
+
+@pytest.mark.parametrize("denied_errno", [1, 13])  # EPERM, EACCES
+def test_safari_probe_access_classifies_eperm_enoent_and_readable(
+    tmp_path, monkeypatch, caplog, denied_errno
+):
+    import logging
+    from pathlib import Path
+
+    from scripts.sidecar_pkg import safari_cookies
+
+    monkeypatch.setattr(safari_cookies, "_last_logged_state", None)
+    assert safari_cookies.probe_access(tmp_path) == "not_used"
+
+    cookie_path = tmp_path / "Library/Cookies/Cookies.binarycookies"
+    cookie_path.parent.mkdir(parents=True, exist_ok=True)
+    cookie_path.write_bytes(b"cook\x00\x00\x00\x00")
+    assert safari_cookies.probe_access(tmp_path) == "readable"
+
+    real_open = Path.open
+
+    def deny_safari_open(self, *args, **kwargs):
+        if self == cookie_path:
+            raise OSError(denied_errno, "denied")
+        return real_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", deny_safari_open)
+    with caplog.at_level(logging.WARNING):
+        assert safari_cookies.probe_access(tmp_path) == "full_disk_access_missing"
+        # Repeated checks in the same state do not repeat the warning.
+        assert safari_cookies.probe_access(tmp_path) == "full_disk_access_missing"
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "Full Disk Access" in warnings[0].message
+    assert str(tmp_path) not in warnings[0].message
+
+    # Recovering and losing access again logs one new warning on the state change.
+    monkeypatch.setattr(Path, "open", real_open)
+    assert safari_cookies.probe_access(tmp_path) == "readable"
+    monkeypatch.setattr(Path, "open", deny_safari_open)
+    with caplog.at_level(logging.WARNING):
+        assert safari_cookies.probe_access(tmp_path) == "full_disk_access_missing"
+    assert len([r for r in caplog.records if r.levelno == logging.WARNING]) == 2

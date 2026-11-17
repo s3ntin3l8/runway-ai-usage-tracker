@@ -539,3 +539,66 @@ console.log(JSON.stringify({ chips, summary, authText: authBtn ? collectText(aut
         f"Authorize {len(expected_live)} enabled · {expected_items} Keychain item"
         in rendered["authText"]
     )
+
+
+def test_safari_row_and_first_open_notice_lifecycle(settings, monkeypatch):
+    import sys
+
+    from scripts.sidecar_pkg import safari_cookies, source_settings
+
+    server, config = settings
+    state = ["full_disk_access_missing"]
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(source_settings, "_safari_state_left_dismissed", False)
+    monkeypatch.setattr(safari_cookies, "probe_access", lambda home=None: state[0])
+
+    # First open with missing Full Disk Access shows the notice and the Safari row.
+    first = _report(server)["safari"]
+    assert first == {
+        "id": "safari",
+        "label": "Safari",
+        "probe_state": "full_disk_access_missing",
+        "state": "Full Disk Access needed",
+        "notice": True,
+    }
+
+    # Dismissing remembers the state in config and hides the notice while unchanged.
+    assert send(server, "POST", "/sources", {"action": "dismiss_safari_notice"})[0] == 200
+    assert config["safari_fda_notice_dismissed_state"] == "full_disk_access_missing"
+    assert _report(server)["safari"]["notice"] is False
+
+    # Transitioning to readable updates the row and keeps the notice hidden.
+    state[0] = "readable"
+    readable = _report(server)["safari"]
+    assert readable["state"] == "Readable"
+    assert readable["notice"] is False
+
+    # Transitioning back to missing re-shows the notice.
+    state[0] = "full_disk_access_missing"
+    assert _report(server)["safari"]["notice"] is True
+
+    # Not-used state maps cleanly too.
+    state[0] = "not_used"
+    not_used = _report(server)["safari"]
+    assert not_used["state"] == "Safari not used"
+    assert not_used["notice"] is False
+
+
+def test_full_disk_access_action_and_page_markers(settings, monkeypatch):
+    server, _config = settings
+    called = []
+    monkeypatch.setattr(server, "open_full_disk_access", lambda: called.append(True))
+
+    assert send(server, "POST", "/action/full_disk_access", origin=False)[0] == 403
+    assert send(server, "POST", "/action/full_disk_access")[0] == 200
+    assert called == [True]
+
+    html = send(server, "GET", "/")[1].decode()
+    for marker in (
+        "safari-row",
+        "safari-fda-notice",
+        "dismiss_safari_notice",
+        "/action/full_disk_access",
+        "window.addEventListener('focus'",
+    ):
+        assert marker in html

@@ -45,6 +45,42 @@ def installed_browsers(
     }
 
 
+_SAFARI_STATE_LABELS = {
+    "full_disk_access_missing": "Full Disk Access needed",
+    "readable": "Readable",
+    "not_used": "Safari not used",
+}
+_safari_state_left_dismissed = False
+
+
+def _safari_probe_state() -> str:
+    if sys.platform != "darwin":
+        return "not_used"
+    from scripts.sidecar_pkg.safari_cookies import probe_access
+
+    return probe_access()
+
+
+def _safari_report(config: dict[str, Any]) -> dict[str, Any]:
+    global _safari_state_left_dismissed
+    probe_state = _safari_probe_state()
+    dismissed = config.get("safari_fda_notice_dismissed_state")
+    if isinstance(dismissed, str) and probe_state != dismissed:
+        _safari_state_left_dismissed = True
+    notice = (
+        sys.platform == "darwin"
+        and probe_state == "full_disk_access_missing"
+        and (dismissed != probe_state or _safari_state_left_dismissed)
+    )
+    return {
+        "id": "safari",
+        "label": "Safari",
+        "probe_state": probe_state,
+        "state": _SAFARI_STATE_LABELS[probe_state],
+        "notice": notice,
+    }
+
+
 def report(config: dict[str, Any]) -> dict[str, Any]:
     from scripts.sidecar_pkg import source_protocol
     from scripts.sidecar_pkg.source_consent import POLICY
@@ -120,6 +156,7 @@ def report(config: dict[str, Any]) -> dict[str, Any]:
         "sources": sources,
         "installed": inst,
         "browsers": selected,
+        "safari": _safari_report(config),
         "run": SETUP.run_report(),
         "forwarding_supported": bool(client and client.accepted),
         "re_pair_required": bool(
@@ -209,6 +246,11 @@ def update(config: dict[str, Any], command: dict[str, Any]) -> dict[str, Any]:
         if command["value"] and SourcePolicy(config).ticket("anthropic.claude-code") is None:
             raise ValueError("Enable Claude Code Keychain reading first")
         updated["claude_keychain_renewal"] = command["value"]
+        return updated
+    if action == "dismiss_safari_notice":
+        global _safari_state_left_dismissed
+        updated["safari_fda_notice_dismissed_state"] = _safari_probe_state()
+        _safari_state_left_dismissed = False
         return updated
     if not isinstance(source_id, str) or source_id not in catalog():
         raise ValueError("Unknown scraper")
