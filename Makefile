@@ -104,7 +104,14 @@ SIDECAR_APP := dist/Runway Sidecar.app
 sidecar-app: ## macOS only: build + ad-hoc sign dist/Runway Sidecar.app (needs pyinstaller in the venv)
 	@[ "$$(uname)" = "Darwin" ] || { echo "sidecar-app needs macOS"; exit 1; }
 	$(VENV)/bin/pyinstaller --noconfirm sidecar_app/spec/macos.spec
-	codesign --force --deep --sign - "$(SIDECAR_APP)"
+	@# Never --deep (it rewrites the Keychain helper's CDHash); same order as the CI workflow.
+	@helper="$(SIDECAR_APP)/Contents/Frameworks/keychain_helper/kc_helper"; \
+	test -f "$$helper" && \
+	find "$(SIDECAR_APP)" -type f ! -path "*/keychain_helper/kc_helper" -print0 | while IFS= read -r -d '' f; do \
+		if file -b "$$f" | grep -q 'Mach-O'; then codesign --force --sign - --timestamp=none "$$f" || exit 1; fi; \
+	done && \
+	codesign --force --sign - --identifier com.runway.sidecar.keychain-helper --timestamp=none "$$helper" && \
+	codesign --force --sign - "$(SIDECAR_APP)"
 	codesign --verify --strict --verbose=2 "$(SIDECAR_APP)"
 
 sidecar-dmg: sidecar-app ## macOS only: package the drag-to-Applications DMG (brew install create-dmg)

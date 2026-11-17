@@ -27,13 +27,12 @@ codesign --force --sign - --identifier com.runway.sidecar.keychain-helper --time
 ```
 
 Never use `--deep` on this executable or an enclosing bundle. Do not rebuild
-this helper as part of an ordinary release. Bundle-signing and packaging
-preservation are tracked separately in #1346; the current CI deep-signing step
-still needs that change before release-to-release grants can be preserved.
-PyInstaller must also preserve the committed helper's signature and bytes.
-The packaged reader is `_MEIPASS/keychain_helper/kc_helper`, located at
-`Contents/Frameworks/keychain_helper/kc_helper` in the PyInstaller 6 macOS app.
-The signing and golden-hash checks in #1346 must target that path.
+this helper as part of an ordinary release. The release workflow signs the other
+nested Mach-O files first, re-signs only this helper with the command above, then
+signs the bundle without `--deep`, and `scripts/check_helper_cdhash.py` compares
+the packaged `Contents/Frameworks/keychain_helper/kc_helper` with the golden file
+after signing and on the unzipped update payload (see `docs/sidecar.md`).
+The packaged reader is `_MEIPASS/keychain_helper/kc_helper`.
 
 Inspect and verify each architecture:
 
