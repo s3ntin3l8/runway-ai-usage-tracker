@@ -632,6 +632,54 @@ def test_safari_row_and_first_open_notice_lifecycle(settings, monkeypatch):
     assert not_used["notice"] is False
 
 
+def test_safari_notice_rearms_when_grant_observed_only_via_get_sources(settings, monkeypatch):
+    import sys
+
+    from scripts.sidecar_pkg import safari_cookies
+
+    server, config = settings
+    state = ["full_disk_access_missing"]
+    monkeypatch.setattr(sys, "platform", "darwin")
+    config_path = safari_cookies._sidecar_config_path()
+    config_path.unlink(missing_ok=True)
+    monkeypatch.setattr(safari_cookies, "_evaluate_access", lambda home=None: state[0])
+
+    # 1. Dismiss while Full Disk Access is missing.
+    assert _report(server)["safari"]["notice"] is True
+    assert send(server, "POST", "/sources", {"action": "dismiss_safari_notice"})[0] == 200
+    assert _report(server)["safari"]["notice"] is False
+
+    # 2. Grant observed only via GET /sources persists re-arm state to disk,
+    #    so an intervening POST /sources does not erase it before access is lost.
+    state[0] = "readable"
+    readable = _report(server)["safari"]
+    assert readable["state"] == "Readable"
+    assert readable["notice"] is False
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+    assert saved["safari_fda_last_state"] == "readable"
+    assert saved["safari_fda_notice_dismissed_state"] == ""
+
+    assert (
+        send(server, "POST", "/sources", {"action": "enable", "source_id": "anthropic.chrome"})[0]
+        == 200
+    )
+    state[0] = "full_disk_access_missing"
+    assert _report(server)["safari"]["notice"] is True
+
+    # 3. Repeat with a simulated sidecar restart (reload config from disk) between grant and loss.
+    assert send(server, "POST", "/sources", {"action": "dismiss_safari_notice"})[0] == 200
+    assert _report(server)["safari"]["notice"] is False
+    state[0] = "readable"
+    assert _report(server)["safari"]["state"] == "Readable"
+
+    reloaded = json.loads(config_path.read_text(encoding="utf-8"))
+    config.clear()
+    config.update(reloaded)
+
+    state[0] = "full_disk_access_missing"
+    assert _report(server)["safari"]["notice"] is True
+
+
 def test_full_disk_access_action_and_page_markers(settings, monkeypatch):
     server, _config = settings
     called = []

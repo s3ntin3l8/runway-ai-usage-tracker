@@ -116,6 +116,14 @@ def _safari_report(config: dict[str, Any]) -> dict[str, Any]:
         )
     )
     config["safari_fda_last_state"] = probe_state
+    if sys.platform == "darwin":
+        from scripts.sidecar_pkg import safari_cookies
+
+        safari_cookies._persist_last_state(
+            probe_state,
+            config,
+            dismissed=dismissed if isinstance(dismissed, str) else None,
+        )
     return {
         "id": "safari",
         "label": "Safari",
