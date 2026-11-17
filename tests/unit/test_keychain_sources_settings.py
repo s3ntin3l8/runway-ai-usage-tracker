@@ -417,7 +417,6 @@ def test_enable_all_and_set_sources_skip_uninstalled_browsers_and_never_action_r
 def test_settings_page_labels_uninstalled_browser_chips_and_excludes_from_counts(
     tmp_path, monkeypatch
 ):
-    import json
     import shutil
     import subprocess
 
