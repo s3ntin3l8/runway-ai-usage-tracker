@@ -20,6 +20,7 @@ class ScraperReport(BaseModel):
         "Ready",
         "Limited",
         "Action required",
+        "Not installed",
         "Withdrawal pending",
     ]
     renewal_requested: StrictBool = False

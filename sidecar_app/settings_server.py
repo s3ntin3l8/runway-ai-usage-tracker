@@ -237,6 +237,7 @@ $css
 .kc-bsel { display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap; text-transform: none; letter-spacing: 0; font-weight: 500; }
 .kc-bsel label { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.7rem; color: #a1a1aa; border: 1px solid rgba(63,63,70,.7); border-radius: 999px; padding: 0.12rem 0.55rem; cursor: pointer; font-weight: 500; }
 .kc-bsel label.sel { color: #e4e4e7; border-color: #7c3aed; background: rgba(124,58,237,.12); }
+.kc-bsel label.off { opacity: 0.45; cursor: not-allowed; }
 .kc-bsel input { position: absolute; opacity: 0; width: 0; height: 0; }
 .kc-bsel label:focus-within { box-shadow: 0 0 0 2px rgba(124,58,237,0.5); }
 .kc-more { font-size: 0.72rem; color: #71717a; padding: 0.45rem 0.75rem; cursor: pointer; background: none; border-left: 0; border-right: 0; border-bottom: 0; width: 100%; text-align: left; font-family: inherit; }
@@ -455,7 +456,7 @@ function renderSources(report) {
   const body = document.getElementById('sources-body');
   body.replaceChildren();
   if (!report.compatible) return;
-  const run = report.run, selected = report.browsers;
+  const run = report.run, selected = report.browsers, installed = report.installed || {};
   const live = report.sources.filter(s => s.compatible && (s.group === 'app' || selected[s.group]));
   const status = s => kcStatus(s, run);
   const blocked = report.re_pair_required || !report.forwarding_supported;
@@ -509,10 +510,13 @@ function renderSources(report) {
   picker.title = 'Only the browsers you use are read; each one is one Keychain item';
   picker.append(document.createTextNode('Read from '));
   for (const [key, name] of KC_BROWSERS) {
-    const choice = kcEl('label', selected[key] ? 'sel' : '');
-    const box = document.createElement('input'); box.type = 'checkbox'; box.id = 'browser-' + key; box.checked = selected[key]; box.disabled = !!run.active;
+    const avail = installed[key] !== false;
+    const on = avail ? selected[key] : selected[key] === true;
+    const choice = kcEl('label', on ? 'sel' : avail ? '' : 'off');
+    const box = document.createElement('input'); box.type = 'checkbox'; box.id = 'browser-' + key; box.checked = on; box.disabled = !!run.active || (!avail && !on);
     box.onchange = () => sourceAction('set_browsers', null, {[key]: box.checked});
-    choice.append(box, document.createTextNode((selected[key] ? '✓ ' : '') + name));
+    choice.append(box, document.createTextNode((on ? '✓ ' : '') + name + (avail ? '' : ' · Not installed')));
+    if (!avail) choice.title = name + ' is not installed on this Mac';
     picker.append(choice);
   }
   label.append(kcEl('span', '', 'Web sessions (browser cookies)'), picker);
@@ -914,11 +918,18 @@ class _Handler(BaseHTTPRequestHandler):
                 import sys
 
                 from scripts.sidecar_pkg.source_catalog import catalog
+                from scripts.sidecar_pkg.source_settings import browsers
                 from scripts.sidecar_pkg.source_setup import SETUP
 
                 # Every source that is on here and belongs to this platform; the controller
                 # skips what is already authorized and groups what shares a Keychain item.
-                ids = [i for i, d in catalog().items() if sys.platform in d.platforms]
+                selected = browsers(self.server.get_config())
+                ids = [
+                    i
+                    for i, d in catalog().items()
+                    if sys.platform in d.platforms
+                    and (d.browser_key is None or selected[d.browser_key])
+                ]
                 self._send_json({"ok": True, "run": SETUP.start_all(ids)})
                 return
             if isinstance(command, dict) and command.get("action") == "authorize_cancel":

@@ -351,6 +351,23 @@ describe('credential sources on other systems', () => {
     expect(container).toBeEmptyDOMElement();
     expect(api.fetchSidecarSources).not.toHaveBeenCalled();
   });
+
+  it('renders Not installed sources as off without attention or setup actions', async () => {
+    const user = userEvent.setup();
+    respond([
+      src('anthropic.claude-code', 'Claude Code'),
+      src('anthropic.edge', 'Claude Pro · Edge cookies', { ...off, state: 'Not installed' }),
+    ]);
+    renderMac();
+    expect(await screen.findByText('Claude Code')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Needs attention/ })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Show 1 source that is off' }));
+    await user.click(screen.getByRole('button', { name: 'Claude Pro browsers' }));
+    expect(screen.getAllByText('Not installed').length).toBeGreaterThanOrEqual(1);
+    await user.click(screen.getByRole('button', { name: 'Actions for Claude Pro · Edge cookies' }));
+    expect(await screen.findByRole('menuitem', { name: 'Ask Mac to set up' })).toHaveAttribute('aria-disabled', 'true');
+    expect(screen.getByRole('menuitem', { name: /Revoke contribution/ })).toHaveAttribute('aria-disabled', 'true');
+  });
 });
 
 describe('SidecarSourceNotice', () => {

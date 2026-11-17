@@ -10,7 +10,14 @@ from sidecar_app.settings_server import _SettingsServer
 
 
 @pytest.fixture
-def settings():
+def settings(monkeypatch):
+    from scripts.sidecar_pkg import source_settings
+
+    monkeypatch.setattr(
+        source_settings,
+        "installed_browsers",
+        lambda: {"chrome": True, "edge": True, "chromium": True},
+    )
     config = {"api_url": "https://runway.example", "api_key": "synthetic-private"}
     server = _SettingsServer(
         "127.0.0.1",
@@ -274,3 +281,124 @@ def test_page_script_parses(settings):
         path.write_text(script, encoding="utf-8")
         result = subprocess.run([node, "--check", str(path)], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
+
+
+def _patch_darwin_dirs(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    from scripts.sidecar_pkg import source_settings
+
+    home = tmp_path / "home"
+    apps = tmp_path / "Applications"
+    home.mkdir(parents=True, exist_ok=True)
+    apps.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(source_settings, "sys", SimpleNamespace(platform="darwin", frozen=False))
+    monkeypatch.setattr(source_settings.Path, "home", staticmethod(lambda: home))
+    monkeypatch.setattr(source_settings, "_APPLICATIONS_DIR", apps)
+    return home, apps, source_settings
+
+
+def test_installed_browsers_and_default_selection_with_fake_dirs(tmp_path, monkeypatch):
+    _home, apps, source_settings = _patch_darwin_dirs(monkeypatch, tmp_path)
+    (apps / "Google Chrome.app").mkdir()
+
+    assert source_settings.installed_browsers() == {
+        "chrome": True,
+        "edge": False,
+        "chromium": False,
+    }
+    assert source_settings.browsers({}) == {
+        "chrome": True,
+        "edge": False,
+        "chromium": False,
+    }
+    assert source_settings.browsers({"keychain_browsers": {"edge": True}}) == {
+        "chrome": True,
+        "edge": True,
+        "chromium": False,
+    }
+    assert source_settings.browsers({"keychain_browsers": {"chrome": False}}) == {
+        "chrome": False,
+        "edge": False,
+        "chromium": False,
+    }
+    rep = source_settings.report({})
+    assert rep["installed"] == {"chrome": True, "edge": False, "chromium": False}
+    assert rep["browsers"] == {"chrome": True, "edge": False, "chromium": False}
+
+
+def test_installed_browsers_detects_user_dirs_and_is_not_cached(tmp_path, monkeypatch):
+    home, _apps, source_settings = _patch_darwin_dirs(monkeypatch, tmp_path)
+
+    assert source_settings.report({})["installed"] == {
+        "chrome": False,
+        "edge": False,
+        "chromium": False,
+    }
+    (home / "Applications" / "Microsoft Edge.app").mkdir(parents=True)
+    (home / "Library" / "Application Support" / "Chromium").mkdir(parents=True)
+
+    assert source_settings.report({})["installed"] == {
+        "chrome": False,
+        "edge": True,
+        "chromium": True,
+    }
+
+
+def test_enable_all_and_set_sources_skip_uninstalled_browsers_and_never_action_required(
+    tmp_path, monkeypatch
+):
+    _home, apps, source_settings = _patch_darwin_dirs(monkeypatch, tmp_path)
+    (apps / "Google Chrome.app").mkdir()
+
+    from scripts.sidecar_pkg import keychain_client, source_protocol
+
+    client = keychain_client.KeychainClient(command=["synthetic-never-started"])
+    client.block_access("storage:Microsoft Edge Safe Storage", "denied")
+    monkeypatch.setattr(keychain_client, "_CLIENT", client)
+
+    updated = source_settings.update({}, {"action": "enable_all"})
+    assert "anthropic.chrome" in updated["keychain_sources"]
+    assert "anthropic.edge" not in updated["keychain_sources"]
+    assert "anthropic.chromium" not in updated["keychain_sources"]
+
+    # set_sources also skips uninstalled browsers when enabling.
+    set_updated = source_settings.update(
+        {},
+        {
+            "action": "set_sources",
+            "source_ids": ["anthropic.chrome", "anthropic.edge"],
+            "value": True,
+        },
+    )
+    assert "anthropic.chrome" in set_updated["keychain_sources"]
+    assert "anthropic.edge" not in set_updated["keychain_sources"]
+
+    rows = {row["id"]: row for row in source_settings.report(updated)["sources"]}
+    assert rows["anthropic.chrome"]["read"] is True
+    assert rows["anthropic.edge"]["read"] is False
+    assert rows["anthropic.edge"]["state"] == "Not installed"
+    assert rows["anthropic.edge"]["new"] is False
+    assert rows["anthropic.chromium"]["state"] == "Not installed"
+
+    proto_client = source_protocol.SourceClient(
+        {"device_id": "device-" + "a" * 32, "api_url": "https://runway.example"},
+        tmp_path / "state.json",
+    )
+    payload_rows = {row["source_id"]: row for row in proto_client.payload(updated)["sources"]}
+    assert payload_rows["anthropic.edge"]["state"] == "Not installed"
+    assert payload_rows["anthropic.edge"]["read"] is False
+    assert payload_rows["anthropic.chromium"]["state"] == "Not installed"
+
+    # Explicit override in keychain_browsers still allows enable_all to select Edge.
+    with_edge = source_settings.update(
+        {"keychain_browsers": {"edge": True}}, {"action": "enable_all"}
+    )
+    assert "anthropic.edge" in with_edge["keychain_sources"]
+
+
+def test_settings_page_labels_uninstalled_browser_chips_and_excludes_from_counts(settings):
+    server, _config = settings
+    html = send(server, "GET", "/")[1].decode()
+    assert "Not installed" in html
+    assert "installed[key] !== false" in html
