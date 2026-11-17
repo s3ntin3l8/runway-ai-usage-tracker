@@ -636,6 +636,7 @@ def test_safari_notice_rearms_when_grant_observed_only_via_get_sources(settings,
     import sys
 
     from scripts.sidecar_pkg import safari_cookies
+    from sidecar_app.config import save_local_config
 
     server, config = settings
     state = ["full_disk_access_missing"]
@@ -643,6 +644,12 @@ def test_safari_notice_rearms_when_grant_observed_only_via_get_sources(settings,
     config_path = safari_cookies._sidecar_config_path()
     config_path.unlink(missing_ok=True)
     monkeypatch.setattr(safari_cookies, "_evaluate_access", lambda home=None: state[0])
+
+    def _save_config(value: dict) -> None:
+        config.update(value)
+        save_local_config(config_path, config)
+
+    monkeypatch.setattr(server, "save_config", _save_config)
 
     # 1. Dismiss while Full Disk Access is missing.
     assert _report(server)["safari"]["notice"] is True
@@ -663,6 +670,9 @@ def test_safari_notice_rearms_when_grant_observed_only_via_get_sources(settings,
         send(server, "POST", "/sources", {"action": "enable", "source_id": "anthropic.chrome"})[0]
         == 200
     )
+    after_post = json.loads(config_path.read_text(encoding="utf-8"))
+    assert after_post["safari_fda_last_state"] == "readable"
+    assert after_post["safari_fda_notice_dismissed_state"] == ""
     state[0] = "full_disk_access_missing"
     assert _report(server)["safari"]["notice"] is True
 
