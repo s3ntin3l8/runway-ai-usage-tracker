@@ -107,8 +107,10 @@ def _persist_last_state(
             try:
                 os.unlink(temporary)
             except FileNotFoundError:
+                # Temporary file was already moved into place by os.replace.
                 pass
     except (OSError, ValueError):
+        # State persistence is best-effort; an unreadable or unwritable config must not break probing.
         pass
 
 

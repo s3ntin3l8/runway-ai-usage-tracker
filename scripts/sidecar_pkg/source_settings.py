@@ -84,6 +84,7 @@ def _safari_report(config: dict[str, Any]) -> dict[str, Any]:
                 ):
                     dismissed = saved["safari_fda_notice_dismissed_state"]
         except (OSError, ValueError):
+            # Missing or malformed on-disk config falls back to the in-memory config dict.
             pass
     notice = (
         sys.platform == "darwin"
