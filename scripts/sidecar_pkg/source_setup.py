@@ -438,8 +438,7 @@ def authorization_command(argv: list[str]) -> None:
     timer.daemon = True
     timer.start()
     try:
-        from scripts.sidecar_pkg.keychain_authorization import authorize_once
-        from scripts.sidecar_pkg.macos_keychain_store import _NativeAPI
+        from scripts.sidecar_pkg.keychain_authorization import HelperReadAPI, authorize_once
         from sidecar_app.config import get_config_path
 
         config_path = get_config_path()
@@ -459,7 +458,11 @@ def authorization_command(argv: list[str]) -> None:
 
         configure_login_dirs(config)
         services, account = resources(args.authorize_keychain_source)
-        authorize_once(_NativeAPI(), services, account)
+        api = HelperReadAPI()
+        try:
+            authorize_once(api, services, account)
+        finally:
+            api.close()
     except KeychainError as exc:
         # The reason is whitelisted, never the underlying error, so nothing
         # about the keychain can reach the output.

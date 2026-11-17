@@ -28,6 +28,13 @@ a = Analysis(
     + [
         (os.path.join(_ROOT, "scripts", "sidecar.py"), "scripts"),
         (os.path.join(_ROOT, "sidecar_app", "assets"), "assets"),
+        # Ship the separately built and signed Keychain helper at the path
+        # keychain_client resolves beneath sys._MEIPASS. Its release signing
+        # and preservation across packaging are handled separately (#1346).
+        (
+            os.path.join(_ROOT, "sidecar_app", "keychain_helper", "bin", "kc_helper"),
+            "keychain_helper",
+        ),
         (os.path.join(_ROOT, "package.json"), "."),
     ],
     hiddenimports=sigstore_imports

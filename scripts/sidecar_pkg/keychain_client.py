@@ -25,18 +25,40 @@ from scripts.sidecar_pkg.keychain_protocol import (
 )
 
 
+def native_helper_path() -> Path:
+    """Fixed bundled/source path; never search PATH for the credential reader."""
+    if getattr(sys, "frozen", False):
+        return Path(sys._MEIPASS) / "keychain_helper" / "kc_helper"
+    return Path(__file__).resolve().parents[2] / "sidecar_app/keychain_helper/bin/kc_helper"
+
+
+def _python_worker_command() -> list[str]:
+    return (
+        [sys.executable, "--runway-keychain-worker"]
+        if getattr(sys, "frozen", False)
+        else [sys.executable, str(Path(__file__).with_name("keychain_worker.py").resolve())]
+    )
+
+
 class KeychainClient:
     def __init__(self, *, command: list[str] | None = None, timeout: float = TIMEOUT) -> None:
+        native = command is None and sys.platform == "darwin"
         self._command = command or (
-            [sys.executable, "--runway-keychain-worker"]
-            if getattr(sys, "frozen", False)
-            else [sys.executable, str(Path(__file__).with_name("keychain_worker.py").resolve())]
+            [str(native_helper_path())] if native else _python_worker_command()
         )
+        # Renewal writes and their recovery records deliberately retain the old identity.
+        self._renewal = (
+            KeychainClient(command=_python_worker_command(), timeout=timeout) if native else None
+        )
+        self._renewal_references: set[bytes] = set()
         self._timeout = timeout
         self._request_lock = threading.RLock()
         self._state_lock = threading.Lock()
         self._blocked: dict[str, str] = {}
         self._process: subprocess.Popen[bytes] | None = None
+        if self._renewal is not None:
+            self._renewal._blocked = self._blocked
+            self._renewal._state_lock = self._state_lock
         self._closed = False
         self._generation = 0
 
@@ -83,11 +105,15 @@ class KeychainClient:
             self._process = None
         if process is not None:
             self._reap(process)
+        if self._renewal is not None:
+            self._renewal.close()
 
     def reopen(self) -> None:
         """Resume a stopped daemon without clearing any permission suppression."""
         with self._state_lock:
             self._closed = False
+        if self._renewal is not None:
+            self._renewal.reopen()
 
     def _cancelled(self, generation: int) -> bool:
         with self._state_lock:
@@ -183,6 +209,23 @@ class KeychainClient:
                 operation != "copy" and allowed is None
             ):
                 raise KeychainError("permission disabled")
+            if self._renewal is not None and (
+                operation != "copy"
+                or query.get("service") == "Runway Claude Code renewal"
+                or (
+                    isinstance(query.get("persistent"), bytes)
+                    and query["persistent"] in self._renewal_references
+                )
+            ):
+                self._renewal._timeout = max(0, deadline - time.monotonic())
+                result = self._renewal.call(operation, query, values, group=group, allowed=allowed)
+                if operation == "copy" and isinstance(result, list):
+                    self._renewal_references.update(
+                        item["persistent"]
+                        for item in result
+                        if isinstance(item, dict) and isinstance(item.get("persistent"), bytes)
+                    )
+                return result
             process = self._start()
             assert process.stdin is not None and process.stdout is not None
             if operation != "copy" and (allowed is None or allowed() is not True):
