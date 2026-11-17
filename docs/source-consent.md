@@ -53,8 +53,9 @@ scraper's local read consent.
 An **Always Allow** grant is intended to survive sidecar updates that preserve
 the helper's bytes and signing identity. Rebuilding, changing or re-signing the
 helper can require a new grant; an existing grant to the previous Python
-helper does not transfer automatically. Release packaging must preserve the
-native helper before update persistence can be claimed (tracked in #1346).
+helper does not transfer automatically. Release signing keeps the helper's CDHash
+stable across builds and fails the build if it drifts
+(`scripts/check_helper_cdhash.py`).
 
 ## States
 

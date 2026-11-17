@@ -98,7 +98,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("helper", nargs="?", type=Path, default=DEFAULT_HELPER)
     parser.add_argument("--golden", type=Path, default=GOLDEN)
     args = parser.parse_args(argv)
-    problems = check(args.helper, args.golden)
+    try:
+        problems = check(args.helper, args.golden)
+    except (OSError, ValueError) as exc:
+        # A broken golden file or missing codesign is not a helper change.
+        print(f"cannot check the Keychain helper: {exc}", file=sys.stderr)
+        return 2
     for problem in problems:
         print(problem, file=sys.stderr)
     if not problems:

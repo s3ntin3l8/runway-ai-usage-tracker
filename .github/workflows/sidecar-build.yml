@@ -122,8 +122,10 @@ jobs:
           app="dist/Runway Sidecar.app"
           helper="$app/Contents/Frameworks/keychain_helper/kc_helper"
           test -f "$helper"
+          # (PyInstaller keeps the real file under Contents/Resources and only
+          # cross-links the directory, which `find` does not follow, hence the glob.)
           # 1. Every other nested Mach-O (PyInstaller libraries, main executable).
-          find "$app" -type f ! -path "$helper" -print0 | while IFS= read -r -d '' f; do
+          find "$app" -type f ! -path "*/keychain_helper/kc_helper" -print0 | while IFS= read -r -d '' f; do
             if file -b "$f" | grep -q 'Mach-O'; then
               codesign --force --sign - --timestamp=none "$f"
             fi

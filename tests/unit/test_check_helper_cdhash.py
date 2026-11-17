@@ -91,3 +91,20 @@ def test_workflow_signs_helper_last_and_never_deep():
     nested = text.index("codesign --force --sign - --timestamp=none")
     assert nested < helper < bundle
     assert text.count("scripts/check_helper_cdhash.py") >= 2
+
+
+def test_workflows_never_deep_and_helper_not_resigned_after_bundle():
+    for wf in (chk.ROOT / ".github/workflows").glob("*.yml"):
+        code = [ln for ln in wf.read_text().splitlines() if not ln.lstrip().startswith("#")]
+        assert not [ln for ln in code if "--deep" in ln], wf.name
+    text = (chk.ROOT / ".github/workflows/sidecar-build.yml").read_text()
+    after = text.split('codesign --force --sign - "$app"', 1)[1].split("- name:")[0]
+    sign_cmds = [ln for ln in after.splitlines() if "codesign" in ln and "--verify" not in ln]
+    assert not [ln for ln in sign_cmds if "helper" in ln]
+    assert "--deep" not in (chk.ROOT / "Makefile").read_text().replace("Never --deep", "")
+
+
+def test_main_reports_broken_golden_distinctly(tmp_path, capsys):
+    helper = helper_file(tmp_path)
+    assert chk.main([str(helper), "--golden", str(tmp_path / "missing")]) == 2
+    assert "cannot check" in capsys.readouterr().err
