@@ -50,11 +50,17 @@ Dependabot updates GitHub Actions, pip, npm, pre-commit hooks and Docker weekly.
   semantics, installer packaging, console code pages), run by
   `scripts/dev_checks.py test-windows`.
 - **`dependency-audit`**: `pip-audit`, plus `npm audit` of the shipped frontend
-  dependencies at any severity and of the whole tree at moderate and up. The
-  moderate cut-off is deliberate: it gates the `:edge` image, and a
-  low-severity finding with no patched release in a dev-only package would
-  otherwise keep the image red. `npm-audit-weekly.yml` keeps those findings
-  visible.
+  dependencies at any severity, plus `webapp/scripts/audit-build-deps.mjs` for
+  the rest of the tree. That script blocks on moderate-and-up advisories in
+  build tooling (vite, the PWA plugin, tailwind, typescript and what they pull
+  in: it writes the bundle that ships) and only warns for dev-only tooling
+  (vitest, eslint, playwright). A build-tooling advisory with no patched release
+  is excused by an entry in `webapp/audit-allowlist.json` (advisory, package,
+  reason, tracking issue, `expires` date); an expired entry fails the job, and
+  an entry that matches nothing is reported so it gets removed. The moderate
+  cut-off is deliberate: the job gates the `:edge` image, and a low-severity
+  finding with no patched release would otherwise keep the image red.
+  `npm-audit-weekly.yml` keeps low and dev-only findings visible.
 - **`installer-check`**: compiles the NSIS installer with a placeholder exe, so
   a broken `.nsi` or missing installer asset fails on the PR.
 - **`image-changed` and `build-docker`** (push only): `image-changed` compares
