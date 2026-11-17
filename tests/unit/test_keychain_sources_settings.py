@@ -549,7 +549,7 @@ def test_safari_row_and_first_open_notice_lifecycle(settings, monkeypatch):
     server, config = settings
     state = ["full_disk_access_missing"]
     monkeypatch.setattr(sys, "platform", "darwin")
-    monkeypatch.setattr(source_settings, "_safari_state_left_dismissed", False)
+    monkeypatch.setitem(source_settings._safari_notice_state, "left_dismissed", False)
     monkeypatch.setattr(safari_cookies, "probe_access", lambda home=None: state[0])
 
     # First open with missing Full Disk Access shows the notice and the Safari row.

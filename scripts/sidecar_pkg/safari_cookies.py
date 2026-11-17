@@ -18,7 +18,7 @@ _FULL_DISK_ACCESS_WARNING = (
     "(System Settings -> Privacy & Security -> Full Disk Access)"
 )
 _logger = logging.getLogger(__name__)
-_last_logged_state: str | None = None
+_probe_log_state: dict[str, str | None] = {"last": None}
 
 
 def _is_access_denied(exc: OSError) -> bool:
@@ -27,7 +27,6 @@ def _is_access_denied(exc: OSError) -> bool:
 
 def probe_access(home: Path | None = None) -> str:
     """Classify Safari cookie access as full_disk_access_missing, readable, or not_used."""
-    global _last_logged_state
     base = home if home is not None else Path.home()
     container = base / "Library/Containers/com.apple.Safari/Data/Library"
     paths = [
@@ -68,9 +67,9 @@ def probe_access(home: Path | None = None) -> str:
                     break
         if state is None:
             state = "readable" if has_readable else "not_used"
-    if state == "full_disk_access_missing" and _last_logged_state != state:
+    if state == "full_disk_access_missing" and _probe_log_state.get("last") != state:
         _logger.warning(_FULL_DISK_ACCESS_WARNING)
-    _last_logged_state = state
+    _probe_log_state["last"] = state
     return state
 
 

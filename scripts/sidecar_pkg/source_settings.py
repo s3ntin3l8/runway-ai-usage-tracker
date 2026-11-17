@@ -50,7 +50,7 @@ _SAFARI_STATE_LABELS = {
     "readable": "Readable",
     "not_used": "Safari not used",
 }
-_safari_state_left_dismissed = False
+_safari_notice_state: dict[str, bool] = {"left_dismissed": False}
 
 
 def _safari_probe_state() -> str:
@@ -62,15 +62,14 @@ def _safari_probe_state() -> str:
 
 
 def _safari_report(config: dict[str, Any]) -> dict[str, Any]:
-    global _safari_state_left_dismissed
     probe_state = _safari_probe_state()
     dismissed = config.get("safari_fda_notice_dismissed_state")
     if isinstance(dismissed, str) and probe_state != dismissed:
-        _safari_state_left_dismissed = True
+        _safari_notice_state["left_dismissed"] = True
     notice = (
         sys.platform == "darwin"
         and probe_state == "full_disk_access_missing"
-        and (dismissed != probe_state or _safari_state_left_dismissed)
+        and (dismissed != probe_state or _safari_notice_state["left_dismissed"])
     )
     return {
         "id": "safari",
@@ -248,9 +247,8 @@ def update(config: dict[str, Any], command: dict[str, Any]) -> dict[str, Any]:
         updated["claude_keychain_renewal"] = command["value"]
         return updated
     if action == "dismiss_safari_notice":
-        global _safari_state_left_dismissed
         updated["safari_fda_notice_dismissed_state"] = _safari_probe_state()
-        _safari_state_left_dismissed = False
+        _safari_notice_state["left_dismissed"] = False
         return updated
     if not isinstance(source_id, str) or source_id not in catalog():
         raise ValueError("Unknown scraper")

@@ -456,7 +456,7 @@ def test_safari_probe_access_classifies_eperm_enoent_and_readable(
 
     from scripts.sidecar_pkg import safari_cookies
 
-    monkeypatch.setattr(safari_cookies, "_last_logged_state", None)
+    monkeypatch.setitem(safari_cookies._probe_log_state, "last", None)
     assert safari_cookies.probe_access(tmp_path) == "not_used"
 
     cookie_path = tmp_path / "Library/Cookies/Cookies.binarycookies"
