@@ -180,6 +180,7 @@ class SourcePolicy:
                 try:
                     os.unlink(temporary)
                 except FileNotFoundError:
+                    # A successful os.replace already moved the temporary file.
                     pass
 
     def _read_record(self, source_id: str) -> dict[str, Any]:
