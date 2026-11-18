@@ -414,6 +414,46 @@ def test_seed_keeps_a_hand_tuned_sonnet_5_5_cache_read():
     assert _sonnet_55_cache_read(s) == 0.15
 
 
+def test_seed_chatgpt_gpt6_2_sol_and_astra_rates():
+    """Per developers.openai.com/api/docs/pricing (checked 2026-11-18)."""
+    s = _make_session()
+    seed_pricing_table(s)
+
+    astra = s.exec(
+        select(ProviderPricing).where(
+            ProviderPricing.provider_id == "chatgpt",
+            ProviderPricing.model_id == "gpt-6.2-astra",
+        )
+    ).first()
+    assert astra is not None
+    assert astra.input_per_mtok == 8.00
+    assert astra.output_per_mtok == 40.00
+    assert astra.cache_read_per_mtok == 0.40
+    assert astra.cache_create_per_mtok == 10.00
+    assert astra.long_prompt_threshold_tokens == 272_000
+    assert astra.long_input_per_mtok == 16.00
+    assert astra.long_output_per_mtok == 60.00
+    assert astra.long_cache_read_per_mtok == 0.80
+    assert astra.long_cache_create_per_mtok == 20.00
+
+    sol = s.exec(
+        select(ProviderPricing).where(
+            ProviderPricing.provider_id == "chatgpt",
+            ProviderPricing.model_id == "gpt-6.2-sol",
+        )
+    ).first()
+    assert sol is not None
+    assert sol.input_per_mtok == 2.00
+    assert sol.output_per_mtok == 10.00
+    assert sol.cache_read_per_mtok == 0.10
+    assert sol.cache_create_per_mtok == 2.50
+    assert sol.long_prompt_threshold_tokens == 272_000
+    assert sol.long_input_per_mtok == 4.00
+    assert sol.long_output_per_mtok == 15.00
+    assert sol.long_cache_read_per_mtok == 0.20
+    assert sol.long_cache_create_per_mtok == 5.00
+
+
 def test_seed_chatgpt_gpt6_1_sol_rates():
     """GPT-6.1 Sol matches gpt-6-sol except cached input ($0.10 vs $0.20)."""
     s = _make_session()
@@ -1019,7 +1059,10 @@ def test_seed_anthropic_haiku_5_5_long_prompt_tier():
     s = _make_session()
     seed_pricing_table(s)
     tiered = s.exec(
-        select(ProviderPricing).where(ProviderPricing.long_prompt_threshold_tokens.is_not(None))  # type: ignore[union-attr]
+        select(ProviderPricing).where(
+            ProviderPricing.provider_id == "anthropic",
+            ProviderPricing.long_prompt_threshold_tokens.is_not(None),  # type: ignore[union-attr]
+        )
     ).all()
     assert [r.model_id for r in tiered] == ["haiku-5.5"]
 

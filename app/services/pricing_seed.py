@@ -252,6 +252,40 @@ PRICING_SEED: list[dict] = [
     # shows no cache-write column for those older models (issue #369).
     {
         "provider_id": "chatgpt",
+        "model_id": "gpt-6.2-astra",
+        "effective_from": "2026-11-01",
+        "input_per_mtok": 8.00,
+        "output_per_mtok": 40.00,
+        "cache_read_per_mtok": 0.40,
+        "cache_create_per_mtok": 10.00,  # 1.25x input (30m retention)
+        "long_prompt_threshold_tokens": 272_000,
+        "long_input_per_mtok": 16.00,  # 2x input above 272K
+        "long_output_per_mtok": 60.00,  # 1.5x output above 272K
+        "long_cache_read_per_mtok": 0.80,  # 2x cached input above 272K
+        "long_cache_create_per_mtok": 20.00,  # 2x cache write above 272K
+        "long_cache_create_1h_per_mtok": None,  # falls back to long_cache_create_per_mtok
+        "notes": "GPT-6.2 Astra (rates per developers.openai.com/api/docs/pricing, "
+        "checked 2026-11-18; >272K long-context tier modeled)",
+    },
+    {
+        "provider_id": "chatgpt",
+        "model_id": "gpt-6.2-sol",
+        "effective_from": "2026-11-01",
+        "input_per_mtok": 2.00,
+        "output_per_mtok": 10.00,
+        "cache_read_per_mtok": 0.10,
+        "cache_create_per_mtok": 2.50,  # 1.25x input (30m retention)
+        "long_prompt_threshold_tokens": 272_000,
+        "long_input_per_mtok": 4.00,  # 2x input above 272K
+        "long_output_per_mtok": 15.00,  # 1.5x output above 272K
+        "long_cache_read_per_mtok": 0.20,  # 2x cached input above 272K
+        "long_cache_create_per_mtok": 5.00,  # 2x cache write above 272K
+        "long_cache_create_1h_per_mtok": None,  # falls back to long_cache_create_per_mtok
+        "notes": "GPT-6.2 Sol (rates per developers.openai.com/api/docs/pricing, "
+        "checked 2026-11-18; >272K long-context tier modeled)",
+    },
+    {
+        "provider_id": "chatgpt",
         "model_id": "gpt-6-astra",
         "effective_from": "2026-09-01",
         "input_per_mtok": 10.00,
