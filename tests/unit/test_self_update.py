@@ -492,11 +492,13 @@ class TestEdgeSameBuildGuard:
         result, applied = self._run(monkeypatch, tmp_path, staged_version="3.0.0+edge.c1e75b7")
         assert result is False
         assert applied == []
+        assert "not been published" in (self_update.last_skip_reason() or "")
 
     def test_a_different_commit_still_installs(self, monkeypatch, tmp_path):
         result, applied = self._run(monkeypatch, tmp_path, staged_version="3.0.0+edge.799963c")
         assert result is True
         assert len(applied) == 1
+        assert self_update.last_skip_reason() is None
 
     def test_unreadable_staged_version_still_installs(self, monkeypatch, tmp_path):
         result, applied = self._run(monkeypatch, tmp_path, staged_version=None)

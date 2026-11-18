@@ -470,12 +470,27 @@ def _staged_version(staged: pathlib.Path) -> str | None:
     return None
 
 
+# Why the last ``self_update()`` call returned False without trying to install, when it
+# was a deliberate skip rather than a failure (None otherwise). The tray reads it so a
+# lagging platform asset is not reported as "could not install".
+_last_skip_reason: str | None = None
+
+
+def last_skip_reason() -> str | None:
+    """Human-readable reason the last ``self_update()`` skipped on purpose, else None."""
+    return _last_skip_reason
+
+
 def _is_running_edge_build(staged: pathlib.Path, running_version: str) -> bool:
     """True when the staged edge payload was built from the commit already running.
 
     The ``edge`` tag moves on every push to main even when a platform leg failed
     and its asset was not republished, so the tag can be ahead of the asset.
     Installing the unchanged asset again would loop on every "update available".
+
+    This compares the *source commit*, not the payload bytes: a re-run of this
+    platform's leg for the same commit (workflow fix, dependency drift) is skipped
+    too, until main moves on.
     """
     running_channel, running_sha = parse_channel(running_version)
     if running_channel != "edge" or not running_sha:
@@ -1069,8 +1084,11 @@ def self_update(version: str, channel: str | None, *, restart: bool = True) -> b
     """Run one full self-update cycle. Returns True if an update was installed.
 
     No-op (returns False) when not a frozen build, inside Docker, already current,
-    or another update is in progress.
+    or another update is in progress. When it skips because this platform's edge
+    asset is the build already running, ``last_skip_reason()`` says so.
     """
+    global _last_skip_reason
+    _last_skip_reason = None
     if not _is_frozen():
         logger.info("Self-update skipped: not a frozen build (update via git/source)")
         return False
@@ -1151,6 +1169,10 @@ def self_update(version: str, channel: str | None, *, restart: bool = True) -> b
                     "published yet. Not reinstalling.",
                     target,
                     version,
+                )
+                _last_skip_reason = (
+                    "The newest build for this platform has not been published yet; "
+                    "you already have the latest one available."
                 )
                 return False
             return apply_update(
