@@ -431,6 +431,9 @@ def test_lookalike_id_is_not_argon():
         ("gpt-oss", "Gemini 4 Hydrogen (Medium)", "gpt-oss"),
         ("gemini-3.8-flash", "Gemini 4 Carbon (High)", "flash-3.8"),
         ("gemini-4-carbonic", "Gemini 4 Carbonic", "gemini-4-carbonic"),
+        ("gemini-4.5-carbon", "Gemini 4.5 Carbon", "gemini-4.5-carbon"),
+        ("", "Gemini 5 Neon", "unknown"),
+        ("", "Gemini 4.5 Carbon", "unknown"),
     ],
 )
 def test_gemini_4_codenames_normalisation(raw, display, expected):

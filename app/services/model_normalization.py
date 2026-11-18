@@ -72,10 +72,14 @@ NEON_MODEL_ID = "gemini-4-neon"
 # those suffixes are not version qualifiers and must not survive into the stored
 # model_id. Look-alikes (e.g. "gemini-4-argonoid") are excluded by the [-.]
 # separator and by word boundaries on the display name.
+_ARGON_RAW_RE = re.compile(r"^gemini-4-argon(?:[-.][a-z0-9][-a-z0-9.]*)?$")
+_GEMINI_4_DISPLAY_GEN_RE = re.compile(r"(?<![\d.])4(?![\d.])")
+_GEMINI_4_GENERIC_RAW_IDS = frozenset({"gemini", "gemini-default"})
+
 _GEMINI_4_CODENAMES: tuple[tuple[str, re.Pattern[str], re.Pattern[str]], ...] = (
     (
         ARGON_MODEL_ID,
-        re.compile(r"^gemini-4-argon(?:[-.][a-z0-9][-a-z0-9.]*)?$"),
+        _ARGON_RAW_RE,
         re.compile(r"\bargon\b", re.IGNORECASE),
     ),
     (
@@ -98,7 +102,7 @@ _GEMINI_4_CODENAMES: tuple[tuple[str, re.Pattern[str], re.Pattern[str]], ...] = 
 
 def is_argon_model_id(model_id: str) -> bool:
     """True for any spelling of the Gemini 4 Argon id."""
-    return bool(_GEMINI_4_CODENAMES[0][1].match((model_id or "").strip().lower()))
+    return bool(_ARGON_RAW_RE.match((model_id or "").strip().lower()))
 
 
 def _match_gemini4_raw(model_id: str) -> str | None:
@@ -133,7 +137,10 @@ def normalize_gemini_model(model_name: str) -> str:
         "gemini-3-pro-preview"      → "pro-3.1-preview"
         "gemini-3.1-pro-preview"    → "pro-3.1-preview"
         "gemini-4-argon-trial"      → "gemini-4-argon"
-        ""                           → "unknown"
+        "gemini-4-hydrogen-preview" → "gemini-4-hydrogen"
+        "gemini-4-carbon"           → "gemini-4-carbon"
+        "gemini-4-neon"             → "gemini-4-neon"
+        ""                          → "unknown"
     """
     lower = (model_name or "").lower()
     if not lower:
@@ -218,18 +225,18 @@ def _ag_gemini4_bucket(raw: str, display: str) -> str | None:
     """Return the canonical Gemini 4 codename id when raw/display name one.
 
     The raw id is authoritative — a ``gemini-4-{argon,hydrogen,carbon,neon}*`` slug
-    wins whatever the display says. A display-only match is scoped exactly like
-    the family fallback in ``normalize_ag_model``: it applies only when the raw
-    id names no family of its own, so a raw id that does (``gemini-3.8-flash``)
-    keeps its own bucket and a non-Gemini raw id (``gpt-oss``) passes through
-    verbatim even when the display happens to name a Gemini 4 codename.
+    wins whatever the display says. A display-only match runs only when ``raw`` is
+    empty or a generic placeholder (``gemini``, ``gemini-default``) and ``display``
+    carries both ``gemini`` and a standalone ``4`` generation token (so
+    ``Gemini 4.5 Carbon`` and ``Gemini 5 Neon`` do not fold into Gemini 4).
     """
     if (codename := _match_gemini4_raw(raw)) is not None:
         return codename
-    if raw and (_ag_detect_family(raw) is not None or not raw.lower().startswith("gemini")):
+    lower_raw = raw.lower()
+    if raw and lower_raw not in _GEMINI_4_GENERIC_RAW_IDS:
         return None
     lower_display = display.lower()
-    if "gemini" in lower_display:
+    if "gemini" in lower_display and _GEMINI_4_DISPLAY_GEN_RE.search(display):
         for canonical_id, _, display_re in _GEMINI_4_CODENAMES:
             if display_re.search(display):
                 return canonical_id
@@ -269,6 +276,9 @@ def normalize_ag_model(raw_model: str, display_name: str, kv: dict[str, str]) ->
         "gemini-3-flash-a" / "Gemini 3 Flash"   → "flash-3"
         "gemini-3.1-flash" / …                  → "flash-3"  (unseeded minor)
         "gemini-4-argon-trial" / "Gemini 4 Argon (High)" → "gemini-4-argon"
+        "gemini-4-hydrogen" / "Gemini 4 Hydrogen (Medium)" → "gemini-4-hydrogen"
+        "gemini-4-carbon" / "Gemini 4 Carbon (High)" → "gemini-4-carbon"
+        "gemini-4-neon" / "Gemini 4 Neon (Medium)" → "gemini-4-neon"
         "gpt-oss"                               → "gpt-oss"
         ""                                      → "unknown"
     """
