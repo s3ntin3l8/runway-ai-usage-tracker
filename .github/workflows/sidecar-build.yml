@@ -224,11 +224,11 @@ jobs:
         # `edge` git tag (which advances even when a platform leg fails).
         if: inputs.label == 'edge'
         env:
-          PAYLOAD: ${{ steps.names.outputs.payload }}
+          BUILD_METADATA: ${{ steps.names.outputs.build_metadata }}
         run: |
           SHA=$(git rev-parse HEAD)
-          python -c "import json,pathlib,sys; pathlib.Path(sys.argv[1]).write_text(json.dumps({'sha': sys.argv[2]}) + '\n')" "out/${PAYLOAD}.build.json" "$SHA"
-          cat "out/${PAYLOAD}.build.json"
+          python -c "import hashlib,json,pathlib,sys; p=pathlib.Path(sys.argv[1]); p.write_text(json.dumps({'sha': sys.argv[2]}) + '\n'); p.with_name(p.name + '.sha256').write_text(hashlib.sha256(p.read_bytes()).hexdigest() + '  ' + p.name + '\n')" "out/$BUILD_METADATA" "$SHA"
+          cat "out/$BUILD_METADATA"
 
       - name: Upload build artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
@@ -262,7 +262,7 @@ jobs:
         working-directory: release-assets
         run: |
           shopt -s nullglob
-          assets=(Runway-Sidecar-*.{dmg,exe,zip,tar.gz})
+          assets=(Runway-Sidecar-*.{dmg,exe,zip,tar.gz,build.json})
           if [ ${#assets[@]} -eq 0 ]; then
             echo "::error::No sidecar assets were built."; exit 1
           fi
@@ -286,7 +286,7 @@ jobs:
         working-directory: release-assets
         run: |
           shopt -s nullglob
-          for f in Runway-Sidecar-*.{dmg,exe,zip,tar.gz} SHA256SUMS.txt; do
+          for f in Runway-Sidecar-*.{dmg,exe,zip,tar.gz,build.json} SHA256SUMS.txt; do
             cosign verify-blob \
               --bundle "$f.sigstore.json" \
               --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/sidecar-build.yml@refs/heads/main" \

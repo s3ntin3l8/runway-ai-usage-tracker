@@ -152,7 +152,10 @@ def main(argv: list[str] | None = None) -> int:
     plat, label = args
     if label != EDGE_LABEL:
         label = release_label("stable", label)
-    print(f"payload={payload_name(plat, label)}")
+    payload = payload_name(plat, label)
+    print(f"payload={payload}")
+    if label == EDGE_LABEL:
+        print(f"build_metadata={build_metadata_name(payload)}")
     inst = installer_name(plat, label)
     if inst:
         print(f"installer={inst}")

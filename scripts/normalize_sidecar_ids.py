@@ -145,6 +145,7 @@ def _merge_registry(session: Session, mapping: dict[str, str]) -> int:
             "sidecar_version": primary.sidecar_version,
             "os_platform": primary.os_platform,
             "self_update_capable": primary.self_update_capable,
+            "sidecar_target": primary.sidecar_target,
             "keep_alive": primary.keep_alive,
             "keep_alive_desired": primary.keep_alive_desired,
             "keep_alive_providers": primary.keep_alive_providers,

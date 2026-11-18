@@ -61,7 +61,9 @@ hand. Every release publishes:
 | Linux (CLI) | — | `Runway-Sidecar-Linux-CLI-<label>.tar.gz` |
 
 `<label>` is the release tag: `v3.1.0` or `v3.1.0-beta.2` for a numbered release, `edge`
-for the rolling prerelease. Each asset also ships a sibling `<asset>.sha256`,
+for the rolling prerelease. On `edge` releases, each payload also ships a
+`<payload>.build.json` sibling recording `{"sha": "<full sha>"}` so update
+checks decide per platform. Each asset also ships a sibling `<asset>.sha256`,
 and each release ships one `SHA256SUMS.txt` covering all of them.
 
 > The `.zip` payloads are the **self-update** artifacts — the sidecar downloads

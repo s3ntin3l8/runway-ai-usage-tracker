@@ -35,6 +35,7 @@ STALE_THRESHOLD_MINUTES = 60
 
 UPDATE_CHANNELS = ("stable", "beta", "edge")
 LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
+SIDECAR_TARGETS = ("tray", "cli")
 
 
 def effective_update_channel(row: SidecarRegistry, fleet_channel: str | None) -> str:
@@ -165,6 +166,7 @@ class FleetRegistryService:
         sidecar_version: str | None = None,
         os_platform: str | None = None,
         self_update_capable: bool | None = None,
+        sidecar_target: str | None = None,
         keep_alive: bool | None = None,
         keep_alive_providers: dict[str, bool] | None = None,
         auto_update: bool | None = None,
@@ -183,6 +185,9 @@ class FleetRegistryService:
         if log_level is not None and log_level not in LOG_LEVELS:
             logger.debug(f"Ignoring unknown log level {log_level!r} from a sidecar")
             log_level = None
+        if sidecar_target is not None and sidecar_target not in SIDECAR_TARGETS:
+            logger.debug(f"Ignoring unknown sidecar target {sidecar_target!r} from a sidecar")
+            sidecar_target = None
         row = session.get(SidecarRegistry, sidecar_id)
         device_hostname = self._device_hostname(sidecar_id, session)
         if row:
@@ -200,6 +205,8 @@ class FleetRegistryService:
                 row.os_platform = os_platform
             if self_update_capable is not None:
                 row.self_update_capable = self_update_capable
+            if sidecar_target is not None:
+                row.sidecar_target = sidecar_target
             if keep_alive is not None:
                 row.keep_alive = keep_alive
             if keep_alive_providers is not None:
@@ -227,6 +234,7 @@ class FleetRegistryService:
                 sidecar_version=sidecar_version,
                 os_platform=os_platform,
                 self_update_capable=self_update_capable,
+                sidecar_target=sidecar_target,
                 keep_alive=keep_alive,
                 keep_alive_providers=(
                     json.dumps(parse_provider_flags(keep_alive_providers))
@@ -321,7 +329,9 @@ class FleetRegistryService:
         last_seen_utc = row.last_seen.replace(tzinfo=UTC)
         stale = last_seen_utc < datetime.now(UTC) - timedelta(minutes=STALE_THRESHOLD_MINUTES)
         latest_version = sidecar_version_checker.get_latest()
-        latest_edge_sha = sidecar_version_checker.get_latest_edge_sha(row.os_platform)
+        latest_edge_sha = sidecar_version_checker.get_latest_edge_sha(
+            row.os_platform, row.sidecar_target
+        )
         latest_beta = sidecar_version_checker.get_latest_beta()
         # Only offer an update when the build can actually self-update in place.
         # `None` (not reported) stays permissive so already-deployed frozen

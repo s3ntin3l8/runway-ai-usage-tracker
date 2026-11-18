@@ -70,6 +70,21 @@ class TestUpsertSidecar:
         service.upsert_sidecar("host-1", "10.0.0.2", mock_session, self_update_capable=True)
         assert existing.self_update_capable is True
 
+    def test_persists_sidecar_target_on_create_and_update(self, service, mock_session):
+        mock_session.get.return_value = None
+        service.upsert_sidecar("host-1", "10.0.0.1", mock_session, sidecar_target="cli")
+        added = mock_session.add.call_args[0][0]
+        assert added.sidecar_target == "cli"
+
+        mock_session.get.return_value = added
+        service.upsert_sidecar("host-1", "10.0.0.2", mock_session, sidecar_target="tray")
+        assert added.sidecar_target == "tray"
+
+    def test_ignores_unknown_sidecar_target(self, service, mock_session):
+        mock_session.get.return_value = None
+        service.upsert_sidecar("host-1", "10.0.0.1", mock_session, sidecar_target="bogus")
+        assert mock_session.add.call_args[0][0].sidecar_target is None
+
 
 class TestPendingUpdate:
     """set_pending_update / consume_pending_update persist on the registry
@@ -284,16 +299,28 @@ class TestToDictUpdateAvailable:
         from app.services import sidecar_version_checker as svc_mod
 
         monkeypatch.setattr(svc_mod.sidecar_version_checker, "_latest", "1.5.0")
-        monkeypatch.setattr(svc_mod.sidecar_version_checker, "_latest_edge_sha", "bbb2222ffffffff")
-        d = service.to_dict(self._row("1.5.0+edge.aaa1111"))
+        monkeypatch.setattr(
+            svc_mod.sidecar_version_checker,
+            "_latest_edge_shas",
+            {"macOS": "bbb2222ffffffff"},
+        )
+        row = self._row("1.5.0+edge.aaa1111")
+        row.os_platform = "Darwin/24.1.0"
+        d = service.to_dict(row)
         assert d["channel"] == "edge"
         assert d["update_available"] is True
 
     def test_edge_sidecar_not_flagged_when_same_build(self, service, monkeypatch):
         from app.services import sidecar_version_checker as svc_mod
 
-        monkeypatch.setattr(svc_mod.sidecar_version_checker, "_latest_edge_sha", "aaa1111ffffffff")
-        d = service.to_dict(self._row("1.5.0+edge.aaa1111"))
+        monkeypatch.setattr(
+            svc_mod.sidecar_version_checker,
+            "_latest_edge_shas",
+            {"macOS": "aaa1111ffffffff"},
+        )
+        row = self._row("1.5.0+edge.aaa1111")
+        row.os_platform = "Darwin/24.1.0"
+        d = service.to_dict(row)
         assert d["channel"] == "edge"
         assert d["update_available"] is False
 
@@ -303,15 +330,24 @@ class TestToDictUpdateAvailable:
         monkeypatch.setattr(
             svc_mod.sidecar_version_checker,
             "_latest_edge_shas",
-            {"macOS": "aaa1111ffffffff", "Linux": "bbb2222ffffffff"},
+            {
+                "macOS": "aaa1111ffffffff",
+                "Linux": "bbb2222ffffffff",
+                "Linux-CLI": "aaa1111ffffffff",
+            },
         )
         mac_row = self._row("1.5.0+edge.aaa1111")
         mac_row.os_platform = "Darwin/24.1.0"
         assert service.to_dict(mac_row)["update_available"] is False
 
-        linux_row = self._row("1.5.0+edge.aaa1111")
-        linux_row.os_platform = "Linux/6.8.0"
-        assert service.to_dict(linux_row)["update_available"] is True
+        linux_tray_row = self._row("1.5.0+edge.aaa1111")
+        linux_tray_row.os_platform = "Linux/6.8.0"
+        assert service.to_dict(linux_tray_row)["update_available"] is True
+
+        linux_cli_row = self._row("1.5.0+edge.aaa1111")
+        linux_cli_row.os_platform = "Linux/6.8.0"
+        linux_cli_row.sidecar_target = "cli"
+        assert service.to_dict(linux_cli_row)["update_available"] is False
 
         win_row = self._row("1.5.0+edge.aaa1111")
         win_row.os_platform = "Windows/11"

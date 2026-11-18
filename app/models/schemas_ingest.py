@@ -228,6 +228,8 @@ class IngestRequest(BaseModel):
     # Whether this build can self-update in place (frozen, non-Docker). None for
     # sidecars that don't report it yet → server stays permissive.
     self_update_capable: bool | None = None
+    # Packaging target ("tray" | "cli"). None for older sidecars → treated as tray.
+    sidecar_target: str | None = None
     # Whether the sidecar runs with --keep-alive. None from older sidecars → "unknown".
     keep_alive: bool | None = None
     # Per sidecar-run login (provider_id -> running); None from sidecars that predate it.

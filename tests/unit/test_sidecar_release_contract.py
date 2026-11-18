@@ -88,12 +88,33 @@ class TestAssetNames:
         # aggregates `sidecar-*` into `sidecar-release-assets`, and `sidecar-edge.yml`
         # publishes `edge-dist/*` to the rolling edge release.
         build_job = BUILD_WF.split("\n  attest:", 1)[0]
-        assert "if: inputs.label == 'edge'" in build_job
-        assert "out/${PAYLOAD}.build.json" in build_job
-        assert "git rev-parse HEAD" in build_job
-        assert "path: out/*" in build_job
+        write_marker = "- name: Write edge build metadata"
+        upload_marker = "- name: Upload build artifact"
+        assert write_marker in build_job
+        assert upload_marker in build_job
+        assert build_job.index(write_marker) < build_job.index(upload_marker)
+
+        metadata_step = build_job.split(write_marker, 1)[1].split(upload_marker, 1)[0]
+        assert "if: inputs.label == 'edge'" in metadata_step
+        assert "steps.names.outputs.build_metadata" in metadata_step
+        assert "out/$BUILD_METADATA" in metadata_step
+        assert "git rev-parse HEAD" in metadata_step
+
+        upload_step = build_job.split(upload_marker, 1)[1]
+        assert "path: out/*" in upload_step
+
         edge_wf = (WORKFLOWS / "sidecar-edge.yml").read_text(encoding="utf-8")
         assert "files: edge-dist/*" in edge_wf
+
+    def test_asset_names_cli_emits_build_metadata_only_for_edge(self, capsys):
+        assert asset_names.main(["Linux-CLI", "edge"]) == 0
+        out_edge = capsys.readouterr().out.splitlines()
+        assert "payload=Runway-Sidecar-Linux-CLI-edge.tar.gz" in out_edge
+        assert "build_metadata=Runway-Sidecar-Linux-CLI-edge.tar.gz.build.json" in out_edge
+
+        assert asset_names.main(["Linux-CLI", "v1.2.3"]) == 0
+        out_stable = capsys.readouterr().out.splitlines()
+        assert not any(line.startswith("build_metadata=") for line in out_stable)
 
     def test_server_edge_build_files_match_asset_names(self):
         from app.services.sidecar_version_checker import _EDGE_BUILD_FILES

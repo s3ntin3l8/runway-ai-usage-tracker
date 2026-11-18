@@ -41,8 +41,10 @@ _CHECK_INTERVAL_SECONDS = 24 * 60 * 60  # 24h
 _HTTP_TIMEOUT_SECONDS = 10.0
 
 
-def _platform_key_from_os_platform(os_platform: str | None) -> str | None:
-    """Map a sidecar's ``os_platform`` (e.g. ``'Darwin/24.1.0'``) to a release platform key."""
+def _platform_key_from_os_platform(
+    os_platform: str | None, sidecar_target: str | None = None
+) -> str | None:
+    """Map a sidecar's ``os_platform`` (e.g. ``'Darwin/24.1.0'``) and target to a release platform key."""
     if not os_platform:
         return None
     family = os_platform.split("/", 1)[0].strip().lower()
@@ -51,7 +53,7 @@ def _platform_key_from_os_platform(os_platform: str | None) -> str | None:
     if family == "windows":
         return "Windows"
     if family == "linux":
-        return "Linux"
+        return "Linux-CLI" if sidecar_target == "cli" else "Linux"
     return None
 
 
@@ -83,7 +85,6 @@ class SidecarVersionChecker:
         self._interval = check_interval
         self._latest: str | None = None
         self._latest_beta: str | None = None
-        self._latest_edge_sha: str | None = None
         self._latest_edge_shas: dict[str, str] = {}
         self._task: asyncio.Task | None = None
         self._running = False
@@ -92,12 +93,12 @@ class SidecarVersionChecker:
         """Return the cached latest tag (without the `v` prefix), or None."""
         return self._latest
 
-    def get_latest_edge_sha(self, os_platform: str | None = None) -> str | None:
+    def get_latest_edge_sha(
+        self, os_platform: str | None = None, sidecar_target: str | None = None
+    ) -> str | None:
         """Return the cached commit sha of the rolling ``edge`` asset for *os_platform*, or None."""
-        if os_platform is not None:
-            plat = _platform_key_from_os_platform(os_platform)
-            return self._latest_edge_shas.get(plat) if plat else None
-        return self._latest_edge_sha
+        plat = _platform_key_from_os_platform(os_platform, sidecar_target)
+        return self._latest_edge_shas.get(plat) if plat else None
 
     def get_latest_beta(self) -> str | None:
         """Return the newest numbered beta tag without its `v` prefix."""
@@ -124,7 +125,7 @@ class SidecarVersionChecker:
         logger.info("Sidecar version checker stopped.")
 
     async def check_now(self) -> str | None:
-        """Refresh the cached stable/beta tags and edge-tag sha.
+        """Refresh the cached stable/beta tags and per-platform edge build shas.
 
         All fetches are best-effort: on any failure the previous cache is kept
         and the fleet API degrades to "unknown latest" for that channel.
@@ -215,7 +216,8 @@ def is_update_available(
 ) -> bool:
     """Whether *current* is behind the newest build on its channel. False on ambiguity.
 
-    Edge builds compare commit sha against the rolling `edge` tag. A configured
+    Edge builds compare commit sha against that platform's ``<payload>.build.json``
+    on the rolling `edge` release. A configured
     target channel overrides the build's channel so beta installs can be
     promoted to stable by changing the fleet setting. Missing channel heads mean
     "unknown" and do not flag an update.

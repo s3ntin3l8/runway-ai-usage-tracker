@@ -1091,6 +1091,7 @@ async def ingest_metrics(
                 sidecar_version=payload.sidecar_version,
                 os_platform=payload.os_platform,
                 self_update_capable=payload.self_update_capable,
+                sidecar_target=payload.sidecar_target,
                 keep_alive=payload.keep_alive,
                 keep_alive_providers=payload.keep_alive_providers,
                 auto_update=payload.auto_update,
