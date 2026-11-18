@@ -89,11 +89,12 @@ Runway's price (transcript tokens) against Claude's `cost_usd`, matched requests
 
 Per request the ratio is exactly 1.000 at the 10th, 50th and 90th percentile for every model, also
 for Opus requests above 100k and 200k prompt tokens. The totals differ because of a tail of requests
-where `cost_usd` is 2 to 20 times Runway's price (72 on Opus and Sonnet: $134.58 against $7.98; tracked in #1352).
+where `cost_usd` is 2 to 20 times Runway's price (72 on Opus and Sonnet: $134.58 against $7.98, plus a $6.79 remainder on Fable; tracked in #1352).
 
 **Cause: the advisor tool.** Claude Code writes `message.usage.iterations`, a list of `message`
-entries (the main call) and `advisor_message` entries (the advisor's own sub-inference, with its own
-`model`). 82 matched requests have an `advisor_message` entry (79 on `claude-fable-5-2`, 3 on
+entries (the main call) and `advisor_message` entries (the advisor's own sub-inference). Only an
+`advisor_message` entry has a `model` key (`iterations[].model`, read from the owner's local transcripts;
+`message` entries have none, and the cloud source-shape capture did not record it). 82 matched requests have an `advisor_message` entry (79 on `claude-fable-5-2`, 3 on
 `claude-fable-5-1`), with a combined `cost_usd` of $163.60. On all 82 the top-level `usage` equals
 the sum of the `message` entries only, and the telemetry token fields equal the top-level `usage`,
 so both sources omit the advisor's tokens and agree with each other while `cost_usd` includes them.
