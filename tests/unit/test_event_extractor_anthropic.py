@@ -2,7 +2,15 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from sqlmodel import Session, SQLModel, create_engine, select
+from sqlmodel.pool import StaticPool
 
+from app.core.db import SQLITE_CONNECT_ARGS, configure_sqlite_engine
+from app.models.db import UsageEvent
+from app.services.cost_calculator import compute_event_cost
+from app.services.event_ingestor import EventIngestor
+from app.services.pricing_seed import seed_pricing_table
+from app.services.queries.sessions import query_sessions
 from scripts.sidecar_pkg.event_extractors.anthropic import (
     _normalize_anthropic_model,
     parse_anthropic_events,
@@ -255,6 +263,383 @@ def test_streamed_usage_keeps_maximum_output_and_first_identity(tmp_path, output
     assert event.app_version == "version-0"
     assert event.entrypoint == "entrypoint-0"
     assert event.effort == "effort-0"
+
+
+def test_advisor_iteration_extracted_as_separate_event(tmp_path):
+    record = {
+        "type": "assistant",
+        "timestamp": "2026-11-18T10:00:00Z",
+        "sessionId": "sess-adv-1",
+        "cwd": "/home/user/repo",
+        "gitBranch": "main",
+        "entrypoint": "cli",
+        "version": "2.1.300",
+        "message": {
+            "id": "msg_adv_1",
+            "requestId": "req_adv_1",
+            "model": "claude-sonnet-4-6",
+            "content": [{"type": "tool_use", "name": "Advisor"}],
+            "usage": {
+                "input_tokens": 1200,
+                "output_tokens": 450,
+                "cache_read_input_tokens": 300,
+                "cache_creation_input_tokens": 100,
+                "cache_creation": {
+                    "ephemeral_1h_input_tokens": 60,
+                    "ephemeral_5m_input_tokens": 40,
+                },
+                "iterations": [
+                    {
+                        "type": "message",
+                        "input_tokens": 500,
+                        "output_tokens": 200,
+                        "cache_read_input_tokens": 300,
+                        "cache_creation_input_tokens": 100,
+                        "cache_creation": {
+                            "ephemeral_1h_input_tokens": 60,
+                            "ephemeral_5m_input_tokens": 40,
+                        },
+                    },
+                    {
+                        "type": "advisor_message",
+                        "model": "claude-fable-5-2",
+                        "input_tokens": 142_952,
+                        "output_tokens": 12_650,
+                        "cache_read_input_tokens": 0,
+                        "cache_creation_input_tokens": 0,
+                        "cache_creation": {
+                            "ephemeral_1h_input_tokens": 0,
+                            "ephemeral_5m_input_tokens": 0,
+                        },
+                    },
+                    {
+                        "type": "message",
+                        "input_tokens": 700,
+                        "output_tokens": 250,
+                        "cache_read_input_tokens": 0,
+                        "cache_creation_input_tokens": 0,
+                    },
+                ],
+            },
+        },
+    }
+    path = tmp_path / "advisor.jsonl"
+    _write_transcript(path, [record])
+
+    events = parse_anthropic_events(
+        [path], account_id="u@x", since=datetime(2020, 1, 1, tzinfo=UTC)
+    )
+
+    assert len(events) == 2
+    main, advisor = events
+    assert main.event_id == "msg_adv_1|req_adv_1"
+    assert main.model_id == "sonnet-4.6"
+    assert main.tokens_input == 1200
+    assert main.tokens_output == 450
+    assert main.tokens_cache_read == 300
+    assert main.tokens_cache_create == 100
+    assert main.tokens_cache_create_1h == 60
+    assert main.tokens_cache_create_5m == 40
+    assert main.tool_names == ["Advisor"]
+    assert main.turn_id is None
+
+    assert advisor.event_id == "msg_adv_1|req_adv_1|advisor"
+    assert advisor.event_id.endswith("|advisor")
+    assert advisor.turn_id == main.event_id
+    assert advisor.model_id == "fable-5.2"
+    assert advisor.tokens_input == 142_952
+    assert advisor.tokens_output == 12_650
+    assert advisor.tokens_cache_read == 0
+    assert advisor.tokens_cache_create == 0
+    assert advisor.tokens_cache_create_1h == 0
+    assert advisor.tokens_cache_create_5m == 0
+    assert advisor.session_id == main.session_id
+    assert advisor.cwd == main.cwd
+    assert advisor.git_branch == main.git_branch
+    assert advisor.ts == main.ts
+    assert advisor.source_app == main.source_app
+    assert advisor.entrypoint == main.entrypoint
+    assert advisor.app_version == main.app_version
+    assert advisor.tool_names is None
+
+
+def test_iterations_without_advisor_and_without_iterations_emit_one_event(tmp_path):
+    records = [
+        {
+            "type": "assistant",
+            "timestamp": "2026-11-18T10:00:00Z",
+            "sessionId": "sess-1",
+            "message": {
+                "id": "msg_with_iter",
+                "requestId": "req_1",
+                "model": "claude-sonnet-4-6",
+                "content": [],
+                "usage": {
+                    "input_tokens": 100,
+                    "output_tokens": 50,
+                    "iterations": [{"type": "message", "input_tokens": 100, "output_tokens": 50}],
+                },
+            },
+        },
+        {
+            "type": "assistant",
+            "timestamp": "2026-11-18T10:01:00Z",
+            "sessionId": "sess-1",
+            "message": {
+                "id": "msg_no_iter",
+                "requestId": "req_2",
+                "model": "claude-sonnet-4-6",
+                "content": [],
+                "usage": {"input_tokens": 200, "output_tokens": 80},
+            },
+        },
+    ]
+    path = tmp_path / "no-advisor.jsonl"
+    _write_transcript(path, records)
+
+    events = parse_anthropic_events(
+        [path], account_id="u@x", since=datetime(2020, 1, 1, tzinfo=UTC)
+    )
+    assert [e.event_id for e in events] == ["msg_with_iter|req_1", "msg_no_iter|req_2"]
+
+
+def test_advisor_iterations_sum_same_model_and_split_distinct_models(tmp_path):
+    records = [
+        {
+            "type": "assistant",
+            "timestamp": "2026-11-18T10:00:00Z",
+            "sessionId": "sess-sum",
+            "message": {
+                "id": "msg_sum",
+                "requestId": "req_sum",
+                "model": "claude-sonnet-4-6",
+                "content": [],
+                "usage": {
+                    "input_tokens": 100,
+                    "output_tokens": 20,
+                    "iterations": [
+                        {
+                            "type": "advisor_message",
+                            "model": "claude-fable-5-2",
+                            "input_tokens": 1000,
+                            "output_tokens": 200,
+                            "cache_read_input_tokens": 50,
+                            "cache_creation_input_tokens": 30,
+                            "cache_creation": {
+                                "ephemeral_1h_input_tokens": 10,
+                                "ephemeral_5m_input_tokens": 20,
+                            },
+                        },
+                        {
+                            "type": "advisor_message",
+                            "model": "claude-fable-5-2",
+                            "input_tokens": 500,
+                            "output_tokens": 100,
+                            "cache_read_input_tokens": 25,
+                            "cache_creation_input_tokens": 15,
+                            "cache_creation": {
+                                "ephemeral_1h_input_tokens": 5,
+                                "ephemeral_5m_input_tokens": 10,
+                            },
+                        },
+                    ],
+                },
+            },
+        },
+        {
+            "type": "assistant",
+            "timestamp": "2026-11-18T10:01:00Z",
+            "sessionId": "sess-multi",
+            "message": {
+                "id": "msg_multi",
+                "requestId": "req_multi",
+                "model": "claude-sonnet-4-6",
+                "content": [],
+                "usage": {
+                    "input_tokens": 100,
+                    "output_tokens": 20,
+                    "iterations": [
+                        {
+                            "type": "advisor_message",
+                            "model": "claude-fable-5-2",
+                            "input_tokens": 400,
+                            "output_tokens": 40,
+                        },
+                        {
+                            "type": "advisor_message",
+                            "model": "claude-fable-5-1",
+                            "input_tokens": 300,
+                            "output_tokens": 30,
+                        },
+                    ],
+                },
+            },
+        },
+    ]
+    path = tmp_path / "advisor-multi.jsonl"
+    _write_transcript(path, records)
+
+    events = parse_anthropic_events(
+        [path], account_id="u@x", since=datetime(2020, 1, 1, tzinfo=UTC)
+    )
+
+    by_id = {e.event_id: e for e in events}
+    assert set(by_id) == {
+        "msg_sum|req_sum",
+        "msg_sum|req_sum|advisor",
+        "msg_multi|req_multi",
+        "msg_multi|req_multi|advisor:fable-5.2",
+        "msg_multi|req_multi|advisor:fable-5.1",
+    }
+    summed = by_id["msg_sum|req_sum|advisor"]
+    assert summed.model_id == "fable-5.2"
+    assert summed.tokens_input == 1500
+    assert summed.tokens_output == 300
+    assert summed.tokens_cache_read == 75
+    assert summed.tokens_cache_create == 45
+    assert summed.tokens_cache_create_1h == 15
+    assert summed.tokens_cache_create_5m == 30
+
+
+def test_advisor_uses_winning_streamed_record_and_first_identity(tmp_path):
+    records = [
+        {
+            "type": "assistant",
+            "timestamp": "2026-11-18T10:00:00Z",
+            "sessionId": "sess-stream",
+            "cwd": "/repo-first",
+            "message": {
+                "id": "msg_stream",
+                "requestId": "req_stream",
+                "model": "claude-sonnet-4-6",
+                "content": [],
+                "usage": {
+                    "input_tokens": 100,
+                    "output_tokens": 10,
+                    "iterations": [
+                        {
+                            "type": "advisor_message",
+                            "model": "claude-fable-5-2",
+                            "input_tokens": 999,
+                            "output_tokens": 99,
+                        }
+                    ],
+                },
+            },
+        },
+        {
+            "type": "assistant",
+            "timestamp": "2026-11-18T10:00:05Z",
+            "sessionId": "sess-stream-later",
+            "cwd": "/repo-later",
+            "message": {
+                "id": "msg_stream",
+                "requestId": "req_stream",
+                "model": "claude-sonnet-4-6",
+                "content": [],
+                "usage": {
+                    "input_tokens": 100,
+                    "output_tokens": 250,
+                    "iterations": [
+                        {
+                            "type": "advisor_message",
+                            "model": "claude-fable-5-2",
+                            "input_tokens": 5000,
+                            "output_tokens": 400,
+                        }
+                    ],
+                },
+            },
+        },
+    ]
+    path = tmp_path / "streamed-advisor.jsonl"
+    _write_transcript(path, records)
+
+    events = parse_anthropic_events(
+        [path], account_id="u@x", since=datetime(2020, 1, 1, tzinfo=UTC)
+    )
+
+    assert len(events) == 2
+    main, advisor = events
+    assert main.tokens_output == 250
+    assert advisor.tokens_input == 5000
+    assert advisor.tokens_output == 400
+    assert advisor.ts == "2026-11-18T10:00:00+00:00"
+    assert advisor.session_id == "sess-stream"
+    assert advisor.cwd == "/repo-first"
+
+
+def test_advisor_ingest_idempotency_cost_and_session_turn_count(tmp_path):
+    record = {
+        "type": "assistant",
+        "timestamp": "2026-11-18T10:00:00Z",
+        "sessionId": "sess-ingest-adv",
+        "cwd": "/home/user/repo",
+        "message": {
+            "id": "msg_ing_1",
+            "requestId": "req_ing_1",
+            "model": "claude-sonnet-4-6",
+            "content": [],
+            "usage": {
+                "input_tokens": 1000,
+                "output_tokens": 200,
+                "iterations": [
+                    {"type": "message", "input_tokens": 1000, "output_tokens": 200},
+                    {
+                        "type": "advisor_message",
+                        "model": "claude-fable-5-2",
+                        "input_tokens": 142_952,
+                        "output_tokens": 12_650,
+                    },
+                ],
+            },
+        },
+    }
+    path = tmp_path / "ingest-advisor.jsonl"
+    _write_transcript(path, [record])
+
+    first_pass = parse_anthropic_events(
+        [path], account_id="u@x", since=datetime(2020, 1, 1, tzinfo=UTC)
+    )
+    second_pass = parse_anthropic_events(
+        [path], account_id="u@x", since=datetime(2020, 1, 1, tzinfo=UTC)
+    )
+    assert [e.event_id for e in first_pass] == [e.event_id for e in second_pass]
+
+    engine = create_engine("sqlite://", connect_args=SQLITE_CONNECT_ARGS, poolclass=StaticPool)
+    configure_sqlite_engine(engine)
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as db:
+        seed_pricing_table(db)
+        res1 = EventIngestor(db).ingest(first_pass, sidecar_id="dev-01")
+        res2 = EventIngestor(db).ingest(second_pass, sidecar_id="dev-01")
+        assert res1.events_inserted == 2
+        assert res2.events_inserted == 0
+        assert res2.events_duplicate == 2
+
+        rows = db.exec(select(UsageEvent)).all()
+        assert len(rows) == 2
+        advisor_row = next(r for r in rows if r.event_id.endswith("|advisor"))
+        expected_cost = compute_event_cost(
+            db,
+            provider_id="anthropic",
+            model_id="fable-5.2",
+            ts=datetime(2026, 11, 18, 10, 0, 0, tzinfo=UTC),
+            tokens_input=142_952,
+            tokens_output=12_650,
+            tokens_cache_read=0,
+            tokens_cache_create=0,
+        )
+        assert advisor_row.cost_usd == pytest.approx(expected_cost)
+
+        sessions = query_sessions(
+            db,
+            provider_id="anthropic",
+            account_id="u@x",
+            since=datetime(2020, 1, 1, tzinfo=UTC),
+        )
+        assert len(sessions) == 1
+        assert sessions[0]["msgs"] == 1
 
 
 # --- session names -----------------------------------------------------------
