@@ -451,6 +451,41 @@ def _find_staged(staged_dir: pathlib.Path, install: pathlib.Path) -> pathlib.Pat
     raise SelfUpdateError("no binary found in downloaded archive")
 
 
+def _staged_version(staged: pathlib.Path) -> str | None:
+    """Version stamped into a staged macOS ``.app`` (its bundled ``package.json``), if readable.
+
+    The build workflow stamps edge builds as ``<base>+edge.<sha>``. One-file Windows
+    and Linux payloads carry ``package.json`` inside the executable, so they have
+    nothing to read here and return None (no guard for them).
+    """
+    if staged.suffix != ".app":
+        return None
+    for rel in ("Contents/Resources/package.json", "Contents/Frameworks/package.json"):
+        try:
+            data = json.loads((staged / rel).read_text())
+        except (OSError, ValueError):
+            continue
+        if isinstance(data, dict) and isinstance(data.get("version"), str):
+            return data["version"]
+    return None
+
+
+def _is_running_edge_build(staged: pathlib.Path, running_version: str) -> bool:
+    """True when the staged edge payload was built from the commit already running.
+
+    The ``edge`` tag moves on every push to main even when a platform leg failed
+    and its asset was not republished, so the tag can be ahead of the asset.
+    Installing the unchanged asset again would loop on every "update available".
+    """
+    running_channel, running_sha = parse_channel(running_version)
+    if running_channel != "edge" or not running_sha:
+        return False
+    staged_channel, staged_sha = parse_channel(_staged_version(staged))
+    if staged_channel != "edge" or not staged_sha:
+        return False
+    return staged_sha.startswith(running_sha) or running_sha.startswith(staged_sha)
+
+
 # Windows installer's Apps & Features entry (installer/windows/runway-sidecar.nsi).
 # Self-updates refresh its DisplayVersion; portable installs have no such key.
 _WIN_UNINSTALL_KEY = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\Runway Sidecar"
@@ -1107,6 +1142,17 @@ def self_update(version: str, channel: str | None, *, restart: bool = True) -> b
             extracted = tmp / "extracted"
             extracted.mkdir()
             _extract(archive, extracted)
+            if eff_channel == "edge" and _is_running_edge_build(
+                _find_staged(extracted, _install_path()), version
+            ):
+                logger.info(
+                    "Self-update: the edge asset for %s is the build already running (%s); "
+                    "the edge tag is ahead of it, so this platform's build has not been "
+                    "published yet. Not reinstalling.",
+                    target,
+                    version,
+                )
+                return False
             return apply_update(
                 target,
                 extracted,
