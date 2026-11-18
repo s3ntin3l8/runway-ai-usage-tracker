@@ -95,9 +95,14 @@ def _context(record: dict[str, Any], key: bytes) -> dict[str, Any]:
                 and not (isinstance(sdk, str) and isinstance(local, str))
             ):
                 context["scope_unknown"] = True
+    raw_request = record.get("request_id")
+    if raw_request is None:
+        raw_request = record.get("requestId")
     message = record.get("message")
-    if isinstance(message, dict) and message.get("requestId") is not None:
-        request = _identity(message["requestId"], key, b"request")
+    if raw_request is None and isinstance(message, dict):
+        raw_request = message.get("requestId")
+    if raw_request is not None:
+        request = _identity(raw_request, key, b"request")
         if request is None:
             context["scope_unknown"] = True
         else:

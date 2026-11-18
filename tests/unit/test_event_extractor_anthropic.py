@@ -18,6 +18,9 @@ from scripts.sidecar_pkg.event_extractors.anthropic import (
 
 FIXTURE = Path(__file__).parent.parent / "fixtures" / "anthropic-sample.jsonl"
 SIDECHAIN_FIXTURE = Path(__file__).parent.parent / "fixtures" / "anthropic-sidechain-sample.jsonl"
+RECORD_REQUEST_ID_FIXTURE = (
+    Path(__file__).parent.parent / "fixtures" / "anthropic-record-request-id-sample.jsonl"
+)
 
 
 @pytest.mark.parametrize(
@@ -734,3 +737,59 @@ def test_session_names_skip_leaves_the_file_unread(tmp_path):
     _write_transcript(fp, [{"type": "ai-title", "aiTitle": "Skipped", "sessionId": "sess-eee"}])
     records, scanned = parse_anthropic_session_names([fp], skip=lambda path: True)
     assert records == [] and scanned == {}
+
+
+def test_top_level_request_id_sets_request_id_without_changing_event_id():
+    evts = parse_anthropic_events(
+        [RECORD_REQUEST_ID_FIXTURE],
+        account_id="u@x",
+        since=datetime(2020, 1, 1, tzinfo=UTC),
+    )
+    assert [(e.event_id, e.request_id) for e in evts] == [
+        ("msg_top_1", "req_top_1"),
+        ("msg_top_2", "req_top_2"),
+    ]
+
+
+def test_message_level_request_id_keeps_legacy_event_id_and_sets_request_id():
+    evts = parse_anthropic_events(
+        [FIXTURE],
+        account_id="u@x",
+        since=datetime(2020, 1, 1, tzinfo=UTC),
+    )
+    assert [(e.event_id, e.request_id) for e in evts] == [
+        ("msg_1|req_1", "req_1"),
+        ("msg_2|req_2", "req_2"),
+    ]
+
+
+def test_re_extracting_and_re_ingesting_top_level_request_id_stores_each_event_once():
+    first_pass = parse_anthropic_events(
+        [RECORD_REQUEST_ID_FIXTURE],
+        account_id="u@x",
+        since=datetime(2020, 1, 1, tzinfo=UTC),
+    )
+    second_pass = parse_anthropic_events(
+        [RECORD_REQUEST_ID_FIXTURE],
+        account_id="u@x",
+        since=datetime(2020, 1, 1, tzinfo=UTC),
+    )
+    assert [e.event_id for e in first_pass] == [e.event_id for e in second_pass]
+
+    engine = create_engine("sqlite://", connect_args=SQLITE_CONNECT_ARGS, poolclass=StaticPool)
+    configure_sqlite_engine(engine)
+    SQLModel.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        res1 = EventIngestor(session).ingest(first_pass, sidecar_id="dev-01")
+        res2 = EventIngestor(session).ingest(second_pass, sidecar_id="dev-01")
+        rows = session.exec(select(UsageEvent)).all()
+
+    assert res1.events_inserted == 2
+    assert res2.events_inserted == 0
+    assert res2.events_duplicate == 2
+    assert len(rows) == 2
+    assert {r.event_id: r.request_id for r in rows} == {
+        "msg_top_1": "req_top_1",
+        "msg_top_2": "req_top_2",
+    }
