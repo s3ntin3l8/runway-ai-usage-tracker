@@ -793,3 +793,41 @@ def test_re_extracting_and_re_ingesting_top_level_request_id_stores_each_event_o
         "msg_top_1": "req_top_1",
         "msg_top_2": "req_top_2",
     }
+
+
+def test_non_string_top_level_request_id_does_not_drop_event(tmp_path):
+    fp = tmp_path / "non-str-req.jsonl"
+    _write_transcript(
+        fp,
+        [
+            {
+                "type": "assistant",
+                "timestamp": "2026-05-08T14:23:00Z",
+                "requestId": 12345,
+                "message": {
+                    "id": "msg_num",
+                    "model": "claude-sonnet-4-5-20250929",
+                    "usage": {"input_tokens": 10, "output_tokens": 5},
+                },
+            },
+            {
+                "type": "assistant",
+                "timestamp": "2026-05-08T14:23:01Z",
+                "requestId": {"nested": "x"},
+                "message": {
+                    "id": "msg_dict",
+                    "model": "claude-sonnet-4-5-20250929",
+                    "usage": {"input_tokens": 10, "output_tokens": 5},
+                },
+            },
+        ],
+    )
+    evts = parse_anthropic_events(
+        [fp],
+        account_id="u@x",
+        since=datetime(2020, 1, 1, tzinfo=UTC),
+    )
+    assert [(e.event_id, e.request_id) for e in evts] == [
+        ("msg_num", None),
+        ("msg_dict", None),
+    ]

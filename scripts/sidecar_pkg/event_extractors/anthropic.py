@@ -148,7 +148,12 @@ def parse_anthropic_events(
                         if not event_id:
                             continue
                         dedup_key = (msg_id, req_id)
-                        request_id = e.get("requestId") or msg.get("requestId") or None
+                        raw_request_id = e.get("requestId") or msg.get("requestId")
+                        request_id = (
+                            raw_request_id
+                            if isinstance(raw_request_id, str) and raw_request_id
+                            else None
+                        )
 
                         usage = msg.get("usage") or {}
                         content = msg.get("content") or []
