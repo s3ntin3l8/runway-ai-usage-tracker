@@ -159,7 +159,7 @@ def test_authorization_child_writes_the_refusal_when_there_is_no_console(monkeyp
 @pytest.mark.skipif(sys.platform == "win32", reason="native scope uses POSIX ownership")
 def test_authorization_child_reports_a_denied_keychain_read(monkeypatch, tmp_path, capsys):
     """A denied read is reported with its own reason, not as an opaque failure."""
-    from scripts.sidecar_pkg import keychain_authorization, macos_keychain_store, source_setup
+    from scripts.sidecar_pkg import keychain_authorization, source_setup
     from scripts.sidecar_pkg.keychain_protocol import KeychainError
     from sidecar_app import config
 
@@ -168,7 +168,7 @@ def test_authorization_child_reports_a_denied_keychain_read(monkeypatch, tmp_pat
     path = tmp_path / "config.json"
     config.save_local_config(path, consent.SourcePolicy.enable_all({}))
     monkeypatch.setattr(config, "get_config_path", lambda: path)
-    monkeypatch.setattr(macos_keychain_store, "_NativeAPI", object)
+    monkeypatch.setattr(keychain_authorization, "HelperReadAPI", Mock)
     monkeypatch.setattr(
         keychain_authorization,
         "authorize_once",
@@ -186,7 +186,7 @@ def test_authorization_child_reports_a_denied_keychain_read(monkeypatch, tmp_pat
 
 
 def test_authorization_child_checks_local_permission_before_native(monkeypatch, tmp_path, capsys):
-    from scripts.sidecar_pkg import macos_keychain_store, source_setup
+    from scripts.sidecar_pkg import keychain_authorization, source_setup
     from sidecar_app import config
 
     monkeypatch.setattr(source_setup.sys, "platform", "darwin")
@@ -195,7 +195,7 @@ def test_authorization_child_checks_local_permission_before_native(monkeypatch, 
     config.save_local_config(path, {})
     monkeypatch.setattr(config, "get_config_path", lambda: path)
     native = Mock(side_effect=AssertionError("must not load frameworks"))
-    monkeypatch.setattr(macos_keychain_store, "_NativeAPI", native)
+    monkeypatch.setattr(keychain_authorization, "HelperReadAPI", native)
     with pytest.raises(SystemExit) as result:
         source_setup.authorization_command(["--authorize-keychain-source", "anthropic.chrome"])
     assert result.value.code == 1
@@ -205,7 +205,7 @@ def test_authorization_child_checks_local_permission_before_native(monkeypatch, 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="native scope uses POSIX ownership")
 def test_authorization_child_uses_only_catalogued_resource(monkeypatch, tmp_path):
-    from scripts.sidecar_pkg import keychain_authorization, macos_keychain_store, source_setup
+    from scripts.sidecar_pkg import keychain_authorization, source_setup
     from sidecar_app import config
 
     monkeypatch.setattr(source_setup.sys, "platform", "darwin")
@@ -213,8 +213,8 @@ def test_authorization_child_uses_only_catalogued_resource(monkeypatch, tmp_path
     path = tmp_path / "config.json"
     config.save_local_config(path, consent.SourcePolicy.enable_all({}))
     monkeypatch.setattr(config, "get_config_path", lambda: path)
-    native = object()
-    monkeypatch.setattr(macos_keychain_store, "_NativeAPI", lambda: native)
+    native = Mock()
+    monkeypatch.setattr(keychain_authorization, "HelperReadAPI", lambda: native)
     authorize = Mock()
     monkeypatch.setattr(keychain_authorization, "authorize_once", authorize)
     with pytest.raises(SystemExit) as result:

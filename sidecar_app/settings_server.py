@@ -13,6 +13,8 @@ import pathlib
 import secrets
 import socket
 import socketserver
+import subprocess
+import sys
 import threading
 import webbrowser
 from collections import deque
@@ -24,6 +26,13 @@ from urllib.parse import parse_qs, urlencode, urlparse
 logger = logging.getLogger(__name__)
 
 _DEFAULT_PORT = 17653
+_FULL_DISK_ACCESS_URL = "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"
+
+
+def _open_full_disk_access() -> None:
+    """Open macOS System Settings -> Privacy & Security -> Full Disk Access."""
+    if sys.platform == "darwin":
+        subprocess.Popen(["/usr/bin/open", _FULL_DISK_ACCESS_URL])
 
 
 # ---------------------------------------------------------------------------
@@ -237,6 +246,7 @@ $css
 .kc-bsel { display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap; text-transform: none; letter-spacing: 0; font-weight: 500; }
 .kc-bsel label { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.7rem; color: #a1a1aa; border: 1px solid rgba(63,63,70,.7); border-radius: 999px; padding: 0.12rem 0.55rem; cursor: pointer; font-weight: 500; }
 .kc-bsel label.sel { color: #e4e4e7; border-color: #7c3aed; background: rgba(124,58,237,.12); }
+.kc-bsel label.off { opacity: 0.45; cursor: not-allowed; }
 .kc-bsel input { position: absolute; opacity: 0; width: 0; height: 0; }
 .kc-bsel label:focus-within { box-shadow: 0 0 0 2px rgba(124,58,237,0.5); }
 .kc-more { font-size: 0.72rem; color: #71717a; padding: 0.45rem 0.75rem; cursor: pointer; background: none; border-left: 0; border-right: 0; border-bottom: 0; width: 100%; text-align: left; font-family: inherit; }
@@ -250,6 +260,10 @@ $css
 .kc-b-err { color: #fca5a5; background: rgba(239,68,68,.08); border: 1px solid rgba(239,68,68,.3); }
 .kc-b-new { color: #c4b5fd; background: rgba(124,58,237,.08); border: 1px solid rgba(124,58,237,.3); display: flex; justify-content: space-between; gap: .5rem; align-items: center; }
 .kc-b-new button { background: none; border: none; color: #a78bfa; font: inherit; font-weight: 700; cursor: pointer; }
+.kc-safari-notice { display: flex; justify-content: space-between; gap: .5rem; align-items: center; }
+.kc-safari-notice button { background: none; border: none; color: #fcd34d; font: inherit; font-weight: 700; cursor: pointer; flex-shrink: 0; }
+.kc-safari-actions { display: inline-flex; align-items: center; gap: .5rem; }
+.kc-btn-sm { padding: .22rem .55rem; font-size: .68rem; border-radius: .45rem; }
 .kc-banner a { color: inherit; font-weight: 700; }
 #sources-error { font-size: .72rem; color: #fca5a5; margin-top: .6rem; }
 </style>
@@ -455,13 +469,33 @@ function renderSources(report) {
   const body = document.getElementById('sources-body');
   body.replaceChildren();
   if (!report.compatible) return;
-  const run = report.run, selected = report.browsers;
+  const run = report.run, selected = report.browsers, installed = report.installed || {};
   const live = report.sources.filter(s => s.compatible && (s.group === 'app' || selected[s.group]));
   const status = s => kcStatus(s, run);
   const blocked = report.re_pair_required || !report.forwarding_supported;
 
   if (report.re_pair_required) body.append(kcBanner('kc-b-err', 'Device authentication is unavailable, so Keychain credentials are withheld.', ['Re-pair this sidecar…', '/pair']));
   else if (!report.forwarding_supported) body.append(kcBanner('kc-b-warn', 'Your paired server does not support authenticated source controls yet, so Keychain credentials are withheld. You can still choose sources now.'));
+
+  if (report.safari && report.safari.notice) {
+    const note = kcEl('div', 'kc-banner kc-b-warn kc-safari-notice');
+    note.id = 'safari-fda-notice';
+    note.setAttribute('role', 'status');
+    const msg = kcEl('span', '', 'Safari cookies need Full Disk Access — see the ');
+    const jump = kcEl('a', '', 'Safari row');
+    jump.href = '#safari-row';
+    jump.onclick = e => {
+      e.preventDefault();
+      document.getElementById('safari-row')?.scrollIntoView({behavior: 'smooth', block: 'center'});
+    };
+    msg.append(jump, document.createTextNode(' below to open System Settings.'));
+    const dismiss = kcEl('button', '', 'Dismiss');
+    dismiss.id = 'safari-fda-dismiss';
+    dismiss.type = 'button';
+    dismiss.onclick = () => sourceAction('dismiss_safari_notice');
+    note.append(msg, dismiss);
+    body.append(note);
+  }
 
   const fresh = live.filter(s => s.new);
   if (fresh.length) {
@@ -509,10 +543,13 @@ function renderSources(report) {
   picker.title = 'Only the browsers you use are read; each one is one Keychain item';
   picker.append(document.createTextNode('Read from '));
   for (const [key, name] of KC_BROWSERS) {
-    const choice = kcEl('label', selected[key] ? 'sel' : '');
-    const box = document.createElement('input'); box.type = 'checkbox'; box.id = 'browser-' + key; box.checked = selected[key]; box.disabled = !!run.active;
+    const avail = installed[key] !== false;
+    const on = avail ? selected[key] : selected[key] === true;
+    const choice = kcEl('label', on ? 'sel' : avail ? '' : 'off');
+    const box = document.createElement('input'); box.type = 'checkbox'; box.id = 'browser-' + key; box.checked = on; box.disabled = !!run.active || (!avail && !on);
     box.onchange = () => sourceAction('set_browsers', null, {[key]: box.checked});
-    choice.append(box, document.createTextNode((selected[key] ? '✓ ' : '') + name));
+    choice.append(box, document.createTextNode((on ? '✓ ' : '') + name + (avail ? '' : ' · Not installed')));
+    if (!avail) choice.title = name + ' is not installed on this Mac';
     picker.append(choice);
   }
   label.append(kcEl('span', '', 'Web sessions (browser cookies)'), picker);
@@ -542,7 +579,26 @@ function renderSources(report) {
     more.type = 'button'; more.onclick = () => { showOffWeb = !showOffWeb; renderSources(report); };
     webRows.append(more);
   }
-  if (services.size) body.append(webGroup);
+  if (report.safari) {
+    const s = report.safari;
+    const row = kcEl('div', 'kc-row');
+    row.id = 'safari-row';
+    const name = kcEl('span', 'kc-name', s.label || 'Safari');
+    name.append(kcInfo('Reads Safari session cookies directly; no Keychain item'));
+    const right = kcEl('span', 'kc-safari-actions');
+    if (s.probe_state === 'full_disk_access_missing') {
+      const openBtn = kcEl('button', 'btn btn-ghost kc-btn-sm', 'Open Full Disk Access…');
+      openBtn.id = 'safari-fda-btn';
+      openBtn.type = 'button';
+      openBtn.onclick = () => fetch('/action/full_disk_access', {method: 'POST'}).catch(() => {});
+      right.append(openBtn);
+    }
+    const chipCls = s.probe_state === 'readable' ? 'kc-ok' : s.probe_state === 'full_disk_access_missing' ? 'kc-need' : 'kc-off';
+    right.append(kcEl('span', 'kc-chip ' + chipCls, s.state));
+    row.append(kcEl('span', ''), name, right);
+    webRows.append(row);
+  }
+  if (services.size || report.safari) body.append(webGroup);
 
   // Claude Code renewal stays a per-source local choice
   const code = report.sources.find(s => s.id === 'anthropic.claude-code');
@@ -610,6 +666,7 @@ async function refreshSources(force) {
 }
 refreshSources().catch(() => {});
 setInterval(() => refreshSources().catch(() => {}), 5000);
+window.addEventListener('focus', () => { refreshSources(true).catch(() => {}); });
 
 // ---- Key visibility toggle ------------------------------------------------
 
@@ -914,11 +971,18 @@ class _Handler(BaseHTTPRequestHandler):
                 import sys
 
                 from scripts.sidecar_pkg.source_catalog import catalog
+                from scripts.sidecar_pkg.source_settings import browsers
                 from scripts.sidecar_pkg.source_setup import SETUP
 
                 # Every source that is on here and belongs to this platform; the controller
                 # skips what is already authorized and groups what shares a Keychain item.
-                ids = [i for i, d in catalog().items() if sys.platform in d.platforms]
+                selected = browsers(self.server.get_config())
+                ids = [
+                    i
+                    for i, d in catalog().items()
+                    if sys.platform in d.platforms
+                    and (d.browser_key is None or selected[d.browser_key])
+                ]
                 self._send_json({"ok": True, "run": SETUP.start_all(ids)})
                 return
             if isinstance(command, dict) and command.get("action") == "authorize_cancel":
@@ -1068,6 +1132,8 @@ class _Handler(BaseHTTPRequestHandler):
                 self.server.open_logs()
             elif action == "config":
                 self.server.open_config()
+            elif action == "full_disk_access":
+                self.server.open_full_disk_access()
             self._send_json({"ok": True})
         except Exception as exc:
             self._send_json({"ok": False, "error": str(exc)}, 500)
@@ -1131,6 +1197,7 @@ class _SettingsServer(socketserver.TCPServer):
         open_dashboard: Callable[[], None],
         open_logs: Callable[[], None],
         open_config: Callable[[], None],
+        open_full_disk_access: Callable[[], None] | None = None,
     ) -> None:
         super().__init__((host, port), _Handler)
         self.control_token = ""
@@ -1141,6 +1208,7 @@ class _SettingsServer(socketserver.TCPServer):
         self.open_dashboard = open_dashboard
         self.open_logs = open_logs
         self.open_config = open_config
+        self.open_full_disk_access = open_full_disk_access or _open_full_disk_access
 
 
 # ---------------------------------------------------------------------------
@@ -1160,6 +1228,7 @@ class SettingsServer:
         open_logs: Callable[[], None],
         open_config: Callable[[], None],
         port: int = _DEFAULT_PORT,
+        open_full_disk_access: Callable[[], None] | None = None,
     ) -> None:
         self._get_config = get_config
         self._get_status = get_status
@@ -1167,6 +1236,7 @@ class SettingsServer:
         self._open_dashboard = open_dashboard
         self._open_logs = open_logs
         self._open_config = open_config
+        self._open_full_disk_access = open_full_disk_access or _open_full_disk_access
         self._port = port
         self._server: _SettingsServer | None = None
         self._thread: threading.Thread | None = None
@@ -1190,6 +1260,7 @@ class SettingsServer:
                     self._open_dashboard,
                     self._open_logs,
                     self._open_config,
+                    self._open_full_disk_access,
                 )
                 break
             except OSError:

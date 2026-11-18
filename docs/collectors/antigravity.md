@@ -23,7 +23,7 @@ Quota gauges for the Antigravity CLI (`agy`) from Google's Cloud Code Assist API
 | Source | Where | Runs in | Notes |
 |---|---|---|---|
 | Token file | `~/.gemini/antigravity-cli/antigravity-oauth-token` (Linux, macOS with agy before 1.4.3) | sidecar | JSON: `auth_method`, `token.access_token`, `token.refresh_token`, `token.expiry`. |
-| macOS Keychain | service `gemini`, account `antigravity` (agy 1.4.3 and later) | sidecar | Read through the Keychain worker after a one-time local consent; see [source-consent.md](../source-consent.md). Value is go-keyring wrapped (base64 or hex envelope), unwrapped by the sidecar. |
+| macOS Keychain | service `gemini`, account `antigravity` (agy 1.4.3 and later) | sidecar | Read through the sidecar's native `kc_helper` after local source authorization; see [source-consent.md](../source-consent.md) for the macOS prompt and update behavior. Value is go-keyring wrapped (base64 or hex envelope), unwrapped by the sidecar. |
 | Windows Credential Manager | target `gemini:antigravity` | sidecar | Native read. |
 
 The server never reads a credential store. The sidecar ships the token on every push, under the origin `keychain:gemini:antigravity` for every OS-store source. A sidecar whose local token has lapsed does not push it, so one machine's dead session cannot overwrite the fresh entry another machine keeps. The macOS `id_token` is deliberately not mapped: the server derives the account label from an `id_token` when present, and a platform-specific mapping would file one account under two keys.

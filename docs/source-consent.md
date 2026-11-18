@@ -29,9 +29,11 @@ a supported write path. Claude Desktop OAuth is read-only.
 
 The sidecar's local settings page has a **Keychain scrapers** section: one row
 per app or CLI, one row per browser-cookie service, a **Read from** selector
-for which browsers' cookie stores may be read (unticking a browser turns its
-sources off; ticking it again turns nothing on), **Enable all**, **Disable
-all** and a separate Claude renewal control.
+for which browsers' cookie stores may be read (on macOS, browsers that are not
+installed appear as disabled **Not installed** chips and default off until
+installed or explicitly opted in; unticking a browser turns its sources off;
+ticking it again turns nothing on), **Enable all**, **Disable all** and a
+separate Claude renewal control.
 
 Saving a choice, status requests and background ticks never open an OS
 prompt. Only an explicit local **Authorize** (or **Authorize all enabled**)
@@ -44,13 +46,26 @@ logged. Turning a source off or changing consent cancels any waiting helper.
 A denied or timed-out Keychain prompt suppresses further access to that item
 until a successful explicit setup.
 
+On macOS, Keychain reads use the sidecar's native `kc_helper`. In the macOS
+prompt, **Always Allow** grants that helper continuing access to the selected
+item; **Allow** grants access only for that request and may prompt again next
+time. **Deny** grants no access. These OS choices are separate from each
+scraper's local read consent.
+
+An **Always Allow** grant is intended to survive sidecar updates that preserve
+the helper's bytes and signing identity. Rebuilding, changing or re-signing the
+helper can require a new grant; an existing grant to the previous Python
+helper does not transfer automatically. Release signing keeps the helper's CDHash
+stable across builds and fails the build if it drifts
+(`scripts/check_helper_cdhash.py`).
+
 ## States
 
-Each source shows one of: **Off**, **Setup required**, **Connecting**,
-**Ready**, **Limited**, **Action required**, **Withdrawal pending**. Read
-access alone does not prove renewal, API acceptance or that a permission
-survives an app update. Old peers that cannot report source state appear as
-**Limited**.
+Each source shows one of: **Off**, **Not installed**, **Setup required**,
+**Connecting**, **Ready**, **Limited**, **Action required**, **Withdrawal
+pending**. Read access alone does not prove renewal, API acceptance or that a
+permission survives an app update. Old peers that cannot report source state
+appear as **Limited**.
 
 ## What Fleet can and cannot do
 
@@ -83,6 +98,14 @@ from the server takes effect there immediately.
 
 A local checkbox does not retroactively revoke a credential the server already
 holds; revoke it from Fleet.
+
+## macOS permissions
+
+macOS splits credential access across two OS permissions:
+
+- **Keychain ("Always Allow")**: Chrome, Edge, Chromium, Claude Code, Claude Desktop, Antigravity and GitHub CLI read secrets from the macOS Keychain. Enable them in **Keychain scrapers**, click **Authorize**, and choose **Always Allow** on the macOS prompt so background collection does not re-prompt.
+- **Full Disk Access (Safari)**: Safari stores session cookies in protected locations (`~/Library/Cookies/Cookies.binarycookies` and `~/Library/Containers/com.apple.Safari/...`) without using the Keychain. Reading them requires **Full Disk Access** for Runway Sidecar in **System Settings → Privacy & Security → Full Disk Access**. The **Web sessions** section shows Safari's state (**Full Disk Access needed**, **Readable**, or **Safari not used**) and links directly to that pane.
+- **Browsers**: The **Read from** selector controls which Keychain-backed browsers (Chrome, Edge, Chromium) are read. Firefox and Safari do not use the Keychain.
 
 ## Windows Credential Manager
 

@@ -113,15 +113,47 @@ jobs:
         # keeps Apple Silicon happy and the bundle seal intact; users confirm
         # first launch via right-click → Open (docs/sidecar.md).
         if: runner.os == 'macOS'
+        # Never `--deep`: it rewrites a nested helper's identifier and CDHash even
+        # when its bytes are identical, which drops every Keychain "Always Allow"
+        # grant given to the helper. So: every nested Mach-O on its own, the
+        # Keychain helper on its own with its fixed identifier, then the bundle
+        # without `--deep`. Nothing may sign the helper again after step 2.
         run: |
-          codesign --force --deep --sign - "dist/Runway Sidecar.app"
-          codesign --verify --strict --verbose=2 "dist/Runway Sidecar.app"
+          app="dist/Runway Sidecar.app"
+          helper="$app/Contents/Frameworks/keychain_helper/kc_helper"
+          test -f "$helper"
+          # (PyInstaller keeps the real file under Contents/Resources and only
+          # cross-links the directory, which `find` does not follow, hence the glob.)
+          # 1. Every other nested Mach-O (PyInstaller libraries, main executable).
+          find "$app" -type f ! -path "*/keychain_helper/kc_helper" -print0 | while IFS= read -r -d '' f; do
+            if file -b "$f" | grep -q 'Mach-O'; then
+              codesign --force --sign - --timestamp=none "$f"
+            fi
+          done
+          # 2. The helper, same command as sidecar_app/keychain_helper/build.sh.
+          codesign --force --sign - --identifier com.runway.sidecar.keychain-helper \
+            --timestamp=none "$helper"
+          # 3. The bundle, without --deep (nested code keeps its own signature).
+          codesign --force --sign - "$app"
+          codesign --verify --strict --verbose=2 "$app"
+          python scripts/check_helper_cdhash.py "$helper"
 
       - name: Package self-update payload (macOS)
         # Same `zip -r` shape the updater has always consumed (symlinks are
         # followed; Python's zipfile cannot restore them).
         if: runner.os == 'macOS'
         run: cd dist && zip -qr "../${{ steps.names.outputs.payload }}" "Runway Sidecar.app"
+
+      - name: Verify the helper survived packaging (macOS)
+        # The payload is what self-update installs: unzip it and check the
+        # helper's CDHash again, so a packaging change cannot lose the grants.
+        if: runner.os == 'macOS'
+        run: |
+          check="$RUNNER_TEMP/payload-check"
+          rm -rf "$check" && mkdir -p "$check"
+          unzip -q "${{ steps.names.outputs.payload }}" -d "$check"
+          python scripts/check_helper_cdhash.py \
+            "$check/Runway Sidecar.app/Contents/Frameworks/keychain_helper/kc_helper"
 
       - name: Build DMG installer (macOS)
         if: runner.os == 'macOS'

@@ -194,7 +194,7 @@ export interface FleetSourceStatus {
   revision: string;
   generation: number;
   read: boolean;
-  state: 'Off' | 'Setup required' | 'Connecting' | 'Ready' | 'Limited' | 'Action required' | 'Withdrawal pending';
+  state: 'Off' | 'Setup required' | 'Connecting' | 'Ready' | 'Limited' | 'Action required' | 'Not installed' | 'Withdrawal pending';
   renewal_requested: boolean;
   renewal_supported: boolean;
   renewal_capable: boolean;

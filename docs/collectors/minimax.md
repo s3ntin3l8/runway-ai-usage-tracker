@@ -183,7 +183,8 @@ the file store (`schemaVersion` 2, generation 81) and a keychain listing (attrib
 no MiniMax or mcode item. The checks were read-only; no credential was read or changed.
 
 **Decision (2026-11-15, #1307):** the keep-alive does not renew or read a keyring login, and no
-consent ticket, Keychain worker group or write path is added. It skips the login and, for the observed
+macOS `kc_helper` read authorization or Keychain renewal write path is added; the Keychain worker
+retains renewal mutations and their recovery records. It skips the login and, for the observed
 `schemaVersion` 1 shape, logs that it is a legacy login the app signs out; any other non-file
 store gets a neutral "does not renew" line. Revisit only if a MiniMax Code release writes
 `storeKind: "os-keyring"` with `schemaVersion` 2 or later.

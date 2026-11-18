@@ -80,7 +80,7 @@ def test_denial_stops_selection_without_fallback_or_retry(authorization):
 @pytest.mark.parametrize("platform", ["linux", "win32"])
 def test_non_darwin_never_initializes_native(authorization, monkeypatch, platform, capsys):
     factory = Mock()
-    monkeypatch.setattr(authorization, "_NativeAPI", factory)
+    monkeypatch.setattr(authorization, "HelperReadAPI", factory)
     monkeypatch.setattr(authorization.sys, "platform", platform)
     with pytest.raises(SystemExit) as caught:
         authorization.authorization_command(["--authorize-claude-keychain"])
@@ -91,7 +91,7 @@ def test_non_darwin_never_initializes_native(authorization, monkeypatch, platfor
 
 def test_unrelated_or_invalid_arguments_do_not_initialize_native(authorization, monkeypatch):
     factory = Mock()
-    monkeypatch.setattr(authorization, "_NativeAPI", factory)
+    monkeypatch.setattr(authorization, "HelperReadAPI", factory)
     assert authorization.authorization_command([]) is False
     with pytest.raises(SystemExit) as caught:
         authorization.authorization_command(["--authorize-claude-keychain", "unexpected"])
@@ -112,7 +112,7 @@ def test_command_reports_sanitized_outcome_and_cancels_watchdog(
 ):
     operation = Mock(side_effect=error)
     monkeypatch.setattr(authorization, "authorize_once", operation)
-    monkeypatch.setattr(authorization, "_NativeAPI", Mock())
+    monkeypatch.setattr(authorization, "HelperReadAPI", Mock())
     timer = Mock()
     monkeypatch.setattr(authorization.threading, "Timer", Mock(return_value=timer))
     with pytest.raises(SystemExit) as caught:
@@ -130,7 +130,7 @@ def test_command_reports_sanitized_outcome_and_cancels_watchdog(
 def test_environment_service_override_uses_existing_derivation(authorization, monkeypatch):
     operation = Mock()
     monkeypatch.setattr(authorization, "authorize_once", operation)
-    monkeypatch.setattr(authorization, "_NativeAPI", Mock())
+    monkeypatch.setattr(authorization, "HelperReadAPI", Mock())
     monkeypatch.setattr(authorization.threading, "Timer", Mock())
     monkeypatch.setenv("CLAUDE_SECURESTORAGE_CONFIG_DIR", "synthetic-directory")
     with pytest.raises(SystemExit):

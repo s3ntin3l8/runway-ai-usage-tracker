@@ -59,7 +59,7 @@ The card shows the full reported balance. Purchased credits and unexpired promot
 
 ## Usage events (sidecar)
 
-Source: `~/.claude/projects/**/*.jsonl` and `~/.config/claude/projects/**/*.jsonl` (plus `CLAUDE_CONFIG_DIR`), parsed by `scripts/sidecar_pkg/event_extractors/anthropic.py`. Only `assistant` records are read. Event id is `<message id>|<request id>` (message id alone without a request id), deduplicated on that pair. Model ids are normalized by `normalize_anthropic_model` to `family-version` (`opus-4.7`, `sonnet-3.5`); date snapshots are dropped and pricing falls back to the bare family. Conversation text is not uploaded.
+Source: `~/.claude/projects/**/*.jsonl` and `~/.config/claude/projects/**/*.jsonl` (plus `CLAUDE_CONFIG_DIR`), parsed by `scripts/sidecar_pkg/event_extractors/anthropic.py`. Only `assistant` records are read. Event id is `<message id>|<request id>` (message id alone without a request id), deduplicated on that pair. Within one parse, repeated records take usage from the record with the largest `usage.output_tokens` (the later record on ties); timestamp and identity come from the first record. Model ids are normalized by `normalize_anthropic_model` to `family-version` (`opus-4.7`, `sonnet-3.5`); date snapshots are dropped and pricing falls back to the bare family. Conversation text is not uploaded.
 
 Per-message columns on `usage_events`, defined in `app/models/db_usage.py` and added by the `ALTER TABLE` list in `app/core/db.py`:
 

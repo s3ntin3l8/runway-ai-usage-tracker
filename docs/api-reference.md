@@ -736,21 +736,30 @@ never exposes them; they are described here because the server protocol below
 interacts with them. See [sidecar.md](sidecar.md).
 
 The loopback settings UI exposes `GET /sources` and `POST /sources`, with exact
-Host and same-origin checks. `GET` is inert and returns catalog labels,
-capability revisions, read intent, state, renewal support, dependency and
-announcement state — never credentials. `POST` takes an action and `source_id`
-(enable, disable, dismiss, authorize; `enable_all` / `disable_all` act on known
-sources; the renewal action takes an exact boolean and needs Claude Code read
-consent first). Authorize is an explicit local, bounded, single-flight setup
-attempt. Unknown actions or ids fail without credential IO.
+Host and same-origin checks. `GET` returns catalog labels,
+capability revisions, read intent, state, renewal support, dependency,
+announcement state, and a `safari` object (`id`, `label`, `probe_state`:
+`full_disk_access_missing` | `readable` | `not_used`, `state`: `Full Disk Access
+needed` | `Readable` | `Safari not used`, and `notice`: boolean first-open
+Full Disk Access notice); it persists the Safari probe state it observes
+(`safari_fda_last_state`, plus the cleared dismissal when the notice re-arms)
+when changed, and still never touches credentials or read consent. `POST` takes an action and
+`source_id` (enable, disable, dismiss, authorize; `enable_all` / `disable_all`
+act on known sources; `dismiss_safari_notice` dismisses the Safari Full Disk
+Access notice without a `source_id`; the renewal action takes an exact boolean
+and needs Claude Code read consent first). Authorize is an explicit local,
+bounded, single-flight setup attempt. Unknown actions or ids fail without
+credential IO.
 
 Local config stores `keychain_sources` entries (exact-boolean read, catalog
 revision, monotonic generation, approved destination), a `claude_keychain_renewal`
-permission that defaults off, `keychain_announcements` (dismissed revisions) and
-`keychain_withdrawals` (pending generations), replaced atomically and owner-only
-on macOS. File and env collection are unaffected; Windows Credential Manager is
-outside this macOS permission model. For the consent model, withdrawal and
-remote control see [source-consent.md](source-consent.md).
+permission that defaults off, `keychain_announcements` (dismissed revisions),
+`keychain_withdrawals` (pending generations), and the Safari Full Disk Access
+notice state (`safari_fda_notice_dismissed_state`, `safari_fda_last_state`),
+replaced atomically and owner-only on macOS. File and env collection are
+unaffected; Windows Credential Manager is outside this macOS permission model.
+For the consent model, withdrawal and remote control see
+[source-consent.md](source-consent.md).
 
 ## Fleet Keychain source lifecycle (protocol 1)
 
