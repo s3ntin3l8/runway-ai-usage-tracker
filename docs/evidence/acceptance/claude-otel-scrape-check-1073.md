@@ -39,13 +39,16 @@ model after normalisation.
 | output tokens | 20,374 | 8 |
 
 The 8 output differences are all cases where the extractor holds less than telemetry (53 tokens in
-total against 27,929): it keeps the first of several streamed transcript records of one message, and
-that record can carry a partial count. Over all transcripts, 53,825 messages have more than one
+total against 27,929): the extractor at that commit kept the first of several streamed transcript
+records of one message, and that record can carry a partial count (fixed since in #1350, which keeps
+the record with the largest output count). Over all transcripts, 53,825 messages have more than one
 record, 3,867 of them disagree on `output_tokens`, and the first record is not the maximum in 3,749
 (the last record is not the maximum in 22).
 
-3,170 transcript requests have no telemetry. 3,167 are in sessions that had no telemetry at all
-(already running when it was switched on, 2026-11-09 and 2026-11-10 mostly), so they are not misses.
+3,170 transcript requests with a request id have no telemetry (one further event has none). 3,167
+are in sessions that had no telemetry at all (already running when it was switched on, 2026-11-09 and
+2026-11-10 mostly), so they are not misses. The other 3 are in sessions that have telemetry and were
+not investigated.
 
 ## Result 2: what the transcripts omit
 
@@ -61,15 +64,16 @@ except 2026-11-11 at 20%, a low-use day).
 | `prompt_suggestion` | Sonnet, Opus, Fable | 488 | $10.76 |
 | `hook_prompt` | Haiku 5.5 | 67 | $7.73 |
 | `away_summary` | Sonnet, Opus | 68 | $1.30 |
-| `generate_session_title` | Haiku 5.5 | 1,255 | $0.65 |
+| `generate_session_title` | Haiku 5.5 | 1,257 | $0.65 |
 | `web_search_tool`, `web_fetch_apply`, `rename_generate_name` | Haiku 5.5 | 54 | $0.09 |
 | `repl_main_thread` | Sonnet, Opus | 2 | $0.23 |
 
 - The Haiku calls #1073 asked about come to **$8.47 in the week; the title calls are $0.65**, in
-  1,255 requests (about 4,800 prompt tokens each). The larger Haiku cost is `hook_prompt`.
+  1,257 requests (about 4,800 prompt tokens each). The larger Haiku cost is `hook_prompt`.
 - Most of the omitted spend is on the main models (summaries, compaction, suggestions), not Haiku.
 - The 2 `repl_main_thread` requests and the 3 requests in transcript-less sessions are isolated cases
-  whose cause was not investigated.
+  whose cause was not investigated; the planned receiver drops `repl_main_thread` and `agent:*` by
+  decision, since transcripts cover those sources.
 - Runway's price of these requests from their tokens equals `cost_usd`, except `web_search_tool`
   ($0.011 against $0.071; not investigated).
 
@@ -85,7 +89,7 @@ Runway's price (transcript tokens) against Claude's `cost_usd`, matched requests
 
 Per request the ratio is exactly 1.000 at the 10th, 50th and 90th percentile for every model, also
 for Opus requests above 100k and 200k prompt tokens. The totals differ because of a tail of requests
-where `cost_usd` is 2 to 20 times Runway's price (72 on Opus and Sonnet: $134.58 against $7.98).
+where `cost_usd` is 2 to 20 times Runway's price (72 on Opus and Sonnet: $134.58 against $7.98; tracked in #1352).
 
 **Cause: the advisor tool.** Claude Code writes `message.usage.iterations`, a list of `message`
 entries (the main call) and `advisor_message` entries (the advisor's own sub-inference, with its own
@@ -99,8 +103,8 @@ The transcripts hold these entries, so the extractor can capture them without te
 
 ## Findings and where they go
 
-1. Local scraping of the main loop is accurate. The only token defect is the partial output count of
-   streamed records.
+1. Local scraping of the main loop is accurate. The only token defect was the partial output count of
+   streamed records, fixed in #1350 after this measurement.
 2. The extractor reads `message.requestId`; real transcripts store `requestId` at the top level of
    the record. In production 0 of 23,553 events carry a request id, so every `event_id` is the bare
    message id. The test fixtures put `requestId` inside `message`, which hides it.

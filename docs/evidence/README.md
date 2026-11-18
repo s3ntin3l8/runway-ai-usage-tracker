@@ -46,8 +46,8 @@ produces a newer file.
 | [`claude-cloud-source-shape-20261029.md`](acceptance/claude-cloud-source-shape-20261029.md) / [`.json`](acceptance/claude-cloud-source-shape-20261029.json) | #669, #993 | Structure-only capture of real cloud-runner list rows and three event histories: fields available (repo, branches, per-message model/usage, cwd), the three usage sources and why they disagree |
 | [`claude-cloud-accounting-capture-20261029.json`](acceptance/claude-cloud-accounting-capture-20261029.json) | #669 | Raw structure-only capture behind the source-shape report |
 | [`claude-automatic-native-acceptance-671.json`](acceptance/claude-automatic-native-acceptance-671.json) / [`.md`](acceptance/claude-automatic-native-acceptance-671.md) | #671 | Acceptance of automatic native credential discovery |
-| [`claude-otel-scrape-check-1073.md`](acceptance/claude-otel-scrape-check-1073.md) | #1073, #1283 | One week of Claude Code OpenTelemetry `api_request` events against the transcript extractor: main-loop tokens agree, side calls are 5.1% of spend, advisor-tool usage (about 9%) is missing locally |
 | [`claude-native-macos-acceptance-672.json`](acceptance/claude-native-macos-acceptance-672.json) / [`.md`](acceptance/claude-native-macos-acceptance-672.md) | #672 | Acceptance for the remaining macOS Claude credential sources |
+| [`claude-otel-scrape-check-1073.md`](acceptance/claude-otel-scrape-check-1073.md) | #1073, #1283 | One week of Claude Code OpenTelemetry `api_request` events against the transcript extractor: main-loop tokens agree, side calls are 5.1% of spend, advisor-tool usage (about 9%) is missing locally |
 
 ### Keychain safety, isolation and renewal
 
