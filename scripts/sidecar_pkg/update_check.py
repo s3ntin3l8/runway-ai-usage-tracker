@@ -24,7 +24,9 @@ import json
 import logging
 import re
 import threading
+import time
 from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import Any
 from urllib import error, request
 
@@ -39,8 +41,13 @@ _BETA_RELEASES_API_URL = (
 _EDGE_REFS_URL = "https://api.github.com/repos/s3ntin3l8/runway-ai-usage-tracker/git/refs/tags/edge"
 _RELEASES_URL = "https://github.com/s3ntin3l8/runway-ai-usage-tracker/releases"
 _CHECK_INTERVAL_SECONDS = 86400  # 24h
+_FAILURE_LOG_COOLDOWN_SECONDS = 3600  # 1h
 _TIMEOUT_SECONDS = 10
 _BETA_TAG_RE = re.compile(r"^v\d+\.\d+\.\d+-beta\.\d+$")
+
+
+class GitHubRateLimitError(OSError):
+    """Raised when GitHub API rejects a request due to rate limiting."""
 
 
 def normalize_version(version: str) -> str:
@@ -64,6 +71,31 @@ def parse_channel(version: str | None) -> tuple[str, str | None]:
     return "stable", None
 
 
+def _header_get(headers: Any, name: str) -> str | None:
+    if headers is None:
+        return None
+    value = headers.get(name)
+    if value is not None:
+        return str(value)
+    items = getattr(headers, "items", None)
+    if callable(items):
+        target = name.lower()
+        for key, val in items():
+            if str(key).lower() == target:
+                return str(val)
+    return None
+
+
+def _format_rate_limit_reset(reset_header: str | None) -> str:
+    if not reset_header:
+        return "unknown time"
+    try:
+        ts = int(float(reset_header.strip()))
+    except (TypeError, ValueError):
+        return "unknown time"
+    return datetime.fromtimestamp(ts, tz=UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+
 def _get_json(url: str) -> Any:
     from scripts.sidecar_pkg.tls import build_context
 
@@ -73,8 +105,18 @@ def _get_json(url: str) -> Any:
     # certifi-backed context so the frozen binary trusts GitHub's public cert;
     # GitHub always presents a valid cert, so never honour the insecure opt-in.
     ctx = build_context(url, insecure=False)
-    with request.urlopen(req, timeout=_TIMEOUT_SECONDS, context=ctx) as resp:  # noqa: S310
-        return json.loads(bounded_read(resp, MAX_METADATA_BYTES).decode())
+    try:
+        with request.urlopen(req, timeout=_TIMEOUT_SECONDS, context=ctx) as resp:  # noqa: S310
+            return json.loads(bounded_read(resp, MAX_METADATA_BYTES).decode())
+    except error.HTTPError as exc:
+        if exc.code in (403, 429):
+            remaining = _header_get(exc.headers, "X-RateLimit-Remaining")
+            if remaining is not None and remaining.strip() == "0":
+                reset_at = _format_rate_limit_reset(_header_get(exc.headers, "X-RateLimit-Reset"))
+                raise GitHubRateLimitError(
+                    f"GitHub API rate limit reached, resets at {reset_at}"
+                ) from exc
+        raise
 
 
 def _stable_update(current: str, *, strict: bool = False) -> str | None:
@@ -228,14 +270,21 @@ class UpdateCheckThread:
         channel_getter: Callable[[], str | None] | None = None,
         interval: int = _CHECK_INTERVAL_SECONDS,
         on_update_available: Callable[[str], None] | None = None,
+        clock: Callable[[], float] | None = None,
     ) -> None:
         self._current = current_version
         self._channel_getter = channel_getter or (lambda: None)
         self._interval = interval
         self._on_update_available = on_update_available
+        self._clock = clock
+        self._last_failure_message: str | None = None
+        self._last_failure_logged_at: float | None = None
         self._stop = threading.Event()
         self._poke_event = threading.Event()
         self._thread: threading.Thread | None = None
+
+    def _now(self) -> float:
+        return self._clock() if self._clock is not None else time.monotonic()
 
     def start(self) -> None:
         self._stop.clear()
@@ -253,10 +302,28 @@ class UpdateCheckThread:
 
     def _check(self) -> None:
         try:
-            available = check_once(self._current, self._channel_getter())
-        except Exception:
+            available = check_once(self._current, self._channel_getter(), strict=True)
+        except Exception as exc:
+            exc_detail = " ".join(str(exc).splitlines()).strip()
+            msg = (
+                f"Update check failed: {type(exc).__name__}: {exc_detail}"
+                if exc_detail
+                else f"Update check failed: {type(exc).__name__}"
+            )
+            now = self._now()
+            if (
+                self._last_failure_message == msg
+                and self._last_failure_logged_at is not None
+                and (now - self._last_failure_logged_at) < _FAILURE_LOG_COOLDOWN_SECONDS
+            ):
+                return
+            self._last_failure_message = msg
+            self._last_failure_logged_at = now
+            logger.info(msg)
             logger.debug("Update check failed", exc_info=True)
             return
+        self._last_failure_message = None
+        self._last_failure_logged_at = None
         if available:
             logger.warning(
                 f"A newer Runway sidecar is available ({available}). Download: {_RELEASES_URL}"

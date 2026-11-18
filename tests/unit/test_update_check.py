@@ -2,12 +2,21 @@
 
 import io
 import json
+import logging
 import time
+from email.message import Message
 from unittest.mock import MagicMock, patch
+from urllib import error
 
 import pytest
 
-from scripts.sidecar_pkg.update_check import _edge_update, check_once, parse_channel
+from scripts.sidecar_pkg.update_check import (
+    GitHubRateLimitError,
+    UpdateCheckThread,
+    _edge_update,
+    check_once,
+    parse_channel,
+)
 
 
 def _urlopen_returning(payload: object):
@@ -360,3 +369,140 @@ class TestAutoUpdateSkipReason:
         monkeypatch.setattr(sidecar, "_AUTO_UPDATE_LOCAL", True)
         monkeypatch.setattr(sidecar, "_AUTO_UPDATE_SERVER", False)
         assert sidecar._auto_update_skip_reason() is None
+
+
+def _http_error(code: int, headers: dict[str, str] | None = None) -> error.HTTPError:
+    msg = Message()
+    for key, value in (headers or {}).items():
+        msg[key] = value
+    return error.HTTPError(
+        "https://api.github.com/repos/s3ntin3l8/runway-ai-usage-tracker/releases/latest",
+        code,
+        "Rate Limit" if code in (403, 429) else "Error",
+        msg,
+        None,
+    )
+
+
+class TestUpdateCheckFailureLogging:
+    def test_urlerror_logs_one_line_at_info_and_deduplicates_within_hour(self, caplog):
+        now = 100.0
+        thread = UpdateCheckThread("1.1.0", clock=lambda: now)
+
+        with (
+            caplog.at_level(logging.INFO, logger="scripts.sidecar_pkg.update_check"),
+            patch(
+                "scripts.sidecar_pkg.update_check.request.urlopen",
+                side_effect=error.URLError("dns lookup failed"),
+            ),
+        ):
+            thread._check()
+            assert len(caplog.records) == 1
+            record = caplog.records[0]
+            assert record.levelno == logging.INFO
+            assert "URLError" in record.message
+            assert "dns lookup failed" in record.message
+            assert record.exc_info is None
+
+            # Second identical failure within the hour is suppressed.
+            now += 1800.0
+            thread._check()
+            assert len(caplog.records) == 1
+
+            # After 1 hour, the same failure is logged again.
+            now += 1800.0
+            thread._check()
+            assert len(caplog.records) == 2
+
+    def test_different_failure_within_hour_is_logged(self, caplog):
+        now = 0.0
+        thread = UpdateCheckThread("1.1.0", clock=lambda: now)
+
+        with caplog.at_level(logging.INFO, logger="scripts.sidecar_pkg.update_check"):
+            with patch(
+                "scripts.sidecar_pkg.update_check.request.urlopen",
+                side_effect=error.URLError("dns lookup failed"),
+            ):
+                thread._check()
+            now += 60.0
+            with patch(
+                "scripts.sidecar_pkg.update_check.request.urlopen",
+                side_effect=error.URLError("timed out"),
+            ):
+                thread._check()
+
+        assert len(caplog.records) == 2
+        assert "dns lookup failed" in caplog.records[0].message
+        assert "timed out" in caplog.records[1].message
+
+    def test_traceback_is_kept_at_debug(self, caplog):
+        thread = UpdateCheckThread("1.1.0", clock=lambda: 0.0)
+        with (
+            caplog.at_level(logging.DEBUG, logger="scripts.sidecar_pkg.update_check"),
+            patch(
+                "scripts.sidecar_pkg.update_check.request.urlopen",
+                side_effect=error.URLError("offline"),
+            ),
+        ):
+            thread._check()
+
+        info_records = [r for r in caplog.records if r.levelno == logging.INFO]
+        debug_records = [r for r in caplog.records if r.levelno == logging.DEBUG]
+        assert len(info_records) == 1
+        assert info_records[0].exc_info is None
+        assert len(debug_records) == 1
+        assert debug_records[0].exc_info is not None
+
+    @pytest.mark.parametrize("status_code", [403, 429])
+    def test_rate_limit_error_logs_reset_time(self, status_code, caplog):
+        thread = UpdateCheckThread("1.1.0", clock=lambda: 0.0)
+        exc = _http_error(
+            status_code,
+            {"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": "1700000000"},
+        )
+        with (
+            caplog.at_level(logging.INFO, logger="scripts.sidecar_pkg.update_check"),
+            patch("scripts.sidecar_pkg.update_check.request.urlopen", side_effect=exc),
+        ):
+            thread._check()
+
+        assert len(caplog.records) == 1
+        msg = caplog.records[0].message
+        assert "GitHub API rate limit reached, resets at 2023-11-14 22:13:20 UTC" in msg
+
+    def test_rate_limit_check_once_strict_and_non_strict(self):
+        exc = _http_error(
+            403,
+            {"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": "1700000000"},
+        )
+        with patch("scripts.sidecar_pkg.update_check.request.urlopen", side_effect=exc):
+            assert check_once("1.1.0") is None
+            with pytest.raises(
+                GitHubRateLimitError,
+                match="GitHub API rate limit reached, resets at 2023-11-14 22:13:20 UTC",
+            ):
+                check_once("1.1.0", strict=True)
+
+    def test_403_without_zero_remaining_is_not_treated_as_rate_limit(self, caplog):
+        thread = UpdateCheckThread("1.1.0", clock=lambda: 0.0)
+        exc = _http_error(403, {"X-RateLimit-Remaining": "42"})
+        with (
+            caplog.at_level(logging.INFO, logger="scripts.sidecar_pkg.update_check"),
+            patch("scripts.sidecar_pkg.update_check.request.urlopen", side_effect=exc),
+        ):
+            thread._check()
+
+        assert len(caplog.records) == 1
+        assert "GitHub API rate limit reached" not in caplog.records[0].message
+        assert "HTTPError" in caplog.records[0].message
+
+    def test_successful_check_logs_nothing_at_info(self, caplog):
+        thread = UpdateCheckThread("1.1.0", clock=lambda: 0.0)
+        opener = _make_urlopen({"releases/latest": {"tag_name": "v1.1.0"}})
+        with (
+            caplog.at_level(logging.INFO, logger="scripts.sidecar_pkg.update_check"),
+            patch("scripts.sidecar_pkg.update_check.request.urlopen", side_effect=opener),
+        ):
+            thread._check()
+
+        assert [r for r in caplog.records if r.levelno == logging.INFO] == []
