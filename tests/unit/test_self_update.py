@@ -417,6 +417,35 @@ class TestWithRetries:
         assert self_update._with_retries(_fn, what="x") == "ok"
         assert calls["n"] == 2
 
+    def test_no_retry_and_clear_message_on_rate_limit(self, monkeypatch):
+        from scripts.sidecar_pkg.update_check import GitHubRateLimitError
+
+        slept = []
+        monkeypatch.setattr(self_update.time, "sleep", lambda s: slept.append(s))
+        calls = {"n": 0}
+
+        def _urlopen(*args, **kwargs):
+            calls["n"] += 1
+            raise self_update.error.HTTPError(
+                "https://api.github.com/repos/s3ntin3l8/runway-ai-usage-tracker/releases/latest",
+                403,
+                "Rate Limit",
+                {"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": "1700000000"},  # type: ignore[arg-type]
+                None,
+            )
+
+        monkeypatch.setattr(self_update.request, "urlopen", _urlopen)
+        with pytest.raises(
+            GitHubRateLimitError,
+            match="GitHub API rate limit reached, resets at 2023-11-14 22:13:20 UTC",
+        ):
+            self_update._with_retries(
+                lambda: self_update._get_json("https://api.github.com/test"),
+                what="release fetch",
+            )
+        assert calls["n"] == 1
+        assert slept == []
+
 
 class TestSelfUpdateRetryWiring:
     def test_transient_504_on_release_fetch_exhausts_to_false(self, monkeypatch, tmp_path):

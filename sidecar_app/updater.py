@@ -12,7 +12,7 @@ import os
 import threading
 from collections.abc import Callable
 
-from scripts.sidecar_pkg.update_check import check_once
+from scripts.sidecar_pkg.update_check import FailureLogState, check_once, log_check_failure
 from sidecar_app import __version__
 
 logger = logging.getLogger(__name__)
@@ -45,9 +45,11 @@ class UpdateChecker:
         self,
         on_update_available: Callable[[str, str], None],  # (current_version, latest_or_description)
         check_interval: int = _CHECK_INTERVAL_SECONDS,
+        clock: Callable[[], float] | None = None,
     ) -> None:
         self._on_update_available = on_update_available
         self._interval = check_interval
+        self._failure_state = FailureLogState(clock=clock)
         self._stop_event = threading.Event()
         self._poke_event = threading.Event()
         self._thread: threading.Thread | None = None
@@ -74,10 +76,11 @@ class UpdateChecker:
     def check_now(self) -> None:
         """Run a single update check synchronously."""
         try:
-            available = check_once(__version__, _resolve_channel())
-        except Exception:
-            logger.debug("Update check failed", exc_info=True)
+            available = check_once(__version__, _resolve_channel(), strict=True)
+        except Exception as exc:
+            log_check_failure(exc, self._failure_state, log=logger)
             return
+        self._failure_state.reset()
         if available:
             self._on_update_available(__version__, available)
 

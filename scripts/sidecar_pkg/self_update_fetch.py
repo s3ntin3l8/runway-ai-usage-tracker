@@ -7,7 +7,6 @@ still replaces the release lookup ``_get_release_json`` performs.
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import pathlib
@@ -18,9 +17,9 @@ from collections.abc import Callable
 from typing import Any
 from urllib import error, request
 
+from scripts.sidecar_pkg.update_check import GitHubRateLimitError, fetch_github_json
 from scripts.sidecar_pkg.update_limits import (
     MAX_CHECKSUM_BYTES,
-    MAX_METADATA_BYTES,
     UpdateSizeError,
     bounded_chunks,
     bounded_read,
@@ -97,6 +96,8 @@ def _with_retries[T](fn: Callable[[], T], *, what: str) -> T:
             if exc.code not in _RETRYABLE_STATUS:
                 raise
             last = exc
+        except GitHubRateLimitError:
+            raise
         except (error.URLError, TimeoutError, OSError) as exc:
             last = exc
         if attempt < attempts - 1:
@@ -134,13 +135,12 @@ def _github_ssl_context(url: str):  # type: ignore[no-untyped-def]
 
 
 def _get_json(url: str) -> Any:
-    req = request.Request(  # noqa: S310 — fixed https GitHub API URL
-        url, headers={"User-Agent": "Runway-Sidecar-SelfUpdate"}
+    return fetch_github_json(
+        url,
+        user_agent="Runway-Sidecar-SelfUpdate",
+        timeout=_TIMEOUT_SECONDS,
+        context=_patched("_github_ssl_context")(url),
     )
-    with request.urlopen(
-        req, timeout=_TIMEOUT_SECONDS, context=_patched("_github_ssl_context")(url)
-    ) as resp:  # noqa: S310
-        return json.loads(bounded_read(resp, MAX_METADATA_BYTES).decode())
 
 
 # ---------------------------------------------------------------------------
