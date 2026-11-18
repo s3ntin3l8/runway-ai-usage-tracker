@@ -447,8 +447,9 @@ def test_settings_page_labels_uninstalled_browser_chips_and_excludes_from_counts
 
     probe = """
 const vm = require('vm');
-const report = JSON.parse(process.argv[1]);
-const script = process.argv[2];
+const fs = require('fs');
+const report = JSON.parse(fs.readFileSync(process.argv[1], 'utf8'));
+const script = fs.readFileSync(process.argv[2], 'utf8');
 const byId = new Map();
 function makeEl(tag) {
   const el = {
@@ -518,10 +519,17 @@ const summary = findAll(body, n => n.className === 'kc-summary').map(collectText
 const authBtn = byId.get('authorize-all');
 console.log(JSON.stringify({ chips, summary, authText: authBtn ? collectText(authBtn) : '' }));
 """
+    # Pass the report and page script as files: both together exceed the Windows
+    # command-line limit (WinError 206) when given as argv.
+    report_file = tmp_path / "report.json"
+    report_file.write_text(json.dumps(report), encoding="utf-8")
+    script_file = tmp_path / "page.js"
+    script_file.write_text(script, encoding="utf-8")
     res = subprocess.run(
-        [node, "-e", probe, json.dumps(report), script],
+        [node, "-e", probe, str(report_file), str(script_file)],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         check=True,
     )
     rendered = json.loads(res.stdout)

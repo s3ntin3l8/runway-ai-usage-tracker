@@ -36,6 +36,7 @@ def test_other_platforms_use_python(monkeypatch, platform):
 @pytest.mark.parametrize(
     "mode,reason", [("success", None), ("deny", "denied"), ("hang", "timed_out")]
 )
+@pytest.mark.skipif(sys.platform == "win32", reason="fake helper is a POSIX shebang script")
 def test_darwin_starts_fake_helper(monkeypatch, tmp_path, mode, reason):
     fake = tmp_path / "kc_helper"
     fake.write_text(
@@ -93,6 +94,10 @@ def test_renewal_reads_and_writes_stay_on_python_worker(monkeypatch, tmp_path):
         client.close()
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="darwin-only transport: KeychainClient._start sets non-blocking pipes and never runs on Windows",
+)
 def test_renewal_worker_lifecycle_and_recovery_reference_routing(monkeypatch, tmp_path):
     import plistlib
 
@@ -141,6 +146,7 @@ def test_renewal_worker_lifecycle_and_recovery_reference_routing(monkeypatch, tm
         client.close()
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="fake helper is a POSIX shebang script")
 def test_foreground_adapter_uses_native_identity(monkeypatch, tmp_path):
     from scripts.sidecar_pkg import keychain_authorization as authorization
 
