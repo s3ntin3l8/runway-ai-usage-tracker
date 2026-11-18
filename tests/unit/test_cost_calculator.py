@@ -1223,30 +1223,28 @@ def test_preloaded_index_snapshots_survive_session_commit():
 
 
 @pytest.mark.parametrize(
-    ("provider_id", "model_id", "input_rate", "cache_read_rate"),
+    ("provider_id", "model_id", "input_rate", "cache_read_rate", "lookup_date"),
     [
-        ("chatgpt", "gpt-6.1-sol", 2.00, 0.10),
+        ("chatgpt", "gpt-6.1-sol", 2.00, 0.10, datetime(2026, 10, 1, tzinfo=UTC)),
         # Unseeded suffixes segment-trim onto the seeded sibling, not $0.
-        ("chatgpt", "gpt-6.1-sol-preview", 2.00, 0.10),
-        ("chatgpt", "gpt-6.2-astra", 8.00, 0.40),
-        ("chatgpt", "gpt-6.2-sol", 2.00, 0.10),
-        ("chatgpt", "gpt-6.2-sol-preview", 2.00, 0.10),
-        ("anthropic", "fable-5.1", 10.00, 0.25),
-        ("anthropic", "fable-5.2", 8.00, 0.20),
-        ("anthropic", "opus-5.5", 4.00, 0.20),
-        ("anthropic", "sonnet-5", 2.00, 0.20),
-        ("anthropic", "sonnet-5.5", 2.00, 0.10),
-        ("anthropic", "haiku-5.5", 0.10, 0.01),
+        ("chatgpt", "gpt-6.1-sol-preview", 2.00, 0.10, datetime(2026, 10, 1, tzinfo=UTC)),
+        ("chatgpt", "gpt-6.2-astra", 8.00, 0.40, datetime(2026, 11, 18, tzinfo=UTC)),
+        ("chatgpt", "gpt-6.2-sol", 2.00, 0.10, datetime(2026, 11, 18, tzinfo=UTC)),
+        ("chatgpt", "gpt-6.2-sol-preview", 2.00, 0.10, datetime(2026, 11, 18, tzinfo=UTC)),
+        ("anthropic", "fable-5.1", 10.00, 0.25, datetime(2026, 10, 1, tzinfo=UTC)),
+        ("anthropic", "fable-5.2", 8.00, 0.20, datetime(2026, 10, 1, tzinfo=UTC)),
+        ("anthropic", "opus-5.5", 4.00, 0.20, datetime(2026, 10, 1, tzinfo=UTC)),
+        ("anthropic", "sonnet-5", 2.00, 0.20, datetime(2026, 10, 1, tzinfo=UTC)),
+        ("anthropic", "sonnet-5.5", 2.00, 0.10, datetime(2026, 10, 1, tzinfo=UTC)),
+        ("anthropic", "haiku-5.5", 0.10, 0.01, datetime(2026, 10, 1, tzinfo=UTC)),
     ],
 )
 def test_new_generation_models_resolve_to_their_own_rows(
-    provider_id, model_id, input_rate, cache_read_rate
+    provider_id, model_id, input_rate, cache_read_rate, lookup_date
 ):
     """The versioned rows are reached through the lookup chain, not just seeded —
     and win over the bare-family fallback (`sonnet` is $3, `opus` is $5)."""
-    row = resolve_price_row(
-        _seeded_session(), provider_id, model_id, datetime(2026, 11, 18, tzinfo=UTC)
-    )
+    row = resolve_price_row(_seeded_session(), provider_id, model_id, lookup_date)
     assert row is not None
     assert row.input_per_mtok == input_rate
     assert row.cache_read_per_mtok == cache_read_rate
