@@ -424,6 +424,7 @@ def test_lookalike_id_is_not_argon():
         ("gemini-4-carbon-trial", "Gemini 4 Carbon (High)", "gemini-4-carbon"),
         ("", "Gemini 4 Carbon (High)", "gemini-4-carbon"),
         ("gemini-default", "Gemini 4 Carbon (High)", "gemini-4-carbon"),
+        ("gemini", "Gemini 4 Carbon (High)", "gemini-4-carbon"),
         ("gemini-4-neon", "Gemini 4 Neon (Medium)", "gemini-4-neon"),
         ("gemini-4-neon-preview", "", "gemini-4-neon"),
         ("", "Gemini 4 Neon (Medium)", "gemini-4-neon"),
