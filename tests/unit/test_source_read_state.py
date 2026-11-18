@@ -54,7 +54,9 @@ def test_restart_recent_success_and_fleet_payload(local, tmp_path, monkeypatch):
     monkeypatch.setattr(source_settings.sys, "platform", "darwin")
     from app.models.source_controls import SourceSyncRequest
 
-    payload = SourceClient(local, tmp_path / "control.json").payload(local)
+    payload = SourceClient(local, tmp_path / "control.json").payload(
+        local, source_settings.report(local)
+    )
     SourceSyncRequest.model_validate(payload)
     reported = next(r for r in payload["sources"] if r["source_id"] == SOURCE)
     assert reported["state"] == row(local)["state"]

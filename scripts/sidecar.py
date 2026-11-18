@@ -3377,7 +3377,7 @@ class GenericCollector:
         provider_hints = (account_label_hints or {}).get(provider_id, {})
 
         from scripts.sidecar_pkg import source_consent as consent
-        from scripts.sidecar_pkg.source_catalog import catalog, trusted_rule
+        from scripts.sidecar_pkg.source_catalog import catalog, source_for_origin, trusted_rule
 
         tickets = {source_id: consent.POLICY.ticket(source_id) for source_id in catalog()}
         for rule in rules:
@@ -3863,9 +3863,7 @@ class GenericCollector:
         # agy. Let a sidecar with a live agy session keep serving quota instead.
         for tokens, origin, candidate_kind in token_candidates:
             source_id = (
-                consent.source_for_origin(provider_id, origin)
-                if platform.system() == "Darwin"
-                else None
+                source_for_origin(provider_id, origin) if platform.system() == "Darwin" else None
             )
             ticket = tickets.get(source_id) if source_id else None
             if source_id and not consent.POLICY.current(ticket):
@@ -5402,8 +5400,9 @@ class DaemonRunner:
         """Inner implementation of run_once (called only when no cycle is running)."""
         cycle_config = dict(self._config)
         from scripts.sidecar_pkg import source_protocol
+        from scripts.sidecar_pkg.source_settings import report
 
-        source_protocol.sync(cycle_config, get_sidecar_dir() / "source-control.json")
+        source_protocol.sync(cycle_config, get_sidecar_dir() / "source-control.json", report)
         api_url = cycle_config["api_url"]
         api_key = cycle_config["api_key"]
 

@@ -301,13 +301,14 @@ def test_windows_lifecycle_catalog_never_expands_keychain_opt_ins():
             SourcePolicy.change(enabled, source_id, read=True)
 
 
-def test_consent_dependencies_cannot_reach_native_readers():
+@pytest.mark.parametrize("module", ["source_consent", "source_protocol"])
+def test_consent_dependencies_cannot_reach_native_readers(module):
     """Keep policy below reporting/setup, including deferred imports (CodeQL)."""
     import ast
     from pathlib import Path
 
     root = Path(__file__).resolve().parents[2]
-    pending = [("scripts.sidecar_pkg.source_consent",)]
+    pending = [(f"scripts.sidecar_pkg.{module}",)]
     visited = set()
     while pending:
         chain = pending.pop()
@@ -315,7 +316,11 @@ def test_consent_dependencies_cannot_reach_native_readers():
         if module in visited:
             continue
         visited.add(module)
-        assert module != "scripts.sidecar_pkg.macos_keychain_store", " -> ".join(chain)
+        assert module not in {
+            "scripts.sidecar_pkg.macos_keychain_store",
+            "scripts.sidecar_pkg.source_settings",
+            "scripts.sidecar_pkg.source_setup",
+        }, " -> ".join(chain)
         path = root.joinpath(*module.split(".")).with_suffix(".py")
         if not path.is_file():
             continue

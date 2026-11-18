@@ -35,7 +35,7 @@ from scripts.sidecar_pkg.keyring_value import (  # noqa: E402
     decode_document,
     decode_envelope,
 )
-from scripts.sidecar_pkg.source_catalog import catalog, trusted_rule  # noqa: E402
+from scripts.sidecar_pkg.source_catalog import catalog, source_for_origin, trusted_rule  # noqa: E402
 
 _SERVICE = "gemini"
 _ACCOUNT = "antigravity"
@@ -372,12 +372,12 @@ class TestCatalogAndConsent:
         assert not [key for key in catalog() if key.endswith(".agy-cli") and key != _SOURCE_ID]
 
     def test_the_origin_maps_to_the_source(self):
-        assert consent.source_for_origin("antigravity", _ORIGIN) == _SOURCE_ID
+        assert source_for_origin("antigravity", _ORIGIN) == _SOURCE_ID
 
     def test_the_acp_entry_is_not_our_source(self):
         """Service 'gemini' also holds the Antigravity ACP server's own token;
         that entry is not ours to read."""
-        assert consent.source_for_origin("antigravity", f"keychain:{_SERVICE}:antigravity-acp") == (
+        assert source_for_origin("antigravity", f"keychain:{_SERVICE}:antigravity-acp") == (
             "unknown"
         )
 

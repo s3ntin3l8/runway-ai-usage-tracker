@@ -12,6 +12,7 @@ import pathlib
 import re
 import sys
 import tempfile
+from collections.abc import Callable
 from typing import Any
 from urllib import error, request
 
@@ -110,12 +111,9 @@ class SourceClient:
             )
             source_consent.POLICY.pause(source_id, paused)
 
-    def payload(self, config: dict[str, Any]) -> dict[str, Any]:
-        from scripts.sidecar_pkg.source_settings import report
-
+    def payload(self, config: dict[str, Any], status: dict[str, Any]) -> dict[str, Any]:
         sources = []
         policy = SourcePolicy(config)
-        status = report(config)
         for row in status["sources"]:
             if not row["compatible"] and (
                 row["read"] or row["id"] not in config.get("keychain_withdrawals", {})
@@ -247,7 +245,9 @@ class SourceClient:
             if isinstance(source_id, str) and source_id in control_catalog()
         }
 
-    def sync(self, config: dict[str, Any]) -> bool:
+    def sync(
+        self, config: dict[str, Any], report: Callable[[dict[str, Any]], dict[str, Any]]
+    ) -> bool:
         self.accepted.clear()
         self.apply_runtime(config)
         url = str(config.get("api_url", "")).rstrip("/") + "/api/v1/fleet/source-sync"
@@ -255,7 +255,7 @@ class SourceClient:
             return False
         from scripts.sidecar_pkg.tls import build_context_from_config
 
-        body = json.dumps(self.payload(config), separators=(",", ":")).encode()
+        body = json.dumps(self.payload(config, report(config)), separators=(",", ":")).encode()
         headers = signed_headers(
             config, url, "", transport.signing_timestamp(), "source-sync", body
         )
@@ -307,9 +307,13 @@ def prepare(config: dict[str, Any], path: pathlib.Path) -> SourceClient | None:
         return None
 
 
-def sync(config: dict[str, Any], path: pathlib.Path) -> bool:
+def sync(
+    config: dict[str, Any],
+    path: pathlib.Path,
+    report: Callable[[dict[str, Any]], dict[str, Any]],
+) -> bool:
     client = prepare(config, path)
-    return client.sync(config) if client is not None else False
+    return client.sync(config, report) if client is not None else False
 
 
 def forwarding_allowed(source_id: str, destination: str) -> bool:

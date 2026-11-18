@@ -4,7 +4,7 @@ import os
 
 import pytest
 
-from scripts.sidecar_pkg import source_consent, source_protocol
+from scripts.sidecar_pkg import source_consent, source_protocol, source_settings
 from scripts.sidecar_pkg.source_consent import SourcePolicy
 from scripts.sidecar_pkg.source_protocol import filter_egress
 
@@ -158,10 +158,10 @@ def test_non_macos_reports_no_new_scrapers_but_can_withdraw_old_consent(tmp_path
     monkeypatch.setattr(sys, "platform", "linux")
     local = config()
     client = source_protocol.SourceClient(local, tmp_path / "state.json")
-    assert client.payload(local)["sources"] == []
+    assert client.payload(local, source_settings.report(local))["sources"] == []
     off = SourcePolicy.change(local, "anthropic.claude-code", read=False)
     off["keychain_withdrawals"] = {"anthropic.claude-code": 2}
-    sources = client.payload(off)["sources"]
+    sources = client.payload(off, source_settings.report(off))["sources"]
     assert len(sources) == 1 and sources[0]["read"] is False and sources[0]["new"] is False
 
 
@@ -212,8 +212,8 @@ def test_device_auth_failure_surfaces_repair_without_shared_key_downgrade(
         raise HTTPError(req.full_url, 401, "synthetic-secret-not-for-logs", {}, None)
 
     monkeypatch.setattr(transport, "urlopen", reject)
-    assert not client.sync(local)
-    assert not client.sync(local)
+    assert not client.sync(local, source_settings.report)
+    assert not client.sync(local, source_settings.report)
     assert source_settings.report(local)["re_pair_required"] is True
     assert all(req.get_header("X-runway-device-id") == local["device_id"] for req in requests)
     assert caplog.text.count("re-pair this sidecar") == 1

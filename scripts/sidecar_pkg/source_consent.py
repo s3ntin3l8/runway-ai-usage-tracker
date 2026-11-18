@@ -19,11 +19,7 @@ from functools import wraps
 from pathlib import Path
 from typing import Any
 
-from scripts.sidecar_pkg.source_catalog import (
-    catalog,
-    source_for_origin,  # noqa: F401 - compatibility export
-    trusted_rule,
-)
+from scripts.sidecar_pkg.source_catalog import catalog, trusted_rule
 
 READ_STATE_MAX_AGE = 7 * 86400
 _BLOCK_REASONS = {"denied", "timed_out", "unavailable", "missing", "identity changed", "ambiguous"}
