@@ -191,7 +191,7 @@ groups it left out.
 | Method | Route | Auth | Description |
 |--------|-------|------|-------------|
 | `POST` | `/api/v1/fleet/ingest` | HMAC | Push metrics + events from a sidecar (HMAC-SHA256 signed, 600/min/IP) |
-| `GET` | `/api/v1/fleet/sidecars` | Admin | List all registered sidecars; an enrolled device also carries `source_sync_state` / `source_sync_last_at` (see [Source sync state](#source-sync-state)) |
+| `GET` | `/api/v1/fleet/sidecars` | Admin | List all registered sidecars with their [Safari access report](#safari-access). Enrolled devices also carry `source_sync_state` / `source_sync_last_at` (see [Source sync state](#source-sync-state)) |
 | `GET` | `/api/v1/fleet/sidecars/{sidecar_id}` | Admin | Single sidecar details |
 | `PATCH` | `/api/v1/fleet/sidecars/{sidecar_id}` | Admin | Update custom name or tags |
 | `DELETE` | `/api/v1/fleet/sidecars/{sidecar_id}` | Admin | Remove sidecar from registry |
@@ -559,6 +559,25 @@ The account display label and billing model are described under
 [Automatically discovered Claude accounts](#automatically-discovered-claude-accounts).
 
 ## Behaviour notes
+
+### Safari access
+
+macOS sidecars can include `safari_access` in the first ingest batch. The
+Fleet sidecar list and detail responses return the latest report for each sidecar:
+
+```json
+{
+  "safari_access": {
+    "state": "full_disk_access_missing",
+    "checked_at": "2026-11-18T10:00:00Z"
+  }
+}
+```
+
+`state` is `full_disk_access_missing`, `readable`, or `not_used`.
+`checked_at` is the time of the local check, as a timestamp with a time zone.
+The field is `null` until the sidecar reports it. Check-ins that omit the
+report or send `null` preserve the last value.
 
 ### Source sync state
 

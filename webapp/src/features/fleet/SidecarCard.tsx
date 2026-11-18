@@ -85,6 +85,12 @@ export function SidecarCard({
             </div>
           </div>
 
+          {sidecar.safari_access?.state === 'full_disk_access_missing' ? (
+            <p className="mt-2.5 text-[11px] font-medium text-warning">
+              Safari: Full Disk Access needed
+            </p>
+          ) : null}
+
           {(sidecar.tags?.length ?? 0) > 0 ||
           paused ||
           keepAliveReported ||

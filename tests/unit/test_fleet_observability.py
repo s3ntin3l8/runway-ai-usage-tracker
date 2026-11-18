@@ -5,9 +5,12 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
+import pytest
+from sqlalchemy import text
 from sqlmodel import Session, SQLModel, create_engine
 from sqlmodel.pool import StaticPool
 
+from app.core import db
 from app.models.db import SidecarRegistry
 from app.services.fleet_registry import fleet_registry
 
@@ -29,6 +32,31 @@ def test_identity_sources_round_trip_through_registry():
     # A check-in without the field (older sidecar) keeps the last report.
     row = fleet_registry.upsert_sidecar("laptop", "10.0.0.2", session)
     assert fleet_registry.to_dict(row)["identity_sources"] == sources
+
+
+@pytest.mark.parametrize("existing", [False, True], ids=["fresh", "existing"])
+def test_safari_access_column_is_nullable_and_migration_is_idempotent(monkeypatch, existing):
+    engine = create_engine("sqlite://")
+    monkeypatch.setattr(db, "engine", engine)
+    if existing:
+        SQLModel.metadata.create_all(engine)
+        with Session(engine) as session:
+            session.add(SidecarRegistry(sidecar_id="old-mac", custom_name="Office Mac"))
+            session.commit()
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE sidecar_registry DROP COLUMN safari_access"))
+
+    db.init_db()
+    db.init_db()
+
+    with Session(engine) as session:
+        if not existing:
+            session.add(SidecarRegistry(sidecar_id="new-mac"))
+            session.commit()
+        row = session.get(SidecarRegistry, "old-mac" if existing else "new-mac")
+        assert row.safari_access is None
+        assert row.custom_name == ("Office Mac" if existing else None)
+    engine.dispose()
 
 
 def test_offline_sidecar_reports_outdated_but_no_update_offer():

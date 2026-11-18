@@ -2,7 +2,7 @@ import re
 import unicodedata
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import AwareDatetime, BaseModel, Field, field_validator
 
 from app.models.schemas_cards import LimitCard
 
@@ -216,6 +216,13 @@ class SessionNameIn(BaseModel):
         return cleaned if any(char not in _JOINERS for char in cleaned) else ""
 
 
+class SafariAccessReport(BaseModel):
+    """The macOS sidecar's latest Safari access check."""
+
+    state: Literal["full_disk_access_missing", "readable", "not_used"]
+    checked_at: AwareDatetime
+
+
 class IngestRequest(BaseModel):
     """Updated body for /api/v1/fleet/ingest."""
 
@@ -239,6 +246,7 @@ class IngestRequest(BaseModel):
     # Level the sidecar logs at now (config.json, or the dashboard's override); None from older ones.
     log_level: str | None = None
     login_dirs_report: LoginDirectoryReport | None = None
+    safari_access: SafariAccessReport | None = None
     collection_errors: int = 0  # Number of provider collection failures in this cycle
     # Providers with a complete local-card snapshot in this payload. None from
     # older sidecars means upsert-only; [] is a complete empty report.

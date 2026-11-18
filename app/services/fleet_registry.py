@@ -11,6 +11,7 @@ from app.core.login_dirs import stored_login_dirs
 from app.core.utils import scrub_log
 from app.models.db import CredentialSource, SidecarDevice, SidecarRegistry
 from app.models.schemas import LoginDirectoryReport
+from app.models.schemas_ingest import SafariAccessReport
 from app.services.refresh_policy import parse_provider_flags
 
 logger = logging.getLogger(__name__)
@@ -174,6 +175,7 @@ class FleetRegistryService:
         last_log_lines: list[str] | None = None,
         identity_sources: dict[str, dict[str, str]] | None = None,
         login_dirs_report: LoginDirectoryReport | None = None,
+        safari_access: SafariAccessReport | None = None,
     ) -> SidecarRegistry:
         """Insert on first sight; update last_seen and ingest_count on repeat calls."""
         if update_channel is not None and update_channel not in UPDATE_CHANNELS:
@@ -245,6 +247,8 @@ class FleetRegistryService:
             )
             session.add(row)
             logger.info(f"Registered new sidecar: '{sidecar_id}' from {source_ip}")
+        if safari_access is not None:
+            row.safari_access = safari_access.model_dump_json()
         session.commit()
         session.refresh(row)
         return row
@@ -365,6 +369,7 @@ class FleetRegistryService:
             "login_dirs_report": json.loads(row.login_dirs_report)
             if row.login_dirs_report
             else None,
+            "safari_access": json.loads(row.safari_access) if row.safari_access else None,
             "update_channel": row.update_channel,
             "update_channel_desired": row.update_channel_desired,
             "effective_update_channel": effective_update_channel(row, update_channel),

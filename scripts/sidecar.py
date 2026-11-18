@@ -5423,7 +5423,8 @@ class DaemonRunner:
             collection_errors = collection_result.error_count
             completed_providers = collection_result.completed_providers
 
-            os_platform = f"{platform.system()}/{platform.release()}"
+            system = platform.system()
+            os_platform = f"{system}/{platform.release()}"
             sidecar_version = self._config.get("sidecar_version") or _SIDECAR_VERSION
             # Whether this build can replace its own binary (frozen, non-Docker).
             # From-source / Docker report False so the server won't offer a
@@ -5471,6 +5472,14 @@ class DaemonRunner:
             ingest_url = f"{api_url.rstrip('/')}/api/v1/fleet/ingest"
             for batch_idx, event_batch in enumerate(event_batches):
                 first_batch = batch_idx == 0
+                safari_access = None
+                if first_batch and system == "Darwin":
+                    from scripts.sidecar_pkg.safari_cookies import probe_access
+
+                    safari_access = {
+                        "state": probe_access(persist=False),
+                        "checked_at": datetime.datetime.now(datetime.UTC).isoformat(),
+                    }
                 payload = {
                     "provider": f"sidecar-{get_hostname()}",
                     "metrics": metrics if first_batch else [],
@@ -5490,6 +5499,7 @@ class DaemonRunner:
                     "completed_providers": completed_providers if first_batch else None,
                     "identity_sources": dict(_IDENTITY_REPORT) if first_batch else None,
                     "login_dirs_report": login_directory_report() if first_batch else None,
+                    "safari_access": safari_access,
                     "last_log_lines": (_tail_log(20) if not providers else [])
                     if first_batch
                     else [],
@@ -5677,6 +5687,8 @@ class DaemonRunner:
             # Only queue metrics payloads; heartbeats don't need to be queued
             queue_saved = True
             queueable = strip_credentials(payload)
+            # Replayed usage must not replace a live Safari access report.
+            queueable.pop("safari_access", None)
             if queueable.get("metrics") or events:
                 queue_saved = queue_push(queueable, self._config.get("queue_max_size_mb"))
                 if queue_saved and collection_result.cowork_batch is not None:

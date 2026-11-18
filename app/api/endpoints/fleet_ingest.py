@@ -1100,6 +1100,7 @@ async def ingest_metrics(
                 last_log_lines=payload.last_log_lines or [],
                 identity_sources=payload.identity_sources,
                 login_dirs_report=payload.login_dirs_report,
+                safari_access=payload.safari_access,
             )
         except Exception as _e:
             logger.warning(f"Fleet registry upsert failed for '{payload.sidecar_id}': {_e}")

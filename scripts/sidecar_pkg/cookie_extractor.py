@@ -181,12 +181,19 @@ def _cookie_store_detail(state: browser_store.StoreState) -> str:
     return browser_store.STATE_DETAILS.get(state, "the store could not be used")
 
 
-def _cookie_store_remedy(providers: dict[str, str], only: str | None = None) -> str:
+def _cookie_store_remedy(
+    probe: browser_store.StoreProbe, providers: dict[str, str], only: str | None = None
+) -> str:
     """What the operator can do about a store that could not be used.
 
     ``only`` narrows the answer to one provider, which is what a per-provider
     report entry wants.
     """
+    if probe.browser == "Safari" and probe.state is browser_store.StoreState.UNREADABLE:
+        return (
+            "grant Full Disk Access to Runway Sidecar on this Mac "
+            "(System Settings → Privacy & Security → Full Disk Access)"
+        )
     variables = sorted(
         {
             variable
@@ -238,7 +245,9 @@ def blocked_source_entries() -> list[dict[str, str]]:
                     "reason": reason,
                     "source_store": identity,
                     "source_detail": detail,
-                    "source_remedy": _cookie_store_remedy(blocked.providers, provider_id),
+                    "source_remedy": _cookie_store_remedy(
+                        blocked.probe, blocked.providers, provider_id
+                    ),
                 }
             )
     return entries
@@ -258,7 +267,7 @@ def report_cookie_stores() -> None:
     for probe in unusable:
         blocked = _cookie_store_blocked.get(probe.identity())
         providers = blocked.providers if blocked else {}
-        remedy = _cookie_store_remedy(providers)
+        remedy = _cookie_store_remedy(probe, providers)
         advice = _cookie_store_advice(probe)
         reason = f"{probe.detail}; {advice}" if advice else probe.detail
         logging.warning(
@@ -496,10 +505,13 @@ class BrowserCookieExtractor:
                 candidates.append((value, origin))
         for target in BrowserCookieExtractor.get_all_paths():
             browser = target["browser"]
+            path = target["path"]
+            profile = target.get("profile", path.parent.name)
+            store = target.get("store", path.name)
             service = (
                 "Microsoft Edge Safe Storage" if "Edge" in browser else f"{browser} Safe Storage"
             )
-            origin = f"cookie:{provider}/{browser}/{target.get('profile', target['path'].parent.name)}/{target.get('store', target['path'].name)}"
+            origin = f"cookie:{provider}/{browser}/{profile}/{store}"
             for domain in domains:
                 bare = domain.lstrip(".")
                 values = []
@@ -516,7 +528,19 @@ class BrowserCookieExtractor:
 
                             scanned = StoreScan("inaccessible")
                         else:
-                            scanned = scan_safari(target["path"], bare, name)
+                            scanned = scan_safari(path, bare, name)
+                        if scanned.status == "inaccessible":
+                            _record_cookie_store_block(
+                                browser_store.StoreProbe(
+                                    path,
+                                    browser,
+                                    profile,
+                                    store,
+                                    browser_store.StoreState.UNREADABLE,
+                                ),
+                                provider,
+                                "",
+                            )
                         report_scan(browser, origin, scanned, scan_outcomes)
                         values = [cookie["value"] for cookie in scanned.values]
                     elif target["type"] == "firefox":
