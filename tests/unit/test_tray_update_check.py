@@ -1,10 +1,12 @@
 """The manual tray check uses the selected channel and reports its result."""
 
+import logging
 from unittest.mock import Mock
 
 import pytest
 
-from sidecar_app import __version__, tray
+from scripts.sidecar_pkg.update_check import GitHubRateLimitError
+from sidecar_app import __version__, tray, updater
 
 
 @pytest.mark.parametrize(
@@ -152,3 +154,34 @@ def test_failed_worker_start_allows_immediate_retry(monkeypatch):
     worker.start.side_effect = None
     instance._start_update_check(icon)
     assert thread_factory.call_count == 2
+
+
+def test_background_updater_logs_failure_at_info_and_deduplicates_within_hour(monkeypatch, caplog):
+    now = 100.0
+    on_update = Mock()
+    check = Mock(
+        side_effect=GitHubRateLimitError(
+            "GitHub API rate limit reached, resets at 2023-11-14 22:13:20 UTC"
+        )
+    )
+    monkeypatch.setattr("sidecar_app.updater.check_once", check)
+    monkeypatch.setattr("sidecar_app.updater._resolve_channel", lambda: "stable")
+    checker = updater.UpdateChecker(on_update_available=on_update, clock=lambda: now)
+
+    with caplog.at_level(logging.INFO, logger="sidecar_app.updater"):
+        checker.check_now()
+        assert len(caplog.records) == 1
+        assert caplog.records[0].levelno == logging.INFO
+        assert "GitHubRateLimitError" in caplog.records[0].message
+        assert "2023-11-14 22:13:20 UTC" in caplog.records[0].message
+
+        now += 1800.0
+        checker.check_now()
+        assert len(caplog.records) == 1
+
+        now += 1800.0
+        checker.check_now()
+        assert len(caplog.records) == 2
+
+    check.assert_called_with(__version__, "stable", strict=True)
+    on_update.assert_not_called()

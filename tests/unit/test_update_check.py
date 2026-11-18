@@ -506,3 +506,62 @@ class TestUpdateCheckFailureLogging:
             thread._check()
 
         assert [r for r in caplog.records if r.levelno == logging.INFO] == []
+
+    @pytest.mark.parametrize(
+        "reset_headers",
+        [
+            {"X-RateLimit-Remaining": "0"},
+            {"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": "not-a-timestamp"},
+        ],
+    )
+    def test_rate_limit_missing_or_invalid_reset_logs_unknown_time(self, reset_headers, caplog):
+        thread = UpdateCheckThread("1.1.0", clock=lambda: 0.0)
+        exc = _http_error(403, reset_headers)
+        with (
+            caplog.at_level(logging.INFO, logger="scripts.sidecar_pkg.update_check"),
+            patch("scripts.sidecar_pkg.update_check.request.urlopen", side_effect=exc),
+        ):
+            thread._check()
+
+        assert len(caplog.records) == 1
+        assert "GitHub API rate limit reached, resets at unknown time" in caplog.records[0].message
+
+    def test_rate_limit_plain_dict_headers_matched_case_insensitively(self, caplog):
+        thread = UpdateCheckThread("1.1.0", clock=lambda: 0.0)
+        exc = error.HTTPError(
+            "https://api.github.com/repos/s3ntin3l8/runway-ai-usage-tracker/releases/latest",
+            403,
+            "Rate Limit",
+            {"x-ratelimit-remaining": "0", "x-ratelimit-reset": "1700000000"},  # type: ignore[arg-type]
+            None,
+        )
+        with (
+            caplog.at_level(logging.INFO, logger="scripts.sidecar_pkg.update_check"),
+            patch("scripts.sidecar_pkg.update_check.request.urlopen", side_effect=exc),
+        ):
+            thread._check()
+
+        assert len(caplog.records) == 1
+        assert (
+            "GitHub API rate limit reached, resets at 2023-11-14 22:13:20 UTC"
+            in caplog.records[0].message
+        )
+
+    def test_http_error_with_none_headers_does_not_crash(self, caplog):
+        thread = UpdateCheckThread("1.1.0", clock=lambda: 0.0)
+        exc = error.HTTPError(
+            "https://api.github.com/repos/s3ntin3l8/runway-ai-usage-tracker/releases/latest",
+            403,
+            "Forbidden",
+            None,  # type: ignore[arg-type]
+            None,
+        )
+        with (
+            caplog.at_level(logging.INFO, logger="scripts.sidecar_pkg.update_check"),
+            patch("scripts.sidecar_pkg.update_check.request.urlopen", side_effect=exc),
+        ):
+            thread._check()
+
+        assert len(caplog.records) == 1
+        assert "HTTPError" in caplog.records[0].message
+        assert "GitHub API rate limit reached" not in caplog.records[0].message
