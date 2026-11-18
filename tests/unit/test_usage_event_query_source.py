@@ -8,13 +8,16 @@ Claude Code's OpenTelemetry ``api_request`` events name each call's type in
 """
 
 from datetime import UTC, datetime
+from typing import cast
 
+from fastapi import Request
 from sqlalchemy import text
 from sqlmodel import Session, SQLModel, create_engine, select
 from sqlmodel.pool import StaticPool
 
+from app.api.endpoints.fleet_pending_events import _promote_pending_event_rows
 from app.core.db import SQLITE_CONNECT_ARGS, _add_columns_if_missing, configure_sqlite_engine
-from app.models.db import UsageEvent
+from app.models.db import PendingUsageEvent, UsageEvent
 from app.models.schemas import UsageEventPush
 from app.services.event_ingestor import EventIngestor
 
@@ -149,3 +152,41 @@ def test_reattribution_refreshes_query_source():
         row = session.exec(select(UsageEvent)).one()
         assert row.account_id == "acc2"
         assert row.query_source == "hook_prompt"
+
+
+def test_pending_event_promotion_preserves_query_source():
+    """Holding an unresolved push in PendingUsageEvent and promoting it keeps query_source."""
+    engine = _engine()
+    with Session(engine) as session:
+        EventIngestor(session).ingest(
+            [
+                UsageEventPush(
+                    provider_id="anthropic",
+                    account_id="default",
+                    account_source="default",
+                    event_id="e-pending",
+                    ts=NOW.isoformat(),
+                    model_id="claude-haiku-4-5",
+                    session_id="sess_1",
+                    query_source="agent_summary",
+                    source_app="claude_code",
+                )
+            ],
+            sidecar_id="dev-01",
+        )
+        assert session.exec(select(UsageEvent)).all() == []
+        pending = session.exec(select(PendingUsageEvent)).one()
+
+        _promote_pending_event_rows(
+            cast(Request, None),
+            session,
+            [pending],
+            "anthropic",
+            "acc1",
+            record_audit=False,
+        )
+
+        assert session.exec(select(PendingUsageEvent)).all() == []
+        row = session.exec(select(UsageEvent)).one()
+        assert row.account_id == "acc1"
+        assert row.query_source == "agent_summary"

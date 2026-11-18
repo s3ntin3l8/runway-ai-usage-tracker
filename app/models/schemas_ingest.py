@@ -37,8 +37,10 @@ class UsageEventPush(BaseModel):
     # Claude Code call type from OpenTelemetry api_request events
     # ("generate_session_title", "agent_summary", "prompt_suggestion",
     # "compact", "hook_prompt", "away_summary", "repl_main_thread",
-    # "agent:builtin:Explore", ...). Kept separate from subagent_type,
-    # which the Sessions views already group on.
+    # "agent:builtin:Explore", ...), set by the OpenTelemetry receiver
+    # (#1365, see docs/evidence/acceptance/claude-otel-scrape-check-1073.md).
+    # Kept separate from subagent_type, which the Sessions views already
+    # group on.
     query_source: str | None = Field(default=None, max_length=_QUERY_SOURCE_MAX_LENGTH)
 
     @field_validator("query_source", mode="before")
