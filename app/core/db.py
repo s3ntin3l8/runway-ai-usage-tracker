@@ -311,6 +311,7 @@ _DEFERRED_COLUMNS: list[tuple[str, str, str]] = [
     # event per request; NULL for the providers that emit one event per
     # message.
     ("usage_events", "turn_id", "VARCHAR"),
+    ("usage_events", "query_source", "VARCHAR"),
     ("usage_events", "attribution_source", "VARCHAR NOT NULL DEFAULT 'unknown'"),
     # Working-directory / project context + tool names (universal project linking).
     ("usage_events", "cwd", "VARCHAR"),

@@ -442,6 +442,7 @@ export interface UsageEvent {
   service_tier?: string | null;
   entrypoint?: string | null;
   app_version?: string | null;
+  query_source?: string | null;
   web_search_requests?: number;
   web_fetch_requests?: number;
   [key: string]: unknown;
