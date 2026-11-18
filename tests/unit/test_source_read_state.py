@@ -78,7 +78,9 @@ def test_stale_or_future_success_requires_setup(local, tmp_path, monkeypatch, ag
     assert row(local)["state"] == "Setup required"
 
 
-@pytest.mark.parametrize("reason", ["denied", "timed_out", "unavailable"])
+@pytest.mark.parametrize(
+    "reason", ["denied", "timed_out", "unavailable", "missing", "identity changed", "ambiguous"]
+)
 def test_block_overrides_success_and_persists(local, tmp_path, monkeypatch, reason):
     from scripts.sidecar_pkg.keychain_protocol import KeychainError
 
@@ -227,3 +229,91 @@ def test_unwritable_state_does_not_break_collection(local, tmp_path, monkeypatch
     policy.record_block(policy.ticket(SOURCE), "denied")
     assert row(local)["state"] == "Action required"
     assert not path.exists()
+
+
+@pytest.mark.parametrize("outcome", ["empty", "missing", "ambiguous", "identity changed"])
+@pytest.mark.parametrize("source", [SOURCE, "anthropic.chrome"])
+def test_background_reader_failure_replaces_restart_evidence(
+    local, tmp_path, monkeypatch, outcome, source
+):
+    from scripts.sidecar_pkg import claude_code_keychain, macos_cookies, macos_keychain_store
+    from scripts.sidecar_pkg.keychain_protocol import KeychainError
+    from scripts.sidecar_pkg.source_catalog_data import KEYCHAIN_RULES
+
+    config = SourcePolicy.enable_all(local)
+    policy = SourcePolicy(config)
+    path = tmp_path / "reads.json"
+    policy.configure_state(path)
+    policy.record_read(policy.ticket(source))
+    restarted = SourcePolicy(config)
+    restarted.configure_state(path)
+    monkeypatch.setattr(source_consent, "POLICY", restarted)
+    monkeypatch.setattr(_WorkerAPI, "call", WORKER_CALL)
+    service = "Claude Code-credentials" if source == SOURCE else "Chrome Safe Storage"
+    item = {"service": service, "account": "synthetic-user", "persistent": b"synthetic-ref"}
+
+    def call(operation, query, values, **kwargs):
+        if "service" in query:
+            if outcome == "missing":
+                raise KeychainError("missing")
+            return [] if outcome == "empty" else [item] * (2 if outcome == "ambiguous" else 1)
+        return {**item, "service": "wrong-service", "data": b"synthetic-secret"}
+
+    client = Mock()
+    client.call.side_effect = call
+    monkeypatch.setattr(keychain_client, "get_keychain_client", lambda: client)
+    monkeypatch.setattr(macos_keychain_store.sys, "platform", "darwin")
+    monkeypatch.setattr(claude_code_keychain, "service_candidates", lambda _: [service])
+    monkeypatch.setattr(claude_code_keychain, "account_name", lambda: "synthetic-user")
+    monkeypatch.setattr(macos_cookies, "_KEY_CACHE", {})
+    monkeypatch.setattr(macos_cookies, "_KEY_STATUS", {})
+    rule = next(r for r in KEYCHAIN_RULES["anthropic"]["rules"] if r["type"] == "cookie")
+    with source_consent.rule_scope("anthropic", rule):
+        if source == SOURCE:
+            assert claude_code_keychain.read_candidates([], {}) == []
+        else:
+            assert macos_cookies.storage_key(service) is None
+    reported = next(r for r in source_settings.report(config)["sources"] if r["id"] == source)
+    assert reported["state"] == "Action required"
+    saved = json.loads(path.read_text())[source]
+    assert saved["last_block_reason"] == ("missing" if outcome == "empty" else outcome)
+    assert saved["last_block_at"] >= saved["last_read_at"]
+    restarted = SourcePolicy(config)
+    restarted.configure_state(path)
+    assert restarted.read_state(source) == "Action required"
+
+
+@pytest.mark.parametrize("failure", ["launch", "verify", "exception"])
+def test_failed_setup_replaces_success_and_persists(local, tmp_path, monkeypatch, failure):
+    path = tmp_path / "reads.json"
+    policy = source_consent.POLICY
+    policy.configure_state(path)
+    policy.record_read(policy.ticket(SOURCE))
+    controller = source_setup.SetupController(
+        launch=lambda _: failure != "launch",
+        verify=Mock(
+            side_effect=RuntimeError("private") if failure == "exception" else None,
+            return_value=False,
+        ),
+    )
+    monkeypatch.setattr(source_setup, "SETUP", controller)
+    controller.start(SOURCE)
+    controller.wait(2)
+    assert row(local)["state"] == "Action required"
+    restarted = SourcePolicy(local)
+    restarted.configure_state(path)
+    assert restarted.read_state(SOURCE) == "Action required"
+
+
+def test_missing_optional_recovery_record_does_not_invalidate_read(local, monkeypatch):
+    from scripts.sidecar_pkg.keychain_protocol import KeychainError
+    from scripts.sidecar_pkg.macos_keychain_store import RECOVERY_SERVICE
+
+    policy = source_consent.POLICY
+    policy.record_read(policy.ticket(SOURCE))
+    client = Mock()
+    client.call.side_effect = KeychainError("missing")
+    monkeypatch.setattr(keychain_client, "get_keychain_client", lambda: client)
+    with pytest.raises(KeychainError, match="missing"):
+        WORKER_CALL(_WorkerAPI(), "copy", {"service": RECOVERY_SERVICE}, {})
+    assert row(local)["state"] == "Authorized"

@@ -295,6 +295,8 @@ class SetupController:
                             macos_cookies._KEY_CACHE.pop(service, None)
                             macos_cookies._KEY_STATUS.pop(service, None)
             if consent.POLICY.current(ticket):
+                if not success:
+                    consent.POLICY.record_block(ticket, "unavailable")
                 self._states[source_id] = (ticket, "Limited" if success else "Action required")
 
     def start_all(self, source_ids: list[str]) -> dict[str, Any]:
@@ -353,6 +355,7 @@ class SetupController:
                                 consent.POLICY.current(ticket)
                                 and self.state(source_id) == "Connecting"
                             ):
+                                consent.POLICY.record_block(ticket, "unavailable")
                                 self._states[source_id] = (ticket, "Action required")
                 with self._lock:
                     batch["done"] += 1

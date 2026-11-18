@@ -24,7 +24,7 @@ from scripts.sidecar_pkg.browser_store import SOURCE_BLOCK_REASONS, SOURCE_REPOR
 from scripts.sidecar_pkg.source_catalog import catalog, source_for_origin, trusted_rule
 
 READ_STATE_MAX_AGE = 7 * 86400
-_BLOCK_REASONS = {"denied", "timed_out", "unavailable"}
+_BLOCK_REASONS = {"denied", "timed_out", "unavailable", "missing", "identity changed", "ambiguous"}
 logger = logging.getLogger(__name__)
 
 
