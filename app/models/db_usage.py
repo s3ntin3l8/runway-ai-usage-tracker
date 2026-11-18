@@ -148,6 +148,9 @@ class UsageEvent(SQLModel, table=True):  # type: ignore[call-arg]
     # A provider that emits one event per request uses it to count turns
     # instead of requests; NULL means "one event per message".
     turn_id: str | None = None
+    # Claude Code call type ("agent_summary", "compact", "repl_main_thread", ...).
+    # Kept separate from subagent_type, which the Sessions views already group on.
+    query_source: str | None = None
     tokens_input: int = Field(default=0)  # non-cached prompt tokens
     tokens_output: int = Field(default=0)  # completion tokens
     tokens_cache_read: int = Field(default=0)  # free reads

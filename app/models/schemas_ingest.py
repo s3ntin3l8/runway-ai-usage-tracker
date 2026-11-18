@@ -9,6 +9,7 @@ from app.models.schemas_cards import LimitCard
 #: How long a reported git repository name may be. The name becomes a project
 #: label, so it is bounded like every other label the server stores.
 _PROJECT_REF_MAX_LENGTH = 128
+_QUERY_SOURCE_MAX_LENGTH = 64
 
 
 class UsageEventPush(BaseModel):
@@ -33,6 +34,24 @@ class UsageEventPush(BaseModel):
     # instead of requests; a provider that emits one event per message leaves
     # it unset, and the turn count falls back to the event count.
     turn_id: str | None = None
+    # Claude Code call type from OpenTelemetry api_request events
+    # ("generate_session_title", "agent_summary", "prompt_suggestion",
+    # "compact", "hook_prompt", "away_summary", "repl_main_thread",
+    # "agent:builtin:Explore", ...), set by the OpenTelemetry receiver
+    # (#1365, see docs/evidence/acceptance/claude-otel-scrape-check-1073.md).
+    # Kept separate from subagent_type, which the Sessions views already
+    # group on.
+    query_source: str | None = Field(default=None, max_length=_QUERY_SOURCE_MAX_LENGTH)
+
+    @field_validator("query_source", mode="before")
+    @classmethod
+    def clean_query_source(cls, value: Any) -> str | None:
+        """Claude Code call type: printable characters, bounded, empty becomes None."""
+        if value is None:
+            return None
+        cleaned = "".join(char for char in str(value) if char.isprintable()).strip()
+        return cleaned[:_QUERY_SOURCE_MAX_LENGTH] or None
+
     # Working-directory / project context (enrichment). cwd = raw per-message
     # path; the server derives `project` (root basename) in EventIngestor via
     # app/services/project_label.py. tool_names = the tool_use block names in the

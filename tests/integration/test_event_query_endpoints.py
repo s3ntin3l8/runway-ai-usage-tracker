@@ -57,6 +57,7 @@ def _event(
     stop_reason: str | None = "end_turn",
     tool_calls: int = 0,
     latency_ms: int | None = None,
+    query_source: str | None = None,
 ) -> UsageEvent:
     if ts is None:
         ts = datetime.now(UTC)
@@ -77,6 +78,7 @@ def _event(
         stop_reason=stop_reason,
         tool_calls=tool_calls,
         latency_ms=latency_ms,
+        query_source=query_source,
     )
 
 
@@ -185,6 +187,21 @@ class TestEventsEndpoint:
         events = r.json()["events"]
         assert len(events) == 1
         assert events[0]["event_id"] == "a1"
+
+    def test_events_returns_query_source_when_set(self, session):
+        now = datetime.now(UTC)
+        session.add(_event(event_id="e_with", ts=now, query_source="agent_summary"))
+        session.add(_event(event_id="e_without", ts=now - timedelta(seconds=1)))
+        session.commit()
+
+        r = _client().get(
+            "/api/v1/usage/events",
+            params={"provider_id": "anthropic", "account_id": "user@example.com"},
+        )
+        assert r.status_code == 200
+        by_id = {e["event_id"]: e for e in r.json()["events"]}
+        assert by_id["e_with"]["query_source"] == "agent_summary"
+        assert by_id["e_without"]["query_source"] is None
 
     def test_events_respects_limit(self, session):
         now = datetime.now(UTC)
