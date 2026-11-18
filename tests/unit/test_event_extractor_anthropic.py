@@ -359,6 +359,8 @@ def test_advisor_iteration_extracted_as_separate_event(tmp_path):
     assert advisor.tokens_cache_create_1h == 0
     assert advisor.tokens_cache_create_5m == 0
     assert advisor.session_id == main.session_id
+    assert advisor.request_id == main.request_id
+    assert advisor.request_id == "req_adv_1"
     assert advisor.cwd == main.cwd
     assert advisor.git_branch == main.git_branch
     assert advisor.ts == main.ts
@@ -830,4 +832,43 @@ def test_non_string_top_level_request_id_does_not_drop_event(tmp_path):
     assert [(e.event_id, e.request_id) for e in evts] == [
         ("msg_num", None),
         ("msg_dict", None),
+    ]
+
+
+def test_advisor_event_inherits_top_level_request_id(tmp_path):
+    fp = tmp_path / "advisor-top-req.jsonl"
+    _write_transcript(
+        fp,
+        [
+            {
+                "type": "assistant",
+                "timestamp": "2026-11-18T10:00:00Z",
+                "requestId": "req_advisor_1",
+                "message": {
+                    "id": "msg_adv",
+                    "model": "claude-sonnet-4-6",
+                    "usage": {
+                        "input_tokens": 100,
+                        "output_tokens": 50,
+                        "iterations": [
+                            {
+                                "type": "advisor_message",
+                                "model": "claude-fable-5-2",
+                                "input_tokens": 200,
+                                "output_tokens": 20,
+                            }
+                        ],
+                    },
+                },
+            }
+        ],
+    )
+    evts = parse_anthropic_events(
+        [fp],
+        account_id="u@x",
+        since=datetime(2020, 1, 1, tzinfo=UTC),
+    )
+    assert [(e.event_id, e.request_id) for e in evts] == [
+        ("msg_adv", "req_advisor_1"),
+        ("msg_adv|advisor", "req_advisor_1"),
     ]

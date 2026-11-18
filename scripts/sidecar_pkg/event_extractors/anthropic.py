@@ -78,6 +78,7 @@ def _build_advisor_events(
                 ts=main_event.ts,
                 model_id=model_id,
                 session_id=main_event.session_id,
+                request_id=main_event.request_id,
                 turn_id=main_event.event_id,
                 cwd=main_event.cwd,
                 git_branch=main_event.git_branch,
