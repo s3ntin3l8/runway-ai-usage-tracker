@@ -23,6 +23,80 @@ from scripts.sidecar_pkg.session_names import make_record  # noqa: E402
 _normalize_anthropic_model = normalize_anthropic_model
 
 
+def _build_advisor_events(
+    main_event: UsageEventPush,
+    iterations: list[Any],
+) -> list[UsageEventPush]:
+    """Build one UsageEventPush per advisor model from `usage.iterations`."""
+    totals_by_model: dict[str, list[int]] = {}
+    for entry in iterations:
+        if not isinstance(entry, dict) or entry.get("type") != "advisor_message":
+            continue
+        raw_model = entry.get("model")
+        model_id = _normalize_anthropic_model(raw_model if isinstance(raw_model, str) else "")
+        cache_creation = entry.get("cache_creation")
+        if not isinstance(cache_creation, dict):
+            cache_creation = {}
+        try:
+            counts = (
+                int(entry.get("input_tokens") or 0),
+                int(entry.get("output_tokens") or 0),
+                int(entry.get("cache_read_input_tokens") or 0),
+                int(entry.get("cache_creation_input_tokens") or 0),
+                int(cache_creation.get("ephemeral_1h_input_tokens") or 0),
+                int(cache_creation.get("ephemeral_5m_input_tokens") or 0),
+            )
+        except (TypeError, ValueError):
+            continue
+        acc = totals_by_model.get(model_id)
+        if acc is None:
+            totals_by_model[model_id] = list(counts)
+        else:
+            for i, val in enumerate(counts):
+                acc[i] += val
+
+    if not totals_by_model:
+        return []
+
+    multi_model = len(totals_by_model) > 1
+    advisor_events: list[UsageEventPush] = []
+    for model_id, (
+        inp,
+        out,
+        cache_read,
+        cache_create,
+        cache_1h,
+        cache_5m,
+    ) in totals_by_model.items():
+        suffix = f"|advisor:{model_id}" if multi_model else "|advisor"
+        advisor_events.append(
+            UsageEventPush(
+                provider_id="anthropic",
+                source_app=main_event.source_app,
+                account_id=main_event.account_id,
+                event_id=f"{main_event.event_id}{suffix}",
+                ts=main_event.ts,
+                model_id=model_id,
+                session_id=main_event.session_id,
+                turn_id=main_event.event_id,
+                cwd=main_event.cwd,
+                git_branch=main_event.git_branch,
+                tool_names=None,
+                tokens_input=inp,
+                tokens_output=out,
+                tokens_cache_read=cache_read,
+                tokens_cache_create=cache_create,
+                tokens_cache_create_1h=cache_1h,
+                tokens_cache_create_5m=cache_5m,
+                tokens_reasoning=0,
+                subagent_type=main_event.subagent_type,
+                entrypoint=main_event.entrypoint,
+                app_version=main_event.app_version,
+            )
+        )
+    return advisor_events
+
+
 def parse_anthropic_events(
     jsonl_paths: list[Path],
     account_id: str,
@@ -37,6 +111,7 @@ def parse_anthropic_events(
     preserving the first record's timestamp and identity.
     """
     events: dict[tuple[str, str], UsageEventPush] = {}
+    winning_iterations: dict[tuple[str, str], list[Any]] = {}
     for fp in jsonl_paths:
         try:
             with open(fp, "rb") as f:
@@ -121,9 +196,13 @@ def parse_anthropic_events(
                             web_search_requests=int(server_tool_use.get("web_search_requests", 0)),
                             web_fetch_requests=int(server_tool_use.get("web_fetch_requests", 0)),
                         )
+                        raw_iterations = usage.get("iterations")
+                        iterations = raw_iterations if isinstance(raw_iterations, list) else None
                         first = events.get(dedup_key)
                         if first is None:
                             events[dedup_key] = event
+                            if iterations:
+                                winning_iterations[dedup_key] = iterations
                         elif event.tokens_output >= first.tokens_output:
                             # Streaming updates replace usage as a unit. Keep the
                             # first timestamp/identity so the event stays on its day.
@@ -147,12 +226,22 @@ def parse_anthropic_events(
                                     )
                                 }
                             )
+                            if iterations:
+                                winning_iterations[dedup_key] = iterations
+                            else:
+                                winning_iterations.pop(dedup_key, None)
                     except (AttributeError, TypeError, ValueError):
                         continue
 
         except Exception:
             continue
-    return list(events.values())
+    result: list[UsageEventPush] = []
+    for dedup_key, main_event in events.items():
+        result.append(main_event)
+        iterations = winning_iterations.get(dedup_key)
+        if iterations:
+            result.extend(_build_advisor_events(main_event, iterations))
+    return result
 
 
 _NAME_MARKERS = (b'"agent-name"', b'"ai-title"')
