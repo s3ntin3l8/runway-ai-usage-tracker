@@ -274,6 +274,8 @@ def test_advisor_iteration_extracted_as_separate_event(tmp_path):
         "gitBranch": "main",
         "entrypoint": "cli",
         "version": "2.1.300",
+        "isSidechain": True,
+        "attributionAgent": "Explore",
         "message": {
             "id": "msg_adv_1",
             "requestId": "req_adv_1",
@@ -360,6 +362,8 @@ def test_advisor_iteration_extracted_as_separate_event(tmp_path):
     assert advisor.source_app == main.source_app
     assert advisor.entrypoint == main.entrypoint
     assert advisor.app_version == main.app_version
+    assert advisor.subagent_type == "Explore"
+    assert advisor.subagent_type == main.subagent_type
     assert advisor.tool_names is None
 
 

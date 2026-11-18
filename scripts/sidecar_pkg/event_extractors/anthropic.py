@@ -89,6 +89,7 @@ def _build_advisor_events(
                 tokens_cache_create_1h=cache_1h,
                 tokens_cache_create_5m=cache_5m,
                 tokens_reasoning=0,
+                subagent_type=main_event.subagent_type,
                 entrypoint=main_event.entrypoint,
                 app_version=main_event.app_version,
             )
