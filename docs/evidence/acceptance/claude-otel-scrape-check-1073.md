@@ -84,11 +84,18 @@ Runway's price (transcript tokens) against Claude's `cost_usd`, matched requests
 | Fable 5.2 | 893 | $147.82 | $154.61 |
 
 Per request the ratio is exactly 1.000 at the 10th, 50th and 90th percentile for every model, also
-for Opus requests above 100k and 200k prompt tokens. The totals differ because of a tail of **72
-requests** (0.35%) where `cost_usd` is 2 to 20 times Runway's price ($134.58 against $7.98). All 72
-have cache writes; 62 have a 1h/5m split that does not sum to the total; none has web search; token
-fields are identical on both sides, so the difference is in how the price is built. Tracked in the
-issue "investigate requests priced far below Claude Code's cost_usd".
+for Opus requests above 100k and 200k prompt tokens. The totals differ because of a tail of requests
+where `cost_usd` is 2 to 20 times Runway's price (72 on Opus and Sonnet: $134.58 against $7.98).
+
+**Cause: the advisor tool.** Claude Code writes `message.usage.iterations`, a list of `message`
+entries (the main call) and `advisor_message` entries (the advisor's own sub-inference, with its own
+`model`). 82 matched requests have an `advisor_message` entry (79 on `claude-fable-5-2`, 3 on
+`claude-fable-5-1`), with a combined `cost_usd` of $163.60. On all 82 the top-level `usage` equals
+the sum of the `message` entries only, and the telemetry token fields equal the top-level `usage`,
+so both sources omit the advisor's tokens and agree with each other while `cost_usd` includes them.
+The gap to Claude's total is $126.59 on Opus and Sonnet plus $6.79 on Fable, **about $133, 9.4% of the
+matched spend**. One advisor entry, for scale: 142,952 input tokens, 12,650 output tokens, no cache.
+The transcripts hold these entries, so the extractor can capture them without telemetry.
 
 ## Findings and where they go
 
@@ -97,16 +104,22 @@ issue "investigate requests priced far below Claude Code's cost_usd".
 2. The extractor reads `message.requestId`; real transcripts store `requestId` at the top level of
    the record. In production 0 of 23,553 events carry a request id, so every `event_id` is the bare
    message id. The test fixtures put `requestId` inside `message`, which hides it.
-3. Side calls are a stable 5% of spend and are available in telemetry with their `query_source`,
+3. Advisor-tool usage is missing from local totals, about 9% of spend, and is present in the
+   transcripts (`usage.iterations`).
+4. Side calls are a stable 5% of spend and are available in telemetry with their `query_source`,
    `model`, tokens and `cost_usd`, joinable by request id.
-4. The bridge-block approach from the first phase (7 of 33 sessions exact on cache counters) is
-   weaker than telemetry in every respect and is not pursued.
+5. The bridge-block approach from the first phase (7 of 33 sessions exact on cache counters) is
+   weaker than telemetry in every respect and is not pursued (#1274 closed).
 
 ## Decision
 
-Capture side calls from OpenTelemetry (owner, 2026-11-17), recording their `query_source` as the
-call's type. The design (transport, enabling, schema, de-duplication, pricing, privacy) is decided in
-the capture decision issue before any implementation.
+Owner, 2026-11-18. Advisor usage is extracted from the transcripts (#1352). Side calls are captured
+from OpenTelemetry by a loopback receiver in the sidecar, enabled by an opt-in setting that writes
+the telemetry `env` block into `~/.claude/settings.json` (default off). Only events the transcripts
+lack are kept (`repl_main_thread` and `agent:*` are dropped), the call type is stored in a new
+`query_source` column, and cost is priced from tokens on the server. Issues: #1351 (request id on
+events, the join key), #1364 (`query_source` column), #1365 (receiver), #1366 (opt-in setting), #1352
+(advisor usage). The design discussion is closed in #1353.
 
 ## Reproduce
 

@@ -334,7 +334,11 @@ calls cost about 5% of the matched spend, mostly on the main models; the Haiku t
 calls were under 1% of that. Local scraping of the main loop itself agreed on every
 token field. Details and numbers:
 [`docs/evidence/acceptance/claude-otel-scrape-check-1073.md`](evidence/acceptance/claude-otel-scrape-check-1073.md).
-Until a telemetry source is captured, local totals are low by that share.
+The advisor tool is a second gap: its sub-inference runs on its own model and appears
+in `message.usage.iterations` as `advisor_message` entries, not in the top-level usage
+the extractor reads, so local totals are low by about another 9% of spend. Until those
+are extracted from the transcripts and the side calls are captured from telemetry,
+local totals are low by these shares.
 
 ## Expiry units
 
