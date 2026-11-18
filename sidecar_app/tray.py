@@ -183,6 +183,16 @@ def _open_in_editor(path: pathlib.Path) -> None:
         subprocess.Popen(["xdg-open", str(path)])  # noqa: S603 S607
 
 
+def _deliberate_skip_reason() -> str | None:
+    """Why the last self-update skipped on purpose (e.g. this platform's asset lags), if it did."""
+    try:
+        from scripts.sidecar_pkg.self_update import last_skip_reason
+
+        return last_skip_reason()
+    except Exception:
+        return None
+
+
 class SidecarTray:
     """pystray system tray icon + menu for the Runway sidecar."""
 
@@ -414,7 +424,8 @@ class SidecarTray:
                 if not ok:
                     try:
                         icon.notify(
-                            "Could not install the update automatically — "
+                            _deliberate_skip_reason()
+                            or "Could not install the update automatically — "
                             "use View Releases… to download it.",
                             "Runway Sidecar",
                         )
