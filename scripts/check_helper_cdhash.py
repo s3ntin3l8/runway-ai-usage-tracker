@@ -52,14 +52,24 @@ def parse_codesign(output: str) -> tuple[str | None, str | None]:
 
 
 def compare(
-    golden: dict[str, str], observed: dict[str, tuple[str | None, str | None]]
+    golden: dict[str, str],
+    observed: dict[str, tuple[str | None, str | None]],
+    present: list[str] | None = None,
 ) -> list[str]:
-    """Problems, empty when every golden slice matches in identifier and CDHash."""
+    """Problems, empty when every golden slice matches in identifier and CDHash.
+
+    *present* is the helper's actual architecture list (``lipo -archs``), used to say
+    "slice missing" rather than "unreadable" when the golden file lists one it lacks.
+    """
     problems: list[str] = []
     for arch, want in sorted(golden.items()):
         ident, got = observed.get(arch, (None, None))
         if got is None:
-            problems.append(f"{arch}: no CDHash could be read from the helper")
+            if present is not None and arch not in present:
+                have = ", ".join(present) or "none"
+                problems.append(f"{arch}: slice missing (helper has: {have})")
+            else:
+                problems.append(f"{arch}: no CDHash could be read from the helper")
             continue
         if ident != IDENTIFIER:
             problems.append(f"{arch}: identifier is {ident!r}, expected {IDENTIFIER!r}")
@@ -80,17 +90,30 @@ def read_codesign(helper: Path, arch: str) -> str:
     return result.stderr + result.stdout
 
 
+def read_archs(helper: Path) -> list[str] | None:
+    """Architectures in the helper (``lipo -archs``), or None when lipo is unavailable."""
+    try:
+        result = subprocess.run(
+            ["lipo", "-archs", str(helper)], capture_output=True, text=True, check=False
+        )
+    except OSError:
+        return None
+    return result.stdout.split() if result.returncode == 0 else None
+
+
 def check(
     helper: Path,
     golden_path: Path = GOLDEN,
     run: Callable[[Path, str], str] | None = None,
+    archs: Callable[[Path], list[str] | None] | None = None,
 ) -> list[str]:
     run = run or read_codesign
+    archs = archs or read_archs
     golden = parse_golden(golden_path.read_text())
     if not helper.is_file():
         return [f"Keychain helper not found at {helper}"]
     observed = {arch: parse_codesign(run(helper, arch)) for arch in golden}
-    return compare(golden, observed)
+    return compare(golden, observed, archs(helper))
 
 
 def main(argv: list[str] | None = None) -> int:
