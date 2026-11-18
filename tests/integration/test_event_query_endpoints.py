@@ -293,6 +293,21 @@ class TestEventsEndpoint:
         assert len(events) == 1
         assert events[0]["event_id"] == "in_window"
 
+    def test_events_excludes_request_id_from_payload(self, session):
+        ev = _event(event_id="msg_with_req")
+        ev.request_id = "req_secret_join_key"
+        session.add(ev)
+        session.commit()
+
+        r = _client().get(
+            "/api/v1/usage/events",
+            params={"provider_id": "anthropic", "account_id": "user@example.com"},
+        )
+        assert r.status_code == 200
+        events = r.json()["events"]
+        assert len(events) == 1
+        assert "request_id" not in events[0]
+
     def test_events_range_returns_min_max(self, session):
         first = datetime(2026, 3, 2, 9, 0, 0, tzinfo=UTC)
         last = datetime(2026, 5, 8, 18, 0, 0, tzinfo=UTC)

@@ -71,6 +71,7 @@ Per-message columns on `usage_events`, defined in `app/models/db_usage.py` and a
 | `entrypoint`, `app_version` | record `entrypoint` (`cli`, `sdk-ts`, `claude-vscode`, ...) and `version` |
 | `tokens_cache_create_1h`, `tokens_cache_create_5m` | `usage.cache_creation.ephemeral_*_input_tokens`; `tokens_cache_create` stays the total |
 | `web_search_requests`, `web_fetch_requests` | `usage.server_tool_use` |
+| `request_id` | record `requestId` (top level); `message.requestId` for the legacy shape |
 
 Sidechain records also carry the subagent type. Claude Code sessions that run on Anthropic's cloud runner leave no local transcript; a server-side collector reads them instead, see [Claude cloud-runner sessions](../collection_logic.md#claude-cloud-runner-sessions).
 

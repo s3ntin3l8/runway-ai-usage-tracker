@@ -18,6 +18,9 @@ from scripts.sidecar_pkg.event_extractors.anthropic import (
 
 FIXTURE = Path(__file__).parent.parent / "fixtures" / "anthropic-sample.jsonl"
 SIDECHAIN_FIXTURE = Path(__file__).parent.parent / "fixtures" / "anthropic-sidechain-sample.jsonl"
+RECORD_REQUEST_ID_FIXTURE = (
+    Path(__file__).parent.parent / "fixtures" / "anthropic-record-request-id-sample.jsonl"
+)
 
 
 @pytest.mark.parametrize(
@@ -356,6 +359,8 @@ def test_advisor_iteration_extracted_as_separate_event(tmp_path):
     assert advisor.tokens_cache_create_1h == 0
     assert advisor.tokens_cache_create_5m == 0
     assert advisor.session_id == main.session_id
+    assert advisor.request_id == main.request_id
+    assert advisor.request_id == "req_adv_1"
     assert advisor.cwd == main.cwd
     assert advisor.git_branch == main.git_branch
     assert advisor.ts == main.ts
@@ -734,3 +739,136 @@ def test_session_names_skip_leaves_the_file_unread(tmp_path):
     _write_transcript(fp, [{"type": "ai-title", "aiTitle": "Skipped", "sessionId": "sess-eee"}])
     records, scanned = parse_anthropic_session_names([fp], skip=lambda path: True)
     assert records == [] and scanned == {}
+
+
+def test_top_level_request_id_sets_request_id_without_changing_event_id():
+    evts = parse_anthropic_events(
+        [RECORD_REQUEST_ID_FIXTURE],
+        account_id="u@x",
+        since=datetime(2020, 1, 1, tzinfo=UTC),
+    )
+    assert [(e.event_id, e.request_id) for e in evts] == [
+        ("msg_top_1", "req_top_1"),
+        ("msg_top_2", "req_top_2"),
+    ]
+
+
+def test_message_level_request_id_keeps_legacy_event_id_and_sets_request_id():
+    evts = parse_anthropic_events(
+        [FIXTURE],
+        account_id="u@x",
+        since=datetime(2020, 1, 1, tzinfo=UTC),
+    )
+    assert [(e.event_id, e.request_id) for e in evts] == [
+        ("msg_1|req_1", "req_1"),
+        ("msg_2|req_2", "req_2"),
+    ]
+
+
+def test_re_extracting_and_re_ingesting_top_level_request_id_stores_each_event_once():
+    first_pass = parse_anthropic_events(
+        [RECORD_REQUEST_ID_FIXTURE],
+        account_id="u@x",
+        since=datetime(2020, 1, 1, tzinfo=UTC),
+    )
+    second_pass = parse_anthropic_events(
+        [RECORD_REQUEST_ID_FIXTURE],
+        account_id="u@x",
+        since=datetime(2020, 1, 1, tzinfo=UTC),
+    )
+    assert [e.event_id for e in first_pass] == [e.event_id for e in second_pass]
+
+    engine = create_engine("sqlite://", connect_args=SQLITE_CONNECT_ARGS, poolclass=StaticPool)
+    configure_sqlite_engine(engine)
+    SQLModel.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        res1 = EventIngestor(session).ingest(first_pass, sidecar_id="dev-01")
+        res2 = EventIngestor(session).ingest(second_pass, sidecar_id="dev-01")
+        rows = session.exec(select(UsageEvent)).all()
+
+    assert res1.events_inserted == 2
+    assert res2.events_inserted == 0
+    assert res2.events_duplicate == 2
+    assert len(rows) == 2
+    assert {r.event_id: r.request_id for r in rows} == {
+        "msg_top_1": "req_top_1",
+        "msg_top_2": "req_top_2",
+    }
+
+
+def test_non_string_top_level_request_id_does_not_drop_event(tmp_path):
+    fp = tmp_path / "non-str-req.jsonl"
+    _write_transcript(
+        fp,
+        [
+            {
+                "type": "assistant",
+                "timestamp": "2026-05-08T14:23:00Z",
+                "requestId": 12345,
+                "message": {
+                    "id": "msg_num",
+                    "model": "claude-sonnet-4-5-20250929",
+                    "usage": {"input_tokens": 10, "output_tokens": 5},
+                },
+            },
+            {
+                "type": "assistant",
+                "timestamp": "2026-05-08T14:23:01Z",
+                "requestId": {"nested": "x"},
+                "message": {
+                    "id": "msg_dict",
+                    "model": "claude-sonnet-4-5-20250929",
+                    "usage": {"input_tokens": 10, "output_tokens": 5},
+                },
+            },
+        ],
+    )
+    evts = parse_anthropic_events(
+        [fp],
+        account_id="u@x",
+        since=datetime(2020, 1, 1, tzinfo=UTC),
+    )
+    assert [(e.event_id, e.request_id) for e in evts] == [
+        ("msg_num", None),
+        ("msg_dict", None),
+    ]
+
+
+def test_advisor_event_inherits_top_level_request_id(tmp_path):
+    fp = tmp_path / "advisor-top-req.jsonl"
+    _write_transcript(
+        fp,
+        [
+            {
+                "type": "assistant",
+                "timestamp": "2026-11-18T10:00:00Z",
+                "requestId": "req_advisor_1",
+                "message": {
+                    "id": "msg_adv",
+                    "model": "claude-sonnet-4-6",
+                    "usage": {
+                        "input_tokens": 100,
+                        "output_tokens": 50,
+                        "iterations": [
+                            {
+                                "type": "advisor_message",
+                                "model": "claude-fable-5-2",
+                                "input_tokens": 200,
+                                "output_tokens": 20,
+                            }
+                        ],
+                    },
+                },
+            }
+        ],
+    )
+    evts = parse_anthropic_events(
+        [fp],
+        account_id="u@x",
+        since=datetime(2020, 1, 1, tzinfo=UTC),
+    )
+    assert [(e.event_id, e.request_id) for e in evts] == [
+        ("msg_adv", "req_advisor_1"),
+        ("msg_adv|advisor", "req_advisor_1"),
+    ]

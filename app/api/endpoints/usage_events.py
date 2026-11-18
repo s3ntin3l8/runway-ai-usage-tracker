@@ -85,6 +85,7 @@ async def get_usage_events(  # noqa: PLR0913, PLR0917 — known-debt: 12 query f
         d = ev.model_dump()
         if not include_raw:
             d.pop("raw_json", None)
+        d.pop("request_id", None)
         rows.append(d)
 
     return {"events": rows, "total": total, "limit": limit, "offset": offset}

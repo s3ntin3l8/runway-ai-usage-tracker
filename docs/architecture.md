@@ -49,7 +49,7 @@ and `db_claude_cloud.py`; `app/models/db.py` re-exports them.
 
 | Table | Role |
 |---|---|
-| `usage_events` | Per-message events, unique on `(provider_id, event_id)`. `kind` is `message` or `error`. Carries `cwd`, an indexed `project`, `git_branch`, `tool_names`, `session_id`, `subagent_type`, `query_source`, the client app `source_app` and, for per-request providers, `turn_id`. See [project labels](collection_logic.md#project-labels). |
+| `usage_events` | Per-message events, unique on `(provider_id, event_id)`. `kind` is `message` or `error`. Carries `cwd`, an indexed `project`, `git_branch`, `tool_names`, `session_id`, `request_id`, `subagent_type`, `query_source`, the client app `source_app` and, for per-request providers, `turn_id`. See [project labels](collection_logic.md#project-labels). |
 | `usage_period_rollup` | Hour / day / month / year / lifetime rollups by model and sidecar, updated incrementally on ingest. |
 | `usage_windows` | Closed-window archive: totals frozen at each authoritative `reset_at` by `app/services/window_closer.py`. |
 | `latest_usage` | Live gauge cards (`pct_used`, `limit_value`, `reset_at`), merged by `merge_card_json` in `app/services/accumulator.py`. |

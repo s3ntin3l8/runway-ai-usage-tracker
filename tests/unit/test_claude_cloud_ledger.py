@@ -372,3 +372,14 @@ def test_sdk_timestamp_is_normalized_without_preserving_raw_text():
     value = normalize({**assistant(), "timestamp": "1970-01-01T01:00:01.500+01:00"})
     assert value["sdk_timestamp"] == 1.5
     assert "1970-" not in json.dumps(value)
+
+
+@pytest.mark.parametrize("field", ["request_id", "requestId"])
+def test_top_level_request_id_populates_hashed_request_scope(field):
+    raw_req = f"private-req-{field}"
+    value = normalize({**assistant(), field: raw_req})
+    scope = value.get("request_scope")
+    assert isinstance(scope, str)
+    assert len(scope) == 64 and set(scope) <= set("0123456789abcdef")
+    assert scope != raw_req
+    assert raw_req not in json.dumps(value)

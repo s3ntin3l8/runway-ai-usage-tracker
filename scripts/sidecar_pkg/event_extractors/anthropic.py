@@ -78,6 +78,7 @@ def _build_advisor_events(
                 ts=main_event.ts,
                 model_id=model_id,
                 session_id=main_event.session_id,
+                request_id=main_event.request_id,
                 turn_id=main_event.event_id,
                 cwd=main_event.cwd,
                 git_branch=main_event.git_branch,
@@ -139,11 +140,21 @@ def parse_anthropic_events(
 
                         msg = e.get("message", {})
                         msg_id = msg.get("id") or ""
+                        # event_id and dedup_key intentionally read only msg.get("requestId"):
+                        # stored rows are keyed by (provider_id, event_id), so adding
+                        # top-level e["requestId"] to event_id would make every existing
+                        # event look new and double-count history on the next sidecar run.
                         req_id = msg.get("requestId") or ""
                         event_id = f"{msg_id}|{req_id}" if req_id else msg_id
                         if not event_id:
                             continue
                         dedup_key = (msg_id, req_id)
+                        raw_request_id = e.get("requestId") or msg.get("requestId")
+                        request_id = (
+                            raw_request_id
+                            if isinstance(raw_request_id, str) and raw_request_id
+                            else None
+                        )
 
                         usage = msg.get("usage") or {}
                         content = msg.get("content") or []
@@ -171,6 +182,7 @@ def parse_anthropic_events(
                             ts=ts.isoformat(),
                             model_id=_normalize_anthropic_model(msg.get("model", "")),
                             session_id=e.get("sessionId"),
+                            request_id=request_id,
                             cwd=e.get("cwd"),
                             git_branch=e.get("gitBranch"),
                             tool_names=tool_names or None,

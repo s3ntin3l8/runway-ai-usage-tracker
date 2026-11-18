@@ -52,6 +52,10 @@ class UsageEventPush(BaseModel):
         cleaned = "".join(char for char in str(value) if char.isprintable()).strip()
         return cleaned[:_QUERY_SOURCE_MAX_LENGTH] or None
 
+    # Upstream API request identifier (e.g. Claude Code top-level requestId),
+    # carried separately from event_id so stored (provider_id, event_id) keys
+    # stay stable.
+    request_id: str | None = None
     # Working-directory / project context (enrichment). cwd = raw per-message
     # path; the server derives `project` (root basename) in EventIngestor via
     # app/services/project_label.py. tool_names = the tool_use block names in the
