@@ -252,6 +252,28 @@ PRICING_SEED: list[dict] = [
     # shows no cache-write column for those older models (issue #369).
     {
         "provider_id": "chatgpt",
+        "model_id": "gpt-6.2-astra",
+        "effective_from": "2026-11-01",
+        "input_per_mtok": 8.00,
+        "output_per_mtok": 40.00,
+        "cache_read_per_mtok": 0.40,
+        "cache_create_per_mtok": 10.00,  # 1.25x input (30m retention)
+        "notes": "GPT-6.2 Astra (rates per developers.openai.com/api/docs/pricing, "
+        "checked 2026-11-18); >272K long-context tier not modeled",
+    },
+    {
+        "provider_id": "chatgpt",
+        "model_id": "gpt-6.2-sol",
+        "effective_from": "2026-11-01",
+        "input_per_mtok": 2.00,
+        "output_per_mtok": 10.00,
+        "cache_read_per_mtok": 0.10,
+        "cache_create_per_mtok": 2.50,  # 1.25x input (30m retention)
+        "notes": "GPT-6.2 Sol (rates per developers.openai.com/api/docs/pricing, "
+        "checked 2026-11-18); >272K long-context tier not modeled",
+    },
+    {
+        "provider_id": "chatgpt",
         "model_id": "gpt-6-astra",
         "effective_from": "2026-09-01",
         "input_per_mtok": 10.00,

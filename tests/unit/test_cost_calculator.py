@@ -1228,6 +1228,9 @@ def test_preloaded_index_snapshots_survive_session_commit():
         ("chatgpt", "gpt-6.1-sol", 2.00, 0.10),
         # Unseeded suffixes segment-trim onto the seeded sibling, not $0.
         ("chatgpt", "gpt-6.1-sol-preview", 2.00, 0.10),
+        ("chatgpt", "gpt-6.2-astra", 8.00, 0.40),
+        ("chatgpt", "gpt-6.2-sol", 2.00, 0.10),
+        ("chatgpt", "gpt-6.2-sol-preview", 2.00, 0.10),
         ("anthropic", "fable-5.1", 10.00, 0.25),
         ("anthropic", "fable-5.2", 8.00, 0.20),
         ("anthropic", "opus-5.5", 4.00, 0.20),
@@ -1242,7 +1245,7 @@ def test_new_generation_models_resolve_to_their_own_rows(
     """The versioned rows are reached through the lookup chain, not just seeded —
     and win over the bare-family fallback (`sonnet` is $3, `opus` is $5)."""
     row = resolve_price_row(
-        _seeded_session(), provider_id, model_id, datetime(2026, 10, 1, tzinfo=UTC)
+        _seeded_session(), provider_id, model_id, datetime(2026, 11, 18, tzinfo=UTC)
     )
     assert row is not None
     assert row.input_per_mtok == input_rate
