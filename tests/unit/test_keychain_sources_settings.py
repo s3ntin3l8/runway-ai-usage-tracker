@@ -529,6 +529,7 @@ console.log(JSON.stringify({ chips, summary, authText: authBtn ? collectText(aut
         [node, "-e", probe, str(report_file), str(script_file)],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         check=True,
     )
     rendered = json.loads(res.stdout)

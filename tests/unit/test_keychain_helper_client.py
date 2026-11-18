@@ -94,7 +94,10 @@ def test_renewal_reads_and_writes_stay_on_python_worker(monkeypatch, tmp_path):
         client.close()
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="Darwin transport uses POSIX pipes")
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="darwin-only transport: KeychainClient._start sets non-blocking pipes and never runs on Windows",
+)
 def test_renewal_worker_lifecycle_and_recovery_reference_routing(monkeypatch, tmp_path):
     import plistlib
 
