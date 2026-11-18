@@ -208,7 +208,7 @@ def verify_background(source_id: str, ticket: consent.ConsentTicket) -> bool:
             return False
         item = selected[0]
         value = bounded_call({"persistent": item["persistent"]})
-        return (
+        success = (
             isinstance(value, dict)
             and value.get("persistent") == item["persistent"]
             and value.get("service") == item["service"]
@@ -216,7 +216,13 @@ def verify_background(source_id: str, ticket: consent.ConsentTicket) -> bool:
             and isinstance(value.get("data"), bytes)
             and bool(value["data"])
         )
-    except (KeychainError, KeyError, TypeError):
+        if success:
+            consent.POLICY.record_read(ticket)
+        return success
+    except KeychainError as exc:
+        consent.POLICY.record_block(ticket, exc.reason)
+        return False
+    except (KeyError, TypeError):
         return False
     finally:
         client.close()

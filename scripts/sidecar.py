@@ -5289,6 +5289,7 @@ class DaemonRunner:
         from scripts.sidecar_pkg.source_consent import POLICY
 
         POLICY.configure(config)
+        POLICY.configure_state(get_sidecar_dir() / "source-reads.json")
         from scripts.sidecar_pkg import source_protocol
 
         source_protocol.prepare(config, get_sidecar_dir() / "source-control.json")

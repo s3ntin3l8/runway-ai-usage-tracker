@@ -1,6 +1,6 @@
 """Additive Fleet source protocol; strict booleans never grant by coercion."""
 
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt
 
@@ -13,16 +13,25 @@ class ScraperReport(BaseModel):
     revision: str = Field(pattern=r"^[a-f0-9]{64}$")
     generation: StrictInt = Field(ge=0)
     read: StrictBool
-    state: Literal[
-        "Off",
-        "Setup required",
-        "Connecting",
-        "Ready",
-        "Limited",
-        "Action required",
-        "Not installed",
-        "Withdrawal pending",
-    ]
+    state: (
+        Literal[
+            "Off",
+            "Setup required",
+            "Connecting",
+            "Ready",
+            "Authorized",
+            "Limited",
+            "Action required",
+            "Not installed",
+            "Withdrawal pending",
+        ]
+        | Annotated[
+            str,
+            Field(
+                pattern=r"^Authorized \(checked [0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2} UTC\)$"
+            ),
+        ]
+    )
     renewal_requested: StrictBool = False
     renewal_supported: StrictBool = False
     new: StrictBool = False

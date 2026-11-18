@@ -428,6 +428,7 @@ function kcStatus(source, run) {
 
 function kcChip(status, source) {
   const chip = kcEl('span', 'kc-chip kc-' + status, source && source.revoked ? 'Revoked' : KC_LABEL[status]);
+  if (source && status === 'ok' && source.state.startsWith('Authorized (checked ')) chip.textContent = source.state;
   if (source && source.read && source.remote_paused) chip.textContent += ' · paused';
   if (source && status === 'need' && source.setup_requested) chip.textContent += ' · requested';
   if (source && source.state === 'Withdrawal pending') chip.title = 'Off · server withdrawal pending';
@@ -567,12 +568,13 @@ function renderSources(report) {
     if (children.some(s => s.new)) name.append(kcEl('span', 'kc-tag', 'NEW'));
     for (const child of children) {
       const pill = kcEl('span', 'kc-pill'); const dot = kcEl('i', 'kc-d-' + status(child));
-      pill.title = child.label + ': ' + KC_LABEL[status(child)];
+      pill.title = child.label + ': ' + (status(child) === 'ok' && child.state.startsWith('Authorized (checked ') ? child.state : KC_LABEL[status(child)]);
       pill.append(dot, document.createTextNode(KC_BROWSERS.find(b => b[0] === child.group)[1]));
       name.append(pill);
     }
     const worst = children.map(status).reduce((a, b) => KC_RANK[b] > KC_RANK[a] ? b : a, 'off');
-    webRows.append(kcRow(kcSwitch('service-' + service.replace(/[^A-Za-z0-9]+/g, '-'), 'Read ' + service + ' cookies', ons.length > 0, !!run.active, mixed, on => sourceAction('set_sources', null, on, {source_ids: children.map(c => c.id)})), name, kcChip(worst, children.length === 1 ? children[0] : null)));
+    const checked = worst === 'ok' ? children.filter(c => c.state.startsWith('Authorized (checked ')).sort((a, b) => a.last_read_at - b.last_read_at)[0] : null;
+    webRows.append(kcRow(kcSwitch('service-' + service.replace(/[^A-Za-z0-9]+/g, '-'), 'Read ' + service + ' cookies', ons.length > 0, !!run.active, mixed, on => sourceAction('set_sources', null, on, {source_ids: children.map(c => c.id)})), name, kcChip(worst, children.length === 1 ? children[0] : checked)));
   }
   if (offServices.length || (showOffWeb && services.size)) {
     const more = kcEl('button', 'kc-more', showOffWeb ? '▴ Hide services that are off' : '▾ ' + offServices.length + ' more off (' + offServices.join(', ') + ')');

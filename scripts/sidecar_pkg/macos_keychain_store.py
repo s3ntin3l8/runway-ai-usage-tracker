@@ -80,9 +80,13 @@ class _WorkerAPI:
                 operation == "copy" or self._allowed() is True
             )
 
-        result = get_keychain_client().call(
-            operation, query, values, group=self._group, allowed=permitted
-        )
+        try:
+            result = get_keychain_client().call(
+                operation, query, values, group=self._group, allowed=permitted
+            )
+        except KeychainError as exc:
+            consent.POLICY.record_block(ticket, exc.reason)
+            raise
         if (
             operation == "copy"
             and isinstance(result, dict)

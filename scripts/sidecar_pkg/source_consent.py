@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import copy
 import inspect
+import json
+import logging
+import math
+import os
 import sys
+import tempfile
 import threading
 import time
 from collections.abc import Iterator
@@ -12,10 +17,15 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from functools import wraps
+from pathlib import Path
 from typing import Any
 
 from scripts.sidecar_pkg.browser_store import SOURCE_BLOCK_REASONS, SOURCE_REPORT_KEYS
 from scripts.sidecar_pkg.source_catalog import catalog, source_for_origin, trusted_rule
+
+READ_STATE_MAX_AGE = 7 * 86400
+_BLOCK_REASONS = {"denied", "timed_out", "unavailable"}
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -34,6 +44,8 @@ class SourcePolicy:
         self._paused: set[str] = set()
         self._epochs: dict[str, int] = {}
         self._successful_reads: dict[str, float] = {}
+        self._read_state: dict[str, dict[str, Any]] = {}
+        self._state_path: Path | None = None
         self.configure(config)
 
     def configure(self, config: dict[str, Any]) -> None:
@@ -46,6 +58,9 @@ class SourcePolicy:
                     config.get("api_url"),
                 ):
                     self._epochs[source_id] = self._epochs.get(source_id, 0) + 1
+                    self._successful_reads.pop(source_id, None)
+                    if self._read_state.pop(source_id, None) is not None:
+                        self._persist_reads()
 
     @staticmethod
     def _entry(config: dict[str, Any], source_id: str) -> dict[str, Any]:
@@ -92,14 +107,138 @@ class SourcePolicy:
             else:
                 self._paused.discard(source_id)
 
+    def configure_state(self, path: Path) -> None:
+        """Load display evidence once; it can never create a consent ticket."""
+        with self._lock:
+            if self._state_path == path:
+                return
+            self._state_path = path
+            self._read_state = {}
+            self._successful_reads.clear()
+            try:
+                info = path.stat()
+                if path.is_symlink() or (
+                    os.name != "nt" and (info.st_uid != os.getuid() or info.st_mode & 0o077)
+                ):
+                    return
+                saved = json.loads(path.read_text(encoding="utf-8"))
+                if not isinstance(saved, dict):
+                    return
+                for source_id, record in saved.items():
+                    descriptor = catalog().get(source_id)
+                    if descriptor is None or not isinstance(record, dict):
+                        return
+                    if set(record) != {
+                        "revision",
+                        "last_read_at",
+                        "last_block_reason",
+                        "last_block_at",
+                    }:
+                        return
+                    if record["revision"] != descriptor.revision:
+                        continue
+                    for field in ("last_read_at", "last_block_at"):
+                        value = record[field]
+                        if value is not None and (
+                            type(value) not in (int, float)
+                            or not 0 < value < 253402300800
+                            or not math.isfinite(value)
+                        ):
+                            return
+                    reason = record["last_block_reason"]
+                    if reason is not None and (
+                        not isinstance(reason, str) or reason not in _BLOCK_REASONS
+                    ):
+                        return
+                    if (reason is None) != (record["last_block_at"] is None):
+                        return
+                self._read_state = {
+                    key: value
+                    for key, value in saved.items()
+                    if value["revision"] == catalog()[key].revision
+                }
+            except (OSError, ValueError, TypeError):
+                # No stale in-memory fallback after a corrupt/unreadable state file.
+                self._read_state = {}
+
+    def _persist_reads(self) -> None:
+        if self._state_path is None:
+            return
+        temporary = None
+        try:
+            self._state_path.parent.mkdir(parents=True, exist_ok=True)
+            fd, temporary = tempfile.mkstemp(prefix=".source-reads-", dir=self._state_path.parent)
+            with os.fdopen(fd, "w", encoding="utf-8") as output:
+                json.dump(self._read_state, output, allow_nan=False)
+                output.flush()
+                os.fsync(output.fileno())
+            os.replace(temporary, self._state_path)
+        except OSError:
+            logger.warning("Could not persist Keychain read status")
+        finally:
+            if temporary is not None:
+                try:
+                    os.unlink(temporary)
+                except FileNotFoundError:
+                    pass
+
+    def _read_record(self, source_id: str) -> dict[str, Any]:
+        record = self._read_state.get(source_id, {})
+        descriptor = catalog().get(source_id)
+        return record if descriptor and record.get("revision") == descriptor.revision else {}
+
     def record_read(self, ticket: ConsentTicket) -> None:
         with self._lock:
             if self.current(ticket):
-                self._successful_reads[ticket.source_id] = time.time()
+                now = time.time()
+                self._successful_reads[ticket.source_id] = now
+                self._read_state[ticket.source_id] = {
+                    "revision": ticket.revision,
+                    "last_read_at": now,
+                    "last_block_reason": self._read_record(ticket.source_id).get(
+                        "last_block_reason"
+                    ),
+                    "last_block_at": self._read_record(ticket.source_id).get("last_block_at"),
+                }
+                self._persist_reads()
+
+    def record_block(self, ticket: ConsentTicket, reason: str) -> None:
+        with self._lock:
+            if self.current(ticket) and reason in _BLOCK_REASONS:
+                self._successful_reads.pop(ticket.source_id, None)
+                self._read_state[ticket.source_id] = {
+                    "revision": ticket.revision,
+                    "last_read_at": self._read_record(ticket.source_id).get("last_read_at"),
+                    "last_block_reason": reason,
+                    "last_block_at": time.time(),
+                }
+                self._persist_reads()
 
     def last_read(self, source_id: str) -> float | None:
         with self._lock:
-            return self._successful_reads.get(source_id)
+            if self.ticket(source_id) is None:
+                return None
+            value = self._read_record(source_id).get("last_read_at")
+            return float(value) if value is not None else None
+
+    def read_state(self, source_id: str) -> str | None:
+        """Current outcome first, then bounded restart evidence; never do native IO."""
+        with self._lock:
+            if self.ticket(source_id) is None:
+                return None
+            record = self._read_record(source_id)
+            if record.get("last_block_reason") and (
+                record.get("last_read_at") is None
+                or record["last_block_at"] >= record["last_read_at"]
+            ):
+                return "Action required"
+            if source_id in self._successful_reads and record:
+                return "Authorized"
+            last = record.get("last_read_at")
+            if last is not None and 0 <= time.time() - last <= READ_STATE_MAX_AGE:
+                checked = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(last))
+                return f"Authorized (checked {checked})"
+            return None
 
     def renewal_allowed(self) -> bool:
         with self._lock:
