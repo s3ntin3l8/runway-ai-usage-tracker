@@ -68,7 +68,32 @@ def test_parse_golden_rejects_garbage():
 
 
 def test_committed_golden_parses():
-    assert set(chk.parse_golden(chk.GOLDEN.read_text())) == {"arm64", "x86_64"}
+    # The app is arm64-only (PyInstaller thins to the runner's arch), so the golden
+    # file must not list a slice the shipped helper can never have.
+    assert set(chk.parse_golden(chk.GOLDEN.read_text())) == {"arm64"}
+
+
+def test_committed_helper_is_a_thin_arm64_macho():
+    """Pins the binary, not just the golden text: a universal helper re-committed by accident
+    would be thinned by PyInstaller and lose its x86_64 slice in CI, so catch it here."""
+    head = (chk.ROOT / "sidecar_app" / "keychain_helper" / "bin" / "kc_helper").read_bytes()[:8]
+    assert head[:4] != bytes.fromhex("cafebabe"), "universal (fat) helper committed"
+    assert head[:4] == bytes.fromhex("cffaedfe"), "not a 64-bit little-endian Mach-O"
+    assert int.from_bytes(head[4:8], "little") == 0x0100000C, "not an arm64 Mach-O"
+
+
+def test_missing_slice_names_the_architectures_present(tmp_path):
+    run = stub({"arm64": out(chk.IDENTIFIER, A), "x86_64": "no architecture"})
+    problems = chk.check(
+        helper_file(tmp_path), golden_file(tmp_path), run, archs=lambda _h: ["arm64"]
+    )
+    assert "x86_64: slice missing (helper has: arm64)" in problems
+
+
+def test_unreadable_slice_without_lipo_keeps_generic_message(tmp_path):
+    run = stub({"arm64": out(chk.IDENTIFIER, A), "x86_64": "garbage"})
+    problems = chk.check(helper_file(tmp_path), golden_file(tmp_path), run, archs=lambda _h: None)
+    assert any("x86_64: no CDHash could be read" in p for p in problems)
 
 
 def test_main_exit_codes(tmp_path, monkeypatch, capsys):

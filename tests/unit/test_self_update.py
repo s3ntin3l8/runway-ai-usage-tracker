@@ -11,6 +11,7 @@ incident this guards against) rather than merely failing an update.
 
 import hashlib
 import io
+import json
 import os
 import pathlib
 import shutil
@@ -435,6 +436,74 @@ class TestSelfUpdateRetryWiring:
         monkeypatch.setattr(self_update.request, "urlopen", _boom)
         assert self_update.self_update("1.0.0+edge.aaa", "edge") is False
         assert calls["n"] == self_update._MAX_ATTEMPTS
+
+
+class TestEdgeSameBuildGuard:
+    """The `edge` tag moves on every push even when a platform's asset was not rebuilt."""
+
+    def _run(self, monkeypatch, tmp_path, *, staged_version, running="3.0.0+edge.c1e75b7"):
+        monkeypatch.setattr(self_update, "_sidecar_dir", lambda: tmp_path)
+        monkeypatch.setattr(self_update, "_is_frozen", lambda: True)
+        monkeypatch.setattr(self_update, "_is_docker", lambda: False)
+        monkeypatch.setattr(self_update, "running_from_disk_image", lambda *a, **k: False)
+        monkeypatch.setattr(self_update, "_detect_target", lambda: "tray")
+        monkeypatch.setattr(self_update, "check_once", lambda *a, **k: "edge build 799963c7")
+        monkeypatch.setattr(
+            self_update,
+            "_get_release_json",
+            lambda channel: {
+                "tag_name": "edge",
+                "assets": [
+                    {
+                        "name": "runway-sidecar-macos-edge.zip.sigstore.json",
+                        "browser_download_url": "http://a/bundle",
+                    }
+                ],
+            },
+        )
+        monkeypatch.setattr(
+            self_update, "_asset_name_candidates", lambda *a: ["runway-sidecar-macos-edge.zip"]
+        )
+        monkeypatch.setattr(
+            self_update, "find_asset_urls", lambda release, name: ("http://a/zip", "http://a/sha")
+        )
+        monkeypatch.setattr(self_update, "_download", lambda url, dest, **k: dest.write_bytes(b"z"))
+        monkeypatch.setattr(self_update, "_fetch_expected_sha", lambda url: "x")
+        monkeypatch.setattr(self_update, "verify_sha256", lambda *a: True)
+        monkeypatch.setattr(self_update, "verify_update", lambda *a: None)
+        app = tmp_path / "staged" / "Runway Sidecar.app"
+
+        def fake_extract(archive, dest):
+            res = app / "Contents" / "Resources"
+            res.mkdir(parents=True, exist_ok=True)
+            if staged_version is not None:
+                (res / "package.json").write_text(json.dumps({"version": staged_version}))
+
+        monkeypatch.setattr(self_update, "_extract", fake_extract)
+        monkeypatch.setattr(self_update, "_find_staged", lambda *a: app)
+        monkeypatch.setattr(self_update, "_install_path", lambda: tmp_path / "Runway Sidecar.app")
+        applied = []
+        monkeypatch.setattr(self_update, "apply_update", lambda *a, **k: applied.append(a) or True)
+        # The guard is only consulted on the edge channel; the first (retry-free) fetch wins.
+        result = self_update.self_update(running, "edge", restart=False)
+        return result, applied
+
+    def test_same_commit_is_not_reinstalled(self, monkeypatch, tmp_path):
+        result, applied = self._run(monkeypatch, tmp_path, staged_version="3.0.0+edge.c1e75b7")
+        assert result is False
+        assert applied == []
+        assert "not been published" in (self_update.last_skip_reason() or "")
+
+    def test_a_different_commit_still_installs(self, monkeypatch, tmp_path):
+        result, applied = self._run(monkeypatch, tmp_path, staged_version="3.0.0+edge.799963c")
+        assert result is True
+        assert len(applied) == 1
+        assert self_update.last_skip_reason() is None
+
+    def test_unreadable_staged_version_still_installs(self, monkeypatch, tmp_path):
+        result, applied = self._run(monkeypatch, tmp_path, staged_version=None)
+        assert result is True
+        assert len(applied) == 1
 
 
 # ---------------------------------------------------------------------------

@@ -1,7 +1,8 @@
 # Stable Keychain reader
 
-`bin/kc_helper` is the **committed, separately signed** universal macOS reader
-(arm64 and x86_64, minimum macOS 11). Sidecar releases must reuse these exact
+`bin/kc_helper` is the **committed, separately signed** macOS reader
+(arm64 only, minimum macOS 11: the app itself is arm64-only and PyInstaller thins any
+universal helper to that architecture). Sidecar releases must reuse these exact
 bytes. Rebuilding it, modifying its Mach-O load commands, or signing it again can
 invalidate existing “Always Allow” grants. A source or toolchain change is an
 intentional helper update requiring re-authorization and a reviewed golden hash.
@@ -18,8 +19,8 @@ From the repository root on macOS:
 sidecar_app/keychain_helper/build.sh
 ```
 
-The script compiles each architecture with `-std=c11 -Os`, minimum macOS 11,
-links CoreFoundation and Security, combines the slices with `lipo`, and signs
+The script compiles for arm64 with `-std=c11 -Os`, minimum macOS 11,
+links CoreFoundation and Security, and signs
 **only this executable**, with this exact command:
 
 ```sh
@@ -34,15 +35,14 @@ the packaged `Contents/Frameworks/keychain_helper/kc_helper` with the golden fil
 after signing and on the unzipped update payload (see `docs/sidecar.md`).
 The packaged reader is `_MEIPASS/keychain_helper/kc_helper`.
 
-Inspect and verify each architecture:
+Inspect and verify the signature:
 
 ```sh
-codesign --verify --strict --all-architectures sidecar_app/keychain_helper/bin/kc_helper
+codesign --verify --strict sidecar_app/keychain_helper/bin/kc_helper
 codesign -dvvv --arch arm64 sidecar_app/keychain_helper/bin/kc_helper
-codesign -dvvv --arch x86_64 sidecar_app/keychain_helper/bin/kc_helper
 ```
 
-`kc_helper.cdhash` records `<architecture> <CDHash>`, one line per slice.
+`kc_helper.cdhash` records `<architecture> <CDHash>`, one line per slice (only `arm64`).
 Every slice must have identifier `com.runway.sidecar.keychain-helper` and match
 its golden CDHash. Keep this file and the committed executable together.
 The golden hashes were built with Xcode 27.2 (27B52), Apple clang
@@ -51,8 +51,9 @@ different bytes; installing a new toolchain is not a reason to update the
 committed binary or golden hashes.
 
 On the macOS worker, three consecutive clean builds produced identical
-universal SHA-256 `5f74469cd1a582362f688dcfaf9888bc31c14e294bcef92df32a4a2e9c4f1849`
-and identical per-slice CDHashes as recorded in the golden file. The linker's
+bytes and the CDHash recorded in the golden file. The committed arm64 file is the
+arm64 slice of the earlier universal build, cut out unchanged (its signature and
+CDHash are unchanged). The linker's
 normal content-derived UUID is retained: removing LC_UUID prevents execution
 on current macOS. No build timestamp or random signing timestamp is embedded.
 
