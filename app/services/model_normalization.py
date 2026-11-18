@@ -58,28 +58,60 @@ def is_free_tier_model_id(model_id: str | None) -> bool:
     return last_token == "free"
 
 
-# ── Gemini 4 Argon ──
+# ── Gemini 4 codename families (Argon, Hydrogen, Carbon, Neon) ──
 
-# Google prices Gemini 4 Argon as one family (issue #686). The seeded pricing
-# rows are keyed on the canonical id for both the `gemini` and the
-# `antigravity` provider — see pricing_seed.py.
+# Google prices each Gemini 4 codename as one family (issue #686 for Argon).
+# The seeded pricing rows are keyed on the canonical id for both the `gemini`
+# and the `antigravity` provider — see pricing_seed.py.
 ARGON_MODEL_ID = "gemini-4-argon"
+HYDROGEN_MODEL_ID = "gemini-4-hydrogen"
+CARBON_MODEL_ID = "gemini-4-carbon"
+NEON_MODEL_ID = "gemini-4-neon"
 
-# The Antigravity CLI reports the raw id as "gemini-4-argon-trial": the
-# "-trial" suffix is part of the id, not a version qualifier, so it must not
-# survive into the stored model_id. Google publishes the model as
-# "gemini-4-argon" (https://ai.google.dev/gemini-api/docs/models/gemini-4-argon).
+# The Antigravity CLI reports raw ids with suffixes like "-trial" or "-preview":
+# those suffixes are not version qualifiers and must not survive into the stored
+# model_id. Look-alikes (e.g. "gemini-4-argonoid") are excluded by the [-.]
+# separator and by word boundaries on the display name.
 _ARGON_RAW_RE = re.compile(r"^gemini-4-argon(?:[-.][a-z0-9][-a-z0-9.]*)?$")
+_GEMINI_4_DISPLAY_GEN_RE = re.compile(r"(?<![\d.])4(?![\d.])")
+_GEMINI_4_GENERIC_RAW_IDS = frozenset({"gemini", "gemini-default"})
 
-# The display name carries the model name in words ("Gemini 4 Argon (High)"),
-# so the match needs word boundaries: a look-alike such as "Argonoid" is a
-# different model, not a spelling of Argon.
-_ARGON_DISPLAY_RE = re.compile(r"\bargon\b", re.IGNORECASE)
+_GEMINI_4_CODENAMES: tuple[tuple[str, re.Pattern[str], re.Pattern[str]], ...] = (
+    (
+        ARGON_MODEL_ID,
+        _ARGON_RAW_RE,
+        re.compile(r"\bargon\b", re.IGNORECASE),
+    ),
+    (
+        HYDROGEN_MODEL_ID,
+        re.compile(r"^gemini-4-hydrogen(?:[-.][a-z0-9][-a-z0-9.]*)?$"),
+        re.compile(r"\bhydrogen\b", re.IGNORECASE),
+    ),
+    (
+        CARBON_MODEL_ID,
+        re.compile(r"^gemini-4-carbon(?:[-.][a-z0-9][-a-z0-9.]*)?$"),
+        re.compile(r"\bcarbon\b", re.IGNORECASE),
+    ),
+    (
+        NEON_MODEL_ID,
+        re.compile(r"^gemini-4-neon(?:[-.][a-z0-9][-a-z0-9.]*)?$"),
+        re.compile(r"\bneon\b", re.IGNORECASE),
+    ),
+)
 
 
 def is_argon_model_id(model_id: str) -> bool:
     """True for any spelling of the Gemini 4 Argon id."""
     return bool(_ARGON_RAW_RE.match((model_id or "").strip().lower()))
+
+
+def _match_gemini4_raw(model_id: str) -> str | None:
+    """Return the canonical Gemini 4 codename id if ``model_id`` matches one."""
+    cleaned = (model_id or "").strip().lower()
+    for canonical_id, raw_re, _ in _GEMINI_4_CODENAMES:
+        if raw_re.match(cleaned):
+            return canonical_id
+    return None
 
 
 def normalize_gemini_model(model_name: str) -> str:
@@ -105,13 +137,16 @@ def normalize_gemini_model(model_name: str) -> str:
         "gemini-3-pro-preview"      → "pro-3.1-preview"
         "gemini-3.1-pro-preview"    → "pro-3.1-preview"
         "gemini-4-argon-trial"      → "gemini-4-argon"
-        ""                           → "unknown"
+        "gemini-4-hydrogen-preview" → "gemini-4-hydrogen"
+        "gemini-4-carbon"           → "gemini-4-carbon"
+        "gemini-4-neon"             → "gemini-4-neon"
+        ""                          → "unknown"
     """
     lower = (model_name or "").lower()
     if not lower:
         return "unknown"
-    if is_argon_model_id(lower):
-        return ARGON_MODEL_ID
+    if (codename := _match_gemini4_raw(lower)) is not None:
+        return codename
     is_3x = "gemini-3" in lower
     if "flash-lite" in lower:
         return "flash-lite-3.1" if is_3x else "flash-lite-2.5"
@@ -186,23 +221,25 @@ def _ag_versioned_bucket(family: str, version: str) -> str:
     return f"{family}-3"
 
 
-def _ag_argon_bucket(raw: str, display: str) -> str | None:
-    """Return the canonical Argon id when raw/display name Gemini 4 Argon.
+def _ag_gemini4_bucket(raw: str, display: str) -> str | None:
+    """Return the canonical Gemini 4 codename id when raw/display name one.
 
-    The raw id is authoritative — a ``gemini-4-argon*`` slug is Argon whatever
-    the display says. A display-only match is scoped exactly like the family
-    fallback in ``normalize_ag_model``: it applies only when the raw id names
-    no family of its own, so a raw id that does (``gemini-3.8-flash``) keeps
-    its own bucket and a non-Gemini raw id (``gpt-oss``) passes through
-    verbatim even when the display happens to name Argon.
+    The raw id is authoritative — a ``gemini-4-{argon,hydrogen,carbon,neon}*`` slug
+    wins whatever the display says. A display-only match runs only when ``raw`` is
+    empty or a generic placeholder (``gemini``, ``gemini-default``) and ``display``
+    carries both ``gemini`` and a standalone ``4`` generation token (so
+    ``Gemini 4.5 Carbon`` and ``Gemini 5 Neon`` do not fold into Gemini 4).
     """
-    if is_argon_model_id(raw):
-        return ARGON_MODEL_ID
-    if raw and (_ag_detect_family(raw) is not None or not raw.lower().startswith("gemini")):
+    if (codename := _match_gemini4_raw(raw)) is not None:
+        return codename
+    lower_raw = raw.lower()
+    if raw and lower_raw not in _GEMINI_4_GENERIC_RAW_IDS:
         return None
     lower_display = display.lower()
-    if "gemini" in lower_display and _ARGON_DISPLAY_RE.search(display):
-        return ARGON_MODEL_ID
+    if "gemini" in lower_display and _GEMINI_4_DISPLAY_GEN_RE.search(display):
+        for canonical_id, _, display_re in _GEMINI_4_CODENAMES:
+            if display_re.search(display):
+                return canonical_id
     return None
 
 
@@ -239,6 +276,9 @@ def normalize_ag_model(raw_model: str, display_name: str, kv: dict[str, str]) ->
         "gemini-3-flash-a" / "Gemini 3 Flash"   → "flash-3"
         "gemini-3.1-flash" / …                  → "flash-3"  (unseeded minor)
         "gemini-4-argon-trial" / "Gemini 4 Argon (High)" → "gemini-4-argon"
+        "gemini-4-hydrogen" / "Gemini 4 Hydrogen (Medium)" → "gemini-4-hydrogen"
+        "gemini-4-carbon" / "Gemini 4 Carbon (High)" → "gemini-4-carbon"
+        "gemini-4-neon" / "Gemini 4 Neon (Medium)" → "gemini-4-neon"
         "gpt-oss"                               → "gpt-oss"
         ""                                      → "unknown"
     """
@@ -260,12 +300,12 @@ def normalize_ag_model(raw_model: str, display_name: str, kv: dict[str, str]) ->
         # land on $0 via verbatim pass-through with no pricing row.
         return "claude-opus"
 
-    # Gemini 4 Argon (issue #686): the raw id carries a "-trial" suffix and
-    # Google publishes the model as "gemini-4-argon" — both spellings must
-    # reach the seeded row, which is keyed on the canonical id.
-    argon = _ag_argon_bucket(raw, display)
-    if argon is not None:
-        return argon
+    # Gemini 4 codename families (Argon, Hydrogen, Carbon, Neon): raw ids may carry
+    # suffixes like "-trial" or "-preview", while seeded pricing rows are keyed
+    # on the canonical id.
+    gemini4 = _ag_gemini4_bucket(raw, display)
+    if gemini4 is not None:
+        return gemini4
 
     if not raw and not display:
         if kv.get("used_claude_conservative") == "true":

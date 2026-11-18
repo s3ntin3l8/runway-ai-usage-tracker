@@ -3,6 +3,8 @@
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
+
 from scripts.sidecar_pkg.event_extractors.gemini import (
     _normalize_gemini_model,
     parse_gemini_events,
@@ -207,3 +209,18 @@ def test_normalizes_gemini_4_argon_to_its_own_family():
     """Argon is priced as one family under the canonical id (issue #686)."""
     assert _normalize_gemini_model("gemini-4-argon") == "gemini-4-argon"
     assert _normalize_gemini_model("gemini-4-argon-trial") == "gemini-4-argon"
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("gemini-4-hydrogen", "gemini-4-hydrogen"),
+        ("gemini-4-hydrogen-preview", "gemini-4-hydrogen"),
+        ("gemini-4-carbon", "gemini-4-carbon"),
+        ("gemini-4-carbon-trial", "gemini-4-carbon"),
+        ("gemini-4-neon", "gemini-4-neon"),
+        ("gemini-4-neon-preview", "gemini-4-neon"),
+    ],
+)
+def test_normalizes_gemini_4_codenames_to_own_families(raw, expected):
+    assert _normalize_gemini_model(raw) == expected
