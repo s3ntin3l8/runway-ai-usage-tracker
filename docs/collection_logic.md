@@ -325,6 +325,21 @@ small positive input difference is expected — the side model's input is missin
 from local transcripts — while cache counters should match exactly. Most bridge
 rows carry no usage block, so this is a spot check, not coverage.
 
+### Side-model calls local transcripts omit
+
+Claude Code makes model calls of its own (summaries, compaction, prompt suggestions,
+hook prompts, session titles) that its transcripts never record. A week of Claude
+Code's OpenTelemetry `api_request` events against the extractor's output found these
+calls cost about 5% of the matched spend, mostly on the main models; the Haiku title
+calls were under 1% of that. Local scraping of the main loop itself agreed on every
+token field. Details and numbers:
+[`docs/evidence/acceptance/claude-otel-scrape-check-1073.md`](evidence/acceptance/claude-otel-scrape-check-1073.md).
+The advisor tool is a second gap: its sub-inference runs on its own model and appears
+in `message.usage.iterations` as `advisor_message` entries, not in the top-level usage
+the extractor reads, so local totals are low by about another 9% of spend. Until those
+are extracted from the transcripts and the side calls are captured from telemetry,
+local totals are low by these shares.
+
 ## Expiry units
 
 A credential's expiry may be published in seconds, milliseconds, microseconds or

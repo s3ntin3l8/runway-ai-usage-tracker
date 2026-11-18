@@ -47,6 +47,7 @@ produces a newer file.
 | [`claude-cloud-accounting-capture-20261029.json`](acceptance/claude-cloud-accounting-capture-20261029.json) | #669 | Raw structure-only capture behind the source-shape report |
 | [`claude-automatic-native-acceptance-671.json`](acceptance/claude-automatic-native-acceptance-671.json) / [`.md`](acceptance/claude-automatic-native-acceptance-671.md) | #671 | Acceptance of automatic native credential discovery |
 | [`claude-native-macos-acceptance-672.json`](acceptance/claude-native-macos-acceptance-672.json) / [`.md`](acceptance/claude-native-macos-acceptance-672.md) | #672 | Acceptance for the remaining macOS Claude credential sources |
+| [`claude-otel-scrape-check-1073.md`](acceptance/claude-otel-scrape-check-1073.md) | #1073, #1283 | One week of Claude Code OpenTelemetry `api_request` events against the transcript extractor: main-loop tokens agree, side calls are 5.1% of spend, advisor-tool usage (about 9%) is missing locally |
 
 ### Keychain safety, isolation and renewal
 
