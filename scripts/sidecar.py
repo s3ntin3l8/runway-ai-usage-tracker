@@ -1608,8 +1608,7 @@ def http_post_signed(
     url: str, data: dict[str, Any], api_key: str, config: dict[str, Any] | None = None
 ) -> tuple[bool, Any, int]:
     """POST data to URL with HMAC-SHA256 signature. Returns (success, data, code)."""
-    from scripts.sidecar_pkg.source_consent import filter_egress
-    from scripts.sidecar_pkg.source_protocol import device_credentials
+    from scripts.sidecar_pkg.source_protocol import device_credentials, filter_egress
 
     data = filter_egress(data, config=config if device_credentials(config, url) else None)
     timestamp = server_http.signing_timestamp()
@@ -4550,7 +4549,7 @@ def _post_credential_manifest(
     # Empty entries still ship with completed_providers: that means a clean
     # provider scan found no unresolved origins and can clear stale rows. A
     # provider omitted from completed_providers is left untouched.
-    from scripts.sidecar_pkg.source_consent import filter_egress
+    from scripts.sidecar_pkg.source_protocol import filter_egress
 
     filtered = filter_egress(
         {

@@ -8,7 +8,6 @@ import json
 import logging
 import math
 import os
-import sys
 import tempfile
 import threading
 import time
@@ -20,8 +19,11 @@ from functools import wraps
 from pathlib import Path
 from typing import Any
 
-from scripts.sidecar_pkg.browser_store import SOURCE_BLOCK_REASONS, SOURCE_REPORT_KEYS
-from scripts.sidecar_pkg.source_catalog import catalog, source_for_origin, trusted_rule
+from scripts.sidecar_pkg.source_catalog import (
+    catalog,
+    source_for_origin,  # noqa: F401 - compatibility export
+    trusted_rule,
+)
 
 READ_STATE_MAX_AGE = 7 * 86400
 _BLOCK_REASONS = {"denied", "timed_out", "unavailable", "missing", "identity changed", "ambiguous"}
@@ -353,101 +355,6 @@ def valid_stamp(value: Any) -> bool:
         return POLICY.current(ConsentTicket(**value))
     except (TypeError, ValueError):
         return False
-
-
-def filter_egress(data: dict[str, Any], *, config: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Recheck local consent and negotiated withdrawal support immediately at egress."""
-    from scripts.sidecar_pkg.source_protocol import device_credentials, forwarding_allowed
-
-    config = config or {}
-    destination = str(config.get("api_url", ""))
-    authenticated = (
-        device_credentials(config, destination.rstrip("/") + "/api/v1/fleet/ingest") is not None
-    )
-
-    def sanitize(value: Any, provider_override: Any = None, *, source_report: bool = False) -> Any:
-        if not isinstance(value, dict):
-            return value
-        result = dict(value)
-        provider, origin = (
-            str(provider_override or value.get("provider_id", "")),
-            str(value.get("credential_origin", "")),
-        )
-        source_id = source_for_origin(provider, origin)
-        proof = value.get("keychain_consent")
-        # A report about a credential source the machine could not read is not
-        # keychain-bound: it names the store, gives a reason from a fixed
-        # vocabulary and states the remedy - no keychain-derived material, no
-        # account id, no secret. The consent rules gate what is read out of the
-        # Keychain, so they do not apply to it. Without this exemption the report
-        # is dropped on macOS - where every browser-cookie origin counts as a
-        # native-browser source - and the provider looks like nobody is signed
-        # into it.
-        #
-        # The shape is the proof, not the reason alone: only a manifest entry
-        # carries the report's own keys, and only those keys pass. A dict that
-        # happens to carry the same reason - a metric's metadata, an
-        # observation, an entry with something else attached - is still gated.
-        # The key set is the whole guarantee, and it fails closed: a new key on
-        # a report stops it from being one.
-        source_block = (
-            source_report
-            and str(value.get("reason", "")) in SOURCE_BLOCK_REASONS
-            and set(value) <= SOURCE_REPORT_KEYS
-        )
-        keychain = not source_block and (
-            "keychain_consent" in value or (sys.platform == "darwin" and bool(source_id))
-        )
-        if keychain:
-            if (
-                not authenticated
-                or not isinstance(proof, dict)
-                or not valid_stamp(proof)
-                or proof.get("source_id") != source_id
-                or not forwarding_allowed(str(source_id), destination)
-            ):
-                return None
-            result["keychain_consent"] = {
-                key: proof[key] for key in ("source_id", "revision", "generation")
-            }
-        if provider == "anthropic" and (
-            "refresh_token" in value or value.get("oauth_read_only") == "1"
-        ):
-            result.pop("refresh_token", None)
-            result["oauth_read_only"] = "1"
-        return result
-
-    result = dict(data)
-    if isinstance(data.get("metrics"), list):
-        cards = []
-        for card in data["metrics"]:
-            if not isinstance(card, dict) or not isinstance(card.get("metadata"), dict):
-                cards.append(card)
-                continue
-            metadata = sanitize(card["metadata"], card.get("provider_id"))
-            if metadata is not None:
-                cards.append({**card, "metadata": metadata})
-        result["metrics"] = cards
-    for field in ("entries", "observations"):
-        if isinstance(data.get(field), list):
-            # Only a manifest entry can be a source report.
-            result[field] = [
-                clean
-                for item in data[field]
-                if (clean := sanitize(item, source_report=field == "entries")) is not None
-            ]
-    if (
-        sys.platform == "darwin"
-        and "entries" in data
-        and isinstance(data.get("completed_providers"), list)
-    ):
-        # An incomplete/withheld native scan never proves logout. Explicit generation
-        # withdrawal owns retirement; files still report their own live contributions.
-        protected = {source.provider for source in catalog().values()}
-        result["completed_providers"] = [
-            provider for provider in data["completed_providers"] if provider not in protected
-        ]
-    return result
 
 
 def cookie_request_scope(function: Any) -> Any:

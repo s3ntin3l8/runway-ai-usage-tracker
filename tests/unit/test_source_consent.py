@@ -2,9 +2,11 @@
 
 import pytest
 
+from scripts.sidecar_pkg import source_protocol
 from scripts.sidecar_pkg.macos_keychain_store import _WorkerAPI
 from scripts.sidecar_pkg.source_catalog import catalog
 from scripts.sidecar_pkg.source_consent import SourcePolicy
+from scripts.sidecar_pkg.source_protocol import filter_egress
 
 WORKER_CALL = _WorkerAPI.call
 
@@ -171,10 +173,7 @@ def test_fleet_directories_do_not_expand_keychain_targets(monkeypatch, tmp_path)
 
 
 def test_keychain_egress_is_withheld_until_withdrawal_protocol(monkeypatch):
-    from scripts.sidecar_pkg import source_consent as consent
-
-    monkeypatch.setattr(consent.sys, "platform", "darwin")
-    from scripts.sidecar_pkg.source_consent import filter_egress
+    monkeypatch.setattr(source_protocol.sys, "platform", "darwin")
 
     keychain = {
         "metadata": {
@@ -202,10 +201,7 @@ def test_a_blocked_source_report_survives_the_macOS_keychain_gate(monkeypatch, r
     nobody is signed into it. The report names the store and the fix, nothing
     that was read out of the Keychain.
     """
-    from scripts.sidecar_pkg import source_consent as consent
-
-    monkeypatch.setattr(consent.sys, "platform", "darwin")
-    from scripts.sidecar_pkg.source_consent import filter_egress
+    monkeypatch.setattr(source_protocol.sys, "platform", "darwin")
 
     blocked = {
         "provider_id": "ollama",
@@ -232,10 +228,7 @@ def test_a_source_report_with_anything_attached_is_still_gated(monkeypatch):
     a token, an account id - is not a report about an unreadable store, so it
     stays behind the consent gate.
     """
-    from scripts.sidecar_pkg import source_consent as consent
-
-    monkeypatch.setattr(consent.sys, "platform", "darwin")
-    from scripts.sidecar_pkg.source_consent import filter_egress
+    monkeypatch.setattr(source_protocol.sys, "platform", "darwin")
 
     report = {
         "provider_id": "ollama",
@@ -257,10 +250,7 @@ def test_a_reason_on_another_kind_of_payload_is_still_gated(monkeypatch):
     A card's metadata or an observation that happens to carry the same reason
     is not a report about an unreadable store, so it stays behind the gate.
     """
-    from scripts.sidecar_pkg import source_consent as consent
-
-    monkeypatch.setattr(consent.sys, "platform", "darwin")
-    from scripts.sidecar_pkg.source_consent import filter_egress
+    monkeypatch.setattr(source_protocol.sys, "platform", "darwin")
 
     report = {
         "provider_id": "ollama",
@@ -277,10 +267,8 @@ def test_a_reason_on_another_kind_of_payload_is_still_gated(monkeypatch):
 
 def test_a_withheld_token_stays_gated_by_the_macOS_keychain_rule(monkeypatch):
     """Only a source report is exempt; a withheld cookie origin is still gated."""
-    from scripts.sidecar_pkg import source_consent as consent
 
-    monkeypatch.setattr(consent.sys, "platform", "darwin")
-    from scripts.sidecar_pkg.source_consent import filter_egress
+    monkeypatch.setattr(source_protocol.sys, "platform", "darwin")
 
     withheld = {
         "provider_id": "anthropic",
@@ -291,15 +279,13 @@ def test_a_withheld_token_stays_gated_by_the_macOS_keychain_rule(monkeypatch):
 
 
 def test_withheld_native_scan_is_not_authoritative_logout(monkeypatch):
-    from scripts.sidecar_pkg import source_consent as consent
-
-    monkeypatch.setattr(consent.sys, "platform", "darwin")
+    monkeypatch.setattr(source_protocol.sys, "platform", "darwin")
     payload = {
         "entries": [],
         "observations": [],
         "completed_providers": ["anthropic", "openrouter"],
     }
-    assert consent.filter_egress(payload)["completed_providers"] == ["openrouter"]
+    assert filter_egress(payload)["completed_providers"] == ["openrouter"]
 
 
 def test_windows_lifecycle_catalog_never_expands_keychain_opt_ins():
@@ -313,3 +299,33 @@ def test_windows_lifecycle_catalog_never_expands_keychain_opt_ins():
     for source_id in windows:
         with pytest.raises(ValueError, match="Unknown scraper"):
             SourcePolicy.change(enabled, source_id, read=True)
+
+
+def test_consent_dependencies_cannot_reach_native_readers():
+    """Keep policy below reporting/setup, including deferred imports (CodeQL)."""
+    import ast
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    pending = [("scripts.sidecar_pkg.source_consent",)]
+    visited = set()
+    while pending:
+        chain = pending.pop()
+        module = chain[-1]
+        if module in visited:
+            continue
+        visited.add(module)
+        assert module != "scripts.sidecar_pkg.macos_keychain_store", " -> ".join(chain)
+        path = root.joinpath(*module.split(".")).with_suffix(".py")
+        if not path.is_file():
+            continue
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            imports = []
+            if isinstance(node, ast.Import):
+                imports = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                imports = [node.module]
+                imports.extend(f"{node.module}.{alias.name}" for alias in node.names)
+            pending.extend(
+                (*chain, name) for name in imports if name.startswith("scripts.sidecar_pkg.")
+            )

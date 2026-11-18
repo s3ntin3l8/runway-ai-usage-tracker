@@ -6,6 +6,7 @@ import pytest
 
 from scripts.sidecar_pkg import source_consent, source_protocol
 from scripts.sidecar_pkg.source_consent import SourcePolicy
+from scripts.sidecar_pkg.source_protocol import filter_egress
 
 
 def config():
@@ -127,16 +128,14 @@ def test_egress_requires_live_consent_and_negotiated_revision(tmp_path, monkeypa
             "keychain_consent": source_consent.stamp(ticket),
         }
     }
-    assert source_consent.filter_egress({"metrics": [card]}, config=local)["metrics"] == []
+    assert filter_egress({"metrics": [card]}, config=local)["metrics"] == []
     client.receive(local, reply())
-    forwarded = source_consent.filter_egress({"metrics": [card]}, config=local)["metrics"][0][
-        "metadata"
-    ]
+    forwarded = filter_egress({"metrics": [card]}, config=local)["metrics"][0]["metadata"]
     assert set(forwarded["keychain_consent"]) == {"source_id", "revision", "generation"}
     assert "refresh_token" not in forwarded
     assert card["metadata"]["refresh_token"] == "synthetic-local-only"
     source_consent.POLICY.configure(SourcePolicy.change(local, "anthropic.claude-code", read=False))
-    assert source_consent.filter_egress({"metrics": [card]}, config=local)["metrics"] == []
+    assert filter_egress({"metrics": [card]}, config=local)["metrics"] == []
 
 
 def test_current_controls_protect_fresh_process_after_another_process_acknowledged(tmp_path):
@@ -171,7 +170,7 @@ def test_claude_refresh_cannot_leave_when_provider_is_only_on_the_card():
         "provider_id": "anthropic",
         "metadata": {"oauth_token": "synthetic-access", "refresh_token": "synthetic-local-refresh"},
     }
-    forwarded = source_consent.filter_egress({"metrics": [card]})["metrics"][0]["metadata"]
+    forwarded = filter_egress({"metrics": [card]})["metrics"][0]["metadata"]
     assert "refresh_token" not in forwarded
     assert forwarded["oauth_read_only"] == "1"
     assert card["metadata"]["refresh_token"] == "synthetic-local-refresh"

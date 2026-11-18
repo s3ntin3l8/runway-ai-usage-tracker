@@ -21,6 +21,9 @@ from unittest.mock import patch
 
 import pytest
 
+from scripts.sidecar_pkg import source_protocol
+from scripts.sidecar_pkg.source_protocol import filter_egress
+
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "scripts"))
 import sidecar  # noqa: E402
 
@@ -433,10 +436,9 @@ class TestCatalogAndConsent:
     def test_the_credential_is_withheld_from_egress(self, monkeypatch):
         """A Keychain-backed credential stays on the host while the withdrawal
         lifecycle is missing - consent grants the local read, not the egress."""
-        from scripts.sidecar_pkg import source_consent
 
-        monkeypatch.setattr(source_consent.sys, "platform", "darwin")
-        filtered = source_consent.filter_egress(
+        monkeypatch.setattr(source_protocol.sys, "platform", "darwin")
+        filtered = filter_egress(
             {
                 "metrics": [
                     {
