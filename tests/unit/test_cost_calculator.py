@@ -1408,3 +1408,31 @@ def test_incomplete_long_tier_bills_standard_and_warns_once(caplog):
         cost_calculator._PARTIAL_TIER_WARNED.clear()
     assert b1.output == 0.50
     assert len([r for r in caplog.records if "incomplete tier" in r.getMessage()]) == 1
+
+
+def test_gpt_6_2_astra_long_context_threshold_boundary():
+    """272,000 input tokens bill at standard ($8/Mtok); 272,001 bill at long ($16/Mtok)."""
+    s = _seeded_session()
+    ts = datetime(2026, 11, 18, tzinfo=UTC)
+    standard = compute_event_cost_breakdown(
+        s,
+        provider_id="chatgpt",
+        model_id="gpt-6.2-astra",
+        ts=ts,
+        tokens_input=272_000,
+        tokens_output=0,
+        tokens_cache_read=0,
+        tokens_cache_create=0,
+    )
+    long_ctx = compute_event_cost_breakdown(
+        s,
+        provider_id="chatgpt",
+        model_id="gpt-6.2-astra",
+        ts=ts,
+        tokens_input=272_001,
+        tokens_output=0,
+        tokens_cache_read=0,
+        tokens_cache_create=0,
+    )
+    assert standard.input == pytest.approx(2.176)
+    assert long_ctx.input == pytest.approx(4.352016)

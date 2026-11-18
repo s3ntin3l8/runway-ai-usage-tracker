@@ -263,7 +263,7 @@ PRICING_SEED: list[dict] = [
         "long_output_per_mtok": 60.00,  # 1.5x output above 272K
         "long_cache_read_per_mtok": 0.80,  # 2x cached input above 272K
         "long_cache_create_per_mtok": 20.00,  # 2x cache write above 272K
-        "long_cache_create_1h_per_mtok": 0.0,
+        "long_cache_create_1h_per_mtok": None,  # falls back to long_cache_create_per_mtok
         "notes": "GPT-6.2 Astra (rates per developers.openai.com/api/docs/pricing, "
         "checked 2026-11-18; >272K long-context tier modeled)",
     },
@@ -280,7 +280,7 @@ PRICING_SEED: list[dict] = [
         "long_output_per_mtok": 15.00,  # 1.5x output above 272K
         "long_cache_read_per_mtok": 0.20,  # 2x cached input above 272K
         "long_cache_create_per_mtok": 5.00,  # 2x cache write above 272K
-        "long_cache_create_1h_per_mtok": 0.0,
+        "long_cache_create_1h_per_mtok": None,  # falls back to long_cache_create_per_mtok
         "notes": "GPT-6.2 Sol (rates per developers.openai.com/api/docs/pricing, "
         "checked 2026-11-18; >272K long-context tier modeled)",
     },
