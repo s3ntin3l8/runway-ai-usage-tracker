@@ -321,7 +321,7 @@ class FleetRegistryService:
         last_seen_utc = row.last_seen.replace(tzinfo=UTC)
         stale = last_seen_utc < datetime.now(UTC) - timedelta(minutes=STALE_THRESHOLD_MINUTES)
         latest_version = sidecar_version_checker.get_latest()
-        latest_edge_sha = sidecar_version_checker.get_latest_edge_sha()
+        latest_edge_sha = sidecar_version_checker.get_latest_edge_sha(row.os_platform)
         latest_beta = sidecar_version_checker.get_latest_beta()
         # Only offer an update when the build can actually self-update in place.
         # `None` (not reported) stays permissive so already-deployed frozen

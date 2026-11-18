@@ -3,6 +3,7 @@
 import io
 import json
 import logging
+import sys
 import time
 from email.message import Message
 from unittest.mock import MagicMock, patch
@@ -121,7 +122,7 @@ class TestCheckOnceEdge:
     def test_empty_embedded_sha_is_tolerated_or_reported_without_network(
         self, embedded_sha, caplog
     ):
-        response = _make_urlopen({"git/refs/tags/edge": {"object": {"sha": "bbbbbbb2222ffff"}}})
+        response = _make_urlopen({"Runway-Sidecar-": {"sha": "bbbbbbb2222ffff"}})
         with patch(
             "scripts.sidecar_pkg.update_check.request.urlopen", side_effect=response
         ) as opener:
@@ -131,29 +132,82 @@ class TestCheckOnceEdge:
         opener.assert_not_called()
         assert "no embedded commit SHA" in caplog.text
 
-    def test_reports_new_edge_build(self):
-        opener = _make_urlopen({"git/refs/tags/edge": {"object": {"sha": "bbbbbbb2222ffff"}}})
+    def test_reports_new_edge_build(self, monkeypatch):
+        monkeypatch.setattr(sys, "platform", "linux")
+        monkeypatch.setattr(sys, "executable", "/usr/bin/RunwaySidecar")
+        opener = _make_urlopen(
+            {"Runway-Sidecar-Linux-edge.tar.gz.build.json": {"sha": "bbbbbbb2222ffff"}}
+        )
         with patch("scripts.sidecar_pkg.update_check.request.urlopen", side_effect=opener):
             result = check_once("1.1.0+edge.aaa1111")
         assert result == "edge build bbbbbbb2222f"
 
-    def test_none_when_same_edge_build(self):
-        # Tag sha starts with the embedded short sha → same build.
-        opener = _make_urlopen({"git/refs/tags/edge": {"object": {"sha": "aaa1111ffffffff"}}})
+    def test_none_when_same_edge_build(self, monkeypatch):
+        # Build sha starts with the embedded short sha → same build.
+        monkeypatch.setattr(sys, "platform", "linux")
+        monkeypatch.setattr(sys, "executable", "/usr/bin/RunwaySidecar")
+        opener = _make_urlopen(
+            {"Runway-Sidecar-Linux-edge.tar.gz.build.json": {"sha": "aaa1111ffffffff"}}
+        )
         with patch("scripts.sidecar_pkg.update_check.request.urlopen", side_effect=opener):
             assert check_once("1.1.0+edge.aaa1111") is None
 
-    def test_manual_check_reports_malformed_edge_ref(self):
-        opener = _make_urlopen({"git/refs/tags/edge": {"object": {}}})
+    def test_decides_from_own_platform_asset_not_edge_tag(self, monkeypatch):
+        # Edge tag / Linux moved to commit B, while macOS asset is still at commit A.
+        opener = _make_urlopen(
+            {
+                "Runway-Sidecar-macOS-edge.zip.build.json": {"sha": "aaa1111ffffffff"},
+                "Runway-Sidecar-Linux-edge.tar.gz.build.json": {"sha": "bbb2222ffffffff"},
+                "git/refs/tags/edge": {"object": {"sha": "bbb2222ffffffff"}},
+            }
+        )
+        monkeypatch.setattr(sys, "executable", "/Applications/Runway Sidecar")
+        with patch("scripts.sidecar_pkg.update_check.request.urlopen", side_effect=opener):
+            monkeypatch.setattr(sys, "platform", "darwin")
+            assert check_once("1.1.0+edge.aaa1111") is None
+
+            monkeypatch.setattr(sys, "platform", "linux")
+            assert check_once("1.1.0+edge.aaa1111") == "edge build bbb2222fffff"
+
+    def test_linux_cli_uses_linux_cli_build_file(self, monkeypatch):
+        monkeypatch.setattr(sys, "platform", "linux")
+        monkeypatch.setattr(sys, "executable", "/usr/local/bin/runway-sidecar-cli")
+        opener = _make_urlopen(
+            {"Runway-Sidecar-Linux-CLI-edge.tar.gz.build.json": {"sha": "bbb2222ffffffff"}}
+        )
+        with patch("scripts.sidecar_pkg.update_check.request.urlopen", side_effect=opener):
+            assert check_once("1.1.0+edge.aaa1111") == "edge build bbb2222fffff"
+
+    def test_missing_build_file_returns_none_and_logs_info(self, monkeypatch, caplog):
+        monkeypatch.setattr(sys, "platform", "darwin")
+
+        def _not_found(req, timeout=None, context=None):
+            url = getattr(req, "full_url", req)
+            raise error.HTTPError(url, 404, "Not Found", Message(), None)
+
+        with (
+            caplog.at_level(logging.INFO, logger="scripts.sidecar_pkg.update_check"),
+            patch("scripts.sidecar_pkg.update_check.request.urlopen", side_effect=_not_found),
+        ):
+            assert check_once("1.1.0+edge.aaa1111") is None
+            assert check_once("1.1.0+edge.aaa1111", strict=True) is None
+        assert "has not been published for the newest edge commit" in caplog.text
+
+    def test_manual_check_reports_malformed_edge_metadata(self, monkeypatch):
+        monkeypatch.setattr(sys, "platform", "linux")
+        monkeypatch.setattr(sys, "executable", "/usr/bin/RunwaySidecar")
+        opener = _make_urlopen({"Runway-Sidecar-Linux-edge.tar.gz.build.json": {}})
         with patch("scripts.sidecar_pkg.update_check.request.urlopen", side_effect=opener):
             with pytest.raises(ValueError, match="no commit SHA"):
                 check_once("1.1.0+edge.aaa1111", strict=True)
 
-    def test_nonobject_edge_ref_is_tolerated_or_reported(self):
-        opener = _make_urlopen({"git/refs/tags/edge": []})
+    def test_nonobject_edge_metadata_is_tolerated_or_reported(self, monkeypatch):
+        monkeypatch.setattr(sys, "platform", "linux")
+        monkeypatch.setattr(sys, "executable", "/usr/bin/RunwaySidecar")
+        opener = _make_urlopen({"Runway-Sidecar-Linux-edge.tar.gz.build.json": []})
         with patch("scripts.sidecar_pkg.update_check.request.urlopen", side_effect=opener):
             assert check_once("1.1.0+edge.aaa1111") is None
-            with pytest.raises(ValueError, match="no object"):
+            with pytest.raises(ValueError, match="not an object"):
                 check_once("1.1.0+edge.aaa1111", strict=True)
 
     def test_stable_binary_on_edge_channel_falls_back_to_stable(self):

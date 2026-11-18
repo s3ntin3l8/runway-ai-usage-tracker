@@ -83,6 +83,29 @@ class TestAssetNames:
         assert "/sidecar-build.yml@refs/heads/main" in BUILD_WF
         assert "--certificate-oidc-issuer https://token.actions.githubusercontent.com" in BUILD_WF
 
+    def test_workflow_publishes_edge_build_metadata_for_every_leg(self):
+        # Every matrix leg runs in `build` and uploads `out/*` before `attest`
+        # aggregates `sidecar-*` into `sidecar-release-assets`, and `sidecar-edge.yml`
+        # publishes `edge-dist/*` to the rolling edge release.
+        build_job = BUILD_WF.split("\n  attest:", 1)[0]
+        assert "if: inputs.label == 'edge'" in build_job
+        assert "out/${PAYLOAD}.build.json" in build_job
+        assert "git rev-parse HEAD" in build_job
+        assert "path: out/*" in build_job
+        edge_wf = (WORKFLOWS / "sidecar-edge.yml").read_text(encoding="utf-8")
+        assert "files: edge-dist/*" in edge_wf
+
+    def test_server_edge_build_files_match_asset_names(self):
+        from app.services.sidecar_version_checker import _EDGE_BUILD_FILES
+
+        expected = {
+            plat: asset_names.build_metadata_name(
+                asset_names.payload_name(plat, asset_names.EDGE_LABEL)
+            )
+            for plat in asset_names.PLATFORMS
+        }
+        assert _EDGE_BUILD_FILES == expected
+
 
 # ---------------------------------------------------------------------------
 # Windows installer ↔ tray / updater

@@ -297,6 +297,26 @@ class TestToDictUpdateAvailable:
         assert d["channel"] == "edge"
         assert d["update_available"] is False
 
+    def test_edge_sidecar_uses_platform_asset_build_not_other_platforms(self, service, monkeypatch):
+        from app.services import sidecar_version_checker as svc_mod
+
+        monkeypatch.setattr(
+            svc_mod.sidecar_version_checker,
+            "_latest_edge_shas",
+            {"macOS": "aaa1111ffffffff", "Linux": "bbb2222ffffffff"},
+        )
+        mac_row = self._row("1.5.0+edge.aaa1111")
+        mac_row.os_platform = "Darwin/24.1.0"
+        assert service.to_dict(mac_row)["update_available"] is False
+
+        linux_row = self._row("1.5.0+edge.aaa1111")
+        linux_row.os_platform = "Linux/6.8.0"
+        assert service.to_dict(linux_row)["update_available"] is True
+
+        win_row = self._row("1.5.0+edge.aaa1111")
+        win_row.os_platform = "Windows/11"
+        assert service.to_dict(win_row)["update_available"] is False
+
     def test_suppressed_when_not_self_update_capable(self, service, monkeypatch):
         # A from-source / Docker build (self_update_capable=False) must not be
         # told to update, even when the version check would otherwise fire.

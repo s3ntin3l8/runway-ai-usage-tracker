@@ -218,6 +218,18 @@ jobs:
             cat "out/$f.sha256"
           done
 
+      - name: Write edge build metadata
+        # Record the full commit SHA this platform's payload was built from so
+        # edge update checks decide per-platform rather than from the moving
+        # `edge` git tag (which advances even when a platform leg fails).
+        if: inputs.label == 'edge'
+        env:
+          PAYLOAD: ${{ steps.names.outputs.payload }}
+        run: |
+          SHA=$(git rev-parse HEAD)
+          python -c "import json,pathlib,sys; pathlib.Path(sys.argv[1]).write_text(json.dumps({'sha': sys.argv[2]}) + '\n')" "out/${PAYLOAD}.build.json" "$SHA"
+          cat "out/${PAYLOAD}.build.json"
+
       - name: Upload build artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
