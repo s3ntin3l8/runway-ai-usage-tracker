@@ -1,8 +1,9 @@
 """Background service that tracks the latest published sidecar release.
 
 Polls GitHub Releases once on startup and every 24h thereafter, caches the
-latest stable and beta tags plus the rolling edge sha, and exposes accessors so
-the fleet API can flag sidecars running an older version. Network failures keep
+latest stable and beta tags plus each platform's edge build sha from
+`<payload>.build.json`, and exposes accessors so the fleet API can flag sidecars
+running an older version. Network failures keep
 the previous cache (or `None` if never fetched) — the fleet API treats `None`
 as "unknown latest, don't flag anything."
 
@@ -74,7 +75,7 @@ def parse_channel(version: str | None) -> tuple[str, str | None]:
 
 
 class SidecarVersionChecker:
-    """Periodically refreshes cached stable/beta release tags and edge sha."""
+    """Periodically refreshes cached stable/beta release tags and per-platform edge build shas from ``<payload>.build.json``."""
 
     def __init__(
         self,

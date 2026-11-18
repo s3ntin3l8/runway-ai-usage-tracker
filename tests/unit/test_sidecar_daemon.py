@@ -547,6 +547,23 @@ class TestDaemonRunnerRunOnceSuccess:
         assert runner.last_metrics_count == 0
         assert runner.last_http_code == 200
 
+    def test_sidecar_target_reported_on_first_batch_only(self, monkeypatch):
+        """Linux CLI reports sidecar_target='cli' on the first batch only."""
+        monkeypatch.setattr(sys, "executable", "/opt/runway/runway-sidecar-cli")
+        runner = _make_runner()
+        events = [{"ts": "2026-01-01T00:00:00Z"} for _ in range(1001)]
+        posts = MagicMock(return_value=(True, {}, 200))
+        with (
+            patch.object(sidecar, "run_collection", return_value=_collection_result(events=events)),
+            patch.object(sidecar, "http_post_signed_with_retry", posts),
+            patch.object(sidecar, "queue_flush"),
+        ):
+            assert runner.run_once() is True
+
+        assert len(posts.call_args_list) == 2
+        assert posts.call_args_list[0].args[1]["sidecar_target"] == "cli"
+        assert posts.call_args_list[1].args[1]["sidecar_target"] is None
+
 
 class TestDaemonRunnerRunOnceFailure:
     """run_once() with a non-2xx HTTP response."""
