@@ -1,5 +1,7 @@
 """Unit tests for the Antigravity event extractor."""
 
+import pytest
+
 from scripts.sidecar_pkg.event_extractors.antigravity import (
     _extract_ag_effort,
     _normalize_ag_model,
@@ -409,3 +411,27 @@ def test_argon_is_not_confused_with_the_tier_buckets():
 def test_lookalike_id_is_not_argon():
     """Only the exact Argon family matches — a look-alike slug passes through."""
     assert _normalize_ag_model("gemini-4-argonoid", "Gemini 4 Argonoid", {}) == "gemini-4-argonoid"
+
+
+@pytest.mark.parametrize(
+    ("raw", "display", "expected"),
+    [
+        ("gemini-4-hydrogen", "Gemini 4 Hydrogen (Medium)", "gemini-4-hydrogen"),
+        ("gemini-4-hydrogen-preview", "", "gemini-4-hydrogen"),
+        ("", "Gemini 4 Hydrogen (Medium)", "gemini-4-hydrogen"),
+        ("gemini-default", "Gemini 4 Hydrogen (Medium)", "gemini-4-hydrogen"),
+        ("gemini-4-carbon", "Gemini 4 Carbon (High)", "gemini-4-carbon"),
+        ("gemini-4-carbon-trial", "Gemini 4 Carbon (High)", "gemini-4-carbon"),
+        ("", "Gemini 4 Carbon (High)", "gemini-4-carbon"),
+        ("gemini-default", "Gemini 4 Carbon (High)", "gemini-4-carbon"),
+        ("gemini-4-neon", "Gemini 4 Neon (Medium)", "gemini-4-neon"),
+        ("gemini-4-neon-preview", "", "gemini-4-neon"),
+        ("", "Gemini 4 Neon (Medium)", "gemini-4-neon"),
+        ("gemini-default", "Gemini 4 Neon (Medium)", "gemini-4-neon"),
+        ("gpt-oss", "Gemini 4 Hydrogen (Medium)", "gpt-oss"),
+        ("gemini-3.8-flash", "Gemini 4 Carbon (High)", "flash-3.8"),
+        ("gemini-4-carbonic", "Gemini 4 Carbonic", "gemini-4-carbonic"),
+    ],
+)
+def test_gemini_4_codenames_normalisation(raw, display, expected):
+    assert _normalize_ag_model(raw, display, {}) == expected

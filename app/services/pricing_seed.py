@@ -684,6 +684,94 @@ PRICING_SEED: list[dict] = [
         "cache_create_per_mtok": 0.0,
         "notes": "Antigravity Gemini 4 Argon, list price from 2026-12-01",
     },
+    # Gemini 4 Hydrogen (https://aistudio.google.com/docs/pricing, checked
+    # 2026-11-18). Flat pricing across its 1M context window (no >200K tier).
+    # Both `gemini` (Gemini CLI / Hermes) and `antigravity` rows are seeded.
+    {
+        "provider_id": "gemini",
+        "model_id": "gemini-4-hydrogen",
+        "effective_from": "2026-10-01",
+        "input_per_mtok": 1.50,
+        "output_per_mtok": 7.50,
+        "cache_read_per_mtok": 0.075,
+        "cache_create_per_mtok": 0.0,
+        "notes": "Gemini 4 Hydrogen",
+    },
+    {
+        "provider_id": "antigravity",
+        "model_id": "gemini-4-hydrogen",
+        "effective_from": "2026-10-01",
+        "input_per_mtok": 1.50,
+        "output_per_mtok": 7.50,
+        "cache_read_per_mtok": 0.075,
+        "cache_create_per_mtok": 0.0,
+        "notes": "Antigravity Gemini 4 Hydrogen",
+    },
+    # Gemini 4 Carbon (https://aistudio.google.com/docs/pricing, checked
+    # 2026-11-18). Introductory promo pricing ($2/$10/$0.10) through 2026-11-30;
+    # standard list pricing ($4/$20/$0.20) from 2026-12-01.
+    {
+        "provider_id": "gemini",
+        "model_id": "gemini-4-carbon",
+        "effective_from": "2026-10-01",
+        "input_per_mtok": 2.00,
+        "output_per_mtok": 10.00,
+        "cache_read_per_mtok": 0.10,
+        "cache_create_per_mtok": 0.0,
+        "notes": "Gemini 4 Carbon, promo price through 2026-11-30",
+    },
+    {
+        "provider_id": "gemini",
+        "model_id": "gemini-4-carbon",
+        "effective_from": "2026-12-01",
+        "input_per_mtok": 4.00,
+        "output_per_mtok": 20.00,
+        "cache_read_per_mtok": 0.20,
+        "cache_create_per_mtok": 0.0,
+        "notes": "Gemini 4 Carbon, list price from 2026-12-01",
+    },
+    {
+        "provider_id": "antigravity",
+        "model_id": "gemini-4-carbon",
+        "effective_from": "2026-10-01",
+        "input_per_mtok": 2.00,
+        "output_per_mtok": 10.00,
+        "cache_read_per_mtok": 0.10,
+        "cache_create_per_mtok": 0.0,
+        "notes": "Antigravity Gemini 4 Carbon, promo price through 2026-11-30",
+    },
+    {
+        "provider_id": "antigravity",
+        "model_id": "gemini-4-carbon",
+        "effective_from": "2026-12-01",
+        "input_per_mtok": 4.00,
+        "output_per_mtok": 20.00,
+        "cache_read_per_mtok": 0.20,
+        "cache_create_per_mtok": 0.0,
+        "notes": "Antigravity Gemini 4 Carbon, list price from 2026-12-01",
+    },
+    # Gemini 4 Neon (https://aistudio.google.com/docs/pricing, checked
+    # 2026-11-18). Flat pricing across its 1M context window (no >200K tier).
+    {
+        "provider_id": "gemini",
+        "model_id": "gemini-4-neon",
+        "effective_from": "2026-10-01",
+        "input_per_mtok": 3.00,
+        "output_per_mtok": 15.00,
+        "cache_read_per_mtok": 0.15,
+        "cache_create_per_mtok": 0.0,
+        "notes": "Gemini 4 Neon",
+    },
+    {
+        "provider_id": "antigravity",
+        "model_id": "gemini-4-neon",
+        "effective_from": "2026-10-01",
+        "input_per_mtok": 3.00,
+        "output_per_mtok": 15.00,
+        "cache_read_per_mtok": 0.15,
+        "cache_create_per_mtok": 0.0,
+        "notes": "Antigravity Gemini 4 Neon",
+    },
     # OpenCode (cost is on each event already; pricing rows here are fallback only)
     # ── MiniMax ──────────────────────────────────────────────────────────────────
     # Pay-as-you-go API rates (USD/Mtok), used to give Coding-Plan subscription

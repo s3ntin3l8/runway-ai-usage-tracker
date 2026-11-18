@@ -853,6 +853,56 @@ def test_seed_gemini_4_argon_promo_then_list_price():
         )
 
 
+def test_seed_gemini_4_hydrogen_rates():
+    s = _make_session()
+    seed_pricing_table(s)
+    for provider in ("gemini", "antigravity"):
+        row = _row(s, provider, "gemini-4-hydrogen", date(2026, 11, 18))
+        assert row is not None
+        assert (
+            row.input_per_mtok,
+            row.output_per_mtok,
+            row.cache_read_per_mtok,
+            row.cache_create_per_mtok,
+        ) == (1.50, 7.50, 0.075, 0.0)
+
+
+def test_seed_gemini_4_carbon_promo_then_list_price():
+    s = _make_session()
+    seed_pricing_table(s)
+    for provider in ("gemini", "antigravity"):
+        promo = _row(s, provider, "gemini-4-carbon", date(2026, 11, 30))
+        assert promo is not None
+        assert (
+            promo.input_per_mtok,
+            promo.output_per_mtok,
+            promo.cache_read_per_mtok,
+            promo.cache_create_per_mtok,
+        ) == (2.00, 10.00, 0.10, 0.0)
+        listed = _row(s, provider, "gemini-4-carbon", date(2026, 12, 1))
+        assert listed is not None
+        assert (
+            listed.input_per_mtok,
+            listed.output_per_mtok,
+            listed.cache_read_per_mtok,
+            listed.cache_create_per_mtok,
+        ) == (4.00, 20.00, 0.20, 0.0)
+
+
+def test_seed_gemini_4_neon_rates():
+    s = _make_session()
+    seed_pricing_table(s)
+    for provider in ("gemini", "antigravity"):
+        row = _row(s, provider, "gemini-4-neon", date(2026, 11, 18))
+        assert row is not None
+        assert (
+            row.input_per_mtok,
+            row.output_per_mtok,
+            row.cache_read_per_mtok,
+            row.cache_create_per_mtok,
+        ) == (3.00, 15.00, 0.15, 0.0)
+
+
 @pytest.mark.parametrize(
     ("raw", "canonical"),
     [
