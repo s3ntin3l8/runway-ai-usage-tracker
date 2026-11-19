@@ -5125,6 +5125,20 @@ def run_collection(config: dict[str, Any], providers: list[str] | None = None) -
         if provider_cycle_complete and provider_manifest_complete:
             completed_providers_this_cycle.append(provider_id)
 
+    # Claude Code's side calls (titles, summaries, ...) captured from its
+    # OpenTelemetry events (#1365). They go out under the account this cycle
+    # resolved for the Claude logs; with no such account yet they stay queued.
+    claude_identity = _IDENTITY_REPORT.get("anthropic")
+    if _events_enabled and claude_identity:
+        try:
+            from scripts.sidecar_pkg.otel_receiver import get_receiver
+
+            all_events.extend(
+                get_receiver().drain(claude_identity["account_id"], claude_identity.get("source"))
+            )
+        except Exception:
+            logging.debug("Telemetry events unavailable", exc_info=True)
+
     cowork_batch = None
     if (
         _events_enabled
@@ -5549,6 +5563,15 @@ class DaemonRunner:
 
             if not success:
                 _discard_session_names()
+            if not success or events_failed:
+                # Unlike transcript events, telemetry events cannot be
+                # re-extracted next cycle.
+                try:
+                    from scripts.sidecar_pkg.otel_receiver import get_receiver
+
+                    get_receiver().requeue(events)
+                except Exception:
+                    logging.debug("Telemetry events not requeued", exc_info=True)
 
             with self._lock:
                 self.last_cycle_at = time.time()
@@ -5596,6 +5619,9 @@ class DaemonRunner:
                 if events and not events_failed:
                     try:
                         from scripts.sidecar_pkg.event_watermark import EventWatermark
+                        from scripts.sidecar_pkg.otel_receiver import (
+                            EVENT_ID_PREFIX as OTEL_EVENT_ID_PREFIX,
+                        )
 
                         wm = EventWatermark(
                             Path(
@@ -5603,6 +5629,11 @@ class DaemonRunner:
                             )
                         )
                         for ev in events:
+                            # Telemetry events arrive out of band: moving the
+                            # transcript watermark past them would skip
+                            # transcript events not yet written.
+                            if str(ev.get("event_id", "")).startswith(OTEL_EVENT_ID_PREFIX):
+                                continue
                             ts_str = ev.get("ts")
                             if ts_str:
                                 try:
@@ -5716,6 +5747,9 @@ class DaemonRunner:
         from scripts.sidecar_pkg.keychain_client import reopen_keychain_client
 
         reopen_keychain_client()
+        from scripts.sidecar_pkg.otel_receiver import start_receiver
+
+        start_receiver()  # a taken port costs one warning, never the sidecar
         self._stop_event.clear()
         self._thread = threading.Thread(target=self._loop, name="DaemonRunner", daemon=True)
         self._thread.start()
@@ -5723,6 +5757,9 @@ class DaemonRunner:
     def stop(self) -> None:
         """Signal the loop to exit and join the background thread."""
         self._stop_event.set()
+        from scripts.sidecar_pkg.otel_receiver import stop_receiver
+
+        stop_receiver()
         from scripts.sidecar_pkg.keychain_client import close_keychain_client
 
         close_keychain_client()

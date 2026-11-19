@@ -105,6 +105,7 @@ a = Analysis(
         "scripts.sidecar_pkg.self_update",
         "scripts.sidecar_pkg.self_update_fetch",
         "scripts.sidecar_pkg.offline_queue",
+        "scripts.sidecar_pkg.otel_receiver",
         "scripts.sidecar_pkg.cookie_extractor",
         "scripts.sidecar_pkg.self_update_supervisor",
         "scripts.sidecar_pkg.self_update_windows",
