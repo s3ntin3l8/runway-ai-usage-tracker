@@ -5448,6 +5448,12 @@ class DaemonRunner:
                 self_update_capable: bool | None = self_update_supported()
             except Exception:
                 self_update_capable = None
+            try:
+                from scripts.sidecar_pkg.asset_names import detect_target
+
+                sidecar_target: str | None = detect_target()
+            except Exception:
+                sidecar_target = None
             # None (unknown) for a sidecar that never armed keep-alive (the tray app).
             keep_alive = _KEEP_ALIVE.reported()
             keep_alive_providers = _KEEP_ALIVE.reported_providers()
@@ -5495,6 +5501,7 @@ class DaemonRunner:
                     "sidecar_version": sidecar_version,
                     "os_platform": os_platform,
                     "self_update_capable": self_update_capable if first_batch else None,
+                    "sidecar_target": sidecar_target if first_batch else None,
                     "keep_alive": keep_alive if first_batch else None,
                     "keep_alive_providers": keep_alive_providers if first_batch else None,
                     "log_level": _effective_log_level() if first_batch else None,

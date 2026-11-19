@@ -52,6 +52,20 @@ def release_label(channel: str, version: str | None = None) -> str:
     return f"v{ver}"
 
 
+def detect_target(executable: str | None = None) -> str:
+    """Classify the running binary as ``"cli"`` or ``"tray"``."""
+    import os
+    import sys
+
+    exe = os.path.basename(executable if executable is not None else sys.executable).lower()
+    return "cli" if "cli" in exe else "tray"
+
+
+def build_metadata_name(asset_name: str) -> str:
+    """Sibling JSON recording the commit SHA an edge asset was built from."""
+    return f"{asset_name}.build.json"
+
+
 def platform_key(sys_platform: str, target: str = "tray") -> str | None:
     """Map ``sys.platform`` + target (``"tray"``/``"cli"``) to a release platform key."""
     if sys_platform == "darwin":
@@ -138,7 +152,10 @@ def main(argv: list[str] | None = None) -> int:
     plat, label = args
     if label != EDGE_LABEL:
         label = release_label("stable", label)
-    print(f"payload={payload_name(plat, label)}")
+    payload = payload_name(plat, label)
+    print(f"payload={payload}")
+    if label == EDGE_LABEL:
+        print(f"build_metadata={build_metadata_name(payload)}")
     inst = installer_name(plat, label)
     if inst:
         print(f"installer={inst}")

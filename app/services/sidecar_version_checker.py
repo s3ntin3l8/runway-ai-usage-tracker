@@ -1,8 +1,9 @@
 """Background service that tracks the latest published sidecar release.
 
 Polls GitHub Releases once on startup and every 24h thereafter, caches the
-latest stable and beta tags plus the rolling edge sha, and exposes accessors so
-the fleet API can flag sidecars running an older version. Network failures keep
+latest stable and beta tags plus each platform's edge build sha from
+`<payload>.build.json`, and exposes accessors so the fleet API can flag sidecars
+running an older version. Network failures keep
 the previous cache (or `None` if never fetched) — the fleet API treats `None`
 as "unknown latest, don't flag anything."
 
@@ -27,11 +28,34 @@ _GITHUB_API_URL = "https://api.github.com/repos/s3ntin3l8/runway-ai-usage-tracke
 _BETA_RELEASES_API_URL = (
     "https://api.github.com/repos/s3ntin3l8/runway-ai-usage-tracker/releases?per_page=100"
 )
-_GITHUB_EDGE_REFS_URL = (
-    "https://api.github.com/repos/s3ntin3l8/runway-ai-usage-tracker/git/refs/tags/edge"
+_EDGE_ASSET_URL_TEMPLATE = (
+    "https://github.com/s3ntin3l8/runway-ai-usage-tracker/releases/download/edge/{asset}"
 )
+# Keep in sync with scripts/sidecar_pkg/asset_names.py (contract-tested).
+_EDGE_BUILD_FILES: dict[str, str] = {
+    "macOS": "Runway-Sidecar-macOS-edge.zip.build.json",
+    "Windows": "Runway-Sidecar-Windows-edge.zip.build.json",
+    "Linux": "Runway-Sidecar-Linux-edge.tar.gz.build.json",
+    "Linux-CLI": "Runway-Sidecar-Linux-CLI-edge.tar.gz.build.json",
+}
 _CHECK_INTERVAL_SECONDS = 24 * 60 * 60  # 24h
 _HTTP_TIMEOUT_SECONDS = 10.0
+
+
+def _platform_key_from_os_platform(
+    os_platform: str | None, sidecar_target: str | None = None
+) -> str | None:
+    """Map a sidecar's ``os_platform`` (e.g. ``'Darwin/24.1.0'``) and target to a release platform key."""
+    if not os_platform:
+        return None
+    family = os_platform.split("/", 1)[0].strip().lower()
+    if family == "darwin":
+        return "macOS"
+    if family == "windows":
+        return "Windows"
+    if family == "linux":
+        return "Linux-CLI" if sidecar_target == "cli" else "Linux"
+    return None
 
 
 def parse_channel(version: str | None) -> tuple[str, str | None]:
@@ -51,7 +75,7 @@ def parse_channel(version: str | None) -> tuple[str, str | None]:
 
 
 class SidecarVersionChecker:
-    """Periodically refreshes cached stable/beta release tags and edge sha."""
+    """Periodically refreshes cached stable/beta release tags and per-platform edge build shas from ``<payload>.build.json``."""
 
     def __init__(
         self,
@@ -62,7 +86,7 @@ class SidecarVersionChecker:
         self._interval = check_interval
         self._latest: str | None = None
         self._latest_beta: str | None = None
-        self._latest_edge_sha: str | None = None
+        self._latest_edge_shas: dict[str, str] = {}
         self._task: asyncio.Task | None = None
         self._running = False
 
@@ -70,9 +94,12 @@ class SidecarVersionChecker:
         """Return the cached latest tag (without the `v` prefix), or None."""
         return self._latest
 
-    def get_latest_edge_sha(self) -> str | None:
-        """Return the cached commit sha of the rolling `edge` tag, or None."""
-        return self._latest_edge_sha
+    def get_latest_edge_sha(
+        self, os_platform: str | None = None, sidecar_target: str | None = None
+    ) -> str | None:
+        """Return the cached commit sha of the rolling ``edge`` asset for *os_platform*, or None."""
+        plat = _platform_key_from_os_platform(os_platform, sidecar_target)
+        return self._latest_edge_shas.get(plat) if plat else None
 
     def get_latest_beta(self) -> str | None:
         """Return the newest numbered beta tag without its `v` prefix."""
@@ -99,7 +126,7 @@ class SidecarVersionChecker:
         logger.info("Sidecar version checker stopped.")
 
     async def check_now(self) -> str | None:
-        """Refresh the cached stable/beta tags and edge-tag sha.
+        """Refresh the cached stable/beta tags and per-platform edge build shas.
 
         All fetches are best-effort: on any failure the previous cache is kept
         and the fleet API degrades to "unknown latest" for that channel.
@@ -144,20 +171,27 @@ class SidecarVersionChecker:
                         f"Sidecar beta check returned HTTP {beta_resp.status_code}; keeping cache"
                     )
 
-                # Rolling `edge` prerelease: track the tag's commit sha so edge
-                # sidecars can be flagged when the tag moves. A 404 here is
-                # normal before the first edge build exists.
-                edge_resp = await client.get(_GITHUB_EDGE_REFS_URL, headers=headers)
-                if edge_resp.status_code == 200:
-                    sha = str(edge_resp.json().get("object", {}).get("sha", "")).strip()
-                    if sha:
-                        if sha != self._latest_edge_sha:
-                            logger.info(f"Latest sidecar edge build is {sha[:12]}")
-                        self._latest_edge_sha = sha
-                elif edge_resp.status_code != 404:
-                    logger.warning(
-                        f"Sidecar edge-tag check returned HTTP {edge_resp.status_code}; keeping cache"
+                # Rolling `edge` prerelease: track each platform's build metadata
+                # so lagging or missing platform legs do not flag false updates.
+                for plat, build_file in _EDGE_BUILD_FILES.items():
+                    edge_resp = await client.get(
+                        _EDGE_ASSET_URL_TEMPLATE.format(asset=build_file),
+                        headers=headers,
                     )
+                    if edge_resp.status_code == 200:
+                        data = edge_resp.json()
+                        sha = str(data.get("sha", "")).strip() if isinstance(data, dict) else ""
+                        if sha:
+                            if sha != self._latest_edge_shas.get(plat):
+                                logger.info(f"Latest sidecar edge build for {plat} is {sha[:12]}")
+                            self._latest_edge_shas[plat] = sha
+                    elif edge_resp.status_code == 404:
+                        self._latest_edge_shas.pop(plat, None)
+                    else:
+                        logger.warning(
+                            f"Sidecar edge build check for {plat} returned HTTP "
+                            f"{edge_resp.status_code}; keeping cache"
+                        )
         except Exception as exc:
             logger.warning(f"Sidecar version check failed: {exc}")
         return self._latest
@@ -183,7 +217,8 @@ def is_update_available(
 ) -> bool:
     """Whether *current* is behind the newest build on its channel. False on ambiguity.
 
-    Edge builds compare commit sha against the rolling `edge` tag. A configured
+    Edge builds compare commit sha against that platform's ``<payload>.build.json``
+    on the rolling `edge` release. A configured
     target channel overrides the build's channel so beta installs can be
     promoted to stable by changing the fleet setting. Missing channel heads mean
     "unknown" and do not flag an update.

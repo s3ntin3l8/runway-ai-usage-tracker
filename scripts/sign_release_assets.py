@@ -43,7 +43,7 @@ def main() -> None:
     assets = sorted(
         p
         for p in root.glob("Runway-Sidecar-*")
-        if p.name.endswith((".dmg", ".exe", ".zip", ".tar.gz"))
+        if p.name.endswith((".dmg", ".exe", ".zip", ".tar.gz", ".build.json"))
     )
     if not assets:
         raise RuntimeError("No sidecar assets to sign")

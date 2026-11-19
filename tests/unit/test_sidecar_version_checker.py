@@ -257,29 +257,44 @@ class TestIsUpdateAvailableEdge:
 
 class TestCheckNowEdge:
     @pytest.mark.asyncio
-    async def test_caches_edge_sha_alongside_stable(self):
+    async def test_caches_per_platform_edge_shas_alongside_stable(self):
         checker = SidecarVersionChecker()
         client = _mock_client_by_url(
             {
                 "releases/latest": (200, {"tag_name": "v1.4.2"}),
-                "git/refs/tags/edge": (200, {"object": {"sha": "ccc3333ffffffff"}}),
+                "Runway-Sidecar-macOS-edge.zip.build.json": (200, {"sha": "aaa1111ffffffff"}),
+                "Runway-Sidecar-Linux-edge.tar.gz.build.json": (200, {"sha": "bbb2222ffffffff"}),
+                "Runway-Sidecar-Linux-CLI-edge.tar.gz.build.json": (
+                    200,
+                    {"sha": "ccc3333ffffffff"},
+                ),
             }
         )
         with patch("app.services.sidecar_version_checker.httpx.AsyncClient", return_value=client):
             await checker.check_now()
         assert checker.get_latest() == "1.4.2"
-        assert checker.get_latest_edge_sha() == "ccc3333ffffffff"
+        assert checker.get_latest_edge_sha("Darwin/24.1.0") == "aaa1111ffffffff"
+        assert checker.get_latest_edge_sha("Linux/6.8.0") == "bbb2222ffffffff"
+        assert checker.get_latest_edge_sha("Linux/6.8.0", "tray") == "bbb2222ffffffff"
+        assert checker.get_latest_edge_sha("Linux/6.8.0", "cli") == "ccc3333ffffffff"
+        assert checker.get_latest_edge_sha("Windows/11") is None
+        assert checker.get_latest_edge_sha(None) is None
 
     @pytest.mark.asyncio
-    async def test_missing_edge_tag_keeps_sha_none(self):
+    async def test_missing_edge_build_file_clears_platform_sha(self):
         checker = SidecarVersionChecker()
+        checker._latest_edge_shas["macOS"] = "old1111ffffffff"
         client = _mock_client_by_url(
-            {"releases/latest": (200, {"tag_name": "v1.4.2"})}  # edge ref → 404
+            {
+                "releases/latest": (200, {"tag_name": "v1.4.2"}),
+                "Runway-Sidecar-Linux-edge.tar.gz.build.json": (200, {"sha": "bbb2222ffffffff"}),
+            }
         )
         with patch("app.services.sidecar_version_checker.httpx.AsyncClient", return_value=client):
             await checker.check_now()
         assert checker.get_latest() == "1.4.2"
-        assert checker.get_latest_edge_sha() is None
+        assert checker.get_latest_edge_sha("Darwin/24.1.0") is None
+        assert checker.get_latest_edge_sha("Linux/6.8.0") == "bbb2222ffffffff"
 
 
 class TestCheckNowBeta:

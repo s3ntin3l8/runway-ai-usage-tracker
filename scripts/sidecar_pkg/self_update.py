@@ -123,7 +123,7 @@ __all__ = [
 ]
 
 # The `edge` rolling prerelease object (carries assets[]); distinct from
-# update_check._EDGE_REFS_URL, which only returns the git ref sha.
+# update_check._EDGE_ASSET_URL_TEMPLATE, which reads per-platform build metadata.
 _EDGE_RELEASE_URL = (
     "https://api.github.com/repos/s3ntin3l8/runway-ai-usage-tracker/releases/tags/edge"
 )
@@ -178,8 +178,7 @@ def _detect_target() -> str:
     Only the CLI PyInstaller spec names the executable ``runway-sidecar-cli``;
     all three tray specs produce ``RunwaySidecar`` / ``Runway Sidecar.app``.
     """
-    exe = os.path.basename(sys.executable).lower()
-    return "cli" if "cli" in exe else "tray"
+    return asset_names.detect_target()
 
 
 def _sidecar_dir() -> pathlib.Path:

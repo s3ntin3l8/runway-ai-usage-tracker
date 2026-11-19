@@ -14,8 +14,9 @@ Channel model:
   * Stable channel → compare the running version against the latest GitHub
     release (`/releases/latest`, which excludes prereleases) via PEP 440.
   * Edge channel → the rolling `edge` prerelease never bumps the public version,
-    so "is there a newer build?" is decided by commit-sha inequality against the
-    `edge` git tag, not version ordering.
+    so "is there a newer build?" is decided by commit-sha inequality against this
+    platform's ``<payload>.build.json`` metadata on the ``edge`` release, not
+    version ordering or the moving ``edge`` git tag.
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import sys
 import threading
 import time
 from collections.abc import Callable
@@ -30,6 +32,7 @@ from datetime import UTC, datetime
 from typing import Any
 from urllib import error, request
 
+from scripts.sidecar_pkg import asset_names
 from scripts.sidecar_pkg.update_limits import MAX_METADATA_BYTES, bounded_read
 
 logger = logging.getLogger(__name__)
@@ -38,7 +41,9 @@ _LATEST_URL = "https://api.github.com/repos/s3ntin3l8/runway-ai-usage-tracker/re
 _BETA_RELEASES_API_URL = (
     "https://api.github.com/repos/s3ntin3l8/runway-ai-usage-tracker/releases?per_page=100"
 )
-_EDGE_REFS_URL = "https://api.github.com/repos/s3ntin3l8/runway-ai-usage-tracker/git/refs/tags/edge"
+_EDGE_ASSET_URL_TEMPLATE = (
+    "https://github.com/s3ntin3l8/runway-ai-usage-tracker/releases/download/edge/{asset}"
+)
 _RELEASES_URL = "https://github.com/s3ntin3l8/runway-ai-usage-tracker/releases"
 _CHECK_INTERVAL_SECONDS = 86400  # 24h
 _FAILURE_LOG_COOLDOWN_SECONDS = 3600  # 1h
@@ -210,10 +215,13 @@ def _beta_update(current: str, *, strict: bool = False) -> str | None:
 
 
 def _edge_update(embedded_sha: str, *, strict: bool = False) -> str | None:
-    """Current ``edge`` tag commit sha if it differs from *embedded_sha*, else None.
+    """Current ``edge`` build commit sha for this platform if it differs from *embedded_sha*, else None.
 
-    *embedded_sha* is the short sha stamped into an edge build; the tag ref
-    returns the full 40-char sha, so a prefix match means "same build."
+    *embedded_sha* is the short sha stamped into an edge build; the platform's
+    ``<payload>.build.json`` sibling on the ``edge`` release carries the full
+    40-char sha, so a prefix match means "same build." A missing build file
+    (HTTP 404) means this platform's asset has not been published for the
+    newest edge commit and is treated as no update available.
     """
     embedded_sha = embedded_sha.strip()
     if not embedded_sha:
@@ -221,18 +229,39 @@ def _edge_update(embedded_sha: str, *, strict: bool = False) -> str | None:
             raise ValueError("edge build has no embedded commit SHA")
         logger.warning("Skipping edge update check: build has no embedded commit SHA")
         return None
+    plat = asset_names.platform_key(sys.platform, asset_names.detect_target())
+    if plat is None:
+        if strict:
+            raise ValueError(f"unsupported platform for edge update check: {sys.platform}")
+        logger.info("Skipping edge update check: unsupported platform %s", sys.platform)
+        return None
+    build_file = asset_names.build_metadata_name(
+        asset_names.payload_name(plat, asset_names.EDGE_LABEL)
+    )
+    url = _EDGE_ASSET_URL_TEMPLATE.format(asset=build_file)
     try:
-        ref = _get_json(_EDGE_REFS_URL)
-        if not isinstance(ref, dict) or not isinstance(ref.get("object"), dict):
-            raise ValueError("edge ref response has no object")
-        latest_sha = str(ref["object"].get("sha", "")).strip()
+        meta = _get_json(url)
+        if not isinstance(meta, dict):
+            raise ValueError("edge build metadata response is not an object")
+        latest_sha = str(meta.get("sha", "")).strip()
+    except error.HTTPError as exc:
+        if exc.code == 404:
+            logger.info(
+                "No edge update for %s: %s has not been published for the newest edge commit",
+                plat,
+                build_file,
+            )
+            return None
+        if strict:
+            raise
+        return None
     except (error.URLError, OSError, ValueError, KeyError):
         if strict:
             raise
         return None
     if not latest_sha:
         if strict:
-            raise ValueError("edge ref has no commit SHA")
+            raise ValueError("edge build metadata has no commit SHA")
         return None
     return latest_sha[:12] if not latest_sha.startswith(embedded_sha) else None
 
