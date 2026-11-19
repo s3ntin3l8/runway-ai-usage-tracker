@@ -321,7 +321,10 @@ def test_missing_optional_recovery_record_does_not_invalidate_read(local, monkey
     assert row(local)["state"] == "Authorized"
 
 
-@pytest.mark.parametrize("outcome", ["missing-first", "missing-last", "all-missing", "denied-last"])
+@pytest.mark.parametrize(
+    "outcome",
+    ["missing-first", "missing-last", "all-missing", "denied", "timed_out", "unavailable"],
+)
 def test_claude_candidate_scan_reports_source_outcome(local, tmp_path, monkeypatch, outcome):
     from scripts.sidecar_pkg import claude_code_keychain, macos_keychain_store
     from scripts.sidecar_pkg.keychain_protocol import KeychainError
@@ -345,7 +348,9 @@ def test_claude_candidate_scan_reports_source_outcome(local, tmp_path, monkeypat
         if "service" in query:
             if query["service"] == present and outcome != "all-missing":
                 return [item]
-            raise KeychainError("denied" if outcome == "denied-last" else "missing")
+            raise KeychainError(
+                outcome if outcome in {"denied", "timed_out", "unavailable"} else "missing"
+            )
         return {**item, "data": b'{"accessToken": "synthetic-token"}'}
 
     client = Mock()
@@ -358,6 +363,15 @@ def test_claude_candidate_scan_reports_source_outcome(local, tmp_path, monkeypat
     assert len(candidates) == (0 if outcome == "all-missing" else 1)
     successful = outcome in {"missing-first", "missing-last"}
     assert row(local)["state"] == ("Authorized" if successful else "Action required")
+    saved = json.loads(path.read_text())[SOURCE]
+    assert row(local)["last_read_at"] == saved["last_read_at"]
+    assert saved["last_block_reason"] == ("missing" if "missing" in outcome else outcome)
+    if successful:
+        assert saved["last_read_at"] > saved["last_block_at"]
+    else:
+        assert saved["last_block_at"] >= saved["last_read_at"]
+    assert "synthetic-token" not in path.read_text()
+    assert "synthetic-user" not in path.read_text()
     persisted = SourcePolicy(local)
     persisted.configure_state(path)
     state = persisted.read_state(SOURCE)
