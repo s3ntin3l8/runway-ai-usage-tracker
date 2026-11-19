@@ -164,7 +164,7 @@ def test_fleet_directories_do_not_expand_keychain_targets(monkeypatch, tmp_path)
 
     monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
     monkeypatch.setattr(
-        sidecar.local_paths, "_LOGIN_DIR_EXTRAS", {"CLAUDE_CONFIG_DIR": [str(tmp_path / "local")]}
+        sidecar.local_paths, "LOGIN_DIR_EXTRAS", {"CLAUDE_CONFIG_DIR": [str(tmp_path / "local")]}
     )
     monkeypatch.setattr(
         sidecar, "_LOGIN_DIR_REMOTE", {"claude_config_dirs": [str(tmp_path / "remote")]}

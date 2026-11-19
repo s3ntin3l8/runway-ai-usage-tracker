@@ -28,6 +28,6 @@ def test_apply_login_dirs_failure_only_logs(monkeypatch):
 
 
 def test_apply_login_dirs_populates_extras(monkeypatch):
-    monkeypatch.setattr(_sidecar.local_paths, "_LOGIN_DIR_EXTRAS", {})
+    monkeypatch.setattr(_sidecar.local_paths, "LOGIN_DIR_EXTRAS", {})
     tray_main._apply_login_dirs({"claude_config_dirs": ["/a/b"]})
-    assert any("/a/b" in str(v) for v in _sidecar.local_paths._LOGIN_DIR_EXTRAS.values())
+    assert any("/a/b" in str(v) for v in _sidecar.local_paths.LOGIN_DIR_EXTRAS.values())

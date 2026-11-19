@@ -49,9 +49,9 @@ from scripts.sidecar_pkg import local_paths
 from scripts.sidecar_pkg import transport as server_http
 from scripts.sidecar_pkg.expiry import expiry_seconds
 from scripts.sidecar_pkg.local_paths import (
-    _split_dirs,
     get_sidecar_dir,
     local_keychain_login_dirs,
+    split_dirs,
 )
 from scripts.sidecar_pkg.opencode_credentials import (
     key_binding as opencode_key_binding,
@@ -1826,10 +1826,10 @@ def custom_login_dirs(env_name: str) -> list[Path]:
     drops files it has already returned.
     """
     dirs: list[Path] = []
-    remote = _LOGIN_DIR_REMOTE.get(local_paths._LOGIN_DIR_CONFIG_KEYS.get(env_name, ""), [])
+    remote = _LOGIN_DIR_REMOTE.get(local_paths.LOGIN_DIR_CONFIG_KEYS.get(env_name, ""), [])
     for raw in [
-        *_split_dirs(os.getenv(env_name, "")),
-        *local_paths._LOGIN_DIR_EXTRAS.get(env_name, []),
+        *split_dirs(os.getenv(env_name, "")),
+        *local_paths.LOGIN_DIR_EXTRAS.get(env_name, []),
         *remote,
     ]:
         p = Path(os.path.expanduser(raw))
