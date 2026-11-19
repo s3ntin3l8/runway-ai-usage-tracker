@@ -181,3 +181,56 @@ def test_port_in_use_warns_and_does_not_raise(
     assert second.address is None
     assert [r.levelno for r in caplog.records].count(logging.WARNING) == 1
     second.stop()  # harmless when never started
+
+
+def test_stop_does_not_hang_when_serve_thread_never_ran(monkeypatch: pytest.MonkeyPatch) -> None:
+    import threading
+
+    class _NoopThread:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        def start(self) -> None:
+            pass
+
+        def is_alive(self) -> bool:
+            return False
+
+        def join(self, timeout: float | None = None) -> None:
+            pass
+
+    monkeypatch.setattr(threading, "Thread", _NoopThread)
+    receiver = OtelReceiver(port=0)
+    assert receiver.start() is True
+    finished = []
+    monkeypatch.undo()  # the real Thread again, for the helper below
+    runner = threading.Thread(target=lambda: (receiver.stop(), finished.append(True)), daemon=True)
+    runner.start()
+    runner.join(timeout=10)
+    assert finished == [True]
+
+
+def test_thread_spawn_failure_degrades(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    import threading
+
+    def boom(self: threading.Thread) -> None:
+        raise RuntimeError("can't start new thread")
+
+    monkeypatch.setattr(threading.Thread, "start", boom)
+    receiver = OtelReceiver(port=0)
+    with caplog.at_level(logging.WARNING):
+        assert receiver.start() is False
+    assert receiver.address is None
+
+
+def test_drain_logs_counts_only(caplog: pytest.LogCaptureFixture) -> None:
+    receiver = OtelReceiver(port=0)
+    from scripts.sidecar_pkg.otel_receiver import parse_logs
+
+    receiver.accept(parse_logs(json.loads(_payload(_record("req_secret", "compact")))))
+    with caplog.at_level(logging.DEBUG):
+        receiver.drain("acct")
+    assert "drained 1" in caplog.text
+    assert "req_secret" not in caplog.text

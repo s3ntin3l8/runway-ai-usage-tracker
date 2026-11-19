@@ -390,6 +390,14 @@ MINIMAL_CONFIG = {
 FAKE_METRICS = [{"provider": "test", "value": 1}]
 
 
+def _pushed_events(call) -> list[dict[str, Any]]:
+    """Events inside one recorded ``http_post_signed_with_retry`` call."""
+    for arg in (*call.args, *call.kwargs.values()):
+        if isinstance(arg, dict) and "events" in arg:
+            return list(arg["events"])
+    return []
+
+
 def _make_runner(**kwargs) -> sidecar.DaemonRunner:
     """Helper: create a DaemonRunner with MINIMAL_CONFIG."""
     config = {**MINIMAL_CONFIG, **kwargs}
@@ -528,6 +536,45 @@ class TestDaemonRunnerRunOnceSuccess:
 
         assert runner._next_poll_providers == ["anthropic"]
         watermark.advance.assert_not_called()
+
+    @pytest.mark.parametrize("push_ok", [True, False])
+    def test_telemetry_events_skip_watermark_and_requeue_on_failure(self, monkeypatch, push_ok):
+        from scripts.sidecar_pkg.otel_receiver import OtelReceiver
+
+        receiver = OtelReceiver(port=0)
+        monkeypatch.setattr("scripts.sidecar_pkg.otel_receiver._receiver", receiver)
+        runner = _make_runner()
+        event = {
+            "ts": "2026-01-01T00:00:00Z",
+            "provider_id": "anthropic",
+            "account_id": "acct",
+            "event_id": "otel|req_1",
+            "request_id": "req_1",
+            "source_app": "claude-code",
+            "model_id": "claude-haiku-5-5",
+        }
+        watermark = MagicMock()
+        monkeypatch.setattr(
+            "scripts.sidecar_pkg.event_watermark.EventWatermark",
+            lambda _path: watermark,
+        )
+        post = MagicMock(return_value=(push_ok, {}, 200 if push_ok else 503))
+        with (
+            patch.object(
+                sidecar, "run_collection", return_value=_collection_result(events=[event])
+            ),
+            patch.object(sidecar, "http_post_signed_with_retry", post),
+            patch.object(sidecar, "queue_flush"),
+            patch.object(sidecar, "queue_enqueue", create=True),
+        ):
+            runner.run_once()
+
+        assert post.called
+        assert event in [e for call in post.call_args_list for e in _pushed_events(call)]
+        watermark.advance.assert_not_called()
+        assert [e["event_id"] for e in receiver.drain("acct")] == (
+            [] if push_ok else ["otel|req_1"]
+        )
 
     def test_run_once_empty_metrics_still_ok(self):
         """No metrics collected → still 'ok', heartbeat HTTP call made."""

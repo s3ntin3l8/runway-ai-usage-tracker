@@ -38,6 +38,8 @@ from app.services.model_normalization import normalize_anthropic_model
 DEFAULT_PORT = 4318
 BIND_HOST = "127.0.0.1"
 LOGS_PATH = "/v1/logs"
+#: Event-id prefix of captured events; the sidecar keys watermark handling on it.
+EVENT_ID_PREFIX = "otel|"
 
 #: Largest request body accepted; a larger one is refused before it is read.
 MAX_BODY_BYTES = 4 * 1024 * 1024
@@ -176,7 +178,7 @@ def parse_logs(document: Any) -> ParseResult:
                         provider_id="anthropic",
                         account_id="default",  # stamped by ``drain``
                         source_app=CLAUDE_CODE,
-                        event_id=f"otel|{request_id}",
+                        event_id=f"{EVENT_ID_PREFIX}{request_id}",
                         request_id=request_id,
                         query_source=query_source,
                         ts=ts,
@@ -203,8 +205,15 @@ class _Server(ThreadingHTTPServer):
     receiver: OtelReceiver
 
 
+#: Seconds a client may stall on a connection before its handler gives up.
+CLIENT_TIMEOUT = 30
+
+
 class _Handler(BaseHTTPRequestHandler):
     server: _Server
+    # Applied by ``StreamRequestHandler.setup``: a client that sends a
+    # ``Content-Length`` and then stalls cannot pin its handler thread.
+    timeout = CLIENT_TIMEOUT
 
     def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
         """Silence the default access log; nothing about a request is logged."""
@@ -236,7 +245,7 @@ class _Handler(BaseHTTPRequestHandler):
             return
         try:
             document = json.loads(self.rfile.read(length))
-        except (ValueError, OSError):
+        except (ValueError, OSError):  # includes a read timeout
             self._reply(400)
             return
         self.server.receiver.accept(parse_logs(document))
@@ -286,11 +295,18 @@ class OtelReceiver:
             )
             return False
         server.receiver = self
+        thread = threading.Thread(target=server.serve_forever, name="OtelReceiver", daemon=True)
+        try:
+            thread.start()
+        except RuntimeError as exc:  # e.g. no threads left to spawn
+            server.server_close()
+            logging.warning(
+                "Claude Code telemetry receiver not started: cannot spawn its thread (%s)",
+                type(exc).__name__,
+            )
+            return False
         self._server = server
-        self._thread = threading.Thread(
-            target=server.serve_forever, name="OtelReceiver", daemon=True
-        )
-        self._thread.start()
+        self._thread = thread
         logging.info("Claude Code telemetry receiver listening on %s:%s", *self.address or ())
         return True
 
@@ -300,11 +316,17 @@ class OtelReceiver:
         if server is None:
             return
         try:
-            server.shutdown()
-            server.server_close()
+            # ``shutdown()`` waits for ``serve_forever`` to exit, so it would
+            # block forever if the serve thread never ran.
+            if thread is not None and thread.is_alive():
+                server.shutdown()
         except Exception:
             logging.debug("telemetry receiver shutdown failed", exc_info=True)
-        if thread is not None:
+        try:
+            server.server_close()
+        except Exception:
+            logging.debug("telemetry receiver close failed", exc_info=True)
+        if thread is not None and thread.is_alive():
             thread.join(timeout=5)
 
     def accept(self, parsed: ParseResult) -> None:
@@ -329,6 +351,17 @@ class OtelReceiver:
         with self._lock:
             events = list(self._queue)
             self._queue.clear()
+            filtered, incomplete = self.filtered, self.dropped_incomplete
+            overflow = self.dropped_overflow
+        if events or filtered or incomplete or overflow:
+            # Counts only, never values; totals since start.
+            logging.debug(
+                "telemetry: drained %d, filtered %d, dropped %d (incomplete), %d (overflow)",
+                len(events),
+                filtered,
+                incomplete,
+                overflow,
+            )
         payloads = []
         for event in events:
             payload = event.model_copy(update={"account_id": account_id}).model_dump(mode="json")
@@ -353,8 +386,6 @@ class OtelReceiver:
             for event in [*events, *pending]:
                 self._append(event)
 
-
-EVENT_ID_PREFIX = "otel|"
 
 #: The sidecar's receiver. Created lazily so importing this module binds nothing.
 _receiver: OtelReceiver | None = None
