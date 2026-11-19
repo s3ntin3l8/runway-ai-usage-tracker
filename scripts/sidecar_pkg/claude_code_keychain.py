@@ -1,4 +1,4 @@
-"""Read-only, account-scoped Claude Code macOS Keychain discovery."""
+"""Account-scoped Claude Code discovery; records outcomes without changing Keychain items."""
 
 from __future__ import annotations
 
@@ -130,4 +130,9 @@ def read_candidates(
             candidates.append((tokens, f"keychain:{service}"))
         except (ValueError, TypeError, AttributeError):
             _warn(service, "unsupported JSON layout")
+    else:
+        # Missing optional login items do not invalidate a completed scan that
+        # delivered credentials. A blocking error breaks the loop and must win.
+        if candidates and consent.POLICY.current(ticket):
+            consent.POLICY.record_read(ticket)
     return candidates if consent.POLICY.current(ticket) else []

@@ -4,8 +4,9 @@ import os
 
 import pytest
 
-from scripts.sidecar_pkg import source_consent, source_protocol
+from scripts.sidecar_pkg import source_consent, source_protocol, source_settings
 from scripts.sidecar_pkg.source_consent import SourcePolicy
+from scripts.sidecar_pkg.source_protocol import filter_egress
 
 
 def config():
@@ -127,16 +128,14 @@ def test_egress_requires_live_consent_and_negotiated_revision(tmp_path, monkeypa
             "keychain_consent": source_consent.stamp(ticket),
         }
     }
-    assert source_consent.filter_egress({"metrics": [card]}, config=local)["metrics"] == []
+    assert filter_egress({"metrics": [card]}, config=local)["metrics"] == []
     client.receive(local, reply())
-    forwarded = source_consent.filter_egress({"metrics": [card]}, config=local)["metrics"][0][
-        "metadata"
-    ]
+    forwarded = filter_egress({"metrics": [card]}, config=local)["metrics"][0]["metadata"]
     assert set(forwarded["keychain_consent"]) == {"source_id", "revision", "generation"}
     assert "refresh_token" not in forwarded
     assert card["metadata"]["refresh_token"] == "synthetic-local-only"
     source_consent.POLICY.configure(SourcePolicy.change(local, "anthropic.claude-code", read=False))
-    assert source_consent.filter_egress({"metrics": [card]}, config=local)["metrics"] == []
+    assert filter_egress({"metrics": [card]}, config=local)["metrics"] == []
 
 
 def test_current_controls_protect_fresh_process_after_another_process_acknowledged(tmp_path):
@@ -159,10 +158,10 @@ def test_non_macos_reports_no_new_scrapers_but_can_withdraw_old_consent(tmp_path
     monkeypatch.setattr(sys, "platform", "linux")
     local = config()
     client = source_protocol.SourceClient(local, tmp_path / "state.json")
-    assert client.payload(local)["sources"] == []
+    assert client.payload(local, source_settings.report(local))["sources"] == []
     off = SourcePolicy.change(local, "anthropic.claude-code", read=False)
     off["keychain_withdrawals"] = {"anthropic.claude-code": 2}
-    sources = client.payload(off)["sources"]
+    sources = client.payload(off, source_settings.report(off))["sources"]
     assert len(sources) == 1 and sources[0]["read"] is False and sources[0]["new"] is False
 
 
@@ -171,7 +170,7 @@ def test_claude_refresh_cannot_leave_when_provider_is_only_on_the_card():
         "provider_id": "anthropic",
         "metadata": {"oauth_token": "synthetic-access", "refresh_token": "synthetic-local-refresh"},
     }
-    forwarded = source_consent.filter_egress({"metrics": [card]})["metrics"][0]["metadata"]
+    forwarded = filter_egress({"metrics": [card]})["metrics"][0]["metadata"]
     assert "refresh_token" not in forwarded
     assert forwarded["oauth_read_only"] == "1"
     assert card["metadata"]["refresh_token"] == "synthetic-local-refresh"
@@ -213,8 +212,8 @@ def test_device_auth_failure_surfaces_repair_without_shared_key_downgrade(
         raise HTTPError(req.full_url, 401, "synthetic-secret-not-for-logs", {}, None)
 
     monkeypatch.setattr(transport, "urlopen", reject)
-    assert not client.sync(local)
-    assert not client.sync(local)
+    assert not client.sync(local, source_settings.report)
+    assert not client.sync(local, source_settings.report)
     assert source_settings.report(local)["re_pair_required"] is True
     assert all(req.get_header("X-runway-device-id") == local["device_id"] for req in requests)
     assert caplog.text.count("re-pair this sidecar") == 1

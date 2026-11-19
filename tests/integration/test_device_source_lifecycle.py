@@ -473,7 +473,7 @@ async def test_windows_idle_heartbeat_keeps_source_freshness_separate_from_colle
     session.commit()
     monkeypatch.setattr(source_settings, "sys", SimpleNamespace(platform="win32"))
     source_client = SourceClient(local, tmp_path / "source-state.json")
-    payload = source_client.payload(local)
+    payload = source_client.payload(local, source_settings.report(local))
     assert payload["sources"] == []  # Windows lifecycle sources have no local consent reports.
     assert (
         post(

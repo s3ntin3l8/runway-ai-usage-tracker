@@ -80,9 +80,14 @@ class _WorkerAPI:
                 operation == "copy" or self._allowed() is True
             )
 
-        result = get_keychain_client().call(
-            operation, query, values, group=self._group, allowed=permitted
-        )
+        try:
+            result = get_keychain_client().call(
+                operation, query, values, group=self._group, allowed=permitted
+            )
+        except KeychainError as exc:
+            if service != RECOVERY_SERVICE or exc.reason != "missing":
+                consent.POLICY.record_block(ticket, exc.reason)
+            raise
         if (
             operation == "copy"
             and isinstance(result, dict)
@@ -203,7 +208,19 @@ def read_secret(service: str, account: str | None = None, *, group: str) -> byte
     """Read-only entrypoint shared by background discovery sources."""
     if service == "Claude Code-credentials" or service.startswith("Claude Code-credentials-"):
         group = "claude-code"
-    return KeychainStore(group=group, allowed=lambda: False).read_secret(service, account)
+    from scripts.sidecar_pkg import source_consent as consent
+
+    ticket = consent.service_ticket(service)
+    try:
+        data = KeychainStore(group=group, allowed=lambda: False).read_secret(service, account)
+    except KeychainError as exc:
+        # Selection can fail after the worker read (for example, identity changed).
+        if ticket is not None:
+            consent.POLICY.record_block(ticket, exc.reason)
+        raise
+    if data is None and ticket is not None:
+        consent.POLICY.record_block(ticket, "missing")
+    return data
 
 
 class _NativeAPI:

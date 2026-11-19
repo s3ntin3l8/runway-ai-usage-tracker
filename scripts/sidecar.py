@@ -45,8 +45,14 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+from scripts.sidecar_pkg import local_paths
 from scripts.sidecar_pkg import transport as server_http
 from scripts.sidecar_pkg.expiry import expiry_seconds
+from scripts.sidecar_pkg.local_paths import (
+    get_sidecar_dir,
+    local_keychain_login_dirs,
+    split_dirs,
+)
 from scripts.sidecar_pkg.opencode_credentials import (
     key_binding as opencode_key_binding,
 )
@@ -1150,25 +1156,6 @@ def _reported_update_settings() -> tuple[str | None, bool | None]:
     return channel, auto
 
 
-def get_sidecar_dir() -> Path:
-    """Get the sidecar configuration directory.
-
-    Honours RUNWAY_CONFIG_DIR for parity with the server (set via .env in
-    dev) so `make dev` and `make sidecar` share the same project-local
-    config when invoked from the repo. Falls back to the platform default
-    otherwise.
-    """
-    override = os.getenv("RUNWAY_CONFIG_DIR")
-    if override:
-        return Path(override) / "sidecar"
-    if platform.system() == "Windows":
-        app_data = os.getenv("APPDATA")
-        if app_data:
-            return Path(app_data) / "runway" / "sidecar"
-        return Path.home() / "AppData" / "Roaming" / "runway" / "sidecar"
-    return Path.home() / ".config" / "runway" / "sidecar"
-
-
 def get_queue_dir() -> Path:
     """Get the queue directory for offline storage."""
     return get_sidecar_dir() / "queue"
@@ -1608,8 +1595,7 @@ def http_post_signed(
     url: str, data: dict[str, Any], api_key: str, config: dict[str, Any] | None = None
 ) -> tuple[bool, Any, int]:
     """POST data to URL with HMAC-SHA256 signature. Returns (success, data, code)."""
-    from scripts.sidecar_pkg.source_consent import filter_egress
-    from scripts.sidecar_pkg.source_protocol import device_credentials
+    from scripts.sidecar_pkg.source_protocol import device_credentials, filter_egress
 
     data = filter_egress(data, config=config if device_credentials(config, url) else None)
     timestamp = server_http.signing_timestamp()
@@ -1766,8 +1752,6 @@ def resolve_path(path_str: str) -> Path:
 # CLIs that relocate their whole state dir via an env var. A sidecar running as a
 # service does not inherit the user's shell env, so each also has a local config
 # key (comma-separated string or list) that is searched in addition to the env var.
-_LOGIN_DIR_CONFIG_KEYS = {"CLAUDE_CONFIG_DIR": "claude_config_dirs", "CODEX_HOME": "codex_home"}
-_LOGIN_DIR_EXTRAS: dict[str, list[str]] = {}
 _LOGIN_DIR_REMOTE: dict[str, list[str]] = {"claude_config_dirs": [], "codex_home": []}
 _LOGIN_DIR_SERVER: tuple[str, str] | None = None
 _LOGIN_DIR_LOCK = threading.RLock()
@@ -1827,32 +1811,11 @@ def login_directory_report() -> dict[str, Any]:
     }
 
 
-def _split_dirs(value: Any) -> list[str]:
-    if isinstance(value, str):
-        value = value.split(",")
-    if not isinstance(value, list | tuple):
-        return []
-    return [v.strip() for v in value if isinstance(v, str) and v.strip()]
-
-
 def configure_login_dirs(config: dict[str, Any]) -> None:
-    """Pick up the per-CLI extra login dirs from the sidecar's local config."""
+    """Pick up local CLI directories and scope Fleet's additions to this server."""
     if "api_url" in config or "api_key" in config:
         scope_login_dirs(config)
-    _LOGIN_DIR_EXTRAS.clear()
-    for env_name, key in _LOGIN_DIR_CONFIG_KEYS.items():
-        dirs = _split_dirs(config.get(key))
-        if dirs:
-            _LOGIN_DIR_EXTRAS[env_name] = dirs
-
-
-def local_keychain_login_dirs() -> list[Path]:
-    """Only local env/config can authorize additional Claude Keychain targets."""
-    values = [
-        *_split_dirs(os.getenv("CLAUDE_CONFIG_DIR", "")),
-        *_LOGIN_DIR_EXTRAS.get("CLAUDE_CONFIG_DIR", []),
-    ]
-    return list(dict.fromkeys(Path(os.path.expanduser(value)).resolve() for value in values))
+    local_paths.configure_login_dirs(config)
 
 
 def custom_login_dirs(env_name: str) -> list[Path]:
@@ -1863,10 +1826,10 @@ def custom_login_dirs(env_name: str) -> list[Path]:
     drops files it has already returned.
     """
     dirs: list[Path] = []
-    remote = _LOGIN_DIR_REMOTE.get(_LOGIN_DIR_CONFIG_KEYS.get(env_name, ""), [])
+    remote = _LOGIN_DIR_REMOTE.get(local_paths.LOGIN_DIR_CONFIG_KEYS.get(env_name, ""), [])
     for raw in [
-        *_split_dirs(os.getenv(env_name, "")),
-        *_LOGIN_DIR_EXTRAS.get(env_name, []),
+        *split_dirs(os.getenv(env_name, "")),
+        *local_paths.LOGIN_DIR_EXTRAS.get(env_name, []),
         *remote,
     ]:
         p = Path(os.path.expanduser(raw))
@@ -3378,7 +3341,7 @@ class GenericCollector:
         provider_hints = (account_label_hints or {}).get(provider_id, {})
 
         from scripts.sidecar_pkg import source_consent as consent
-        from scripts.sidecar_pkg.source_catalog import catalog, trusted_rule
+        from scripts.sidecar_pkg.source_catalog import catalog, source_for_origin, trusted_rule
 
         tickets = {source_id: consent.POLICY.ticket(source_id) for source_id in catalog()}
         for rule in rules:
@@ -3864,9 +3827,7 @@ class GenericCollector:
         # agy. Let a sidecar with a live agy session keep serving quota instead.
         for tokens, origin, candidate_kind in token_candidates:
             source_id = (
-                consent.source_for_origin(provider_id, origin)
-                if platform.system() == "Darwin"
-                else None
+                source_for_origin(provider_id, origin) if platform.system() == "Darwin" else None
             )
             ticket = tickets.get(source_id) if source_id else None
             if source_id and not consent.POLICY.current(ticket):
@@ -4550,7 +4511,7 @@ def _post_credential_manifest(
     # Empty entries still ship with completed_providers: that means a clean
     # provider scan found no unresolved origins and can clear stale rows. A
     # provider omitted from completed_providers is left untouched.
-    from scripts.sidecar_pkg.source_consent import filter_egress
+    from scripts.sidecar_pkg.source_protocol import filter_egress
 
     filtered = filter_egress(
         {
@@ -5303,6 +5264,7 @@ class DaemonRunner:
         from scripts.sidecar_pkg.source_consent import POLICY
 
         POLICY.configure(config)
+        POLICY.configure_state(get_sidecar_dir() / "source-reads.json")
         from scripts.sidecar_pkg import source_protocol
 
         source_protocol.prepare(config, get_sidecar_dir() / "source-control.json")
@@ -5416,8 +5378,9 @@ class DaemonRunner:
         """Inner implementation of run_once (called only when no cycle is running)."""
         cycle_config = dict(self._config)
         from scripts.sidecar_pkg import source_protocol
+        from scripts.sidecar_pkg.source_settings import report
 
-        source_protocol.sync(cycle_config, get_sidecar_dir() / "source-control.json")
+        source_protocol.sync(cycle_config, get_sidecar_dir() / "source-control.json", report)
         api_url = cycle_config["api_url"]
         api_key = cycle_config["api_key"]
 

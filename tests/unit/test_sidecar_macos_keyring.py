@@ -21,6 +21,9 @@ from unittest.mock import patch
 
 import pytest
 
+from scripts.sidecar_pkg import source_protocol
+from scripts.sidecar_pkg.source_protocol import filter_egress
+
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "scripts"))
 import sidecar  # noqa: E402
 
@@ -32,7 +35,7 @@ from scripts.sidecar_pkg.keyring_value import (  # noqa: E402
     decode_document,
     decode_envelope,
 )
-from scripts.sidecar_pkg.source_catalog import catalog, trusted_rule  # noqa: E402
+from scripts.sidecar_pkg.source_catalog import catalog, source_for_origin, trusted_rule  # noqa: E402
 
 _SERVICE = "gemini"
 _ACCOUNT = "antigravity"
@@ -369,12 +372,12 @@ class TestCatalogAndConsent:
         assert not [key for key in catalog() if key.endswith(".agy-cli") and key != _SOURCE_ID]
 
     def test_the_origin_maps_to_the_source(self):
-        assert consent.source_for_origin("antigravity", _ORIGIN) == _SOURCE_ID
+        assert source_for_origin("antigravity", _ORIGIN) == _SOURCE_ID
 
     def test_the_acp_entry_is_not_our_source(self):
         """Service 'gemini' also holds the Antigravity ACP server's own token;
         that entry is not ours to read."""
-        assert consent.source_for_origin("antigravity", f"keychain:{_SERVICE}:antigravity-acp") == (
+        assert source_for_origin("antigravity", f"keychain:{_SERVICE}:antigravity-acp") == (
             "unknown"
         )
 
@@ -433,10 +436,9 @@ class TestCatalogAndConsent:
     def test_the_credential_is_withheld_from_egress(self, monkeypatch):
         """A Keychain-backed credential stays on the host while the withdrawal
         lifecycle is missing - consent grants the local read, not the egress."""
-        from scripts.sidecar_pkg import source_consent
 
-        monkeypatch.setattr(source_consent.sys, "platform", "darwin")
-        filtered = source_consent.filter_egress(
+        monkeypatch.setattr(source_protocol.sys, "platform", "darwin")
+        filtered = filter_egress(
             {
                 "metrics": [
                     {

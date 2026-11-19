@@ -337,6 +337,7 @@ def _is_revoked(config: dict[str, Any], remote: dict[str, Any], source_id: str) 
 
 def _authorization_state(source_id: str, services: tuple[str, ...], setup_state: str) -> str:
     from scripts.sidecar_pkg.keychain_client import access_groups_blocked
+    from scripts.sidecar_pkg.source_consent import POLICY
 
     if setup_state == "Connecting":
         return setup_state
@@ -350,4 +351,6 @@ def _authorization_state(source_id: str, services: tuple[str, ...], setup_state:
     ]
     if access_groups_blocked(groups):
         return "Action required"
-    return setup_state if setup_state != "Off" else "Setup required"
+    return POLICY.read_state(source_id) or (
+        setup_state if setup_state != "Off" else "Setup required"
+    )

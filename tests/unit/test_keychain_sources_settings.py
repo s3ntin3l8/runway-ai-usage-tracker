@@ -402,7 +402,10 @@ def test_enable_all_and_set_sources_skip_uninstalled_browsers_and_never_action_r
         {"device_id": "device-" + "a" * 32, "api_url": "https://runway.example"},
         tmp_path / "state.json",
     )
-    payload_rows = {row["source_id"]: row for row in proto_client.payload(updated)["sources"]}
+    payload_rows = {
+        row["source_id"]: row
+        for row in proto_client.payload(updated, source_settings.report(updated))["sources"]
+    }
     assert payload_rows["anthropic.edge"]["state"] == "Not installed"
     assert payload_rows["anthropic.edge"]["read"] is False
     assert payload_rows["anthropic.chromium"]["state"] == "Not installed"

@@ -120,7 +120,7 @@ async def test_verified_exact_source_gets_bounded_history_without_leaking_eviden
     environment, origin, forwarded
 ):
     if forwarded:
-        from scripts.sidecar_pkg.source_consent import filter_egress
+        from scripts.sidecar_pkg.source_protocol import filter_egress
 
         entry = filter_egress(
             {

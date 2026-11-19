@@ -80,7 +80,7 @@ def _write_refusal_file(source: str, reason: str) -> Path | None:
     not point at a report that does not exist.
     """
     try:
-        from sidecar_app.config import get_config_path
+        from scripts.sidecar_pkg.local_paths import get_config_path
 
         path = get_config_path().parent / "source_authorization.txt"
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -132,8 +132,8 @@ def _refuse(source: str, reason: str) -> None:
 
 def resources(source_id: str) -> tuple[list[str], str | None]:
     if source_id == "anthropic.claude-code":
-        from scripts.sidecar import local_keychain_login_dirs
         from scripts.sidecar_pkg.claude_code_keychain import account_name, service_candidates
+        from scripts.sidecar_pkg.local_paths import local_keychain_login_dirs
 
         return service_candidates(local_keychain_login_dirs()), account_name()
     descriptor = catalog()[source_id]
@@ -208,7 +208,7 @@ def verify_background(source_id: str, ticket: consent.ConsentTicket) -> bool:
             return False
         item = selected[0]
         value = bounded_call({"persistent": item["persistent"]})
-        return (
+        success = (
             isinstance(value, dict)
             and value.get("persistent") == item["persistent"]
             and value.get("service") == item["service"]
@@ -216,7 +216,13 @@ def verify_background(source_id: str, ticket: consent.ConsentTicket) -> bool:
             and isinstance(value.get("data"), bytes)
             and bool(value["data"])
         )
-    except (KeychainError, KeyError, TypeError):
+        if success:
+            consent.POLICY.record_read(ticket)
+        return success
+    except KeychainError as exc:
+        consent.POLICY.record_block(ticket, exc.reason)
+        return False
+    except (KeyError, TypeError):
         return False
     finally:
         client.close()
@@ -289,6 +295,8 @@ class SetupController:
                             macos_cookies._KEY_CACHE.pop(service, None)
                             macos_cookies._KEY_STATUS.pop(service, None)
             if consent.POLICY.current(ticket):
+                if not success:
+                    consent.POLICY.record_block(ticket, "unavailable")
                 self._states[source_id] = (ticket, "Limited" if success else "Action required")
 
     def start_all(self, source_ids: list[str]) -> dict[str, Any]:
@@ -347,6 +355,7 @@ class SetupController:
                                 consent.POLICY.current(ticket)
                                 and self.state(source_id) == "Connecting"
                             ):
+                                consent.POLICY.record_block(ticket, "unavailable")
                                 self._states[source_id] = (ticket, "Action required")
                 with self._lock:
                     batch["done"] += 1
@@ -439,7 +448,7 @@ def authorization_command(argv: list[str]) -> None:
     timer.start()
     try:
         from scripts.sidecar_pkg.keychain_authorization import HelperReadAPI, authorize_once
-        from sidecar_app.config import get_config_path
+        from scripts.sidecar_pkg.local_paths import get_config_path
 
         config_path = get_config_path()
         if (
@@ -454,7 +463,7 @@ def authorization_command(argv: list[str]) -> None:
             or consent.SourcePolicy(config).ticket(args.authorize_keychain_source) is None
         ):
             raise _LocalRefusedError("local permission disabled")
-        from scripts.sidecar import configure_login_dirs
+        from scripts.sidecar_pkg.local_paths import configure_login_dirs
 
         configure_login_dirs(config)
         services, account = resources(args.authorize_keychain_source)

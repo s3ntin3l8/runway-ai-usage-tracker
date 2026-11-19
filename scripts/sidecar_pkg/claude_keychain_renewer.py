@@ -118,11 +118,15 @@ class KeychainRenewer:
             raise KeychainError("permission disabled")
 
     def renew(self) -> bool:
+        from scripts.sidecar_pkg import source_consent as consent
+
         if not self.due():
             return True
         with claude_renewal_lock() as acquired:
             if not acquired:
                 return False
+            ticket = consent.POLICY.ticket("anthropic.claude-code")
+            found = False
             ok = True
             store = self._store_factory()
             for service in service_candidates(self._directories()):
@@ -131,12 +135,18 @@ class KeychainRenewer:
                 try:
                     item = store.find(service, account_name())
                     if item is not None:
+                        found = True
                         ok = self._renew_item(store, item) and ok
                 except KeychainError as exc:
                     if exc.reason in {"denied", "timed_out", "unavailable"}:
                         block_access()
                     self._log(service, "permission unavailable" if access_blocked() else exc.reason)
                     ok = False
+            else:
+                # Optional login misses must not replace a completed successful
+                # read. Interrupted or failed keep-alive passes retain the block.
+                if found and ok and self._allowed() and ticket is not None:
+                    consent.POLICY.record_read(ticket)
             return ok
 
     def _clear(self, store: KeychainStore, reference: bytes) -> None:

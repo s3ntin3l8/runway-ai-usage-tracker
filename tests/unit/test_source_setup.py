@@ -134,7 +134,7 @@ def test_authorization_child_says_authorization_requires_the_packaged_build(monk
 
 def test_authorization_child_writes_the_refusal_when_there_is_no_console(monkeypatch, tmp_path):
     """A windowed build has no stderr, so the reason goes to a file the user can find."""
-    from scripts.sidecar_pkg import source_setup
+    from scripts.sidecar_pkg import local_paths, source_setup
     from sidecar_app import config
 
     monkeypatch.setattr(source_setup.sys, "platform", "darwin")
@@ -145,7 +145,7 @@ def test_authorization_child_writes_the_refusal_when_there_is_no_console(monkeyp
     monkeypatch.setattr(source_setup, "_notify_windows", messages.append)
     path = tmp_path / "config.json"
     config.save_local_config(path, {})
-    monkeypatch.setattr(config, "get_config_path", lambda: path)
+    monkeypatch.setattr(local_paths, "get_config_path", lambda: path)
 
     with pytest.raises(SystemExit) as result:
         source_setup.authorization_command(["--authorize-keychain-source", "anthropic.chrome"])
@@ -159,7 +159,7 @@ def test_authorization_child_writes_the_refusal_when_there_is_no_console(monkeyp
 @pytest.mark.skipif(sys.platform == "win32", reason="native scope uses POSIX ownership")
 def test_authorization_child_reports_a_denied_keychain_read(monkeypatch, tmp_path, capsys):
     """A denied read is reported with its own reason, not as an opaque failure."""
-    from scripts.sidecar_pkg import keychain_authorization, source_setup
+    from scripts.sidecar_pkg import keychain_authorization, local_paths, source_setup
     from scripts.sidecar_pkg.keychain_protocol import KeychainError
     from sidecar_app import config
 
@@ -167,7 +167,7 @@ def test_authorization_child_reports_a_denied_keychain_read(monkeypatch, tmp_pat
     monkeypatch.setattr(source_setup.sys, "frozen", True, raising=False)
     path = tmp_path / "config.json"
     config.save_local_config(path, consent.SourcePolicy.enable_all({}))
-    monkeypatch.setattr(config, "get_config_path", lambda: path)
+    monkeypatch.setattr(local_paths, "get_config_path", lambda: path)
     monkeypatch.setattr(keychain_authorization, "HelperReadAPI", Mock)
     monkeypatch.setattr(
         keychain_authorization,
@@ -186,14 +186,14 @@ def test_authorization_child_reports_a_denied_keychain_read(monkeypatch, tmp_pat
 
 
 def test_authorization_child_checks_local_permission_before_native(monkeypatch, tmp_path, capsys):
-    from scripts.sidecar_pkg import keychain_authorization, source_setup
+    from scripts.sidecar_pkg import keychain_authorization, local_paths, source_setup
     from sidecar_app import config
 
     monkeypatch.setattr(source_setup.sys, "platform", "darwin")
     monkeypatch.setattr(source_setup.sys, "frozen", True, raising=False)
     path = tmp_path / "config.json"
     config.save_local_config(path, {})
-    monkeypatch.setattr(config, "get_config_path", lambda: path)
+    monkeypatch.setattr(local_paths, "get_config_path", lambda: path)
     native = Mock(side_effect=AssertionError("must not load frameworks"))
     monkeypatch.setattr(keychain_authorization, "HelperReadAPI", native)
     with pytest.raises(SystemExit) as result:
@@ -205,14 +205,14 @@ def test_authorization_child_checks_local_permission_before_native(monkeypatch, 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="native scope uses POSIX ownership")
 def test_authorization_child_uses_only_catalogued_resource(monkeypatch, tmp_path):
-    from scripts.sidecar_pkg import keychain_authorization, source_setup
+    from scripts.sidecar_pkg import keychain_authorization, local_paths, source_setup
     from sidecar_app import config
 
     monkeypatch.setattr(source_setup.sys, "platform", "darwin")
     monkeypatch.setattr(source_setup.sys, "frozen", True, raising=False)
     path = tmp_path / "config.json"
     config.save_local_config(path, consent.SourcePolicy.enable_all({}))
-    monkeypatch.setattr(config, "get_config_path", lambda: path)
+    monkeypatch.setattr(local_paths, "get_config_path", lambda: path)
     native = Mock()
     monkeypatch.setattr(keychain_authorization, "HelperReadAPI", lambda: native)
     authorize = Mock()
