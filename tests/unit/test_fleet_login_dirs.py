@@ -18,7 +18,7 @@ def isolated_dirs(monkeypatch, tmp_path):
     monkeypatch.delenv("RUNWAY_API_URL", raising=False)
     monkeypatch.delenv("RUNWAY_API_KEY", raising=False)
     monkeypatch.setattr(sidecar, "_LOGIN_DIR_REMOTE", clean_login_dirs({}))
-    monkeypatch.setattr(sidecar, "_LOGIN_DIR_EXTRAS", {})
+    monkeypatch.setattr(sidecar.local_paths, "_LOGIN_DIR_EXTRAS", {})
     monkeypatch.setattr(sidecar, "_LOGIN_DIR_SERVER", None)
 
 

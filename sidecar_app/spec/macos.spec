@@ -94,6 +94,7 @@ a = Analysis(
         "scripts.sidecar_pkg.source_settings",
         "scripts.sidecar_pkg.source_protocol",
         "scripts.sidecar_pkg.source_setup",
+        "scripts.sidecar_pkg.local_paths",
         # Classified browser cookie stores (locked / app-bound). Imported at
         # module level in scripts/sidecar.py, which this spec bundles as data,
         # so PyInstaller never scans it.

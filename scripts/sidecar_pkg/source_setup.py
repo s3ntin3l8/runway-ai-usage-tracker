@@ -80,7 +80,7 @@ def _write_refusal_file(source: str, reason: str) -> Path | None:
     not point at a report that does not exist.
     """
     try:
-        from sidecar_app.config import get_config_path
+        from scripts.sidecar_pkg.local_paths import get_config_path
 
         path = get_config_path().parent / "source_authorization.txt"
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -132,8 +132,8 @@ def _refuse(source: str, reason: str) -> None:
 
 def resources(source_id: str) -> tuple[list[str], str | None]:
     if source_id == "anthropic.claude-code":
-        from scripts.sidecar import local_keychain_login_dirs
         from scripts.sidecar_pkg.claude_code_keychain import account_name, service_candidates
+        from scripts.sidecar_pkg.local_paths import local_keychain_login_dirs
 
         return service_candidates(local_keychain_login_dirs()), account_name()
     descriptor = catalog()[source_id]
@@ -448,7 +448,7 @@ def authorization_command(argv: list[str]) -> None:
     timer.start()
     try:
         from scripts.sidecar_pkg.keychain_authorization import HelperReadAPI, authorize_once
-        from sidecar_app.config import get_config_path
+        from scripts.sidecar_pkg.local_paths import get_config_path
 
         config_path = get_config_path()
         if (
@@ -463,7 +463,7 @@ def authorization_command(argv: list[str]) -> None:
             or consent.SourcePolicy(config).ticket(args.authorize_keychain_source) is None
         ):
             raise _LocalRefusedError("local permission disabled")
-        from scripts.sidecar import configure_login_dirs
+        from scripts.sidecar_pkg.local_paths import configure_login_dirs
 
         configure_login_dirs(config)
         services, account = resources(args.authorize_keychain_source)

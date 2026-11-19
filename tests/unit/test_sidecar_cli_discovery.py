@@ -301,7 +301,7 @@ class TestCustomLoginDirs:
         monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
         monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
         monkeypatch.delenv("CODEX_HOME", raising=False)
-        monkeypatch.setattr(sidecar, "_LOGIN_DIR_EXTRAS", {})
+        monkeypatch.setattr(sidecar.local_paths, "_LOGIN_DIR_EXTRAS", {})
 
     @staticmethod
     def _claude_login(directory: Path, email: str) -> Path:

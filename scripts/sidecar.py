@@ -45,8 +45,14 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+from scripts.sidecar_pkg import local_paths
 from scripts.sidecar_pkg import transport as server_http
 from scripts.sidecar_pkg.expiry import expiry_seconds
+from scripts.sidecar_pkg.local_paths import (
+    _split_dirs,
+    get_sidecar_dir,
+    local_keychain_login_dirs,
+)
 from scripts.sidecar_pkg.opencode_credentials import (
     key_binding as opencode_key_binding,
 )
@@ -1150,25 +1156,6 @@ def _reported_update_settings() -> tuple[str | None, bool | None]:
     return channel, auto
 
 
-def get_sidecar_dir() -> Path:
-    """Get the sidecar configuration directory.
-
-    Honours RUNWAY_CONFIG_DIR for parity with the server (set via .env in
-    dev) so `make dev` and `make sidecar` share the same project-local
-    config when invoked from the repo. Falls back to the platform default
-    otherwise.
-    """
-    override = os.getenv("RUNWAY_CONFIG_DIR")
-    if override:
-        return Path(override) / "sidecar"
-    if platform.system() == "Windows":
-        app_data = os.getenv("APPDATA")
-        if app_data:
-            return Path(app_data) / "runway" / "sidecar"
-        return Path.home() / "AppData" / "Roaming" / "runway" / "sidecar"
-    return Path.home() / ".config" / "runway" / "sidecar"
-
-
 def get_queue_dir() -> Path:
     """Get the queue directory for offline storage."""
     return get_sidecar_dir() / "queue"
@@ -1765,8 +1752,6 @@ def resolve_path(path_str: str) -> Path:
 # CLIs that relocate their whole state dir via an env var. A sidecar running as a
 # service does not inherit the user's shell env, so each also has a local config
 # key (comma-separated string or list) that is searched in addition to the env var.
-_LOGIN_DIR_CONFIG_KEYS = {"CLAUDE_CONFIG_DIR": "claude_config_dirs", "CODEX_HOME": "codex_home"}
-_LOGIN_DIR_EXTRAS: dict[str, list[str]] = {}
 _LOGIN_DIR_REMOTE: dict[str, list[str]] = {"claude_config_dirs": [], "codex_home": []}
 _LOGIN_DIR_SERVER: tuple[str, str] | None = None
 _LOGIN_DIR_LOCK = threading.RLock()
@@ -1826,32 +1811,11 @@ def login_directory_report() -> dict[str, Any]:
     }
 
 
-def _split_dirs(value: Any) -> list[str]:
-    if isinstance(value, str):
-        value = value.split(",")
-    if not isinstance(value, list | tuple):
-        return []
-    return [v.strip() for v in value if isinstance(v, str) and v.strip()]
-
-
 def configure_login_dirs(config: dict[str, Any]) -> None:
-    """Pick up the per-CLI extra login dirs from the sidecar's local config."""
+    """Pick up local CLI directories and scope Fleet's additions to this server."""
     if "api_url" in config or "api_key" in config:
         scope_login_dirs(config)
-    _LOGIN_DIR_EXTRAS.clear()
-    for env_name, key in _LOGIN_DIR_CONFIG_KEYS.items():
-        dirs = _split_dirs(config.get(key))
-        if dirs:
-            _LOGIN_DIR_EXTRAS[env_name] = dirs
-
-
-def local_keychain_login_dirs() -> list[Path]:
-    """Only local env/config can authorize additional Claude Keychain targets."""
-    values = [
-        *_split_dirs(os.getenv("CLAUDE_CONFIG_DIR", "")),
-        *_LOGIN_DIR_EXTRAS.get("CLAUDE_CONFIG_DIR", []),
-    ]
-    return list(dict.fromkeys(Path(os.path.expanduser(value)).resolve() for value in values))
+    local_paths.configure_login_dirs(config)
 
 
 def custom_login_dirs(env_name: str) -> list[Path]:
@@ -1862,10 +1826,10 @@ def custom_login_dirs(env_name: str) -> list[Path]:
     drops files it has already returned.
     """
     dirs: list[Path] = []
-    remote = _LOGIN_DIR_REMOTE.get(_LOGIN_DIR_CONFIG_KEYS.get(env_name, ""), [])
+    remote = _LOGIN_DIR_REMOTE.get(local_paths._LOGIN_DIR_CONFIG_KEYS.get(env_name, ""), [])
     for raw in [
         *_split_dirs(os.getenv(env_name, "")),
-        *_LOGIN_DIR_EXTRAS.get(env_name, []),
+        *local_paths._LOGIN_DIR_EXTRAS.get(env_name, []),
         *remote,
     ]:
         p = Path(os.path.expanduser(raw))

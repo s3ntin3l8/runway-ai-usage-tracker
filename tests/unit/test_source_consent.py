@@ -164,12 +164,18 @@ def test_fleet_directories_do_not_expand_keychain_targets(monkeypatch, tmp_path)
 
     monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
     monkeypatch.setattr(
-        sidecar, "_LOGIN_DIR_EXTRAS", {"CLAUDE_CONFIG_DIR": [str(tmp_path / "local")]}
+        sidecar.local_paths, "_LOGIN_DIR_EXTRAS", {"CLAUDE_CONFIG_DIR": [str(tmp_path / "local")]}
     )
     monkeypatch.setattr(
         sidecar, "_LOGIN_DIR_REMOTE", {"claude_config_dirs": [str(tmp_path / "remote")]}
     )
     assert sidecar.local_keychain_login_dirs() == [tmp_path / "local"]
+
+    from scripts.sidecar_pkg import claude_code_keychain, source_setup
+
+    services, account = source_setup.resources("anthropic.claude-code")
+    assert services == claude_code_keychain.service_candidates([tmp_path / "local"])
+    assert account == claude_code_keychain.account_name()
 
 
 def test_keychain_egress_is_withheld_until_withdrawal_protocol(monkeypatch):
@@ -333,4 +339,36 @@ def test_consent_dependencies_cannot_reach_native_readers(module):
                 imports.extend(f"{node.module}.{alias.name}" for alias in node.names)
             pending.extend(
                 (*chain, name) for name in imports if name.startswith("scripts.sidecar_pkg.")
+            )
+
+
+def test_source_reporting_dependencies_cannot_reach_daemon():
+    """Reporting must stay below the daemon, even through deferred setup imports."""
+    import ast
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    pending = [("scripts.sidecar_pkg.source_settings",)]
+    visited = set()
+    while pending:
+        chain = pending.pop()
+        module = chain[-1]
+        if module in visited:
+            continue
+        visited.add(module)
+        assert module != "scripts.sidecar" and not module.startswith("sidecar_app"), " -> ".join(
+            chain
+        )
+        path = root.joinpath(*module.split(".")).with_suffix(".py")
+        if not path.is_file():
+            continue
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            imports = []
+            if isinstance(node, ast.Import):
+                imports = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                imports = [node.module]
+                imports.extend(f"{node.module}.{alias.name}" for alias in node.names)
+            pending.extend(
+                (*chain, name) for name in imports if name.startswith(("scripts.", "sidecar_app"))
             )
