@@ -325,8 +325,13 @@ def test_missing_optional_recovery_record_does_not_invalidate_read(local, monkey
     "outcome",
     ["missing-first", "missing-last", "all-missing", "denied", "timed_out", "unavailable"],
 )
-def test_claude_candidate_scan_reports_source_outcome(local, tmp_path, monkeypatch, outcome):
-    from scripts.sidecar_pkg import claude_code_keychain, macos_keychain_store
+@pytest.mark.parametrize("scan", ["collection", "keep-alive"])
+def test_claude_candidate_scan_reports_source_outcome(local, tmp_path, monkeypatch, outcome, scan):
+    from scripts.sidecar_pkg import (
+        claude_code_keychain,
+        claude_keychain_renewer,
+        macos_keychain_store,
+    )
     from scripts.sidecar_pkg.keychain_protocol import KeychainError
 
     policy = source_consent.POLICY
@@ -340,27 +345,45 @@ def test_claude_candidate_scan_reports_source_outcome(local, tmp_path, monkeypat
     monkeypatch.setattr(macos_keychain_store.sys, "platform", "darwin")
     monkeypatch.delenv("CLAUDE_SECURESTORAGE_CONFIG_DIR", raising=False)
     monkeypatch.setattr(claude_code_keychain, "account_name", lambda: "synthetic-user")
+    monkeypatch.setattr(claude_keychain_renewer, "account_name", lambda: "synthetic-user")
     services = claude_code_keychain.service_candidates([tmp_path / "extra"])
     present = services[1] if outcome == "missing-first" else services[0]
     item = {"service": present, "account": "synthetic-user", "persistent": b"synthetic-ref"}
 
     def call(operation, query, values, **kwargs):
         if "service" in query:
+            if query["service"] == macos_keychain_store.RECOVERY_SERVICE:
+                raise KeychainError("missing")
             if query["service"] == present and outcome != "all-missing":
                 return [item]
             raise KeychainError(
                 outcome if outcome in {"denied", "timed_out", "unavailable"} else "missing"
             )
-        return {**item, "data": b'{"accessToken": "synthetic-token"}'}
+        return {
+            **item,
+            "data": json.dumps(
+                {
+                    "claudeAiOauth": {
+                        "accessToken": "synthetic-token",
+                        "refreshToken": "synthetic-refresh",
+                        "expiresAt": 4102444800000,
+                    }
+                }
+            ).encode(),
+        }
 
     client = Mock()
     client.access_blocked.return_value = False
     client.call.side_effect = call
     monkeypatch.setattr(keychain_client, "get_keychain_client", lambda: client)
-    candidates = claude_code_keychain.read_candidates(
-        [tmp_path / "extra"], {"accessToken": "oauth_token"}
-    )
-    assert len(candidates) == (0 if outcome == "all-missing" else 1)
+    if scan == "collection":
+        candidates = claude_code_keychain.read_candidates(
+            [tmp_path / "extra"], {"claudeAiOauth.accessToken": "oauth_token"}
+        )
+        assert len(candidates) == (0 if outcome == "all-missing" else 1)
+    else:
+        worker = claude_keychain_renewer.KeychainRenewer(lambda: [tmp_path / "extra"], lambda: True)
+        assert worker.renew() == (outcome not in {"denied", "timed_out", "unavailable"})
     successful = outcome in {"missing-first", "missing-last"}
     assert row(local)["state"] == ("Authorized" if successful else "Action required")
     saved = json.loads(path.read_text())[SOURCE]
@@ -371,6 +394,7 @@ def test_claude_candidate_scan_reports_source_outcome(local, tmp_path, monkeypat
     else:
         assert saved["last_block_at"] >= saved["last_read_at"]
     assert "synthetic-token" not in path.read_text()
+    assert "synthetic-refresh" not in path.read_text()
     assert "synthetic-user" not in path.read_text()
     persisted = SourcePolicy(local)
     persisted.configure_state(path)

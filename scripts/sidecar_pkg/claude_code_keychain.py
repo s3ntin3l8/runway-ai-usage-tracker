@@ -1,4 +1,4 @@
-"""Read-only, account-scoped Claude Code macOS Keychain discovery."""
+"""Account-scoped Claude Code discovery; records outcomes without changing Keychain items."""
 
 from __future__ import annotations
 
