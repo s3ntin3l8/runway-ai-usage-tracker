@@ -340,6 +340,19 @@ the extractor reads, so local totals are low by about another 9% of spend. Until
 are extracted from the transcripts and the side calls are captured from telemetry,
 local totals are low by these shares.
 
+The sidecar closes the side-call gap with a receiver for Claude Code's OpenTelemetry
+log events (`scripts/sidecar_pkg/otel_receiver.py`). It listens on `127.0.0.1:4318`
+only, accepts OTLP HTTP/JSON at `POST /v1/logs`, and keeps `api_request` events whose
+`query_source` is not `repl_main_thread` or `agent:*`: the main loop and agent calls come
+from the transcripts, everything else (including a `query_source` not seen before) is
+captured. Only an allow-list of attributes (model, token counts, `request_id`,
+`query_source`, `speed`, `effort`, session id, timestamp) is read; cost and all user,
+account and organisation fields are dropped while parsing, and the server prices the
+event from its tokens. Events are stored as `otel|<request_id>`, queued in a bounded
+in-memory queue (the oldest are dropped past the cap) and pushed with the next cycle's
+Claude events. Only sessions that were started with telemetry enabled are covered. If
+the port is taken the sidecar logs one warning and runs without the receiver.
+
 ## Expiry units
 
 A credential's expiry may be published in seconds, milliseconds, microseconds or
