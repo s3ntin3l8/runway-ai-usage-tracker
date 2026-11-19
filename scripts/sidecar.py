@@ -2230,7 +2230,6 @@ def _get_credential_cache() -> Any:
 # otherwise a host whose opencode events all retag re-extracts the whole
 # bootstrap window every cycle. Rebuilt on every extraction.
 _EVENT_WATERMARK_ALIASES: dict[tuple[str, str], tuple[str, str]] = {}
-from scripts.sidecar_pkg.otel_receiver import EVENT_ID_PREFIX as OTEL_EVENT_ID_PREFIX  # noqa: E402
 
 # provider_id → {"account_id", "source"} for the identity this sidecar stamped
 # on each event provider's data in the last collection cycle. ``source`` is
@@ -5620,6 +5619,9 @@ class DaemonRunner:
                 if events and not events_failed:
                     try:
                         from scripts.sidecar_pkg.event_watermark import EventWatermark
+                        from scripts.sidecar_pkg.otel_receiver import (
+                            EVENT_ID_PREFIX as OTEL_EVENT_ID_PREFIX,
+                        )
 
                         wm = EventWatermark(
                             Path(

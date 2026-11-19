@@ -270,6 +270,7 @@ class OtelReceiver:
         self.dropped_overflow = 0
         self.dropped_incomplete = 0
         self.filtered = 0
+        self._logged = (0, 0, 0)  # filtered, incomplete, overflow at the last drain
 
     @property
     def address(self) -> tuple[str, int] | None:
@@ -296,17 +297,18 @@ class OtelReceiver:
             return False
         server.receiver = self
         thread = threading.Thread(target=server.serve_forever, name="OtelReceiver", daemon=True)
+        self._server = server
+        self._thread = thread
         try:
             thread.start()
         except RuntimeError as exc:  # e.g. no threads left to spawn
+            self._server = self._thread = None
             server.server_close()
             logging.warning(
                 "Claude Code telemetry receiver not started: cannot spawn its thread (%s)",
                 type(exc).__name__,
             )
             return False
-        self._server = server
-        self._thread = thread
         logging.info("Claude Code telemetry receiver listening on %s:%s", *self.address or ())
         return True
 
@@ -351,10 +353,13 @@ class OtelReceiver:
         with self._lock:
             events = list(self._queue)
             self._queue.clear()
-            filtered, incomplete = self.filtered, self.dropped_incomplete
-            overflow = self.dropped_overflow
+            totals = (self.filtered, self.dropped_incomplete, self.dropped_overflow)
+            filtered, incomplete, overflow = (
+                now - before for now, before in zip(totals, self._logged, strict=True)
+            )
+            self._logged = totals
         if events or filtered or incomplete or overflow:
-            # Counts only, never values; totals since start.
+            # Counts only, never values; since the previous drain.
             logging.debug(
                 "telemetry: drained %d, filtered %d, dropped %d (incomplete), %d (overflow)",
                 len(events),
