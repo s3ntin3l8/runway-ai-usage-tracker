@@ -69,11 +69,40 @@ def _detect_indent(text: str) -> int | str:
     return 2
 
 
+def _detect_format(raw_text: str) -> tuple[int | str | None, str, str]:
+    """Return ``(indent, newline, trailing_nl)`` matching *raw_text*'s formatting."""
+    newline = "\r\n" if "\r\n" in raw_text else "\n"
+    trailing_nl = newline if raw_text.endswith(("\n", "\r")) else ""
+    if "\n" not in raw_text.rstrip("\r\n"):
+        return None, newline, trailing_nl
+    return _detect_indent(raw_text), newline, trailing_nl
+
+
+def _format_settings_json(
+    data: dict[str, Any],
+    indent: int | str | None,
+    newline: str,
+    trailing_nl: str,
+) -> bytes:
+    text = json.dumps(data, indent=indent, ensure_ascii=False)
+    if newline != "\n":
+        text = text.replace("\n", newline)
+    return (text + trailing_nl).encode("utf-8")
+
+
 def _stat_sig(path: Path) -> tuple[int, int] | None:
     try:
         st = path.stat()
         return (st.st_mtime_ns, st.st_size)
     except FileNotFoundError:
+        return None
+
+
+def settings_stat_sig(path: Path) -> tuple[int, int] | None:
+    """Best-effort ``(mtime_ns, size)`` signature for change detection; None on OSError."""
+    try:
+        return _stat_sig(path)
+    except OSError:
         return None
 
 
@@ -84,11 +113,12 @@ def _atomic_write_bytes(
     check_stat: bool = False,
     expected_stat: tuple[int, int] | None = None,
 ) -> bool:
-    """Write *content* to *path* atomically. Returns False on concurrent edit."""
-    path.parent.mkdir(parents=True, exist_ok=True)
+    """Write *content* to *path* atomically (resolving symlinks). Returns False on concurrent edit."""
+    write_target = Path(os.path.realpath(path))
+    write_target.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(
-        dir=str(path.parent),
-        prefix=f".{path.name}.",
+        dir=str(write_target.parent),
+        prefix=f".{write_target.name}.",
         suffix=".tmp",
     )
     tmp_path = Path(tmp_name)
@@ -100,7 +130,7 @@ def _atomic_write_bytes(
         if check_stat and _stat_sig(path) != expected_stat:
             tmp_path.unlink(missing_ok=True)
             return False
-        os.replace(tmp_path, path)
+        os.replace(tmp_path, write_target)
         return True
     except Exception:
         tmp_path.unlink(missing_ok=True)
@@ -163,9 +193,13 @@ def sync_claude_telemetry(
     target = settings_path or default_settings_path()
     state_file = state_path or default_state_path()
 
-    if not enabled:
-        return _disable(target, state_file)
-    return _enable(target, state_file)
+    try:
+        if not enabled:
+            return _disable(target, state_file)
+        return _enable(target, state_file)
+    except OSError as exc:
+        logging.warning("Failed to update %s (%s); leaving file untouched", target, exc)
+        return "error"
 
 
 def _enable(settings_path: Path, state_path: Path) -> str:
@@ -176,13 +210,11 @@ def _enable(settings_path: Path, state_path: Path) -> str:
         if parsed is None:
             return "error"
         data, raw_text, raw_bytes, expected_stat = parsed
-        indent = _detect_indent(raw_text)
-        trailing_nl = "\n" if raw_text.endswith("\n") else ""
+        indent, newline, trailing_nl = _detect_format(raw_text)
     else:
         data = {}
         expected_stat = None
-        indent = 2
-        trailing_nl = "\n"
+        indent, newline, trailing_nl = 2, "\n", "\n"
 
     env = data.get("env")
     if isinstance(env, dict):
@@ -201,6 +233,14 @@ def _enable(settings_path: Path, state_path: Path) -> str:
     newly_added = [k for k in TELEMETRY_ENV_KEYS if k not in env_dict]
 
     if file_exists and not newly_added and not created_env_now:
+        if not state.get("added_keys") and not state.get("created_env"):
+            _save_state(
+                state_path,
+                {
+                    "added_keys": list(TELEMETRY_ENV_KEYS),
+                    "created_env": set(env_dict.keys()) <= set(TELEMETRY_ENV_KEYS),
+                },
+            )
         return "enabled"
 
     if file_exists:
@@ -211,10 +251,10 @@ def _enable(settings_path: Path, state_path: Path) -> str:
     for key in newly_added:
         env_dict[key] = TELEMETRY_ENV_KEYS[key]
 
-    new_text = json.dumps(data, indent=indent) + trailing_nl
+    new_bytes = _format_settings_json(data, indent, newline, trailing_nl)
     if not _atomic_write_bytes(
         settings_path,
-        new_text.encode("utf-8"),
+        new_bytes,
         check_stat=True,
         expected_stat=expected_stat,
     ):
@@ -256,12 +296,11 @@ def _disable(settings_path: Path, state_path: Path) -> str:
             changed = True
 
     if changed:
-        indent = _detect_indent(raw_text)
-        trailing_nl = "\n" if raw_text.endswith("\n") else ""
-        new_text = json.dumps(data, indent=indent) + trailing_nl
+        indent, newline, trailing_nl = _detect_format(raw_text)
+        new_bytes = _format_settings_json(data, indent, newline, trailing_nl)
         if not _atomic_write_bytes(
             settings_path,
-            new_text.encode("utf-8"),
+            new_bytes,
             check_stat=True,
             expected_stat=expected_stat,
         ):

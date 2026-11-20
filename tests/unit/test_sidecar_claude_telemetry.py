@@ -194,6 +194,7 @@ def test_sidecar_real_status_path_off_leaves_file_untouched_and_on_reports_enabl
     monkeypatch.setattr(sidecar, "_CLAUDE_TELEMETRY_LOCAL", None)
     monkeypatch.setattr(sidecar, "_CLAUDE_TELEMETRY_SERVER", False)
     monkeypatch.setattr(sidecar, "_CLAUDE_TELEMETRY_STATUS", "disabled")
+    monkeypatch.setattr(sidecar, "_LAST_TELEMETRY_SYNC", None)
     monkeypatch.setattr(
         sidecar, "run_collection", lambda *a, **kw: sidecar.CollectionResult([], [], 0, [])
     )
@@ -235,3 +236,154 @@ def test_sidecar_real_status_path_off_leaves_file_untouched_and_on_reports_enabl
     # Cycle 3: next status report carries "enabled".
     runner.run_once()
     assert sent_payloads[2]["claude_telemetry_status"] == "enabled"
+
+
+def test_oserror_on_write_returns_error_and_logs_warning(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+):
+    settings_path = tmp_path / ".claude" / "settings.json"
+    state_path = tmp_path / "state" / "claude-telemetry-state.json"
+
+    def raise_perm(*args, **kwargs):
+        raise PermissionError("read-only directory")
+
+    monkeypatch.setattr(ct, "_atomic_write_bytes", raise_perm)
+
+    with caplog.at_level(logging.WARNING):
+        status = ct.sync_claude_telemetry(True, settings_path=settings_path, state_path=state_path)
+
+    assert status == "error"
+    assert len(caplog.records) == 1
+    assert "read-only directory" in caplog.records[0].message
+
+
+def test_symlinked_settings_preserves_symlink_and_updates_target(tmp_path: Path):
+    dotfiles_dir = tmp_path / "dotfiles"
+    dotfiles_dir.mkdir()
+    real_settings = dotfiles_dir / "settings.json"
+    original_obj = {"model": "sonnet"}
+    real_settings.write_text(json.dumps(original_obj, indent=2) + "\n", encoding="utf-8")
+
+    claude_dir = tmp_path / ".claude"
+    claude_dir.mkdir()
+    settings_link = claude_dir / "settings.json"
+    settings_link.symlink_to(real_settings)
+    state_path = tmp_path / "state.json"
+
+    assert (
+        ct.sync_claude_telemetry(True, settings_path=settings_link, state_path=state_path)
+        == "enabled"
+    )
+    assert settings_link.is_symlink()
+    assert settings_link.resolve() == real_settings.resolve()
+    assert json.loads(real_settings.read_text(encoding="utf-8"))["env"] == ct.TELEMETRY_ENV_KEYS
+
+    assert (
+        ct.sync_claude_telemetry(False, settings_path=settings_link, state_path=state_path)
+        == "disabled"
+    )
+    assert settings_link.is_symlink()
+    assert json.loads(real_settings.read_text(encoding="utf-8")) == original_obj
+
+
+def test_preserves_non_ascii_crlf_and_single_line_formatting(tmp_path: Path):
+    # CRLF + non-ASCII round-trip
+    settings_path = tmp_path / "crlf.json"
+    state_path = tmp_path / "crlf-state.json"
+    original_text = '{\r\n  "permissions": {\r\n    "allow": [\r\n      "Bash(echo h\u00e9llo)"\r\n    ]\r\n  }\r\n}\r\n'
+    settings_path.write_bytes(original_text.encode("utf-8"))
+
+    assert (
+        ct.sync_claude_telemetry(True, settings_path=settings_path, state_path=state_path)
+        == "enabled"
+    )
+    enabled_bytes = settings_path.read_bytes()
+    assert b"\r\n" in enabled_bytes
+    assert "h\u00e9llo".encode() in enabled_bytes
+
+    assert (
+        ct.sync_claude_telemetry(False, settings_path=settings_path, state_path=state_path)
+        == "disabled"
+    )
+    assert settings_path.read_bytes() == original_text.encode("utf-8")
+
+    # Single-line JSON stays single-line
+    single_path = tmp_path / "single.json"
+    single_state = tmp_path / "single-state.json"
+    single_path.write_text('{"model":"opus"}', encoding="utf-8")
+
+    assert (
+        ct.sync_claude_telemetry(True, settings_path=single_path, state_path=single_state)
+        == "enabled"
+    )
+    assert "\n" not in single_path.read_text(encoding="utf-8")
+
+    assert (
+        ct.sync_claude_telemetry(False, settings_path=single_path, state_path=single_state)
+        == "disabled"
+    )
+    single_after = single_path.read_text(encoding="utf-8")
+    assert "\n" not in single_after
+    assert json.loads(single_after) == {"model": "opus"}
+
+
+def test_reestablishes_ownership_when_keys_present_and_state_file_missing(tmp_path: Path):
+    settings_path = tmp_path / "settings.json"
+    state_path = tmp_path / "state.json"
+    settings_path.write_text('{"model": "sonnet"}\n', encoding="utf-8")
+
+    assert (
+        ct.sync_claude_telemetry(True, settings_path=settings_path, state_path=state_path)
+        == "enabled"
+    )
+    state_path.unlink()
+
+    # Re-enabling when all keys are already present re-creates the state file.
+    assert (
+        ct.sync_claude_telemetry(True, settings_path=settings_path, state_path=state_path)
+        == "enabled"
+    )
+    assert state_path.exists()
+
+    assert (
+        ct.sync_claude_telemetry(False, settings_path=settings_path, state_path=state_path)
+        == "disabled"
+    )
+    assert json.loads(settings_path.read_text(encoding="utf-8")) == {"model": "sonnet"}
+
+
+def test_sidecar_sync_skips_redundant_reads_when_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    import scripts.sidecar as sidecar
+
+    claude_settings = tmp_path / ".claude" / "settings.json"
+    claude_settings.parent.mkdir(parents=True)
+    claude_settings.write_text('{"model": "sonnet"}\n', encoding="utf-8")
+    monkeypatch.setenv("RUNWAY_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(sidecar, "_CLAUDE_TELEMETRY_LOCAL", None)
+    monkeypatch.setattr(sidecar, "_CLAUDE_TELEMETRY_SERVER", True)
+    monkeypatch.setattr(sidecar, "_CLAUDE_TELEMETRY_STATUS", "disabled")
+    monkeypatch.setattr(sidecar, "_LAST_TELEMETRY_SYNC", None)
+
+    calls: list[bool] = []
+    real_sync = ct.sync_claude_telemetry
+
+    def spy_sync(enabled: bool, **kwargs):
+        calls.append(enabled)
+        return real_sync(enabled, **kwargs)
+
+    monkeypatch.setattr(ct, "sync_claude_telemetry", spy_sync)
+
+    assert sidecar._sync_claude_telemetry() == "enabled"
+    assert sidecar._sync_claude_telemetry() == "enabled"
+    assert len(calls) == 1
+
+    # Editing settings.json invalidates the cached stat and triggers a re-sync.
+    claude_settings.write_text('{"model": "opus"}\n', encoding="utf-8")
+    os.utime(claude_settings, ns=(1_000_000_000, 2_000_000_000))
+    assert sidecar._sync_claude_telemetry() == "enabled"
+    assert len(calls) == 2

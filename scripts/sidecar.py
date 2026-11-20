@@ -1118,6 +1118,7 @@ _LOG_LEVEL_SERVER: str | None = None
 _CLAUDE_TELEMETRY_LOCAL: bool | None = None
 _CLAUDE_TELEMETRY_SERVER: bool = False
 _CLAUDE_TELEMETRY_STATUS: str = "disabled"
+_LAST_TELEMETRY_SYNC: tuple[bool, tuple[int, int] | None] | None = None
 
 
 def _claude_telemetry_enabled() -> bool:
@@ -1129,10 +1130,21 @@ def _claude_telemetry_enabled() -> bool:
 
 def _sync_claude_telemetry() -> str:
     """Apply the effective Claude Code telemetry setting and record its status."""
-    global _CLAUDE_TELEMETRY_STATUS
-    from scripts.sidecar_pkg.claude_telemetry import sync_claude_telemetry
+    global _CLAUDE_TELEMETRY_STATUS, _LAST_TELEMETRY_SYNC
+    from scripts.sidecar_pkg.claude_telemetry import (
+        default_settings_path,
+        settings_stat_sig,
+        sync_claude_telemetry,
+    )
 
-    _CLAUDE_TELEMETRY_STATUS = sync_claude_telemetry(_claude_telemetry_enabled())
+    enabled = _claude_telemetry_enabled()
+    settings_file = default_settings_path()
+    sig = settings_stat_sig(settings_file)
+    if _LAST_TELEMETRY_SYNC == (enabled, sig):
+        return _CLAUDE_TELEMETRY_STATUS
+
+    _CLAUDE_TELEMETRY_STATUS = sync_claude_telemetry(enabled)
+    _LAST_TELEMETRY_SYNC = (enabled, settings_stat_sig(settings_file))
     return _CLAUDE_TELEMETRY_STATUS
 
 

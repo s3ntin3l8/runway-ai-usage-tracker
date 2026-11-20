@@ -12,6 +12,7 @@ from app.core.utils import scrub_log
 from app.models.db import CredentialSource, SidecarDevice, SidecarRegistry
 from app.models.schemas import LoginDirectoryReport
 from app.services.refresh_policy import parse_provider_flags
+from scripts.sidecar_pkg.claude_telemetry import VALID_STATUSES as CLAUDE_TELEMETRY_STATUSES
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +37,6 @@ STALE_THRESHOLD_MINUTES = 60
 UPDATE_CHANNELS = ("stable", "beta", "edge")
 LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
 SIDECAR_TARGETS = ("tray", "cli")
-CLAUDE_TELEMETRY_STATUSES = ("disabled", "enabled", "conflict", "error")
 
 
 def effective_update_channel(row: SidecarRegistry, fleet_channel: str | None) -> str:
