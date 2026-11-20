@@ -467,6 +467,7 @@ def test_sidecar_sync_reestablishes_state_if_state_file_deleted(
     [
         '{\n  "a": 1\n}\n\n',
         '{\n"a": 1\n}\n',
+        '\n{\n  "a": 1\n}\n',
     ],
 )
 def test_preserves_multi_newline_tail_and_zero_indent_round_trip(
@@ -480,8 +481,13 @@ def test_preserves_multi_newline_tail_and_zero_indent_round_trip(
         ct.sync_claude_telemetry(True, settings_path=settings_path, state_path=state_path)
         == "enabled"
     )
+    if '  "a": 1' in original_text:
+        assert '  "env": {' in settings_path.read_text(encoding="utf-8")
     assert (
         ct.sync_claude_telemetry(False, settings_path=settings_path, state_path=state_path)
         == "disabled"
     )
-    assert settings_path.read_text(encoding="utf-8") == original_text
+    if not original_text.startswith("\n"):
+        assert settings_path.read_text(encoding="utf-8") == original_text
+    else:
+        assert settings_path.read_text(encoding="utf-8") == original_text.lstrip("\n")

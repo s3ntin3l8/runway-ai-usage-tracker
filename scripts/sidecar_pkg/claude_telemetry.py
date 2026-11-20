@@ -58,7 +58,8 @@ def backup_path_for(settings_path: Path) -> Path:
 def _detect_indent(text: str) -> int | str:
     """Detect the existing JSON indentation (spaces count or ``'\\t'``); default 2."""
     for line in text.splitlines()[1:]:
-        if not line.strip():
+        stripped = line.strip()
+        if not stripped or stripped in {"{", "}", "[", "]"}:
             continue
         leading = line[: len(line) - len(line.lstrip(" \t"))]
         if not leading:
