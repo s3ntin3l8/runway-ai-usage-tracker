@@ -194,7 +194,7 @@ def test_sidecar_real_status_path_off_leaves_file_untouched_and_on_reports_enabl
     monkeypatch.setattr(sidecar, "_CLAUDE_TELEMETRY_LOCAL", None)
     monkeypatch.setattr(sidecar, "_CLAUDE_TELEMETRY_SERVER", False)
     monkeypatch.setattr(sidecar, "_CLAUDE_TELEMETRY_STATUS", "disabled")
-    monkeypatch.setattr(sidecar, "_LAST_TELEMETRY_SYNC", None)
+    monkeypatch.setattr(sidecar, "_TELEMETRY_SYNC_CACHE", {})
     monkeypatch.setattr(
         sidecar, "run_collection", lambda *a, **kw: sidecar.CollectionResult([], [], 0, [])
     )
@@ -367,7 +367,7 @@ def test_sidecar_sync_skips_redundant_reads_when_unchanged(
     monkeypatch.setattr(sidecar, "_CLAUDE_TELEMETRY_LOCAL", None)
     monkeypatch.setattr(sidecar, "_CLAUDE_TELEMETRY_SERVER", True)
     monkeypatch.setattr(sidecar, "_CLAUDE_TELEMETRY_STATUS", "disabled")
-    monkeypatch.setattr(sidecar, "_LAST_TELEMETRY_SYNC", None)
+    monkeypatch.setattr(sidecar, "_TELEMETRY_SYNC_CACHE", {})
 
     calls: list[bool] = []
     real_sync = ct.sync_claude_telemetry
