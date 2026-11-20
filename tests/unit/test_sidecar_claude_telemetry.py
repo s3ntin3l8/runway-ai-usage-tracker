@@ -387,3 +387,9 @@ def test_sidecar_sync_skips_redundant_reads_when_unchanged(
     os.utime(claude_settings, ns=(1_000_000_000, 2_000_000_000))
     assert sidecar._sync_claude_telemetry() == "enabled"
     assert len(calls) == 2
+
+
+def test_fleet_registry_telemetry_statuses_match_without_sidecar_import():
+    from app.services import fleet_registry
+
+    assert fleet_registry.CLAUDE_TELEMETRY_STATUSES == ct.VALID_STATUSES
