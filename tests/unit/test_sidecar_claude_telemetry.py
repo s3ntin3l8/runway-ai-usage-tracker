@@ -393,3 +393,95 @@ def test_fleet_registry_telemetry_statuses_match_without_sidecar_import():
     from app.services import fleet_registry
 
     assert fleet_registry.CLAUDE_TELEMETRY_STATUSES == ct.VALID_STATUSES
+
+
+def test_sidecar_sync_retries_after_error_without_spamming_logs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+):
+    import scripts.sidecar as sidecar
+
+    claude_settings = tmp_path / ".claude" / "settings.json"
+    claude_settings.parent.mkdir(parents=True)
+    claude_settings.write_text('{"model": "sonnet"}\n', encoding="utf-8")
+    monkeypatch.setenv("RUNWAY_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(sidecar, "_CLAUDE_TELEMETRY_LOCAL", None)
+    monkeypatch.setattr(sidecar, "_CLAUDE_TELEMETRY_SERVER", True)
+    monkeypatch.setattr(sidecar, "_CLAUDE_TELEMETRY_STATUS", "disabled")
+    monkeypatch.setattr(sidecar, "_TELEMETRY_SYNC_CACHE", {})
+
+    real_atomic_write = ct._atomic_write_bytes
+    should_fail = True
+
+    def flaky_write(*args, **kwargs):
+        if should_fail:
+            raise PermissionError("read-only")
+        return real_atomic_write(*args, **kwargs)
+
+    monkeypatch.setattr(ct, "_atomic_write_bytes", flaky_write)
+
+    with caplog.at_level(logging.WARNING):
+        assert sidecar._sync_claude_telemetry() == "error"
+        assert sidecar._sync_claude_telemetry() == "error"
+
+    # Retried on second cycle, but only logged once for the unchanged failure signature.
+    assert len(caplog.records) == 1
+    assert "env" not in json.loads(claude_settings.read_text(encoding="utf-8"))
+
+    # Once the transient error clears (without changing settings.json stat), next cycle succeeds.
+    should_fail = False
+    assert sidecar._sync_claude_telemetry() == "enabled"
+    assert json.loads(claude_settings.read_text(encoding="utf-8"))["env"] == ct.TELEMETRY_ENV_KEYS
+
+
+def test_sidecar_sync_reestablishes_state_if_state_file_deleted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    import scripts.sidecar as sidecar
+
+    claude_settings = tmp_path / ".claude" / "settings.json"
+    claude_settings.parent.mkdir(parents=True)
+    claude_settings.write_text('{"model": "sonnet"}\n', encoding="utf-8")
+    monkeypatch.setenv("RUNWAY_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(sidecar, "_CLAUDE_TELEMETRY_LOCAL", None)
+    monkeypatch.setattr(sidecar, "_CLAUDE_TELEMETRY_SERVER", True)
+    monkeypatch.setattr(sidecar, "_CLAUDE_TELEMETRY_STATUS", "disabled")
+    monkeypatch.setattr(sidecar, "_TELEMETRY_SYNC_CACHE", {})
+
+    assert sidecar._sync_claude_telemetry() == "enabled"
+    state_file = ct.default_state_path()
+    assert state_file.exists()
+
+    state_file.unlink()
+    assert sidecar._sync_claude_telemetry() == "enabled"
+    assert state_file.exists()
+
+    monkeypatch.setattr(sidecar, "_CLAUDE_TELEMETRY_SERVER", False)
+    assert sidecar._sync_claude_telemetry() == "disabled"
+    assert json.loads(claude_settings.read_text(encoding="utf-8")) == {"model": "sonnet"}
+
+
+@pytest.mark.parametrize(
+    "original_text",
+    [
+        '{\n  "a": 1\n}\n\n',
+        '{\n"a": 1\n}\n',
+    ],
+)
+def test_preserves_multi_newline_tail_and_zero_indent_round_trip(
+    tmp_path: Path, original_text: str
+):
+    settings_path = tmp_path / "settings.json"
+    state_path = tmp_path / "state.json"
+    settings_path.write_text(original_text, encoding="utf-8")
+
+    assert (
+        ct.sync_claude_telemetry(True, settings_path=settings_path, state_path=state_path)
+        == "enabled"
+    )
+    assert (
+        ct.sync_claude_telemetry(False, settings_path=settings_path, state_path=state_path)
+        == "disabled"
+    )
+    assert settings_path.read_text(encoding="utf-8") == original_text

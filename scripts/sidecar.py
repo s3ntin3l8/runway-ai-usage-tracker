@@ -1118,7 +1118,7 @@ _LOG_LEVEL_SERVER: str | None = None
 _CLAUDE_TELEMETRY_LOCAL: bool | None = None
 _CLAUDE_TELEMETRY_SERVER: bool = False
 _CLAUDE_TELEMETRY_STATUS: str = "disabled"
-_TELEMETRY_SYNC_CACHE: dict[str, tuple[bool, tuple[int, int] | None]] = {}
+_TELEMETRY_SYNC_CACHE: dict[str, Any] = {}
 
 
 def _claude_telemetry_enabled() -> bool:
@@ -1133,18 +1133,33 @@ def _sync_claude_telemetry() -> str:
     global _CLAUDE_TELEMETRY_STATUS
     from scripts.sidecar_pkg.claude_telemetry import (
         default_settings_path,
+        default_state_path,
         settings_stat_sig,
         sync_claude_telemetry,
     )
 
     enabled = _claude_telemetry_enabled()
     settings_file = default_settings_path()
-    sig = settings_stat_sig(settings_file)
-    if _TELEMETRY_SYNC_CACHE.get("key") == (enabled, sig):
+    state_file = default_state_path()
+    sig = (enabled, settings_stat_sig(settings_file), settings_stat_sig(state_file))
+    if _TELEMETRY_SYNC_CACHE.get("key") == sig:
         return _CLAUDE_TELEMETRY_STATUS
 
-    _CLAUDE_TELEMETRY_STATUS = sync_claude_telemetry(enabled)
-    _TELEMETRY_SYNC_CACHE["key"] = (enabled, settings_stat_sig(settings_file))
+    already_warned = _TELEMETRY_SYNC_CACHE.get("warned") == sig
+    status = sync_claude_telemetry(enabled, warn=not already_warned)
+    _CLAUDE_TELEMETRY_STATUS = status
+    if status == "error":
+        # Never cache "error" as settled so the next heartbeat retries once the cause clears;
+        # track the warned signature separately so repeated failures still log only once.
+        _TELEMETRY_SYNC_CACHE.pop("key", None)
+        _TELEMETRY_SYNC_CACHE["warned"] = sig
+    else:
+        _TELEMETRY_SYNC_CACHE["key"] = (
+            enabled,
+            settings_stat_sig(settings_file),
+            settings_stat_sig(state_file),
+        )
+        _TELEMETRY_SYNC_CACHE.pop("warned", None)
     return _CLAUDE_TELEMETRY_STATUS
 
 

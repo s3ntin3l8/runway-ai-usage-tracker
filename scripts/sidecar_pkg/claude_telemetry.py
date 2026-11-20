@@ -62,7 +62,7 @@ def _detect_indent(text: str) -> int | str:
             continue
         leading = line[: len(line) - len(line.lstrip(" \t"))]
         if not leading:
-            continue
+            return 0
         if leading[0] == "\t":
             return "\t"
         return len(leading)
@@ -72,7 +72,7 @@ def _detect_indent(text: str) -> int | str:
 def _detect_format(raw_text: str) -> tuple[int | str | None, str, str]:
     """Return ``(indent, newline, trailing_nl)`` matching *raw_text*'s formatting."""
     newline = "\r\n" if "\r\n" in raw_text else "\n"
-    trailing_nl = newline if raw_text.endswith(("\n", "\r")) else ""
+    trailing_nl = raw_text[len(raw_text.rstrip("\r\n")) :]
     if "\n" not in raw_text.rstrip("\r\n"):
         return None, newline, trailing_nl
     return _detect_indent(raw_text), newline, trailing_nl
@@ -155,8 +155,15 @@ def _save_state(state_path: Path, state: dict[str, Any]) -> None:
     )
 
 
+def _warn(warn: bool, msg: str, *args: Any) -> None:
+    if warn:
+        logging.warning(msg, *args)
+
+
 def _read_settings(
     settings_path: Path,
+    *,
+    warn: bool = True,
 ) -> tuple[dict[str, Any], str, bytes, tuple[int, int]] | None:
     """Read and parse *settings_path*, returning None if unparseable or malformed."""
     try:
@@ -167,14 +174,16 @@ def _read_settings(
         raw_text = raw_bytes.decode("utf-8")
         data = json.loads(raw_text)
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        logging.warning("Cannot parse %s (%s); leaving file untouched", settings_path, exc)
+        _warn(warn, "Cannot parse %s (%s); leaving file untouched", settings_path, exc)
         return None
     if not isinstance(data, dict):
-        logging.warning("Expected JSON object in %s; leaving file untouched", settings_path)
+        _warn(warn, "Expected JSON object in %s; leaving file untouched", settings_path)
         return None
     if "env" in data and not isinstance(data["env"], dict):
-        logging.warning(
-            "Expected 'env' to be an object in %s; leaving file untouched", settings_path
+        _warn(
+            warn,
+            "Expected 'env' to be an object in %s; leaving file untouched",
+            settings_path,
         )
         return None
     return data, raw_text, raw_bytes, expected_stat
@@ -185,6 +194,7 @@ def sync_claude_telemetry(
     *,
     settings_path: Path | None = None,
     state_path: Path | None = None,
+    warn: bool = True,
 ) -> str:
     """Apply or remove Claude Code telemetry env vars in ``settings.json``.
 
@@ -195,18 +205,18 @@ def sync_claude_telemetry(
 
     try:
         if not enabled:
-            return _disable(target, state_file)
-        return _enable(target, state_file)
+            return _disable(target, state_file, warn=warn)
+        return _enable(target, state_file, warn=warn)
     except OSError as exc:
-        logging.warning("Failed to update %s (%s); leaving file untouched", target, exc)
+        _warn(warn, "Failed to update %s (%s); leaving file untouched", target, exc)
         return "error"
 
 
-def _enable(settings_path: Path, state_path: Path) -> str:
+def _enable(settings_path: Path, state_path: Path, *, warn: bool = True) -> str:
     state = _load_state(state_path)
     file_exists = settings_path.exists()
     if file_exists:
-        parsed = _read_settings(settings_path)
+        parsed = _read_settings(settings_path, warn=warn)
         if parsed is None:
             return "error"
         data, raw_text, raw_bytes, expected_stat = parsed
@@ -220,7 +230,8 @@ def _enable(settings_path: Path, state_path: Path) -> str:
     if isinstance(env, dict):
         conflicts = [k for k, v in TELEMETRY_ENV_KEYS.items() if k in env and env[k] != v]
         if conflicts:
-            logging.warning(
+            _warn(
+                warn,
                 "Claude Code telemetry conflict in %s (%s already set to another value); "
                 "leaving file untouched",
                 settings_path,
@@ -258,7 +269,7 @@ def _enable(settings_path: Path, state_path: Path) -> str:
         check_stat=True,
         expected_stat=expected_stat,
     ):
-        logging.warning("Concurrent edit detected on %s; leaving file untouched", settings_path)
+        _warn(warn, "Concurrent edit detected on %s; leaving file untouched", settings_path)
         return "error"
 
     merged_added = list(dict.fromkeys([*state.get("added_keys", []), *newly_added]))
@@ -267,7 +278,7 @@ def _enable(settings_path: Path, state_path: Path) -> str:
     return "enabled"
 
 
-def _disable(settings_path: Path, state_path: Path) -> str:
+def _disable(settings_path: Path, state_path: Path, *, warn: bool = True) -> str:
     state = _load_state(state_path)
     added_keys: list[str] = state.get("added_keys", [])
     created_env: bool = bool(state.get("created_env", False))
@@ -279,7 +290,7 @@ def _disable(settings_path: Path, state_path: Path) -> str:
         state_path.unlink(missing_ok=True)
         return "disabled"
 
-    parsed = _read_settings(settings_path)
+    parsed = _read_settings(settings_path, warn=warn)
     if parsed is None:
         return "error"
     data, raw_text, _raw_bytes, expected_stat = parsed
@@ -304,7 +315,7 @@ def _disable(settings_path: Path, state_path: Path) -> str:
             check_stat=True,
             expected_stat=expected_stat,
         ):
-            logging.warning("Concurrent edit detected on %s; leaving file untouched", settings_path)
+            _warn(warn, "Concurrent edit detected on %s; leaving file untouched", settings_path)
             return "error"
 
     state_path.unlink(missing_ok=True)
