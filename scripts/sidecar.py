@@ -1112,6 +1112,56 @@ _BASE_LOG_LEVEL: str = "INFO"
 # Dashboard override for the level, from the /fleet/ingest response. None = use the base level.
 _LOG_LEVEL_SERVER: str | None = None
 
+# Claude Code OpenTelemetry (~/.claude/settings.json env block), local override wins:
+#   _CLAUDE_TELEMETRY_LOCAL  — explicit local config (`claude_telemetry`); None = defer to server.
+#   _CLAUDE_TELEMETRY_SERVER — effective flag from the /fleet/ingest response.
+_CLAUDE_TELEMETRY_LOCAL: bool | None = None
+_CLAUDE_TELEMETRY_SERVER: bool = False
+_CLAUDE_TELEMETRY_STATUS: str = "disabled"
+_TELEMETRY_SYNC_CACHE: dict[str, Any] = {}
+
+
+def _claude_telemetry_enabled() -> bool:
+    """Effective Claude Code telemetry setting: explicit local config overrides the server."""
+    return (
+        _CLAUDE_TELEMETRY_LOCAL if _CLAUDE_TELEMETRY_LOCAL is not None else _CLAUDE_TELEMETRY_SERVER
+    )
+
+
+def _sync_claude_telemetry() -> str:
+    """Apply the effective Claude Code telemetry setting and record its status."""
+    global _CLAUDE_TELEMETRY_STATUS
+    from scripts.sidecar_pkg.claude_telemetry import (
+        default_settings_path,
+        default_state_path,
+        settings_stat_sig,
+        sync_claude_telemetry,
+    )
+
+    enabled = _claude_telemetry_enabled()
+    settings_file = default_settings_path()
+    state_file = default_state_path()
+    sig = (enabled, settings_stat_sig(settings_file), settings_stat_sig(state_file))
+    if _TELEMETRY_SYNC_CACHE.get("key") == sig:
+        return _CLAUDE_TELEMETRY_STATUS
+
+    already_warned = _TELEMETRY_SYNC_CACHE.get("warned") == sig
+    status = sync_claude_telemetry(enabled, warn=not already_warned)
+    _CLAUDE_TELEMETRY_STATUS = status
+    if status == "error":
+        # Never cache "error" as settled so the next heartbeat retries once the cause clears;
+        # track the warned signature separately so repeated failures still log only once.
+        _TELEMETRY_SYNC_CACHE.pop("key", None)
+        _TELEMETRY_SYNC_CACHE["warned"] = sig
+    else:
+        _TELEMETRY_SYNC_CACHE["key"] = (
+            enabled,
+            settings_stat_sig(settings_file),
+            settings_stat_sig(state_file),
+        )
+        _TELEMETRY_SYNC_CACHE.pop("warned", None)
+    return _CLAUDE_TELEMETRY_STATUS
+
 
 def _effective_log_level() -> str:
     return _LOG_LEVEL_SERVER or _BASE_LOG_LEVEL
@@ -5468,6 +5518,7 @@ class DaemonRunner:
                     "keep_alive": keep_alive if first_batch else None,
                     "keep_alive_providers": keep_alive_providers if first_batch else None,
                     "log_level": _effective_log_level() if first_batch else None,
+                    "claude_telemetry_status": _CLAUDE_TELEMETRY_STATUS if first_batch else None,
                     "auto_update": auto_update if first_batch else None,
                     "update_channel": update_channel if first_batch else None,
                     "collection_errors": collection_errors if first_batch else 0,
@@ -5790,6 +5841,10 @@ class DaemonRunner:
                 apply_remote_login_dirs(result["login_dirs"], request_target)
             if "log_level" in result:
                 _apply_server_log_level(result.get("log_level"))
+            if "claude_telemetry" in result:
+                global _CLAUDE_TELEMETRY_SERVER
+                _CLAUDE_TELEMETRY_SERVER = bool(result.get("claude_telemetry", False))
+                _sync_claude_telemetry()
             # Replace identities because the server withdraws hints by omission.
             if "identities" in result:
                 global _ACCOUNT_IDENTITIES
@@ -6032,9 +6087,12 @@ def main():
     # Tri-state local override: explicit true/false wins over the server flag;
     # absent (None) defers to the server's fleet-wide setting.
     configure_login_dirs(config)
-    global _AUTO_UPDATE_LOCAL
+    global _AUTO_UPDATE_LOCAL, _CLAUDE_TELEMETRY_LOCAL
     local_auto = config.get("auto_update")
     _AUTO_UPDATE_LOCAL = None if local_auto is None else bool(local_auto)
+    local_telemetry = config.get("claude_telemetry")
+    _CLAUDE_TELEMETRY_LOCAL = None if local_telemetry is None else bool(local_telemetry)
+    _sync_claude_telemetry()
 
     if not write_pid_file():
         sys.exit(1)

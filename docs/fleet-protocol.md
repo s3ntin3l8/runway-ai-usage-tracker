@@ -113,6 +113,7 @@ The response tells the sidecar what to do next:
 |---|---|
 | `poll_providers` | Which providers to collect, and at which interval. It lists the enabled providers, the passive ones (cards present but no config row) and the sidecar-only event providers (`hermes`, `minimax_code`). The last is a scheduling id only — it is never shown as a provider. |
 | `sidecar_auto_update` / `sidecar_update_channel` | The fleet-wide update policy, and the per-sidecar override that wins over it. |
+| `claude_telemetry` | Whether the sidecar should manage the OpenTelemetry `env` block in `~/.claude/settings.json` (fleet default or per-sidecar override). |
 | `keep_alive_desired` | Whether the keep-alive thread should run. The sidecar starts or stops it without a restart. |
 | `log_level` | A live log-level override from the dashboard. Applied immediately, no restart; it is not written to the config. |
 

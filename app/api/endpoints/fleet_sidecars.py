@@ -23,6 +23,7 @@ from app.services.fleet_registry import (
     LOG_LEVELS,
     UPDATE_CHANNELS,
     effective_auto_update,
+    effective_claude_telemetry,
     effective_update_channel,
     fleet_registry,
 )
@@ -60,6 +61,12 @@ def _fleet_update_defaults(session: Session) -> tuple[str, bool]:
     )
 
 
+def _fleet_claude_telemetry_default(session: Session) -> bool:
+    """Fleet-wide Claude Code telemetry default (off unless enabled in Settings)."""
+    cfg = session.exec(select(SystemConfig)).first()
+    return bool((cfg.sidecar_claude_telemetry_default if cfg else None) or False)
+
+
 def _source_sync_fields(
     entry: tuple[sidecar_devices.SourceSyncState, datetime | None] | None,
 ) -> dict[str, Any]:
@@ -80,6 +87,7 @@ async def list_sidecars(
         select(SidecarRegistry).order_by(col(SidecarRegistry.last_seen).desc())
     ).all()
     channel, auto_update = _fleet_update_defaults(session)
+    claude_telemetry = _fleet_claude_telemetry_default(session)
     enrolled_at = load_enrollment_times(session, [row.sidecar_id for row in rows])
     adoptable = adoptable_legacy(list(rows), enrolled_at)
     replaced = replaced_by(list(rows), enrolled_at)
@@ -87,7 +95,7 @@ async def list_sidecars(
     return {
         "sidecars": [
             {
-                **fleet_registry.to_dict(row, channel, auto_update),
+                **fleet_registry.to_dict(row, channel, auto_update, claude_telemetry),
                 "adoptable_legacy": adoptable.get(row.sidecar_id, []),
                 "replaced_by": replaced.get(row.sidecar_id, []),
                 **_source_sync_fields(sync_states.get(row.sidecar_id)),
@@ -109,9 +117,10 @@ async def get_sidecar(
     if not row:
         raise HTTPException(status_code=404, detail=f"Sidecar '{sidecar_id}' not found")
     channel, auto_update = _fleet_update_defaults(session)
+    claude_telemetry = _fleet_claude_telemetry_default(session)
     sync_states = sidecar_devices.source_sync_states(session, [sidecar_id])
     return {
-        **fleet_registry.to_dict(row, channel, auto_update),
+        **fleet_registry.to_dict(row, channel, auto_update, claude_telemetry),
         **_source_sync_fields(sync_states.get(sidecar_id)),
     }
 
@@ -206,7 +215,9 @@ async def update_sidecar(
         payload={"custom_name": body.custom_name, "tags": body.tags},
     )
     channel, auto_update = _fleet_update_defaults(session)
-    return fleet_registry.to_dict(row, channel, auto_update)
+    return fleet_registry.to_dict(
+        row, channel, auto_update, _fleet_claude_telemetry_default(session)
+    )
 
 
 @router.delete("/sidecars/{sidecar_id}")
@@ -256,6 +267,7 @@ class SidecarSettingsRequest(BaseModel):
     auto_update: bool | None = None
     update_channel: str | None = None
     log_level: str | None = None
+    claude_telemetry: bool | None = None
     claude_config_dirs: list[str] | None = None
     codex_home: list[str] | None = None
 
@@ -306,6 +318,8 @@ async def set_sidecar_settings(
         row.auto_update_desired = body.auto_update
     if "update_channel" in sent:
         row.update_channel_desired = body.update_channel
+    if "claude_telemetry" in sent:
+        row.claude_telemetry_desired = body.claude_telemetry
     session.commit()
     audit_log.record(
         session,
@@ -317,15 +331,18 @@ async def set_sidecar_settings(
     if new_dirs != old_dirs:
         fleet_registry.set_pending_trigger(sidecar_id)
     channel, fleet_auto = _fleet_update_defaults(session)
+    fleet_telemetry = _fleet_claude_telemetry_default(session)
     return {
         "status": "ok",
         "sidecar_id": sidecar_id,
         "auto_update_desired": row.auto_update_desired,
         "update_channel_desired": row.update_channel_desired,
         "log_level_desired": row.log_level_desired,
+        "claude_telemetry_desired": row.claude_telemetry_desired,
         "login_dirs_desired": new_dirs,
         "effective_auto_update": effective_auto_update(row, fleet_auto),
         "effective_update_channel": effective_update_channel(row, channel),
+        "effective_claude_telemetry": effective_claude_telemetry(row, fleet_telemetry),
     }
 
 

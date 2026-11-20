@@ -7,6 +7,7 @@ import type { Sidecar, SidecarChannel } from '@/api/types';
 export interface FleetUpdateDefaults {
   autoUpdate: boolean;
   channel: SidecarChannel;
+  claudeTelemetry?: boolean;
 }
 
 export interface UpdateDrift {
@@ -45,9 +46,22 @@ export function loginDirsPending(sidecar: Sidecar): boolean {
   );
 }
 
+export function claudeTelemetryPending(sidecar: Sidecar, fleet: FleetUpdateDefaults): boolean {
+  if (sidecar.claude_telemetry == null) return false;
+  if (sidecar.claude_telemetry === 'conflict' || sidecar.claude_telemetry === 'error') return false;
+  const effective = sidecar.effective_claude_telemetry ?? (fleet.claudeTelemetry ?? false);
+  return (sidecar.claude_telemetry === 'enabled') !== effective;
+}
+
 /** Settings that are asked for but not applied yet, across every section of the dialog. */
 export function pendingSettings(sidecar: Sidecar, fleet: FleetUpdateDefaults, keepAlivePending: boolean): number {
   const drift = updateDrift(sidecar, fleet);
-  return [keepAlivePending, drift.auto, drift.channel, logLevelLagging(sidecar), loginDirsPending(sidecar)].filter(Boolean)
-    .length;
+  return [
+    keepAlivePending,
+    drift.auto,
+    drift.channel,
+    logLevelLagging(sidecar),
+    loginDirsPending(sidecar),
+    claudeTelemetryPending(sidecar, fleet),
+  ].filter(Boolean).length;
 }

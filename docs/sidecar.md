@@ -95,6 +95,7 @@ Config file: `~/.config/runway/sidecar/config.json` (macOS/Linux) or `%APPDATA%\
 | `queue_max_size_mb` | `10` | Offline queue cap. |
 | `log_level` / `log_file_enabled` | `INFO` / `true` | Logging. |
 | `auto_update` | absent | `true` always auto-installs, `false` never does, absent defers to the server toggle. |
+| `claude_telemetry` | absent | `true` writes the OpenTelemetry env block into `~/.claude/settings.json`, `false` removes the keys it added, absent defers to the server setting. |
 | `keep_alive` | `false` | Same as `--keep-alive`. |
 | `claude_config_dirs`, `codex_home` | none | Extra Claude Code / Codex state directories (list or comma-separated string). |
 | `ca_bundle`, `tls_insecure` | none | TLS trust settings, see [below](#tls--certificate-errors-certificate_verify_failed). |

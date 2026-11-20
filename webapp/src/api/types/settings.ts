@@ -72,6 +72,8 @@ export interface AppConfig {
   sidecar_auto_update?: boolean | null;
   /** Fleet-wide default: keep-alive on for every sidecar without its own override. */
   sidecar_keep_alive_default?: boolean | null;
+  /** Fleet-wide default: opt-in to configure ~/.claude/settings.json telemetry for sidecars. */
+  sidecar_claude_telemetry_default?: boolean | null;
   /** Stored Claude cloud-runner collector switch; null/absent = none stored (the env default applies). */
   claude_cloud_collector_enabled?: boolean | null;
   /** The collector switch in effect: the stored value, else the env default. */

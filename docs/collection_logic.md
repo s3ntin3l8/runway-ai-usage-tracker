@@ -353,6 +353,29 @@ in-memory queue (the oldest are dropped past the cap) and pushed with the next c
 Claude events. Only sessions that were started with telemetry enabled are covered. If
 the port is taken the sidecar logs one warning and runs without the receiver.
 
+Telemetry export is off by default and is an explicit opt-in in **Settings → System**
+(fleet-wide default) or per sidecar in **Fleet → Sidecar settings** (`Claude Code
+telemetry`). When turned on, the sidecar writes a one-time backup
+(`settings.json.runway.bak`) before its first change and ensures these keys exist in the
+`env` object of `~/.claude/settings.json` (creating the file or object if missing,
+preserving existing keys and indentation):
+
+- `CLAUDE_CODE_ENABLE_TELEMETRY="1"`
+- `OTEL_LOGS_EXPORTER="otlp"`
+- `OTEL_METRICS_EXPORTER="none"`
+- `OTEL_EXPORTER_OTLP_PROTOCOL="http/json"`
+- `OTEL_EXPORTER_OTLP_ENDPOINT="http://127.0.0.1:4318"`
+- `OTEL_LOGS_EXPORT_INTERVAL="5000"`
+
+If any of those keys already has a different value, the sidecar leaves the file untouched,
+logs one warning, and reports `conflict` in its status. Turning the setting off removes
+only the keys the sidecar added (recorded in its own state file,
+`claude-telemetry-state.json`) and removes the `env` object only if the sidecar created it
+and it is now empty; keys the user had before stay. Coverage is limited to sessions
+started after the setting is applied and to machines where a sidecar with the setting
+enabled is running. Windows and macOS use the same `~/.claude/settings.json` path under
+the user's home directory.
+
 ## Expiry units
 
 A credential's expiry may be published in seconds, milliseconds, microseconds or

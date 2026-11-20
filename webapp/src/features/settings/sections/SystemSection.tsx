@@ -42,6 +42,7 @@ export function SystemSection() {
   const [channel, setChannel] = useState<'stable' | 'beta' | 'edge'>('stable');
   const [autoUpdate, setAutoUpdate] = useState(false);
   const [keepAliveDefault, setKeepAliveDefault] = useState(false);
+  const [claudeTelemetryDefault, setClaudeTelemetryDefault] = useState(false);
   const [cleanupOpen, setCleanupOpen] = useState(false);
 
   useEffect(() => {
@@ -58,6 +59,7 @@ export function SystemSection() {
       : 'stable');
     setAutoUpdate(appConfig.data.sidecar_auto_update === true);
     setKeepAliveDefault(appConfig.data.sidecar_keep_alive_default === true);
+    setClaudeTelemetryDefault(appConfig.data.sidecar_claude_telemetry_default === true);
   }, [appConfig.data]);
 
   const save = useMutation({
@@ -70,6 +72,7 @@ export function SystemSection() {
         sidecar_update_channel: channel,
         sidecar_auto_update: autoUpdate,
         sidecar_keep_alive_default: keepAliveDefault,
+        sidecar_claude_telemetry_default: claudeTelemetryDefault,
       }),
     onSuccess: () => {
       toast.success('System settings saved');
@@ -214,6 +217,25 @@ export function SystemSection() {
                 don't lapse while the CLI is idle. A sidecar's own Fleet switch overrides this, and
                 a sidecar started with <code>--keep-alive</code> stays on either way. The tray app
                 doesn't support keep-alive.
+              </HelperText>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-center justify-between gap-3">
+                <Label htmlFor="sys-claude-telemetry-default">
+                  Capture Claude Code side calls (OpenTelemetry)
+                </Label>
+                <Switch
+                  id="sys-claude-telemetry-default"
+                  checked={claudeTelemetryDefault}
+                  onCheckedChange={setClaudeTelemetryDefault}
+                />
+              </div>
+              <HelperText>
+                Captures Claude Code side calls (summaries, compaction, prompt suggestions, hook
+                prompts, session titles) that transcripts omit, by writing OpenTelemetry settings to{' '}
+                <code>~/.claude/settings.json</code> for the sidecar&apos;s local receiver. Only
+                Claude Code sessions started afterwards are covered. Can be overridden per sidecar
+                in Fleet.
               </HelperText>
             </div>
             <Button type="submit" variant="primary" className="self-start" loading={save.isPending}>

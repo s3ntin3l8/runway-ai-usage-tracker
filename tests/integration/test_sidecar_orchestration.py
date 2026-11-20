@@ -424,9 +424,11 @@ def test_a_per_sidecar_update_override_replaces_the_fleet_value_in_the_ingest_re
         "auto_update_desired": False,
         "update_channel_desired": "edge",
         "log_level_desired": None,
+        "claude_telemetry_desired": None,
         "login_dirs_desired": {"claude_config_dirs": [], "codex_home": []},
         "effective_auto_update": False,
         "effective_update_channel": "edge",
+        "effective_claude_telemetry": False,
     }
     body = _heartbeat(client).json()
     assert (body["sidecar_auto_update"], body["sidecar_update_channel"]) == (False, "edge")
@@ -492,6 +494,47 @@ def test_ingest_ignores_an_unknown_reported_update_channel(client, session):
     assert _heartbeat(client, update_channel="nightly").status_code == 200
     session.expire_all()
     assert session.get(SidecarRegistry, "ka-host").update_channel == "beta"
+
+
+def test_claude_telemetry_setting_defaults_off_and_roundtrips_status(client, session):
+    # Default off in app-config and in the ingest response.
+    assert (
+        client.get("/api/v1/system/app-config").json()["sidecar_claude_telemetry_default"] is False
+    )
+    assert _heartbeat(client).json()["claude_telemetry"] is False
+
+    # Turning on the fleet default propagates to /fleet/ingest.
+    client.put("/api/v1/system/app-config", json={"sidecar_claude_telemetry_default": True})
+    assert _heartbeat(client).json()["claude_telemetry"] is True
+
+    # Per-sidecar override wins over the fleet default; null clears it back to fleet.
+    r = client.put("/api/v1/fleet/sidecars/ka-host/settings", json={"claude_telemetry": False})
+    assert r.status_code == 200
+    assert r.json()["claude_telemetry_desired"] is False
+    assert r.json()["effective_claude_telemetry"] is False
+    assert _heartbeat(client).json()["claude_telemetry"] is False
+
+    # Sidecar reports conflict / enabled and the fleet list surfaces it.
+    assert _heartbeat(client, claude_telemetry_status="conflict").status_code == 200
+    row = next(
+        s
+        for s in client.get("/api/v1/fleet/sidecars").json()["sidecars"]
+        if s["sidecar_id"] == "ka-host"
+    )
+    assert row["claude_telemetry"] == "conflict"
+    assert row["claude_telemetry_desired"] is False
+    assert row["effective_claude_telemetry"] is False
+
+    client.put("/api/v1/fleet/sidecars/ka-host/settings", json={"claude_telemetry": None})
+    assert _heartbeat(client, claude_telemetry_status="enabled").json()["claude_telemetry"] is True
+    row = next(
+        s
+        for s in client.get("/api/v1/fleet/sidecars").json()["sidecars"]
+        if s["sidecar_id"] == "ka-host"
+    )
+    assert row["claude_telemetry"] == "enabled"
+    assert row["claude_telemetry_desired"] is None
+    assert row["effective_claude_telemetry"] is True
 
 
 def test_a_log_level_override_is_sent_on_check_in_and_cleared_with_null(client, session):
