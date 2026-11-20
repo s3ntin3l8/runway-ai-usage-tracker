@@ -189,7 +189,6 @@ def test_sidecar_real_status_path_off_leaves_file_untouched_and_on_reports_enabl
     import scripts.sidecar as sidecar
 
     claude_settings = tmp_path / ".claude" / "settings.json"
-    sidecar_dir = tmp_path / "sidecar"
     monkeypatch.setenv("RUNWAY_CONFIG_DIR", str(tmp_path))
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     monkeypatch.setattr(sidecar, "_CLAUDE_TELEMETRY_LOCAL", None)

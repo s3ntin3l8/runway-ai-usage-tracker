@@ -180,7 +180,6 @@ def _enable(settings_path: Path, state_path: Path) -> str:
         trailing_nl = "\n" if raw_text.endswith("\n") else ""
     else:
         data = {}
-        raw_bytes = b""
         expected_stat = None
         indent = 2
         trailing_nl = "\n"
