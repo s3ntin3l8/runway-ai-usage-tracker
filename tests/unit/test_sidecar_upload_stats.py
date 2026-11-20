@@ -1,10 +1,12 @@
 """Delivery counters must survive idle heartbeats and failed uploads."""
 
+from datetime import datetime, timedelta
 from unittest.mock import Mock
 
 import pytest
 
 from scripts import sidecar
+from scripts.sidecar_pkg import safari_cookies
 from sidecar_app.daemon import TrayDaemon
 
 
@@ -80,6 +82,30 @@ def test_partial_batch_failure_does_not_claim_full_upload(monkeypatch, daemon):
     assert daemon._runner.run_once() is False
     assert daemon._runner.last_upload_at == uploaded_at
     assert daemon._runner.last_events_count == 2
+
+
+@pytest.mark.parametrize(("system", "event_count"), [("Darwin", 0), ("Darwin", 1001), ("Linux", 0)])
+def test_safari_access_is_sent_once_per_mac_check_in(monkeypatch, daemon, system, event_count):
+    monkeypatch.setattr(sidecar.platform, "system", lambda: system)
+    probe = Mock(return_value="full_disk_access_missing")
+    monkeypatch.setattr(safari_cookies, "probe_access", probe)
+    collection = sidecar.CollectionResult(
+        [], [{"event_id": str(n)} for n in range(event_count)], 0, []
+    )
+    monkeypatch.setattr(sidecar, "run_collection", lambda *args, **kwargs: collection)
+    post = Mock(return_value=(True, {}, 200))
+    monkeypatch.setattr(sidecar, "http_post_signed_with_retry", post)
+
+    assert daemon._runner.run_once(providers=[] if event_count == 0 else None)
+    reports = [call.args[1]["safari_access"] for call in post.call_args_list]
+    if system == "Darwin":
+        probe.assert_called_once_with(persist=False)
+        assert reports[0]["state"] == "full_disk_access_missing"
+        assert datetime.fromisoformat(reports[0]["checked_at"]).utcoffset() == timedelta(0)
+        assert reports[1:] == ([None] if event_count > 1000 else [])
+    else:
+        probe.assert_not_called()
+        assert reports == [None]
 
 
 @pytest.mark.parametrize("heartbeat_response", [(True, {}, 200), (False, "unavailable", 503)])

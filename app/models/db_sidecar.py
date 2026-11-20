@@ -139,6 +139,7 @@ class SidecarRegistry(SQLModel, table=True):  # type: ignore[call-arg]
     claude_telemetry_status: str | None = None
     login_dirs_desired: str | None = None  # JSON Fleet additions; never expanded on the server
     login_dirs_report: str | None = None  # JSON acknowledgement and searched directories
+    safari_access: str | None = None  # JSON Safari access report from the latest check-in
     recent_logs: str | None = None  # JSON-encoded list of last log lines from the sidecar
     # JSON: provider_id → {"account_id", "source"} from the latest check-in.
     identity_sources: str | None = None

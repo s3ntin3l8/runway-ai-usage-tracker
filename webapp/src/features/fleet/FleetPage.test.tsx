@@ -81,6 +81,30 @@ describe('FleetPage', () => {
     ]);
   });
 
+  it('shows the Safari to-do only on the sidecar that needs Full Disk Access', async () => {
+    const checked_at = '2026-11-18T10:00:00Z';
+    vi.mocked(api.fetchSidecars).mockResolvedValue({
+      sidecars: [
+        sidecar({ safari_access: { state: 'full_disk_access_missing', checked_at } }),
+        sidecar({
+          hostname: 'readable-mac',
+          sidecar_id: 'readable',
+          safari_access: { state: 'readable', checked_at },
+        }),
+        sidecar({
+          hostname: 'unused-mac',
+          sidecar_id: 'unused',
+          safari_access: { state: 'not_used', checked_at },
+        }),
+        sidecar({ hostname: 'older-mac', sidecar_id: 'older', safari_access: null }),
+      ],
+    });
+    const { container } = renderWithProviders(<FleetPage />);
+    const notices = await screen.findAllByText('Safari: Full Disk Access needed');
+    expect(notices).toHaveLength(1);
+    expect(container.querySelector('#sidecar-laptop')).toContainElement(notices[0]!);
+  });
+
   it.each([
     ['the banner chip', /untagged credentials? on sidecar laptop/i],
     ['the card pill', /^\d+ untagged credentials? — click to resolve/i],

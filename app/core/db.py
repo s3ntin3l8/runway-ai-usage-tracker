@@ -271,6 +271,7 @@ _DEFERRED_COLUMNS: list[tuple[str, str, str]] = [
     ("sidecar_registry", "identity_sources", "TEXT"),
     ("sidecar_registry", "login_dirs_desired", "TEXT"),
     ("sidecar_registry", "login_dirs_report", "TEXT"),
+    ("sidecar_registry", "safari_access", "TEXT"),
     ("usage_events", "credential_origin", "VARCHAR"),
     ("usage_events", "source_app", "VARCHAR"),
     ("usage_events", "raw_provider_id", "VARCHAR"),

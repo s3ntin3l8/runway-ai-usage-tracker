@@ -31,6 +31,9 @@ def isolated(tmp_path, monkeypatch):
         raise AssertionError("Native credential access forbidden")
 
     monkeypatch.setattr(subprocess, "run", forbidden)
+    sidecar.reset_cookie_store_tracking()
+    yield
+    sidecar.reset_cookie_store_tracking()
 
 
 def test_safari_expiry_is_filtered_by_existing_candidate_interface(tmp_path, monkeypatch):
@@ -193,13 +196,25 @@ def test_desktop_cookie_scan_uses_shared_key_cache_and_reports_expired(tmp_path,
     assert len(calls) == 1
 
 
-def test_candidate_scan_reports_protected_safari_as_inaccessible(tmp_path, monkeypatch):
+@pytest.mark.parametrize("discovery_status", [None, "inaccessible"])
+def test_candidate_scan_reports_protected_safari_as_inaccessible(
+    tmp_path, monkeypatch, discovery_status
+):
     path = tmp_path / "private-account/Cookies.binarycookies"
     monkeypatch.setenv("RUNWAY_CLAUDE_DESKTOP_CREDENTIALS", "0")
     monkeypatch.setattr(
         sidecar.BrowserCookieExtractor,
         "get_all_paths",
-        lambda: [{"type": "safari", "browser": "Safari", "path": path}],
+        lambda: [
+            {
+                "type": "safari",
+                "browser": "Safari",
+                "path": path,
+                "profile": "Default",
+                "store": "Cookies.binarycookies",
+                "discovery_status": discovery_status,
+            }
+        ],
     )
     original = Path.open
 
@@ -220,6 +235,19 @@ def test_candidate_scan_reports_protected_safari_as_inaccessible(tmp_path, monke
     assert outcomes[0]["status"] == "inaccessible"
     assert outcomes[0]["candidate_count"] == 0
     assert "private-account" not in json.dumps(outcomes)
+    assert sidecar.blocked_source_entries() == [
+        {
+            "provider_id": "anthropic",
+            "credential_origin": "cookie:anthropic/Safari/Default/Cookies.binarycookies",
+            "reason": "source_unreadable",
+            "source_store": "Safari/Default/Cookies.binarycookies",
+            "source_detail": "the file could not be opened",
+            "source_remedy": (
+                "grant Full Disk Access to Runway Sidecar on this Mac "
+                "(System Settings → Privacy & Security → Full Disk Access)"
+            ),
+        }
+    ]
 
 
 def test_safari_reports_empty_when_only_unrelated_cookies_exist(tmp_path, monkeypatch):
