@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0-beta.19](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v3.0.0-beta.18...v3.0.0-beta.19) (2026-11-20)
+
+
+### Features
+
+* **claude:** store the call type (query_source) on usage events ([fe5d54c](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/fe5d54c83ad0f48ba53831b790b603198b6cda76))
+* **pricing:** add Gemini 4 Hydrogen, Carbon, and Neon pricing ([#1380](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1380)) ([8af8aa7](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/8af8aa77cf51eec3fb724e0f19acc149d5373cf3))
+* **pricing:** add GPT-6.2 Astra and Sol rates ([#1378](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1378)) ([a33fa63](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/a33fa63b0332502136969785fc80694766769be5))
+* **sidecar:** capture Claude Code side calls from OpenTelemetry api_request events ([83cc131](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/83cc131eb3fd70381a5a8de0687f341049732bd9))
+* **sidecar:** opt-in setting that enables Claude Code telemetry for the sidecar receiver ([35e0454](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/35e04544682152b45d66f66d6789c4ab71015916))
+
+
+### Bug Fixes
+
+* **claude:** extract advisor-tool usage from usage.iterations as separate events ([94d16c7](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/94d16c7a49954f246d9822eb38bafa00dfb3c60c))
+* **claude:** read the request id from the transcript record, not from message ([9d82b8c](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/9d82b8cc101b66ecb6ebe71b5f867e295075c140))
+* **sidecar:** decide edge updates from the platform asset's build, not the edge tag ([#1374](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1374)) ([8ba3782](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/8ba3782ff364780dfd4856e239f35499d5dcbac6))
+* **sidecar:** don't reinstall the running edge build when its platform asset lags ([#1368](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1368)) ([b33b0bb](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/b33b0bb16b8de149a31b937e730afe0534243e3e))
+* **sidecar:** keep the "Authorized" state after a restart when the source is already delivering ([c973a61](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/c973a61e12463d90b2913337d14f5bdef075552a))
+* **sidecar:** log a failed update check at INFO and name the GitHub rate limit ([46e26bd](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/46e26bda425ae7a717c93cce02e61cbcf0105cc4))
+
 ## [3.0.0-beta.18](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v3.0.0-beta.17...v3.0.0-beta.18) (2026-11-17)
 
 
