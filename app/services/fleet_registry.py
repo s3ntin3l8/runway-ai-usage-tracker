@@ -36,6 +36,7 @@ STALE_THRESHOLD_MINUTES = 60
 UPDATE_CHANNELS = ("stable", "beta", "edge")
 LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
 SIDECAR_TARGETS = ("tray", "cli")
+CLAUDE_TELEMETRY_STATUSES = ("disabled", "enabled", "conflict", "error")
 
 
 def effective_update_channel(row: SidecarRegistry, fleet_channel: str | None) -> str:
@@ -48,6 +49,13 @@ def effective_auto_update(row: SidecarRegistry, fleet_auto_update: bool | None) 
     if row.auto_update_desired is not None:
         return row.auto_update_desired
     return bool(fleet_auto_update)
+
+
+def effective_claude_telemetry(row: SidecarRegistry, fleet_claude_telemetry: bool | None) -> bool:
+    """Whether this sidecar is told to enable Claude Code telemetry: its own override, else the fleet's."""
+    if row.claude_telemetry_desired is not None:
+        return row.claude_telemetry_desired
+    return bool(fleet_claude_telemetry)
 
 
 class FleetRegistryService:
@@ -172,6 +180,7 @@ class FleetRegistryService:
         auto_update: bool | None = None,
         update_channel: str | None = None,
         log_level: str | None = None,
+        claude_telemetry_status: str | None = None,
         collection_errors: int = 0,
         last_log_lines: list[str] | None = None,
         identity_sources: dict[str, dict[str, str]] | None = None,
@@ -188,6 +197,14 @@ class FleetRegistryService:
         if sidecar_target is not None and sidecar_target not in SIDECAR_TARGETS:
             logger.debug(f"Ignoring unknown sidecar target {sidecar_target!r} from a sidecar")
             sidecar_target = None
+        if (
+            claude_telemetry_status is not None
+            and claude_telemetry_status not in CLAUDE_TELEMETRY_STATUSES
+        ):
+            logger.debug(
+                f"Ignoring unknown claude_telemetry_status {claude_telemetry_status!r} from a sidecar"
+            )
+            claude_telemetry_status = None
         row = session.get(SidecarRegistry, sidecar_id)
         device_hostname = self._device_hostname(sidecar_id, session)
         if row:
@@ -217,6 +234,8 @@ class FleetRegistryService:
                 row.update_channel = update_channel
             if log_level is not None:
                 row.log_level = log_level
+            if claude_telemetry_status is not None:
+                row.claude_telemetry_status = claude_telemetry_status
             if collection_errors > 0:
                 row.error_count = col(SidecarRegistry.error_count) + collection_errors  # type: ignore[assignment]
             if last_log_lines is not None:
@@ -244,6 +263,7 @@ class FleetRegistryService:
                 auto_update=auto_update,
                 update_channel=update_channel,
                 log_level=log_level,
+                claude_telemetry_status=claude_telemetry_status,
                 error_count=collection_errors,
                 recent_logs=_recent_logs_json(last_log_lines) if last_log_lines else None,
                 identity_sources=json.dumps(identity_sources) if identity_sources else None,
@@ -312,6 +332,7 @@ class FleetRegistryService:
         row: SidecarRegistry,
         update_channel: str | None = None,
         auto_update: bool = False,
+        claude_telemetry: bool = False,
     ) -> dict:
         """Serialize a SidecarRegistry row to a response dict.
 
@@ -371,6 +392,9 @@ class FleetRegistryService:
             "effective_auto_update": effective_auto_update(row, auto_update),
             "log_level": row.log_level,
             "log_level_desired": row.log_level_desired,
+            "claude_telemetry": row.claude_telemetry_status,
+            "claude_telemetry_desired": row.claude_telemetry_desired,
+            "effective_claude_telemetry": effective_claude_telemetry(row, claude_telemetry),
             "login_dirs_desired": stored_login_dirs(row.login_dirs_desired),
             "login_dirs_report": json.loads(row.login_dirs_report)
             if row.login_dirs_report

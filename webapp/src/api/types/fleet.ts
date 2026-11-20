@@ -92,6 +92,10 @@ export interface Sidecar {
   // (null = the sidecar's own config.json level).
   log_level?: SidecarLogLevel | null;
   log_level_desired?: SidecarLogLevel | null;
+  // Claude Code OpenTelemetry (~/.claude/settings.json env block).
+  claude_telemetry?: 'disabled' | 'enabled' | 'conflict' | 'error' | null;
+  claude_telemetry_desired?: boolean | null;
+  effective_claude_telemetry?: boolean;
   // Whether the sidecar runs with --keep-alive (renews the logins in keepAlive.ts itself). null = not
   // reported by an older sidecar — treat as unknown, not off.
   keep_alive?: boolean | null;

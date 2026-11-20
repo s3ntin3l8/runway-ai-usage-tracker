@@ -152,6 +152,7 @@ export const setSidecarSettings = (
     auto_update?: boolean | null;
     update_channel?: SidecarChannel | null;
     log_level?: SidecarLogLevel | null;
+    claude_telemetry?: boolean | null;
     claude_config_dirs?: string[] | null;
     codex_home?: string[] | null;
   },
@@ -161,9 +162,11 @@ export const setSidecarSettings = (
     auto_update_desired: boolean | null;
     update_channel_desired: SidecarChannel | null;
     log_level_desired: SidecarLogLevel | null;
+    claude_telemetry_desired?: boolean | null;
     login_dirs_desired?: { claude_config_dirs: string[]; codex_home: string[] };
     effective_auto_update: boolean;
     effective_update_channel: SidecarChannel;
+    effective_claude_telemetry?: boolean;
   }>(`/api/v1/fleet/sidecars/${encodeURIComponent(sidecarId)}/settings`, {
     method: 'PUT',
     body: JSON.stringify(settings),

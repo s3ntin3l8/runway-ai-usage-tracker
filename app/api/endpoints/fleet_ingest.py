@@ -37,6 +37,7 @@ from app.services.accumulator import (
 from app.services.credential_tags import CredentialTagRepo, ParkedMapping, PendingCredentialTagRepo
 from app.services.fleet_registry import (
     effective_auto_update,
+    effective_claude_telemetry,
     effective_update_channel,
     fleet_registry,
 )
@@ -267,6 +268,7 @@ class _PollInstructions:
     log_level_desired: str | None
     login_dirs: dict[str, list[str]]
     keep_alive_fleet_default: bool
+    claude_telemetry: bool
 
 
 # A credential bundle on its way into the token cache: provider id, the tokens
@@ -962,8 +964,12 @@ def _poll_instructions(ctx: _IngestContext) -> _PollInstructions:
     keep_alive_desired_providers: dict[str, bool] = {}
     fleet_channel = (sys_cfg.sidecar_update_channel if sys_cfg else None) or "stable"
     fleet_auto_update = bool((sys_cfg.sidecar_auto_update if sys_cfg else None) or False)
+    fleet_claude_telemetry = bool(
+        (sys_cfg.sidecar_claude_telemetry_default if sys_cfg else None) or False
+    )
     update_channel = fleet_channel
     auto_update = fleet_auto_update
+    claude_telemetry = fleet_claude_telemetry
     log_level_desired: str | None = None
     login_dirs = stored_login_dirs(None)
     if payload.sidecar_id:
@@ -971,6 +977,7 @@ def _poll_instructions(ctx: _IngestContext) -> _PollInstructions:
         if desired_row is not None:
             update_channel = effective_update_channel(desired_row, fleet_channel)
             auto_update = effective_auto_update(desired_row, fleet_auto_update)
+            claude_telemetry = effective_claude_telemetry(desired_row, fleet_claude_telemetry)
             log_level_desired = desired_row.log_level_desired
             login_dirs = stored_login_dirs(desired_row.login_dirs_desired)
         keep_alive_desired = desired_row.keep_alive_desired if desired_row else None
@@ -1029,6 +1036,7 @@ def _poll_instructions(ctx: _IngestContext) -> _PollInstructions:
         log_level_desired=log_level_desired,
         login_dirs=login_dirs,
         keep_alive_fleet_default=(sys_cfg.sidecar_keep_alive_default if sys_cfg else None) or False,
+        claude_telemetry=claude_telemetry,
     )
 
 
@@ -1097,6 +1105,7 @@ async def ingest_metrics(
                 auto_update=payload.auto_update,
                 update_channel=payload.update_channel,
                 log_level=payload.log_level,
+                claude_telemetry_status=payload.claude_telemetry_status,
                 collection_errors=payload.collection_errors,
                 last_log_lines=payload.last_log_lines or [],
                 identity_sources=payload.identity_sources,
@@ -1167,6 +1176,8 @@ async def ingest_metrics(
         # Fleet-wide keep-alive default: on for sidecars without their own override. It only
         # ever turns keep-alive on (the sidecar ORs it with its local flag).
         "keep_alive_fleet_default": poll.keep_alive_fleet_default,
+        # Opt-in Claude Code OpenTelemetry setting (this sidecar's override, else the fleet's).
+        "claude_telemetry": poll.claude_telemetry,
         # One-shot: self-update immediately on this heartbeat (admin pushed it).
         "update_now": update_now,
     }

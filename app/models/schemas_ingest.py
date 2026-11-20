@@ -240,6 +240,8 @@ class IngestRequest(BaseModel):
     update_channel: str | None = None
     # Level the sidecar logs at now (config.json, or the dashboard's override); None from older ones.
     log_level: str | None = None
+    # Claude Code OpenTelemetry status ("disabled" | "enabled" | "conflict" | "error"); None from older ones.
+    claude_telemetry_status: str | None = None
     login_dirs_report: LoginDirectoryReport | None = None
     collection_errors: int = 0  # Number of provider collection failures in this cycle
     # Providers with a complete local-card snapshot in this payload. None from

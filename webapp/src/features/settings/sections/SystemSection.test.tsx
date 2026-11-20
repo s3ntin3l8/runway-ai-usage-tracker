@@ -53,6 +53,22 @@ describe('SystemSection', () => {
       sidecar_update_channel: 'stable',
       sidecar_auto_update: false,
       sidecar_keep_alive_default: false,
+      sidecar_claude_telemetry_default: false,
+    });
+  });
+
+  it('turns the Claude Code telemetry default on and saves it', async () => {
+    vi.mocked(api.fetchAppConfig).mockResolvedValue(appConfig());
+    vi.mocked(api.putAppConfig).mockResolvedValue({ status: 'ok' });
+    renderWithProviders(<SystemSection />);
+
+    const toggle = await screen.findByLabelText(/capture claude code side calls/i);
+    expect(toggle).not.toBeChecked();
+    await userEvent.click(toggle);
+    await userEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+    expect(vi.mocked(api.putAppConfig).mock.calls[0][0]).toMatchObject({
+      sidecar_claude_telemetry_default: true,
     });
   });
 

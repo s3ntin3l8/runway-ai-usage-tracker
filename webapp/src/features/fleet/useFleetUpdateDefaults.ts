@@ -9,5 +9,6 @@ export function useFleetUpdateDefaults(): FleetUpdateDefaults {
   return {
     autoUpdate: data?.sidecar_auto_update === true,
     channel: (data?.sidecar_update_channel as SidecarChannel | undefined) ?? 'stable',
+    claudeTelemetry: data?.sidecar_claude_telemetry_default === true,
   };
 }

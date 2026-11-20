@@ -3,6 +3,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/Tabs';
 import { timeAgo } from '@/lib/format';
+import { ClaudeTelemetrySection } from './ClaudeTelemetrySection';
 import { GeneralForm } from './GeneralForm';
 import { KeepAliveSection } from './KeepAliveSection';
 import { LoggingSection } from './LoggingSection';
@@ -10,6 +11,7 @@ import { LoginDirectoriesSection } from './LoginDirectoriesSection';
 import { SidecarSources } from './SidecarSources';
 import { UpdatesSection } from './UpdatesSection';
 import {
+  claudeTelemetryPending,
   logLevelLagging,
   loginDirsPending,
   pendingSettings,
@@ -38,8 +40,12 @@ export function SettingsTabs({
   const maintenance =
     (sidecar.update_available ? 1 : 0) + [drift.auto, drift.channel, logLevelLagging(sidecar)].filter(Boolean).length;
   const attention = useSourcesNeedingAttention(sidecar.sidecar_id, sidecar.os_platform);
-  // A directory the sidecar has not applied yet lives on the General tab.
-  const general = loginDirsPending(sidecar) ? 1 : 0;
+  // A directory or telemetry setting the sidecar has not applied yet (or a conflict/error) lives on the General tab.
+  const telemetryAttention =
+    claudeTelemetryPending(sidecar, fleet) ||
+    sidecar.claude_telemetry === 'conflict' ||
+    sidecar.claude_telemetry === 'error';
+  const general = (loginDirsPending(sidecar) ? 1 : 0) + (telemetryAttention ? 1 : 0);
 
   return (
     <div className="flex flex-col gap-4">
@@ -73,6 +79,7 @@ export function SettingsTabs({
         <TabsContent value="general" className="flex flex-col gap-4">
           <GeneralForm key={sidecar.sidecar_id} sidecar={sidecar} />
           <LoginDirectoriesSection key={`${sidecar.sidecar_id}-dirs`} sidecar={sidecar} online={online} onUpdate={onUpdate} />
+          <ClaudeTelemetrySection sidecar={sidecar} online={online} />
         </TabsContent>
         <TabsContent value="credentials" className="flex flex-col gap-4">
           <KeepAliveSection sidecar={sidecar} online={online} onUpdate={onUpdate} />

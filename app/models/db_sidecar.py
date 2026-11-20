@@ -132,6 +132,11 @@ class SidecarRegistry(SQLModel, table=True):  # type: ignore[call-arg]
     # reports it logs at (None = an older sidecar that doesn't report it).
     log_level: str | None = None
     log_level_desired: str | None = None
+    # Claude Code OpenTelemetry (~/.claude/settings.json env block).
+    # ``*_desired`` is the operator's per-sidecar override (None = follow fleet default, which is off).
+    # ``claude_telemetry_status`` is what the sidecar reports ("disabled" | "enabled" | "conflict" | "error").
+    claude_telemetry_desired: bool | None = None
+    claude_telemetry_status: str | None = None
     login_dirs_desired: str | None = None  # JSON Fleet additions; never expanded on the server
     login_dirs_report: str | None = None  # JSON acknowledgement and searched directories
     recent_logs: str | None = None  # JSON-encoded list of last log lines from the sidecar

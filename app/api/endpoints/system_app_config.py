@@ -36,6 +36,8 @@ class _AppConfigUpdate(BaseModel):
     sidecar_auto_update: bool | None = None
     # Fleet-wide default: keep-alive on for every sidecar without its own override.
     sidecar_keep_alive_default: bool | None = None
+    # Fleet-wide default: opt-in to configure ~/.claude/settings.json telemetry for sidecars.
+    sidecar_claude_telemetry_default: bool | None = None
     # Claude cloud-runner collector switch; null leaves it as it is (the env default applies
     # until a value is stored).
     claude_cloud_collector_enabled: bool | None = None
@@ -62,6 +64,9 @@ async def get_app_config(request: Request, session: Session = Depends(get_sessio
         "sidecar_update_channel": (cfg.sidecar_update_channel if cfg else None) or "stable",
         "sidecar_auto_update": bool(cfg.sidecar_auto_update) if cfg else False,
         "sidecar_keep_alive_default": bool(cfg.sidecar_keep_alive_default) if cfg else False,
+        "sidecar_claude_telemetry_default": (
+            bool(cfg.sidecar_claude_telemetry_default) if cfg else False
+        ),
         # The stored switch (null = none stored) and the value in effect.
         "claude_cloud_collector_enabled": (cfg.claude_cloud_collector_enabled if cfg else None),
         "claude_cloud_collector_effective": claude_cloud_collector_enabled(session),
@@ -129,6 +134,8 @@ async def upsert_app_config(
         cfg.sidecar_auto_update = bool(body.sidecar_auto_update)
     if body.sidecar_keep_alive_default is not None:
         cfg.sidecar_keep_alive_default = bool(body.sidecar_keep_alive_default)
+    if body.sidecar_claude_telemetry_default is not None:
+        cfg.sidecar_claude_telemetry_default = bool(body.sidecar_claude_telemetry_default)
     cloud_changed = False
     if body.claude_cloud_collector_enabled is not None:
         cfg.claude_cloud_collector_enabled = bool(body.claude_cloud_collector_enabled)
