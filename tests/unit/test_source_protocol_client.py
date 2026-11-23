@@ -529,7 +529,7 @@ def test_daemon_runner_syncs_before_first_collection(tmp_path, monkeypatch):
 
     order = []
     local = config()
-    local["api_key"] = "synthetic-api-key"
+    local["api_key"] = "synthetic-api-key"  # pragma: allowlist secret
     local["poll_interval"] = 60
     monkeypatch.setattr(sidecar, "get_sidecar_dir", lambda: tmp_path)
     monkeypatch.setattr(
