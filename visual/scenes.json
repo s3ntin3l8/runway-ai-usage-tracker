@@ -63,6 +63,11 @@
       "tags": ["presentation", "check", "audit"]
     },
     {
+      "name": "fleet-safari-access-stale",
+      "path": "/fleet",
+      "tags": ["presentation", "check", "audit"]
+    },
+    {
       "name": "settings",
       "path": "/settings",
       "tags": ["presentation", "check", "audit"]

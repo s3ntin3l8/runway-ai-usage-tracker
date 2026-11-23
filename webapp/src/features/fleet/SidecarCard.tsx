@@ -34,6 +34,12 @@ export function SidecarCard({
   const queryClient = useQueryClient();
   const online = isOnline(sidecar);
   const paused = sidecar.collection_enabled === false;
+  const safariAccess = sidecar.safari_access;
+  const staleThreshold = sidecar.stale_threshold_minutes;
+  const safariReportStale =
+    safariAccess != null &&
+    staleThreshold != null &&
+    Date.parse(safariAccess.checked_at) < Date.now() - staleThreshold * 60_000;
   const [showLogs, setShowLogs] = useState(false);
 
   const toggle = useMutation({
@@ -85,9 +91,12 @@ export function SidecarCard({
             </div>
           </div>
 
-          {sidecar.safari_access?.state === 'full_disk_access_missing' ? (
-            <p className="mt-2.5 text-[11px] font-medium text-warning">
-              Safari: Full Disk Access needed
+          {safariAccess?.state === 'full_disk_access_missing' ? (
+            <p className={`mt-2.5 text-[11px] font-medium ${safariReportStale ? 'text-fg-muted' : 'text-warning'}`}>
+              {safariReportStale
+                ? 'Safari: Full Disk Access was needed'
+                : 'Safari: Full Disk Access needed'}{' '}
+              (checked {timeAgo(safariAccess.checked_at)})
             </p>
           ) : null}
 

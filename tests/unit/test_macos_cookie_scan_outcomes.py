@@ -196,11 +196,27 @@ def test_desktop_cookie_scan_uses_shared_key_cache_and_reports_expired(tmp_path,
     assert len(calls) == 1
 
 
-@pytest.mark.parametrize("discovery_status", [None, "inaccessible"])
+@pytest.mark.parametrize(
+    ("discovery_status", "profile", "store", "label"),
+    [
+        (
+            None,
+            "profile-uuid",
+            "Library/Containers/com.apple.Safari/Data/Library/WebKit/WebsiteDataStore/Cookies.binarycookies",
+            "Cookies.binarycookies",
+        ),
+        (
+            "inaccessible",
+            "Unenumerated",
+            "Library/Containers/com.apple.Safari/Data/Library/WebKit/WebsiteDataStore",
+            "WebsiteDataStore",
+        ),
+    ],
+)
 def test_candidate_scan_reports_protected_safari_as_inaccessible(
-    tmp_path, monkeypatch, discovery_status
+    tmp_path, monkeypatch, discovery_status, profile, store, label
 ):
-    path = tmp_path / "private-account/Cookies.binarycookies"
+    path = tmp_path / "private-account" / label
     monkeypatch.setenv("RUNWAY_CLAUDE_DESKTOP_CREDENTIALS", "0")
     monkeypatch.setattr(
         sidecar.BrowserCookieExtractor,
@@ -210,8 +226,8 @@ def test_candidate_scan_reports_protected_safari_as_inaccessible(
                 "type": "safari",
                 "browser": "Safari",
                 "path": path,
-                "profile": "Default",
-                "store": "Cookies.binarycookies",
+                "profile": profile,
+                "store": store,
                 "discovery_status": discovery_status,
             }
         ],
@@ -238,9 +254,9 @@ def test_candidate_scan_reports_protected_safari_as_inaccessible(
     assert sidecar.blocked_source_entries() == [
         {
             "provider_id": "anthropic",
-            "credential_origin": "cookie:anthropic/Safari/Default/Cookies.binarycookies",
+            "credential_origin": f"cookie:anthropic/Safari/{profile}/{label}",
             "reason": "source_unreadable",
-            "source_store": "Safari/Default/Cookies.binarycookies",
+            "source_store": f"Safari/{profile}/{label}",
             "source_detail": "the file could not be opened",
             "source_remedy": (
                 "grant Full Disk Access to Runway Sidecar on this Mac "

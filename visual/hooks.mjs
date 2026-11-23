@@ -12,14 +12,16 @@
 // font's, the layout is never redone, and the shot differs from run to run. The charts render when the first
 // API answers, so hold every fetch until the fonts are in.
 export async function beforeScene({ context, scene }) {
-  if (scene.name === "fleet-safari-access") {
+  if (scene.name === "fleet-safari-access" || scene.name === "fleet-safari-access-stale") {
     await context.route("**/api/v1/fleet/sidecars", async (route) => {
       const response = await route.fetch();
       const data = await response.json();
       const mac = data.sidecars.find((sidecar) => sidecar.os_platform?.startsWith("Darwin/"));
       mac.safari_access = {
         state: "full_disk_access_missing",
-        checked_at: "2026-10-15T10:00:00Z",
+        checked_at: scene.name === "fleet-safari-access-stale"
+          ? "2026-10-15T08:00:00Z"
+          : "2026-10-15T10:00:00Z",
       };
       await route.fulfill({ response, json: data });
     });

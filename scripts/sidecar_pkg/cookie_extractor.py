@@ -535,7 +535,7 @@ class BrowserCookieExtractor:
                                     path,
                                     browser,
                                     profile,
-                                    store,
+                                    path.name,
                                     browser_store.StoreState.UNREADABLE,
                                 ),
                                 provider,
