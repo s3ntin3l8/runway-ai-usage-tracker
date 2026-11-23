@@ -250,30 +250,38 @@ def test_snapshot_mkdir_failure_exits_cleanly(
 
 _NON_MAINTENANCE_DB_SCRIPTS = {
     "benchmark_server_memory.py",  # writes to a scratch temp DB
+    "benchmark_sidecar_memory.py",  # writes to a scratch temp sqlite3 DB
 }
 
+_NON_SESSION_CALLS = {"set", "frozenset", "list", "dict", "tuple"}
 
-def _session_vars(fn: ast.FunctionDef) -> set[str]:
+
+def _session_vars(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
     names = {"session"}
     for node in ast.walk(fn):
-        if isinstance(node, ast.With):
+        if isinstance(node, (ast.With, ast.AsyncWith)):
             for item in node.items:
                 if (
                     isinstance(item.context_expr, ast.Call)
-                    and isinstance(item.context_expr.func, ast.Name)
-                    and item.context_expr.func.id == "Session"
+                    and _call_name(item.context_expr) not in _NON_SESSION_CALLS
                     and isinstance(item.optional_vars, ast.Name)
                 ):
                     names.add(item.optional_vars.id)
         elif (
             isinstance(node, ast.Assign)
             and isinstance(node.value, ast.Call)
-            and isinstance(node.value.func, ast.Name)
-            and node.value.func.id == "Session"
+            and _call_name(node.value) not in _NON_SESSION_CALLS
         ):
             for target in node.targets:
                 if isinstance(target, ast.Name):
                     names.add(target.id)
+        elif (
+            isinstance(node, ast.AnnAssign)
+            and isinstance(node.value, ast.Call)
+            and _call_name(node.value) not in _NON_SESSION_CALLS
+            and isinstance(node.target, ast.Name)
+        ):
+            names.add(node.target.id)
     return names
 
 
@@ -285,10 +293,17 @@ def _call_name(node: ast.Call) -> str | None:
     return None
 
 
-def _is_db_write_call(node: ast.Call, session_vars: set[str] | None = None) -> bool:
+def _is_db_write_call(
+    node: ast.Call,
+    session_vars: set[str] | None = None,
+    local_funcs: set[str] | None = None,
+) -> bool:
     if isinstance(node.func, ast.Name) and (
         node.func.id == "init_db"
-        or node.func.id.startswith("apply_")
+        or (
+            node.func.id.startswith("apply_")
+            and (local_funcs is None or node.func.id not in local_funcs)
+        )
         or node.func.id == "merge_gauge_series"
     ):
         return True
@@ -298,23 +313,48 @@ def _is_db_write_call(node: ast.Call, session_vars: set[str] | None = None) -> b
         and isinstance(node.func.value, ast.Name)
         and node.func.value.id in vars_to_check
     ):
-        if node.func.attr in {"commit", "add", "delete", "execute"}:
+        if node.func.attr in {"commit", "add", "add_all", "delete", "flush"}:
             return True
-        if node.func.attr == "exec" and node.args:
+        if node.func.attr in {"exec", "execute"} and node.args:
             return any(
-                isinstance(sub, ast.Call)
-                and isinstance(sub.func, ast.Name)
-                and sub.func.id in {"update", "delete", "insert"}
+                (
+                    isinstance(sub, ast.Call)
+                    and isinstance(sub.func, ast.Name)
+                    and sub.func.id in {"update", "delete", "insert"}
+                )
+                or (
+                    isinstance(sub, ast.Constant)
+                    and isinstance(sub.value, str)
+                    and any(kw in sub.value.lower() for kw in ("insert", "update", "delete"))
+                )
                 for sub in ast.walk(node.args[0])
             )
     return False
 
 
-def _contains_db_write_call(fn: ast.FunctionDef) -> bool:
+def _contains_db_write_call(
+    fn: ast.FunctionDef | ast.AsyncFunctionDef,
+    local_funcs: set[str] | None = None,
+) -> bool:
     svars = _session_vars(fn)
     return any(
-        isinstance(child, ast.Call) and _is_db_write_call(child, svars) for child in ast.walk(fn)
+        isinstance(child, ast.Call) and _is_db_write_call(child, svars, local_funcs)
+        for child in ast.walk(fn)
     )
+
+
+def _iter_module_functions(
+    tree: ast.Module,
+) -> list[ast.FunctionDef | ast.AsyncFunctionDef]:
+    funcs: list[ast.FunctionDef | ast.AsyncFunctionDef] = []
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            funcs.append(node)
+        elif isinstance(node, ast.ClassDef):
+            for item in node.body:
+                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    funcs.append(item)
+    return funcs
 
 
 def _discover_writing_scripts() -> list[Path]:
@@ -332,8 +372,9 @@ def _discover_writing_scripts() -> list[Path]:
         )
         if not imports_app:
             continue
-        top_funcs = [node for node in tree.body if isinstance(node, ast.FunctionDef)]
-        if any(_contains_db_write_call(fn) for fn in top_funcs):
+        funcs = _iter_module_functions(tree)
+        local_funcs = {fn.name for fn in funcs}
+        if any(_contains_db_write_call(fn, local_funcs) for fn in funcs):
             discovered.append(path)
     return discovered
 
