@@ -24,7 +24,7 @@ import {
   useSortable,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { useNavigate } from 'react-router';
+import { Link, useNavigate } from 'react-router';
 import { TokenBar } from '@/components/charts/TokenBar';
 import { Badge } from '@/components/ui/Badge';
 import { Card } from '@/components/ui/Card';
@@ -147,40 +147,48 @@ function SortableProviderCard({
     <Card
       ref={setNodeRef}
       style={{ transform: CSS.Transform.toString(transform), transition }}
-      {...attributes}
-      {...listeners}
-      role="button"
-      tabIndex={0}
-      aria-label={
-        accountLabel ? `${name} (${accountLabel}), ${accessibleHero}` : `${name}, ${accessibleHero}`
-      }
       onClick={() => {
         if (!isDragging) navigate(providerPath(entry.provider_id, entry.account_id));
       }}
-      onKeyDown={(e) => {
-        // Enter opens the provider detail — the card declares role="button",
-        // so Enter has to activate it.
-        if (e.key === 'Enter') {
-          e.preventDefault();
-          navigate(providerPath(entry.provider_id, entry.account_id));
-          return;
-        }
-        // Space is the keyboard drag key. The sensor's own handler has to see
-        // it: the card's onKeyDown used to REPLACE the spread's listener (it
-        // came last in the prop order), so the KeyboardSensor never received
-        // a keydown and the grid could only be reordered with a pointer.
-        // While a drag is running the sensor ends it from its own window
-        // listener — re-invoking the activator here would restart it first.
-        if (isDragging) return;
-        listeners?.onKeyDown?.(e);
-      }}
       className={
         'cursor-pointer touch-manipulation p-3.5 transition-colors duration-150 hover:border-edge-strong ' +
-        (isDragging ? 'z-10 opacity-80 shadow-lg' : '') +
-        (cardStale(gauge) ? ' opacity-60' : '')
+        (isDragging ? 'z-10 opacity-80 shadow-lg' : '')
       }
     >
-      <div className="flex items-center gap-2.5">
+      {/* Keep the interactive card trigger separate from the footer so stale-reason
+          links are siblings of role="button" rather than nested inside it, and keep
+          stale dimming off the footer links so text-warning preserves WCAG AA contrast. */}
+      <div
+        {...attributes}
+        {...listeners}
+        role="button"
+        tabIndex={0}
+        aria-label={
+          accountLabel ? `${name} (${accountLabel}), ${accessibleHero}` : `${name}, ${accessibleHero}`
+        }
+        onKeyDown={(e) => {
+          // Enter opens the provider detail — the card body declares role="button",
+          // so Enter has to activate it.
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            navigate(providerPath(entry.provider_id, entry.account_id));
+            return;
+          }
+          // Space is the keyboard drag key. The sensor's own handler has to see
+          // it: the card's onKeyDown used to REPLACE the spread's listener (it
+          // came last in the prop order), so the KeyboardSensor never received
+          // a keydown and the grid could only be reordered with a pointer.
+          // While a drag is running the sensor ends it from its own window
+          // listener — re-invoking the activator here would restart it first.
+          if (isDragging) return;
+          listeners?.onKeyDown?.(e);
+        }}
+        className={
+          'rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-accent' +
+          (cardStale(gauge) ? ' opacity-60' : '')
+        }
+      >
+        <div className="flex items-center gap-2.5">
         <ProviderGlyph providerId={entry.provider_id} name={name} className="size-6 text-[10px]" />
         <div className="min-w-0 flex-1">
           <p className="truncate text-[13px] font-medium">{name}</p>
@@ -269,18 +277,41 @@ function SortableProviderCard({
           {overflow > 0 ? <Badge variant="neutral">+{overflow}</Badge> : null}
         </div>
       ) : null}
+      </div>
       <div className="mt-2.5 flex items-center justify-between text-[11px] text-fg-subtle">
-        {kind === 'quota' ? (
-          <Countdown until={gauge.reset_at} className="text-[11px]" />
-        ) : gauge.msgs != null ? (
-          <span>{formatNumber(gauge.msgs)} msgs</span>
-        ) : (
-          <span />
-        )}
+        <div className={cardStale(gauge) ? 'opacity-60' : undefined}>
+          {kind === 'quota' ? (
+            <Countdown until={gauge.reset_at} className="text-[11px]" />
+          ) : gauge.msgs != null ? (
+            <span>{formatNumber(gauge.msgs)} msgs</span>
+          ) : null}
+        </div>
         {cardStale(gauge) ? (
-          <span className="text-warning" title={staleTitle(gauge)}>
-            Stale
-          </span>
+          gauge.stale_reason === 'no_credential' ? (
+            <Link
+              to="/settings/providers"
+              onClick={(e) => e.stopPropagation()}
+              aria-label={`No credential, reconnect — ${name}`}
+              title={staleTitle(gauge)}
+              className="font-medium text-warning underline underline-offset-2 hover:text-fg"
+            >
+              No credential, reconnect
+            </Link>
+          ) : gauge.stale_reason === 'credential_failing' ? (
+            <Link
+              to="/fleet"
+              onClick={(e) => e.stopPropagation()}
+              aria-label={`Credential failing — ${name}`}
+              title={staleTitle(gauge)}
+              className="font-medium text-warning underline underline-offset-2 hover:text-fg"
+            >
+              Credential failing
+            </Link>
+          ) : (
+            <span className="text-warning" title={staleTitle(gauge)}>
+              Stale
+            </span>
+          )
         ) : (
           <span>{timeAgo(gauge.updated_at)}</span>
         )}

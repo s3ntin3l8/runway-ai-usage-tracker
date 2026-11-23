@@ -1,5 +1,6 @@
 import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { useLocation } from 'react-router';
 import type { FleetEntry, LimitCard } from '@/api/types';
 import { renderWithProviders } from '@/test/utils';
 import { ProviderGrid } from './ProviderGrid';
@@ -71,7 +72,7 @@ describe('ProviderGrid', () => {
     await userEvent.keyboard('{ }');
 
     // Space starts a keyboard drag: the active item gets a drag transform.
-    expect(cardEl.getAttribute('style') ?? '').toMatch(/transform/);
+    expect(cardEl.parentElement?.getAttribute('style') ?? '').toMatch(/transform/);
   });
 
   it('falls back to the provider_id when no friendly name is known', () => {
@@ -119,6 +120,7 @@ describe('ProviderGrid', () => {
     renderWithProviders(<ProviderGrid items={items} providerNames={names} onReorder={vi.fn()} />);
     const cardEl = screen.getByRole('button', { name: /claude/i });
     expect(cardEl.className).toContain('opacity-60');
+    expect(cardEl.parentElement?.className).not.toContain('opacity-60');
   });
 
   it('shows a Stale footer label when the gauge is stale', () => {
@@ -128,6 +130,65 @@ describe('ProviderGrid', () => {
     );
     renderWithProviders(<ProviderGrid items={items} providerNames={names} onReorder={vi.fn()} />);
     expect(screen.getByText('Stale')).toBeInTheDocument();
+  });
+
+  it('shows "No credential, reconnect" link to Settings -> Providers when stale_reason is no_credential', async () => {
+    function LocationProbe() {
+      const { pathname } = useLocation();
+      return <span data-testid="location">{pathname}</span>;
+    }
+    const items = buildRiskItems(
+      [entry({ critical_gauge: card({ stale: true, stale_reason: 'no_credential' }) })],
+      [],
+    );
+    renderWithProviders(
+      <>
+        <ProviderGrid items={items} providerNames={names} onReorder={vi.fn()} />
+        <LocationProbe />
+      </>,
+    );
+    const link = screen.getByRole('link', { name: /no credential, reconnect — claude/i });
+    expect(link).toHaveTextContent('No credential, reconnect');
+    expect(link).toHaveAttribute('href', '/settings/providers');
+    expect(link).toHaveAttribute('title', 'No credential found — showing cached data');
+    expect(screen.queryByText('Stale')).not.toBeInTheDocument();
+
+    await userEvent.click(link);
+    expect(screen.getByTestId('location')).toHaveTextContent('/settings/providers');
+  });
+
+  it('shows "Credential failing" link to Fleet when stale_reason is credential_failing', async () => {
+    function LocationProbe() {
+      const { pathname } = useLocation();
+      return <span data-testid="location">{pathname}</span>;
+    }
+    const items = buildRiskItems(
+      [entry({ critical_gauge: card({ stale: true, stale_reason: 'credential_failing' }) })],
+      [],
+    );
+    renderWithProviders(
+      <>
+        <ProviderGrid items={items} providerNames={names} onReorder={vi.fn()} />
+        <LocationProbe />
+      </>,
+    );
+    const link = screen.getByRole('link', { name: /credential failing — claude/i });
+    expect(link).toHaveTextContent('Credential failing');
+    expect(link).toHaveAttribute('href', '/fleet');
+    expect(screen.queryByText('Stale')).not.toBeInTheDocument();
+
+    await userEvent.click(link);
+    expect(screen.getByTestId('location')).toHaveTextContent('/fleet');
+  });
+
+  it('keeps bare "Stale" when stale_reason is null', () => {
+    const items = buildRiskItems(
+      [entry({ critical_gauge: card({ stale: true, stale_reason: null }) })],
+      [],
+    );
+    renderWithProviders(<ProviderGrid items={items} providerNames={names} onReorder={vi.fn()} />);
+    expect(screen.getByText('Stale')).toBeInTheDocument();
+    expect(screen.queryByRole('link')).not.toBeInTheDocument();
   });
 
   it('puts the failure reason in the Stale label tooltip', () => {
@@ -165,6 +226,7 @@ describe('ProviderGrid', () => {
     renderWithProviders(<ProviderGrid items={items} providerNames={names} onReorder={vi.fn()} />);
     const cardEl = screen.getByRole('button', { name: /claude/i });
     expect(cardEl.className).toContain('opacity-60');
+    expect(cardEl.parentElement?.className).not.toContain('opacity-60');
     expect(screen.getByText('Stale')).toBeInTheDocument();
   });
 
@@ -176,6 +238,7 @@ describe('ProviderGrid', () => {
     renderWithProviders(<ProviderGrid items={items} providerNames={names} onReorder={vi.fn()} />);
     const cardEl = screen.getByRole('button', { name: /claude/i });
     expect(cardEl.className).toContain('opacity-60');
+    expect(cardEl.parentElement?.className).not.toContain('opacity-60');
     expect(screen.getByText('Stale')).toBeInTheDocument();
   });
 
@@ -184,6 +247,7 @@ describe('ProviderGrid', () => {
     renderWithProviders(<ProviderGrid items={items} providerNames={names} onReorder={vi.fn()} />);
     const cardEl = screen.getByRole('button', { name: /claude/i });
     expect(cardEl.className).not.toContain('opacity-60');
+    expect(cardEl.parentElement?.className).not.toContain('opacity-60');
   });
 
   it('puts the dollar breakdown of a currency quota card in the hero tooltip', () => {
