@@ -63,8 +63,8 @@ stable across builds and fails the build if it drifts
 
 Each source shows one of: **Off**, **Not installed**, **Setup required**,
 **Connecting**, **Authorized**, **Authorized (checked &lt;YYYY-MM-DD HH:MM&gt; UTC)**,
-**Ready**, **Limited**, **Action required**, **Withdrawal
-pending**. Read access alone does not prove renewal, API acceptance or that a
+**Ready**, **Limited**, **Action required**, **Needs re-authorization (app updated)**,
+**Withdrawal pending**. Read access alone does not prove renewal, API acceptance or that a
 permission survives an app update. Old peers that cannot report source state
 appear as **Limited**.
 

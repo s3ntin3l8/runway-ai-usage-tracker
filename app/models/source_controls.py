@@ -22,6 +22,7 @@ class ScraperReport(BaseModel):
             "Authorized",
             "Limited",
             "Action required",
+            "Needs re-authorization (app updated)",
             "Not installed",
             "Withdrawal pending",
         ]
@@ -32,6 +33,18 @@ class ScraperReport(BaseModel):
             ),
         ]
     )
+    state_reason: (
+        Literal[
+            "app_updated",
+            "denied",
+            "timed_out",
+            "unavailable",
+            "missing",
+            "identity changed",
+            "ambiguous",
+        ]
+        | None
+    ) = None
     renewal_requested: StrictBool = False
     renewal_supported: StrictBool = False
     new: StrictBool = False

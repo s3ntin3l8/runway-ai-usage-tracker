@@ -234,8 +234,10 @@ class SetupController:
         *,
         launch: Callable[[str], bool] = launch_authorization,
         verify: Callable[[str, consent.ConsentTicket], bool] = verify_background,
+        code_identity: Callable[[], str | None] | None = None,
     ) -> None:
         self._launch, self._verify = launch, verify
+        self._code_identity = code_identity
         self._lock = threading.RLock()
         self._thread: threading.Thread | None = None
         self._states: dict[str, tuple[consent.ConsentTicket, str]] = {}
@@ -295,7 +297,14 @@ class SetupController:
                             macos_cookies._KEY_CACHE.pop(service, None)
                             macos_cookies._KEY_STATUS.pop(service, None)
             if consent.POLICY.current(ticket):
-                if not success:
+                if success:
+                    identity = (
+                        self._code_identity()
+                        if self._code_identity is not None
+                        else consent.current_code_identity()
+                    )
+                    consent.POLICY.record_authorization(ticket, identity)
+                else:
                     consent.POLICY.record_block(ticket, "unavailable")
                 self._states[source_id] = (ticket, "Limited" if success else "Action required")
 
@@ -314,7 +323,14 @@ class SetupController:
             for source_id in source_ids:
                 descriptor = descriptors.get(source_id)
                 ticket = consent.POLICY.ticket(source_id)
-                if descriptor is None or ticket is None or self.state(source_id) == "Limited":
+                if (
+                    descriptor is None
+                    or ticket is None
+                    or (
+                        self.state(source_id) == "Limited"
+                        and not consent.POLICY.needs_reauthorization(source_id)
+                    )
+                ):
                     continue
                 groups.setdefault(descriptor.item_key, []).append((source_id, ticket))
             if not groups:

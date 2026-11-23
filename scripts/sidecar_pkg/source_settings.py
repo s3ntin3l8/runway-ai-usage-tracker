@@ -189,6 +189,10 @@ def report(config: dict[str, Any]) -> dict[str, Any]:
                 "revision": source.revision,
                 "read": has_ticket,
                 "state": state,
+                # Other state_reason values (denied, timed_out, etc.) are left to #1340.
+                "state_reason": (
+                    "app_updated" if state == "Needs re-authorization (app updated)" else None
+                ),
                 "last_read_at": POLICY.last_read(source.id),
                 "remote_paused": remote.get(source.id, {}).get("paused") is True,
                 "revoked": _is_revoked(config, remote, source.id),
@@ -206,6 +210,9 @@ def report(config: dict[str, Any]) -> dict[str, Any]:
     return {
         "compatible": any(sys.platform in source.platforms for source in catalog().values()),
         "sources": sources,
+        "reauthorization_count": sum(
+            1 for row in sources if row["state"] == "Needs re-authorization (app updated)"
+        ),
         "installed": inst,
         "browsers": selected,
         "safari": _safari_report(config),
@@ -337,10 +344,13 @@ def _is_revoked(config: dict[str, Any], remote: dict[str, Any], source_id: str) 
 
 def _authorization_state(source_id: str, services: tuple[str, ...], setup_state: str) -> str:
     from scripts.sidecar_pkg.keychain_client import access_groups_blocked
-    from scripts.sidecar_pkg.source_consent import POLICY
+    from scripts.sidecar_pkg.source_consent import POLICY, REAUTH_REQUIRED_STATE
 
     if setup_state == "Connecting":
         return setup_state
+    read_state = POLICY.read_state(source_id)
+    if read_state == REAUTH_REQUIRED_STATE:
+        return read_state
     groups = [
         "claude-code"
         if source_id == "anthropic.claude-code"
@@ -351,6 +361,4 @@ def _authorization_state(source_id: str, services: tuple[str, ...], setup_state:
     ]
     if access_groups_blocked(groups):
         return "Action required"
-    return POLICY.read_state(source_id) or (
-        setup_state if setup_state != "Off" else "Setup required"
-    )
+    return read_state or (setup_state if setup_state != "Off" else "Setup required")

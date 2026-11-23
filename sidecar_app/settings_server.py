@@ -421,6 +421,7 @@ function kcStatus(source, run) {
   if (source.revoked) return 'err';
   if (run.current.includes(source.id) || source.state === 'Connecting') return 'busy';
   if (run.queued.includes(source.id)) return 'wait';
+  if (source.state === 'Needs re-authorization (app updated)') return 'need';
   if (source.state === 'Action required') return 'err';
   if (source.state === 'Setup required') return 'need';
   return 'ok';
@@ -429,6 +430,7 @@ function kcStatus(source, run) {
 function kcChip(status, source) {
   const chip = kcEl('span', 'kc-chip kc-' + status, source && source.revoked ? 'Revoked' : KC_LABEL[status]);
   if (source && status === 'ok' && source.state.startsWith('Authorized (checked ')) chip.textContent = source.state;
+  if (source && !source.revoked && status === 'need' && source.state === 'Needs re-authorization (app updated)') chip.textContent = source.state;
   if (source && source.read && source.remote_paused) chip.textContent += ' · paused';
   if (source && status === 'need' && source.setup_requested) chip.textContent += ' · requested';
   if (source && source.state === 'Withdrawal pending') chip.title = 'Off · server withdrawal pending';
@@ -511,11 +513,16 @@ function renderSources(report) {
   const enabled = live.filter(s => s.read);
   const authorized = enabled.filter(s => status(s) === 'ok');
   const waiting = enabled.filter(s => status(s) === 'need');
+  const reauthCount = typeof report.reauthorization_count === 'number'
+    ? report.reauthorization_count
+    : waiting.filter(s => s.state === 'Needs re-authorization (app updated)').length;
+  const otherWaiting = Math.max(0, waiting.length - reauthCount);
   const failed = enabled.filter(s => status(s) === 'err');
   const summary = kcEl('div', 'kc-summary'); summary.setAttribute('aria-live', 'polite');
   const part = (cls, n, text) => { const span = kcEl('span', cls); span.append(kcEl('strong', '', String(n)), document.createTextNode(' ' + text)); return span; };
   summary.append(part('', enabled.length, 'of ' + live.length + ' on'), part('', authorized.length, 'authorized'));
-  if (waiting.length) summary.append(part('kc-warn', waiting.length, 'need authorization'));
+  if (reauthCount) summary.append(part('kc-warn', reauthCount, (reauthCount === 1 ? 'source needs' : 'sources need') + ' re-authorization after the update'));
+  if (otherWaiting) summary.append(part('kc-warn', otherWaiting, 'need authorization'));
   if (failed.length) summary.append(part('kc-bad', failed.length, 'action required'));
   body.append(summary);
 
@@ -568,7 +575,7 @@ function renderSources(report) {
     if (children.some(s => s.new)) name.append(kcEl('span', 'kc-tag', 'NEW'));
     for (const child of children) {
       const pill = kcEl('span', 'kc-pill'); const dot = kcEl('i', 'kc-d-' + status(child));
-      pill.title = child.label + ': ' + (status(child) === 'ok' && child.state.startsWith('Authorized (checked ') ? child.state : KC_LABEL[status(child)]);
+      pill.title = child.label + ': ' + ((status(child) === 'ok' && child.state.startsWith('Authorized (checked ')) || child.state === 'Needs re-authorization (app updated)' ? child.state : KC_LABEL[status(child)]);
       pill.append(dot, document.createTextNode(KC_BROWSERS.find(b => b[0] === child.group)[1]));
       name.append(pill);
     }

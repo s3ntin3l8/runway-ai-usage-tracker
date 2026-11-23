@@ -286,6 +286,8 @@ def main() -> None:  # noqa: PLR0915 — known-debt: tray-app bootstrap entrypoi
                 "Edit config.json to connect to your Runway server, then restart.",
                 "Runway Sidecar — Setup Required",
             )
+        else:
+            tray.notify_reauthorization()
 
     try:
         tray.run(after_start=notify_on_start)
