@@ -1115,3 +1115,249 @@ async def test_desktop_profile_success_quota_denial_stays_pending_and_other_sour
     assert _outcome(engine, "anthropic", good)[0] == BOB
     assert _outcome(engine, "anthropic", bad)[1] is None
     assert [p["source_id"] for p in await cache.get_pending_sources("anthropic")] == [bad]
+
+
+@pytest.mark.asyncio
+async def test_console_cookie_fingerprint_rotation_preserves_source_and_contribution(
+    world, monkeypatch
+):
+    """Replay (#1342): Console cookie rotates to a new fingerprint on an enrolled device.
+
+    Exercises promotion (including the ``existing_target`` branch that calls
+    ``session.delete(source)``), sidecar ingest, and
+    ``reconcile_token_cache_from_durable_tags``, asserting after every step
+    that the ``CredentialSource`` row and non-NULL ``SidecarSourceContribution``
+    payload survive.
+    """
+    from cryptography.fernet import Fernet
+
+    from app.core import config, db
+    from app.core.db import get_session
+    from app.core.encryption import EncryptionService
+    from app.main import app
+    from app.models.db import SidecarDevice, SidecarSourceContribution
+    from app.services import sidecar_devices, source_controls
+    from app.services.credential_sources import pending_cache_slot, sidecar_source_id
+    from scripts.sidecar_pkg.source_catalog import catalog
+    from scripts.sidecar_pkg.source_protocol import signed_headers
+    from scripts.sidecar_pkg.transport import signing_timestamp
+    from tests.fixtures.test_client import TestClient
+
+    engine, cache = world
+    encryption = EncryptionService(Fernet.generate_key().decode())
+    monkeypatch.setattr("app.services.token_cache.token_cache", cache)
+    monkeypatch.setattr("app.api.endpoints.fleet_ingest.token_cache", cache)
+    monkeypatch.setattr(sidecar_devices, "encryption_service", encryption)
+    monkeypatch.setattr(source_controls, "encryption_service", encryption)
+    monkeypatch.setattr(config.settings, "INGEST_API_KEY", "synthetic-shared")
+    monkeypatch.setattr(db, "engine", engine)
+    monkeypatch.setattr(source_controls, "_ENABLED", True)
+
+    org_x = "11111111-1111-4111-8111-111111111111"
+    origin_1 = "cookie:anthropic_console/Chrome/Default/Cookies#b73300000001"
+    origin_2 = "cookie:anthropic_console/Chrome/Default/Cookies#489f00000002"
+
+    with Session(engine) as session:
+        device, secret = sidecar_devices.enroll(session, "macbook")
+        dev = session.get(SidecarDevice, device.device_id)
+        assert dev is not None
+        dev.platform = "Darwin"
+        session.add(dev)
+        session.commit()
+        device_id = device.device_id
+    sidecar_id = sidecar_devices.registry_id(device_id)
+    source_id_1 = sidecar_source_id(sidecar_id, origin_1)
+    source_id_2 = sidecar_source_id(sidecar_id, origin_2)
+
+    local = {
+        "api_url": "https://runway.example",
+        "device_api_url": "https://runway.example",
+        "api_key": "synthetic-shared",  # pragma: allowlist secret
+        "device_id": device_id,
+        "device_key": secret,
+    }
+    descriptor = catalog()["anthropic_console.chrome"]
+    proof = {"source_id": descriptor.id, "revision": descriptor.revision, "generation": 1}
+
+    def post(client: TestClient, path: str, purpose: str, body_obj: dict):
+        body = json.dumps(body_obj).encode()
+        headers = signed_headers(
+            local, local["api_url"] + path, local["api_key"], signing_timestamp(), purpose, body
+        )
+        return client.post(path, content=body, headers=headers)
+
+    def assert_source_and_payload(source_id: str, expected_account: str | None = None) -> None:
+        with Session(engine) as session:
+            rows = session.exec(
+                select(CredentialSource).where(
+                    CredentialSource.provider_id == "anthropic_console",
+                    CredentialSource.source_id == source_id,
+                )
+            ).all()
+            assert rows, f"missing CredentialSource for {source_id}"
+            if expected_account is not None:
+                assert any(r.account_id == expected_account for r in rows), (
+                    f"expected {expected_account} in {[r.account_id for r in rows]}"
+                )
+            contrib = session.exec(
+                select(SidecarSourceContribution).where(
+                    SidecarSourceContribution.device_id == device_id,
+                    SidecarSourceContribution.provider_id == "anthropic_console",
+                    SidecarSourceContribution.credential_source_id == source_id,
+                )
+            ).one()
+            assert contrib.payload_encrypted is not None, f"NULL payload for {source_id}"
+
+    def console_upstream(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/organizations":
+            return httpx.Response(
+                200,
+                json=[{"uuid": org_x, "name": "Org X", "capabilities": ["api"]}],
+            )
+        if request.url.path == f"/api/organizations/{org_x}/prepaid/credits":
+            return httpx.Response(200, json={"amount": 1234, "currency": "USD"})
+        return httpx.Response(404)
+
+    def override_session():
+        with Session(engine) as session:
+            yield session
+
+    app.dependency_overrides[get_session] = override_session
+    try:
+        client = TestClient(app)
+        # 0. Report macOS Chrome source grant
+        sync_resp = post(
+            client,
+            "/api/v1/fleet/source-sync",
+            "source-sync",
+            {
+                "sources": [
+                    {
+                        "source_id": descriptor.id,
+                        "provider_id": descriptor.provider,
+                        "label": descriptor.label,
+                        "revision": descriptor.revision,
+                        "generation": 1,
+                        "read": True,
+                        "state": "Limited",
+                    }
+                ]
+            },
+        )
+        assert sync_resp.status_code == 200, sync_resp.text
+
+        # 1. Initial verified Console cookie on org X
+        resp1 = post(
+            client,
+            "/api/v1/fleet/ingest",
+            "ingest",
+            {
+                "provider": "sidecar",
+                "sidecar_id": sidecar_id,
+                "metrics": [
+                    {
+                        "provider_id": "anthropic_console",
+                        "service_name": "Claude Console",
+                        "remaining": "Token",
+                        "unit": "cookie",
+                        "metadata": {
+                            "credential_origin": origin_1,
+                            "session_cookie": "sk-ant-sid01-console-old",  # pragma: allowlist secret
+                            "identity_pending": True,
+                            "keychain_consent": proof,
+                        },
+                    }
+                ],
+            },
+        )
+        assert resp1.status_code == 200, resp1.text
+        assert_source_and_payload(source_id_1, pending_cache_slot("anthropic_console", source_id_1))
+
+        cards1 = await _verify("anthropic_console", console_upstream)
+        assert cards1
+        assert_source_and_payload(source_id_1, org_x)
+
+        # 2. Fingerprint rotates to origin_2 (new source_id_2)
+        resp2 = post(
+            client,
+            "/api/v1/fleet/ingest",
+            "ingest",
+            {
+                "provider": "sidecar",
+                "sidecar_id": sidecar_id,
+                "metrics": [
+                    {
+                        "provider_id": "anthropic_console",
+                        "service_name": "Claude Console",
+                        "remaining": "Token",
+                        "unit": "cookie",
+                        "metadata": {
+                            "credential_origin": origin_2,
+                            "session_cookie": "sk-ant-sid01-console-new",  # pragma: allowlist secret
+                            "identity_pending": True,
+                            "keychain_consent": proof,
+                        },
+                    }
+                ],
+            },
+        )
+        assert resp2.status_code == 200, resp2.text
+        assert_source_and_payload(source_id_2, pending_cache_slot("anthropic_console", source_id_2))
+
+        # 3. Seed an existing target CredentialSource row on org X for source_id_2
+        # so promotion hits the ``existing_target`` branch (``session.delete(source)``),
+        # and run promotion + ingest + durable-tag reconciliation.
+        with Session(engine) as session:
+            session.add(
+                CredentialSource(
+                    provider_id="anthropic_console",
+                    account_id=org_x,
+                    source_id=source_id_2,
+                    source_type="cookie",
+                    source_label=sidecar_id,
+                    credential_origin=origin_2,
+                    sidecar_id=sidecar_id,
+                )
+            )
+            session.commit()
+
+        cards2 = await _verify("anthropic_console", console_upstream)
+        assert cards2
+        assert_source_and_payload(source_id_2, org_x)
+
+        # 4. Subsequent ingest from the same sidecar (with stale pending flag, then resolved)
+        for pending_flag in (True, False):
+            resp3 = post(
+                client,
+                "/api/v1/fleet/ingest",
+                "ingest",
+                {
+                    "provider": "sidecar",
+                    "sidecar_id": sidecar_id,
+                    "metrics": [
+                        {
+                            "provider_id": "anthropic_console",
+                            "service_name": "Claude Console",
+                            "remaining": "Token",
+                            "unit": "cookie",
+                            "account_id": None if pending_flag else org_x,
+                            "metadata": {
+                                "credential_origin": origin_2,
+                                "session_cookie": "sk-ant-sid01-console-new",  # pragma: allowlist secret
+                                "identity_pending": pending_flag,
+                                "keychain_consent": proof,
+                            },
+                        }
+                    ],
+                },
+            )
+            assert resp3.status_code == 200, resp3.text
+            assert_source_and_payload(source_id_2, org_x)
+
+        # 5. Durable-tag reconciliation
+        await CollectorManager().reconcile_token_cache_from_durable_tags(
+            provider_id="anthropic_console"
+        )
+        assert_source_and_payload(source_id_2, org_x)
+    finally:
+        app.dependency_overrides.pop(get_session, None)
