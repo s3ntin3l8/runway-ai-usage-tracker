@@ -970,7 +970,7 @@ def test_the_same_event_from_two_stores_is_pushed_once(monkeypatch, tmp_path, _c
 
 def test_minimax_events_are_dispatched_under_the_minimax_provider(monkeypatch, tmp_path):
     sidecar = _sidecar()
-    db_path = make_minimax_code_store(tmp_path)
+    db_path = make_minimax_code_store(tmp_path, usage=_backlog_usage(days_ago=10))
     monkeypatch.setattr(sidecar, "_discover_minimax_code_db_paths", lambda: [db_path])
     out_events: list[dict] = []
     failures = sidecar._extract_events_for_provider(

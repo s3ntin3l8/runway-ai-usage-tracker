@@ -31,6 +31,19 @@ RECORDED_SCAN = REPO_ROOT / "tests" / "fixtures" / "image-exceptions" / "publish
 REMEDIATION = REPO_ROOT / "docs" / "security" / "image-remediation.md"
 ARCHITECTURES = ("amd64", "arm64")
 
+# Debian 13 point-release packages installed by fresh candidate builds
+# (`apt-get upgrade -y`) before a new published image is recorded in
+# `published-release.json`. Keep this empty unless a point release lands
+# between releases on a package with an active `wont-fix` exception (#1130).
+CANDIDATE_POINT_RELEASE_EXCEPTIONS = frozenset(
+    {
+        ("CVE-2026-84243", "debian:distro:debian:13", "libc-bin", "2.41-12+deb13u5", "amd64"),
+        ("CVE-2026-84243", "debian:distro:debian:13", "libc-bin", "2.41-12+deb13u5", "arm64"),
+        ("CVE-2026-84243", "debian:distro:debian:13", "libc6", "2.41-12+deb13u5", "amd64"),
+        ("CVE-2026-84243", "debian:distro:debian:13", "libc6", "2.41-12+deb13u5", "arm64"),
+    }
+)
+
 
 def _scan() -> dict:
     return json.loads(RECORDED_SCAN.read_text())
@@ -136,11 +149,22 @@ class TestTheDocumentMatchesTheScan:
             if entry["architecture"] == architecture
         }
 
-        assert shipped == recorded, (
+        candidate_for_arch = {
+            entry for entry in CANDIDATE_POINT_RELEASE_EXCEPTIONS if entry[-1] == architecture
+        }
+        assert candidate_for_arch <= shipped, (
+            f"CANDIDATE_POINT_RELEASE_EXCEPTIONS for {architecture} missing from "
+            f"image-exceptions.json: {sorted(candidate_for_arch - shipped)}"
+        )
+        assert not (candidate_for_arch & recorded), (
+            f"CANDIDATE_POINT_RELEASE_EXCEPTIONS for {architecture} already in "
+            f"published-release.json and should be retired: {sorted(candidate_for_arch & recorded)}"
+        )
+        assert shipped - candidate_for_arch == recorded, (
             "the shipped exception document and the recorded scan disagree for "
             f"{architecture}: "
-            f"{sorted(shipped - recorded)} waive nothing, "
-            f"{sorted(recorded - shipped)} have no entry"
+            f"{sorted((shipped - candidate_for_arch) - recorded)} waive nothing, "
+            f"{sorted(recorded - (shipped - candidate_for_arch))} have no entry"
         )
 
 
