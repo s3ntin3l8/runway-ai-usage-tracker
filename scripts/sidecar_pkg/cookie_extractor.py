@@ -523,10 +523,14 @@ class BrowserCookieExtractor:
                     elif target["type"] == "safari":
                         from scripts.sidecar_pkg.safari_cookies import scan_cookies as scan_safari
 
+                        blocked_store = path.name
                         if target.get("discovery_status") == "inaccessible":
                             from scripts.sidecar_pkg.cookie_scan import StoreScan
 
                             scanned = StoreScan("inaccessible")
+                            # Both protected profile roots share a basename. Use the
+                            # top-level Library folder (Containers or WebKit) as the label.
+                            blocked_store = Path(store).parts[1]
                         else:
                             scanned = scan_safari(path, bare, name)
                         if scanned.status == "inaccessible":
@@ -535,7 +539,7 @@ class BrowserCookieExtractor:
                                     path,
                                     browser,
                                     profile,
-                                    path.name,
+                                    blocked_store,
                                     browser_store.StoreState.UNREADABLE,
                                 ),
                                 provider,
