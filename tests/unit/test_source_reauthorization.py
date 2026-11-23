@@ -82,6 +82,7 @@ def test_changed_identity_marks_sources_reports_count_and_notifies_once_per_chan
         lambda groups: "claude-code" in groups,
     )
 
+    monkeypatch.setattr(source_settings.sys, "platform", "darwin")
     report = source_settings.report(config)
     by_id = {r["id"]: r for r in report["sources"]}
     assert by_id["anthropic.claude-code"]["state"] == REAUTH_REQUIRED_STATE
@@ -91,7 +92,6 @@ def test_changed_identity_marks_sources_reports_count_and_notifies_once_per_chan
     assert report["reauthorization_count"] == 2
 
     # Source report sent to Fleet carries state and state_reason.
-    monkeypatch.setattr(source_settings.sys, "platform", "darwin")
     payload = SourceClient(config, tmp_path / "control.json").payload(config, report)
     SourceSyncRequest.model_validate(payload)
     fleet_by_id = {r["source_id"]: r for r in payload["sources"]}
