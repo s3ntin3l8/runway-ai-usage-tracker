@@ -122,7 +122,8 @@ size. A disk-space guard requires at least `1.2x` the database size free before
 writing anything. Pass `--no-snapshot` to skip snapshotting or `--keep-snapshots N`
 to control retention (default `2` per script after a successful run; `--dry-run`
 never takes a snapshot, though scripts that call `init_db()` at startup still
-run startup schema/seed migrations under `--dry-run`). Snapshots are disposable once a **Settings → Data health**
+run `init_db()`, which prunes orphan rows, rebuilds the quota/window tables and
+re-costs events, without taking a snapshot). Snapshots are disposable once a **Settings → Data health**
 scan passes. To restore one, stop the server, remove any `runway.db-wal` /
 `runway.db-shm` files, and `cp <config dir>/backups/<snapshot>.db <config dir>/runway.db`.
 

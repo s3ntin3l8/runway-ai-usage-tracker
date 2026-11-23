@@ -249,26 +249,32 @@ def test_snapshot_mkdir_failure_exits_cleanly(
 
 
 _NON_MAINTENANCE_DB_SCRIPTS = {
-    "_db_snapshot.py",
     "benchmark_server_memory.py",  # writes to a scratch temp DB
-    "check_bridge_sessions.py",  # read-only diagnostic
 }
 
 
-def _discover_writing_scripts() -> list[Path]:
-    scripts_dir = Path(__file__).resolve().parents[2] / "scripts"
-    discovered: list[Path] = []
-    for path in sorted(scripts_dir.glob("*.py")):
-        if path.name in _NON_MAINTENANCE_DB_SCRIPTS:
-            continue
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        imports_db = any(
-            isinstance(node, ast.ImportFrom) and node.module == "app.core.db"
-            for node in ast.walk(tree)
-        )
-        if imports_db:
-            discovered.append(path)
-    return discovered
+def _session_vars(fn: ast.FunctionDef) -> set[str]:
+    names = {"session"}
+    for node in ast.walk(fn):
+        if isinstance(node, ast.With):
+            for item in node.items:
+                if (
+                    isinstance(item.context_expr, ast.Call)
+                    and isinstance(item.context_expr.func, ast.Name)
+                    and item.context_expr.func.id == "Session"
+                    and isinstance(item.optional_vars, ast.Name)
+                ):
+                    names.add(item.optional_vars.id)
+        elif (
+            isinstance(node, ast.Assign)
+            and isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Name)
+            and node.value.func.id == "Session"
+        ):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    names.add(target.id)
+    return names
 
 
 def _call_name(node: ast.Call) -> str | None:
@@ -279,14 +285,19 @@ def _call_name(node: ast.Call) -> str | None:
     return None
 
 
-def _is_db_write_call(node: ast.Call) -> bool:
+def _is_db_write_call(node: ast.Call, session_vars: set[str] | None = None) -> bool:
     if isinstance(node.func, ast.Name) and (
         node.func.id == "init_db"
         or node.func.id.startswith("apply_")
         or node.func.id == "merge_gauge_series"
     ):
         return True
-    if isinstance(node.func, ast.Attribute):
+    vars_to_check = session_vars if session_vars is not None else {"session"}
+    if (
+        isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id in vars_to_check
+    ):
         if node.func.attr in {"commit", "add", "delete", "execute"}:
             return True
         if node.func.attr == "exec" and node.args:
@@ -299,8 +310,32 @@ def _is_db_write_call(node: ast.Call) -> bool:
     return False
 
 
-def _contains_db_write_call(node: ast.AST) -> bool:
-    return any(isinstance(child, ast.Call) and _is_db_write_call(child) for child in ast.walk(node))
+def _contains_db_write_call(fn: ast.FunctionDef) -> bool:
+    svars = _session_vars(fn)
+    return any(
+        isinstance(child, ast.Call) and _is_db_write_call(child, svars) for child in ast.walk(fn)
+    )
+
+
+def _discover_writing_scripts() -> list[Path]:
+    scripts_dir = Path(__file__).resolve().parents[2] / "scripts"
+    discovered: list[Path] = []
+    for path in sorted(scripts_dir.glob("*.py")):
+        if path.name in _NON_MAINTENANCE_DB_SCRIPTS:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        imports_app = any(
+            isinstance(node, ast.ImportFrom)
+            and node.module is not None
+            and (node.module == "app" or node.module.startswith("app."))
+            for node in ast.walk(tree)
+        )
+        if not imports_app:
+            continue
+        top_funcs = [node for node in tree.body if isinstance(node, ast.FunctionDef)]
+        if any(_contains_db_write_call(fn) for fn in top_funcs):
+            discovered.append(path)
+    return discovered
 
 
 def _if_guards_snap(test: ast.expr) -> bool:
@@ -337,6 +372,7 @@ def test_every_writing_script_wires_snapshot_helpers(script_path: Path) -> None:
     take_snap_lines: list[int] = []
     write_lines: list[int] = []
 
+    main_svars = _session_vars(main_fn)
     for node in ast.walk(main_fn):
         if isinstance(node, ast.Call):
             name = _call_name(node)
@@ -344,7 +380,7 @@ def test_every_writing_script_wires_snapshot_helpers(script_path: Path) -> None:
                 add_args_lines.append(node.lineno)
             elif name == "take_snapshot":
                 take_snap_lines.append(node.lineno)
-            elif _is_db_write_call(node) or (
+            elif _is_db_write_call(node, main_svars) or (
                 isinstance(node.func, ast.Name) and node.func.id in writer_helpers
             ):
                 write_lines.append(node.lineno)

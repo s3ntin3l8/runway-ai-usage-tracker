@@ -9,9 +9,11 @@
 otherwise run:
 
 ```sh
-mkdir -p "${RUNWAY_CONFIG_DIR:-$HOME/.config/runway}/backups" && \
-  sqlite3 "${RUNWAY_CONFIG_DIR:-$HOME/.config/runway}/runway.db" \
-  "VACUUM INTO '${RUNWAY_CONFIG_DIR:-$HOME/.config/runway}/backups/runway.db.bak'"
+CONFIG_DIR="${RUNWAY_CONFIG_DIR:-$HOME/.config/runway}"  # macOS: ~/Library/Application Support/runway, Windows: %APPDATA%\runway
+test -f "$CONFIG_DIR/runway.db" || { echo "no database at $CONFIG_DIR/runway.db - set RUNWAY_CONFIG_DIR" >&2; exit 1; }
+mkdir -p -m 700 "$CONFIG_DIR/backups" && \
+  sqlite3 "$CONFIG_DIR/runway.db" \
+  "VACUUM INTO '$CONFIG_DIR/backups/runway.db.bak'"
 ```
 
 so you get a consistent snapshot without stopping anything. `runway.db.bak` is
