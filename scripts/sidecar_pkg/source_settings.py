@@ -357,15 +357,17 @@ def _is_revoked(config: dict[str, Any], remote: dict[str, Any], source_id: str) 
     return type(generation) is int and type(revoked) is int and generation <= revoked
 
 
+def access_group(source_id: str, service: str) -> str:
+    """Map a catalog source ID and Keychain service name to its KeychainClient access group."""
+    if source_id == "anthropic.claude-code":
+        return "claude-code"
+    if source_id == "github.gh-cli":
+        return "github-cli"
+    return "storage:" + service
+
+
 def _source_groups(source_id: str, services: tuple[str, ...]) -> list[str]:
-    return [
-        "claude-code"
-        if source_id == "anthropic.claude-code"
-        else "github-cli"
-        if source_id == "github.gh-cli"
-        else "storage:" + service
-        for service in services
-    ]
+    return [access_group(source_id, service) for service in services]
 
 
 def _state_reason(source_id: str, services: tuple[str, ...], state: str) -> str | None:

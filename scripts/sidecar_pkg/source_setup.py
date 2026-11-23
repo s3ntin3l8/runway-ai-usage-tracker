@@ -284,18 +284,14 @@ class SetupController:
             if success and consent.POLICY.current(ticket):
                 from scripts.sidecar_pkg import macos_cookies
                 from scripts.sidecar_pkg.keychain_client import get_keychain_client
+                from scripts.sidecar_pkg.source_settings import access_group
 
                 client = get_keychain_client()
-                if source_id == "anthropic.claude-code":
-                    client.clear_access("claude-code")
-                elif source_id == "github.gh-cli":
-                    client.clear_access("github-cli")
-                else:
-                    for service in catalog()[source_id].services:
-                        client.clear_access("storage:" + service)
-                        with macos_cookies._KEY_LOCK:
-                            macos_cookies._KEY_CACHE.pop(service, None)
-                            macos_cookies._KEY_STATUS.pop(service, None)
+                for service in catalog()[source_id].services:
+                    client.clear_access(access_group(source_id, service))
+                    with macos_cookies._KEY_LOCK:
+                        macos_cookies._KEY_CACHE.pop(service, None)
+                        macos_cookies._KEY_STATUS.pop(service, None)
             if consent.POLICY.current(ticket):
                 if success:
                     identity = (

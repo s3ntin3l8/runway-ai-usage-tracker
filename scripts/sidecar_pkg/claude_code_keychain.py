@@ -70,7 +70,7 @@ def access_blocked() -> bool:
     return get_keychain_client().access_blocked("claude-code")
 
 
-def block_access(reason: str = "denied") -> None:
+def block_access(reason: str = "unavailable") -> None:
     get_keychain_client().block_access("claude-code", reason)
 
 

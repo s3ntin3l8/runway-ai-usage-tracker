@@ -1133,3 +1133,51 @@ console.log(collectText(body));
     )
     assert expected_panel_text in res.stdout
     assert "secret-acct" not in res.stdout
+
+
+def test_panel_renders_reason_for_all_action_required_state_reasons(tmp_path):
+    import shutil
+    import subprocess
+
+    from sidecar_app.settings_server import _CSS, _HTML
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+
+    html = _HTML.substitute(
+        css=_CSS,
+        api_url="https://runway.example",
+        version="0.0.0",
+        sidecar_id="test",
+    )
+    script = html.rsplit("<script>", 1)[1].split("</script>", 1)[0]
+    probe = """
+const vm = require('vm');
+const fs = require('fs');
+const script = fs.readFileSync(process.argv[1], 'utf8');
+const ctx = {
+  document: { getElementById: () => null, createElement: () => ({}), createTextNode: () => ({}) },
+  window: { addEventListener() {} },
+  fetch: async () => ({ ok: true, json: async () => ({}) }),
+  setTimeout: () => 0, clearTimeout: () => {}, setInterval: () => 0,
+  URLSearchParams, Map, Set, Math, JSON,
+};
+vm.runInNewContext(script, ctx);
+for (const reason of ['denied', 'timed_out', 'unavailable', 'missing', 'identity changed', 'ambiguous']) {
+  const text = ctx.kcReason({ revoked: false, state: 'Action required', state_reason: reason });
+  if (!text) {
+    console.error('Missing KC_REASON_TEXT for ' + reason);
+    process.exit(1);
+  }
+}
+"""
+    script_file = tmp_path / "page.js"
+    script_file.write_text(script, encoding="utf-8")
+    subprocess.run(
+        [node, "-e", probe, str(script_file)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=True,
+    )

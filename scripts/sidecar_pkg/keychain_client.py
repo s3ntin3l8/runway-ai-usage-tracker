@@ -74,7 +74,7 @@ class KeychainClient:
         with self._state_lock:
             return self._blocked.get(group)
 
-    def block_access(self, group: str, reason: str = "denied") -> None:
+    def block_access(self, group: str, reason: str = "unavailable") -> None:
         normalized = reason if reason in BLOCK_REASONS else "unavailable"
         with self._state_lock:
             previous = self._blocked.get(group)

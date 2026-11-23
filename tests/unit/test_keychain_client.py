@@ -474,3 +474,18 @@ def test_block_reason_vocabulary_is_fixed_and_strips_error_text(
             assert "gh:github.com" not in rec.message
     finally:
         client.close()
+
+
+def test_block_reasons_stay_within_protocol_and_server_contract():
+    from typing import Literal, get_args, get_origin
+
+    from app.models.source_controls import ScraperReport
+    from scripts.sidecar_pkg.keychain_client import BLOCK_REASONS
+    from scripts.sidecar_pkg.keychain_protocol import KEYCHAIN_REASONS
+
+    annotation = ScraperReport.model_fields["state_reason"].annotation
+    server_reasons = frozenset(
+        val for arg in get_args(annotation) if get_origin(arg) is Literal for val in get_args(arg)
+    )
+    assert BLOCK_REASONS <= server_reasons
+    assert BLOCK_REASONS <= KEYCHAIN_REASONS

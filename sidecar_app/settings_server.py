@@ -410,6 +410,9 @@ const KC_REASON_TEXT = {
   denied: 'macOS denied access. Click Authorize and choose Always Allow (not Allow)',
   timed_out: 'macOS did not answer in time. Try again',
   unavailable: 'The Keychain is unavailable',
+  missing: 'No usable Keychain item was found. Click Authorize',
+  'identity changed': 'The Keychain item was written by a different app version. Click Authorize',
+  ambiguous: 'Several Keychain items match. Choose one in Keychain Access',
 };
 const KC_RANK = {off: 0, ok: 1, wait: 2, busy: 3, need: 4, err: 5};
 const KC_BROWSERS = [['chrome', 'Chrome'], ['edge', 'Edge'], ['chromium', 'Chromium']];
