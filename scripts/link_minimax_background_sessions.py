@@ -52,6 +52,7 @@ from app.services.maintenance.minimax_background_sessions import (  # noqa: E402
     apply_background_attribution,
     plan_background_attribution,
 )
+from scripts._db_snapshot import add_snapshot_args, prune_snapshots, take_snapshot  # noqa: E402
 from scripts.sidecar_pkg.event_extractors.minimax_code import (  # noqa: E402
     INTERNAL_TURN_PREFIX,
     SUBAGENT_TYPE_PLAN,
@@ -152,6 +153,7 @@ def main() -> None:
         action="append",
         help="path to a runtime store (default: every store this host runs)",
     )
+    add_snapshot_args(parser)
     args = parser.parse_args()
 
     stores = [Path(path) for path in args.store] if args.store else discover_runtime_stores()
@@ -168,6 +170,11 @@ def main() -> None:
             print(f"No runtime store at {store}.", flush=True)
         return
 
+    snap = take_snapshot(
+        "link_minimax_background_sessions",
+        enabled=args.apply and not args.dry_run and not args.no_snapshot,
+        engine=engine,
+    )
     init_db()
     with Session(engine) as session:
         for store in stores:
@@ -194,6 +201,13 @@ def main() -> None:
             )
         if not args.apply:
             print("\nDry run — nothing written. Re-run with --apply to write.", flush=True)
+        elif snap is not None:
+            prune_snapshots(
+                snap.parent,
+                "link_minimax_background_sessions",
+                keep=args.keep_snapshots,
+                protect=snap,
+            )
 
 
 if __name__ == "__main__":

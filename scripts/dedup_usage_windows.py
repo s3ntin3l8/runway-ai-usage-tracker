@@ -60,6 +60,7 @@ from app.core.console import force_utf8_console  # noqa: E402
 from app.core.db import engine  # noqa: E402
 from app.models.db import UsageWindow  # noqa: E402
 from app.services.window_closer import WINDOW_DURATION  # noqa: E402
+from scripts._db_snapshot import add_snapshot_args, prune_snapshots, take_snapshot  # noqa: E402
 
 
 def _naive(dt: datetime) -> datetime:
@@ -201,8 +202,17 @@ def main() -> int:
     g = p.add_mutually_exclusive_group(required=True)
     g.add_argument("--dry-run", action="store_true", help="Preview deletions, write nothing.")
     g.add_argument("--apply", action="store_true", help="Execute the migration.")
+    add_snapshot_args(p)
     args = p.parse_args()
-    return migrate(apply=args.apply)
+    snap = take_snapshot(
+        "dedup_usage_windows",
+        enabled=args.apply and not args.no_snapshot,
+        engine=engine,
+    )
+    rc = migrate(apply=args.apply)
+    if rc == 0 and snap is not None:
+        prune_snapshots(snap.parent, "dedup_usage_windows", keep=args.keep_snapshots, protect=snap)
+    return rc
 
 
 if __name__ == "__main__":

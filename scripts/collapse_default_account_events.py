@@ -83,6 +83,7 @@ from sqlmodel import Session, select  # noqa: E402
 from app.core.console import force_utf8_console  # noqa: E402
 from app.core.db import engine  # noqa: E402
 from app.models.db import UsageEvent  # noqa: E402
+from scripts._db_snapshot import add_snapshot_args, prune_snapshots, take_snapshot  # noqa: E402
 from scripts.backfill_rollups import backfill  # noqa: E402
 
 _SOURCE_ACCOUNT_ID = "default"
@@ -217,8 +218,21 @@ def main() -> int:
     g = p.add_mutually_exclusive_group(required=True)
     g.add_argument("--dry-run", action="store_true", help="Preview the plan, write nothing.")
     g.add_argument("--apply", action="store_true", help="Execute the migration.")
+    add_snapshot_args(p)
     args = p.parse_args()
+    snap = take_snapshot(
+        "collapse_default_account_events",
+        enabled=args.apply and not args.no_snapshot,
+        engine=engine,
+    )
     migrate(args.provider, args.source, args.account_id, apply=args.apply)
+    if snap is not None:
+        prune_snapshots(
+            snap.parent,
+            "collapse_default_account_events",
+            keep=args.keep_snapshots,
+            protect=snap,
+        )
     return 0
 
 

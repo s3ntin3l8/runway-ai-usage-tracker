@@ -62,6 +62,7 @@ from app.services.maintenance.argon_retag import (  # noqa: E402
     plan_argon_retag,
 )
 from app.services.model_normalization import ARGON_MODEL_ID  # noqa: E402
+from scripts._db_snapshot import add_snapshot_args, prune_snapshots, take_snapshot  # noqa: E402
 
 
 def run(providers: list[str] | None, dry_run: bool, skip_rollups: bool, skip_windows: bool) -> None:
@@ -141,13 +142,23 @@ def main(argv: list[str] | None = None) -> int:
     )
     p.add_argument("--skip-rollups", action="store_true", help="Skip the rollup rebuild.")
     p.add_argument("--skip-windows", action="store_true", help="Skip the window rebuild.")
+    add_snapshot_args(p)
     args = p.parse_args(argv)
+    snap = take_snapshot(
+        "backfill_argon_models",
+        enabled=not args.dry_run and not args.no_snapshot,
+        engine=engine,
+    )
     run(
         providers=args.provider or None,
         dry_run=args.dry_run,
         skip_rollups=args.skip_rollups,
         skip_windows=args.skip_windows,
     )
+    if snap is not None:
+        prune_snapshots(
+            snap.parent, "backfill_argon_models", keep=args.keep_snapshots, protect=snap
+        )
     return 0
 
 

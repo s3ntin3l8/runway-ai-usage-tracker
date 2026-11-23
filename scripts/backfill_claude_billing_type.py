@@ -38,6 +38,7 @@ from app.services.maintenance.claude_billing_type import (  # noqa: E402
     apply_claude_billing_type,
     plan_claude_billing_type,
 )
+from scripts._db_snapshot import add_snapshot_args, prune_snapshots, take_snapshot  # noqa: E402
 
 
 def run(provider_id: str | None, apply_changes: bool) -> None:
@@ -90,8 +91,21 @@ def main() -> int:
     p.add_argument(
         "--apply", action="store_true", help="Write the detected models (default: preview only)."
     )
+    add_snapshot_args(p)
     args = p.parse_args()
+    snap = take_snapshot(
+        "backfill_claude_billing_type",
+        enabled=args.apply and not args.no_snapshot,
+        engine=engine,
+    )
     run(provider_id=args.provider, apply_changes=args.apply)
+    if snap is not None:
+        prune_snapshots(
+            snap.parent,
+            "backfill_claude_billing_type",
+            keep=args.keep_snapshots,
+            protect=snap,
+        )
     return 0
 
 

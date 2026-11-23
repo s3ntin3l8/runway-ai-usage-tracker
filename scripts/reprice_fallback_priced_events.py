@@ -26,6 +26,7 @@ from app.services.maintenance.fallback_priced_events import (  # noqa: E402
     apply_fallback_priced_events,
     plan_fallback_priced_events,
 )
+from scripts._db_snapshot import add_snapshot_args, prune_snapshots, take_snapshot  # noqa: E402
 
 
 def run(provider: str, model: str, dry_run: bool) -> int:
@@ -47,14 +48,28 @@ def run(provider: str, model: str, dry_run: bool) -> int:
     return 0
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     force_utf8_console()
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--provider", required=True)
     p.add_argument("--model", required=True)
     p.add_argument("--dry-run", action="store_true")
-    args = p.parse_args()
-    return run(args.provider, args.model, args.dry_run)
+    add_snapshot_args(p)
+    args = p.parse_args(argv)
+    snap = take_snapshot(
+        "reprice_fallback_priced_events",
+        enabled=not args.dry_run and not args.no_snapshot,
+        engine=engine,
+    )
+    rc = run(args.provider, args.model, args.dry_run)
+    if rc == 0 and snap is not None:
+        prune_snapshots(
+            snap.parent,
+            "reprice_fallback_priced_events",
+            keep=args.keep_snapshots,
+            protect=snap,
+        )
+    return rc
 
 
 if __name__ == "__main__":

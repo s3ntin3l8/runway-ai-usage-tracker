@@ -36,6 +36,7 @@ from app.services.maintenance.event_reassign import (  # noqa: E402
     apply_reassign_default,
     plan_reassign_default,
 )
+from scripts._db_snapshot import add_snapshot_args, prune_snapshots, take_snapshot  # noqa: E402
 
 _SOURCE_ACCOUNT_ID = "default"
 
@@ -112,12 +113,22 @@ def main() -> int:
         action="store_true",
         help="No-op; preview is already the default without --apply.",
     )
+    add_snapshot_args(p)
     args = p.parse_args()
 
+    snap = take_snapshot(
+        "assign_default_events",
+        enabled=args.apply and not args.dry_run and not args.no_snapshot,
+        engine=engine,
+    )
     try:
         assign_events(args.provider, args.account_id, args.event_ids, apply=args.apply)
     except ValueError as exc:
         p.error(str(exc))
+    if snap is not None:
+        prune_snapshots(
+            snap.parent, "assign_default_events", keep=args.keep_snapshots, protect=snap
+        )
     return 0
 
 

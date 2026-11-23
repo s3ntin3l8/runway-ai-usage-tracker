@@ -86,6 +86,7 @@ from app.core.config import settings  # noqa: E402
 from app.core.console import force_utf8_console  # noqa: E402
 from app.core.db import engine  # noqa: E402
 from app.models.db import UsageEvent  # noqa: E402
+from scripts._db_snapshot import add_snapshot_args, prune_snapshots, take_snapshot  # noqa: E402
 from scripts.backfill_rollups import backfill  # noqa: E402
 from scripts.sidecar_pkg.event_extractors.opencode import (  # noqa: E402
     _OC_CANONICAL_MAP,
@@ -401,13 +402,26 @@ def main() -> int:
         "--dry-run", action="store_true", help="Report what would change without writing."
     )
     g.add_argument("--apply", action="store_true", help="Reclassify rows and rebuild rollups.")
+    add_snapshot_args(p)
     args = p.parse_args()
 
     db_path = args.db or Path(settings.OPENCODE_DB_PATH)
     source_providers = (
         [p.strip() for p in args.providers.split(",") if p.strip()] if args.providers else None
     )
+    snap = take_snapshot(
+        "reclassify_opencode_providers",
+        enabled=args.apply and not args.no_snapshot,
+        engine=engine,
+    )
     migrate(db_path, apply=args.apply, source_providers=source_providers)
+    if snap is not None:
+        prune_snapshots(
+            snap.parent,
+            "reclassify_opencode_providers",
+            keep=args.keep_snapshots,
+            protect=snap,
+        )
     return 0
 
 

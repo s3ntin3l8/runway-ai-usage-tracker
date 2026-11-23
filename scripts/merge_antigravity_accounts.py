@@ -91,6 +91,7 @@ from app.models.db import (  # noqa: E402
     UsageEvent,
     UsagePeriodRollup,
 )
+from scripts._db_snapshot import add_snapshot_args, prune_snapshots, take_snapshot  # noqa: E402
 from scripts.recost_events import phase_c_rollups, phase_d_windows  # noqa: E402
 
 _PROVIDER = "antigravity"
@@ -411,9 +412,11 @@ def main() -> int:
             "reports both gate failures before deletion."
         ),
     )
+    add_snapshot_args(p)
     args = p.parse_args()
     dry_run = args.dry_run
     prefix = "[DRY-RUN] " if dry_run else ""
+    snap = None
 
     with Session(engine) as session:
         email = _discover_canonical_account(session)
@@ -514,6 +517,11 @@ def main() -> int:
                 )
                 sys.exit(3)
 
+        snap = take_snapshot(
+            "merge_antigravity_accounts",
+            enabled=not dry_run and not args.no_snapshot,
+            engine=engine,
+        )
         dedup_counts = phase_dedup_delete(session, email, dry_run)
 
         verb = "rebuilding" if not dry_run else "previewing"
@@ -570,6 +578,13 @@ def main() -> int:
         )
         print(
             f"  Default quota_snapshots rows (--force, untouched): {gauge['default_quota_snapshots']:,}"
+        )
+    if snap is not None:
+        prune_snapshots(
+            snap.parent,
+            "merge_antigravity_accounts",
+            keep=args.keep_snapshots,
+            protect=snap,
         )
     return 0
 

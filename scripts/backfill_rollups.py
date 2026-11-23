@@ -33,6 +33,7 @@ from app.core.console import force_utf8_console  # noqa: E402
 from app.core.db import engine  # noqa: E402
 from app.models.db import UsageEvent, UsagePeriodRollup  # noqa: E402
 from app.services.period_rollups import update_rollups_for_event  # noqa: E402
+from scripts._db_snapshot import add_snapshot_args, prune_snapshots, take_snapshot  # noqa: E402
 
 
 def backfill(providers: list[str] | None) -> int:
@@ -81,13 +82,17 @@ def main() -> int:
         action="store_true",
         help="Rebuild rollups for every provider in usage_events.",
     )
+    add_snapshot_args(p)
     args = p.parse_args()
 
     if not args.provider and not args.all:
         p.error("supply --provider <id> (repeatable) or --all")
 
     providers = args.provider if not args.all else None
+    snap = take_snapshot("backfill_rollups", enabled=not args.no_snapshot, engine=engine)
     n = backfill(providers)
+    if snap is not None:
+        prune_snapshots(snap.parent, "backfill_rollups", keep=args.keep_snapshots, protect=snap)
     scope = "all providers" if providers is None else ", ".join(providers)
     print(f"Done. Rebuilt rollups for {scope} from {n:,} event(s).")
     return 0

@@ -39,6 +39,7 @@ from app.core.db import engine, init_db  # noqa: E402
 from app.models.db import UsageEvent, UsagePeriodRollup  # noqa: E402
 from app.services.cost_calculator import compute_event_cost_breakdown  # noqa: E402
 from app.services.period_rollups import update_rollups_for_event  # noqa: E402
+from scripts._db_snapshot import add_snapshot_args, prune_snapshots, take_snapshot  # noqa: E402
 
 
 def _event_scope(stmt, providers: list[str] | None):
@@ -156,12 +157,20 @@ def main() -> int:
     )
     p.add_argument("--dry-run", action="store_true", help="Report changes without writing.")
     p.add_argument("--skip-rollups", action="store_true", help="Skip Phase C (rollup rebuild).")
+    add_snapshot_args(p)
     args = p.parse_args()
+    snap = take_snapshot(
+        "backfill_cache_costs",
+        enabled=not args.dry_run and not args.no_snapshot,
+        engine=engine,
+    )
     run(
         providers=args.providers or None,
         dry_run=args.dry_run,
         skip_rollups=args.skip_rollups,
     )
+    if snap is not None:
+        prune_snapshots(snap.parent, "backfill_cache_costs", keep=args.keep_snapshots, protect=snap)
     return 0
 
 

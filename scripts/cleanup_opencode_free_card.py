@@ -43,6 +43,7 @@ from sqlmodel import Session, delete, select  # noqa: E402
 from app.core.console import force_utf8_console  # noqa: E402
 from app.core.db import engine  # noqa: E402
 from app.models.db import LatestUsage  # noqa: E402
+from scripts._db_snapshot import add_snapshot_args, prune_snapshots, take_snapshot  # noqa: E402
 
 _PROVIDER = "opencode"
 _WINDOW_TYPE = "rolling"
@@ -67,9 +68,15 @@ def main() -> int:
         "--dry-run", action="store_true", help="Report what would be deleted without writing."
     )
     g.add_argument("--apply", action="store_true", help="Delete the stale row(s).")
+    add_snapshot_args(p)
     args = p.parse_args()
     dry_run = args.dry_run
     prefix = "[DRY-RUN] " if dry_run else ""
+    snap = take_snapshot(
+        "cleanup_opencode_free_card",
+        enabled=not dry_run and not args.no_snapshot,
+        engine=engine,
+    )
 
     with Session(engine) as session:
         rows = session.exec(select(LatestUsage).where(*_filters())).all()
@@ -91,6 +98,13 @@ def main() -> int:
             session.commit()
             print(f"Deleted {len(rows)} row(s).", flush=True)
 
+    if snap is not None:
+        prune_snapshots(
+            snap.parent,
+            "cleanup_opencode_free_card",
+            keep=args.keep_snapshots,
+            protect=snap,
+        )
     return 0
 
 

@@ -63,6 +63,7 @@ from sqlmodel import Session, delete, select  # noqa: E402
 from app.core.console import force_utf8_console  # noqa: E402
 from app.core.db import engine  # noqa: E402
 from app.models.db import LatestUsage  # noqa: E402
+from scripts._db_snapshot import add_snapshot_args, prune_snapshots, take_snapshot  # noqa: E402
 
 _PROVIDER = "chatgpt"
 # The only window_types the ChatGPT collector can ever emit (see
@@ -108,9 +109,15 @@ def main() -> int:
         "--dry-run", action="store_true", help="Report what would be deleted without writing."
     )
     g.add_argument("--apply", action="store_true", help="Delete the stale row(s).")
+    add_snapshot_args(p)
     args = p.parse_args()
     dry_run = args.dry_run
     prefix = "[DRY-RUN] " if dry_run else ""
+    snap = take_snapshot(
+        "cleanup_chatgpt_stale_window",
+        enabled=not dry_run and not args.no_snapshot,
+        engine=engine,
+    )
 
     window_types_label = "+".join(args.window_type)
 
@@ -136,6 +143,13 @@ def main() -> int:
             session.commit()
             print(f"Deleted {len(rows)} row(s).", flush=True)
 
+    if snap is not None:
+        prune_snapshots(
+            snap.parent,
+            "cleanup_chatgpt_stale_window",
+            keep=args.keep_snapshots,
+            protect=snap,
+        )
     return 0
 
 

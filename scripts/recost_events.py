@@ -89,6 +89,7 @@ from app.services.maintenance.windows import (  # noqa: E402
     count_windows_for_providers,
     rebuild_windows_for_providers,
 )
+from scripts._db_snapshot import add_snapshot_args, prune_snapshots, take_snapshot  # noqa: E402
 
 
 def _skipped_note(skipped_unpopulated: int) -> str:
@@ -350,6 +351,7 @@ def main() -> int:
         action="store_true",
         help="Skip Phase D (usage_windows rebuild).",
     )
+    add_snapshot_args(p)
     args = p.parse_args()
 
     if not args.providers and not args.all:
@@ -363,6 +365,11 @@ def main() -> int:
             p.error(f"--since must be YYYY-MM-DD, got: {args.since!r}")
 
     providers = args.providers if not args.all else None
+    snap = take_snapshot(
+        "recost_events",
+        enabled=not args.dry_run and not args.no_snapshot,
+        engine=engine,
+    )
     run(
         providers=providers,
         since=since,
@@ -371,6 +378,8 @@ def main() -> int:
         skip_windows=args.skip_windows,
         estimate_only=args.estimate_only,
     )
+    if snap is not None:
+        prune_snapshots(snap.parent, "recost_events", keep=args.keep_snapshots, protect=snap)
     return 0
 
 

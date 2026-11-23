@@ -50,6 +50,7 @@ from app.models.db import (  # noqa: E402
     UsageWindow,
 )
 from app.services.account_identity import normalize_sidecar_id  # noqa: E402
+from scripts._db_snapshot import add_snapshot_args, prune_snapshots, take_snapshot  # noqa: E402
 from scripts.backfill_rollups import backfill  # noqa: E402
 
 # Additive numeric columns on a closed-window row (mirror window_closer totals).
@@ -236,8 +237,22 @@ def main() -> int:
     g = p.add_mutually_exclusive_group(required=True)
     g.add_argument("--dry-run", action="store_true", help="Preview planned folds, write nothing.")
     g.add_argument("--apply", action="store_true", help="Execute the migration.")
+    add_snapshot_args(p)
     args = p.parse_args()
-    return migrate(apply=args.apply)
+    snap = take_snapshot(
+        "normalize_sidecar_ids",
+        enabled=args.apply and not args.no_snapshot,
+        engine=engine,
+    )
+    rc = migrate(apply=args.apply)
+    if rc == 0 and snap is not None:
+        prune_snapshots(
+            snap.parent,
+            "normalize_sidecar_ids",
+            keep=args.keep_snapshots,
+            protect=snap,
+        )
+    return rc
 
 
 if __name__ == "__main__":

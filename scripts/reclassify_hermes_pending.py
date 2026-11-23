@@ -45,6 +45,7 @@ from sqlmodel import Session, col, select  # noqa: E402
 
 from app.core.db import engine, init_db  # noqa: E402
 from app.models.db import PendingUsageEvent, UsageEvent  # noqa: E402
+from scripts._db_snapshot import add_snapshot_args, prune_snapshots, take_snapshot  # noqa: E402
 from scripts.sidecar_pkg.event_extractors.hermes import _is_free_model  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -209,8 +210,14 @@ def main() -> None:
         action="store_true",
         help="Apply reclassification to the database (default is dry-run)",
     )
+    add_snapshot_args(parser)
     args = parser.parse_args()
 
+    snap = take_snapshot(
+        "reclassify_hermes_pending",
+        enabled=args.apply and not args.no_snapshot,
+        engine=engine,
+    )
     init_db()
     dry_run = not args.apply
     if dry_run:
@@ -222,6 +229,13 @@ def main() -> None:
         pending_count = reclassify_pending(session, dry_run=dry_run)
         events_count = reclassify_usage_events(session, dry_run=dry_run)
 
+    if snap is not None:
+        prune_snapshots(
+            snap.parent,
+            "reclassify_hermes_pending",
+            keep=args.keep_snapshots,
+            protect=snap,
+        )
     logger.info(
         "Done. Total reclassified: %d pending event(s), %d usage_event(s).",
         pending_count,
