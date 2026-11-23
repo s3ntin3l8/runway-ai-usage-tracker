@@ -6,13 +6,21 @@
 
 **Back up the database first.** `~/.config/runway/runway.db` (or your
 `RUNWAY_CONFIG_DIR`) — a plain file copy is enough if the server is stopped;
-otherwise use `sqlite3 runway.db "VACUUM INTO 'backups/runway.db.bak'"` (in
-`<config dir>/backups/`, i.e. `~/.config/runway/backups/`) so you get a
-consistent snapshot without stopping anything. Offline maintenance scripts
-write their own pre-write snapshots to the same `backups/` directory; they
-are disposable once a **Settings → Data health** scan passes. To restore
-from a snapshot, stop the server, remove any `runway.db-wal` /
-`runway.db-shm` files, and `cp` the snapshot over `runway.db`. The first
+otherwise run:
+
+```sh
+mkdir -p "${RUNWAY_CONFIG_DIR:-$HOME/.config/runway}/backups" && \
+  sqlite3 "${RUNWAY_CONFIG_DIR:-$HOME/.config/runway}/runway.db" \
+  "VACUUM INTO '${RUNWAY_CONFIG_DIR:-$HOME/.config/runway}/backups/runway.db.bak'"
+```
+
+so you get a consistent snapshot without stopping anything. `runway.db.bak` is
+not pruned by the maintenance scripts' retention because its name does not match
+`<script>-<timestamp>.db`. Offline maintenance scripts write their own pre-write
+snapshots to the same `backups/` directory; they are disposable once a
+**Settings → Data health** scan passes. To restore from a snapshot, stop the
+server, remove any `runway.db-wal` / `runway.db-shm` files, and `cp` the
+snapshot over `runway.db`. The first
 boot after upgrading runs a one-time, one-way cleanup (below) that deletes
 cross-account duplicate events; there's no automatic rollback if something
 about your data trips it up.

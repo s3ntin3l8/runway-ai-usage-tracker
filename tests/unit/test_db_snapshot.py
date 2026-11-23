@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import os
 import sqlite3
 import stat
@@ -228,46 +229,152 @@ def test_disk_guard_aborts_before_any_write(
         check_engine.dispose()
 
 
-_WRITING_SCRIPTS = [
-    "assign_default_events.py",
-    "backfill_argon_models.py",
-    "backfill_cache_costs.py",
-    "backfill_claude_billing_type.py",
-    "backfill_claude_dimensions.py",
-    "backfill_opencode_effort.py",
-    "backfill_project_context.py",
-    "backfill_rollups.py",
-    "cleanup_anthropic_sonnet_weekly.py",
-    "cleanup_antigravity.py",
-    "cleanup_chatgpt_stale_window.py",
-    "cleanup_minimax_monthly_cards.py",
-    "cleanup_opencode_free_card.py",
-    "cleanup_opencode_kimi_card.py",
-    "collapse_default_account_events.py",
-    "consolidate_session_projects.py",
-    "dedup_usage_windows.py",
-    "label_cloud_session_lead_repo.py",
-    "link_minimax_background_sessions.py",
-    "merge_antigravity_accounts.py",
-    "merge_gemini_default_account.py",
-    "migrate_kimi_coding_key.py",
-    "normalize_sidecar_ids.py",
-    "reclassify_antigravity_models.py",
-    "reclassify_chatgpt_models.py",
-    "reclassify_hermes_pending.py",
-    "reclassify_opencode_providers.py",
-    "recost_events.py",
-    "remove_cloud_coarse_events.py",
-    "reprice_fallback_priced_events.py",
-    "reset_cloud_events.py",
-]
+def test_snapshot_mkdir_failure_exits_cleanly(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    db_path = config_dir / "runway.db"
+    _init_file_db(db_path)
+
+    # Occupy backups/ with a regular file so mkdir() fails.
+    (config_dir / "backups").write_text("not a directory", encoding="utf-8")
+
+    with pytest.raises(SystemExit) as exc_info:
+        take_snapshot("test_script", db_path=db_path, config_dir=config_dir)
+    assert exc_info.value.code != 0
+
+    err = capsys.readouterr().err
+    assert "Error: failed to snapshot database" in err
 
 
-@pytest.mark.parametrize("script_name", _WRITING_SCRIPTS)
-def test_every_writing_script_wires_snapshot_helpers(script_name: str) -> None:
-    src = (Path(__file__).resolve().parents[2] / "scripts" / script_name).read_text(
-        encoding="utf-8"
+_NON_MAINTENANCE_DB_SCRIPTS = {
+    "_db_snapshot.py",
+    "benchmark_server_memory.py",  # writes to a scratch temp DB
+    "check_bridge_sessions.py",  # read-only diagnostic
+}
+
+
+def _discover_writing_scripts() -> list[Path]:
+    scripts_dir = Path(__file__).resolve().parents[2] / "scripts"
+    discovered: list[Path] = []
+    for path in sorted(scripts_dir.glob("*.py")):
+        if path.name in _NON_MAINTENANCE_DB_SCRIPTS:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        imports_db = any(
+            isinstance(node, ast.ImportFrom) and node.module == "app.core.db"
+            for node in ast.walk(tree)
+        )
+        if imports_db:
+            discovered.append(path)
+    return discovered
+
+
+def _call_name(node: ast.Call) -> str | None:
+    if isinstance(node.func, ast.Name):
+        return node.func.id
+    if isinstance(node.func, ast.Attribute):
+        return node.func.attr
+    return None
+
+
+def _is_db_write_call(node: ast.Call) -> bool:
+    if isinstance(node.func, ast.Name) and (
+        node.func.id == "init_db"
+        or node.func.id.startswith("apply_")
+        or node.func.id == "merge_gauge_series"
+    ):
+        return True
+    if isinstance(node.func, ast.Attribute):
+        if node.func.attr in {"commit", "add", "delete", "execute"}:
+            return True
+        if node.func.attr == "exec" and node.args:
+            return any(
+                isinstance(sub, ast.Call)
+                and isinstance(sub.func, ast.Name)
+                and sub.func.id in {"update", "delete", "insert"}
+                for sub in ast.walk(node.args[0])
+            )
+    return False
+
+
+def _contains_db_write_call(node: ast.AST) -> bool:
+    return any(isinstance(child, ast.Call) and _is_db_write_call(child) for child in ast.walk(node))
+
+
+def _if_guards_snap(test: ast.expr) -> bool:
+    return any(isinstance(n, ast.Name) and n.id == "snap" for n in ast.walk(test))
+
+
+@pytest.mark.parametrize("script_path", _discover_writing_scripts(), ids=lambda p: p.name)
+def test_every_writing_script_wires_snapshot_helpers(script_path: Path) -> None:
+    tree = ast.parse(script_path.read_text(encoding="utf-8"), filename=str(script_path))
+    top_funcs = {node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)}
+    assert "main" in top_funcs, f"{script_path.name} missing main()"
+    main_fn = top_funcs["main"]
+
+    writer_helpers = {
+        name for name, fn in top_funcs.items() if name != "main" and _contains_db_write_call(fn)
+    }
+    # Propagate transitively through local helper calls (e.g. main -> run -> phase_b -> apply_*).
+    changed = True
+    while changed:
+        changed = False
+        for name, fn in top_funcs.items():
+            if name == "main" or name in writer_helpers:
+                continue
+            if any(
+                isinstance(n, ast.Call)
+                and isinstance(n.func, ast.Name)
+                and n.func.id in writer_helpers
+                for n in ast.walk(fn)
+            ):
+                writer_helpers.add(name)
+                changed = True
+
+    add_args_lines: list[int] = []
+    take_snap_lines: list[int] = []
+    write_lines: list[int] = []
+
+    for node in ast.walk(main_fn):
+        if isinstance(node, ast.Call):
+            name = _call_name(node)
+            if name == "add_snapshot_args":
+                add_args_lines.append(node.lineno)
+            elif name == "take_snapshot":
+                take_snap_lines.append(node.lineno)
+            elif _is_db_write_call(node) or (
+                isinstance(node.func, ast.Name) and node.func.id in writer_helpers
+            ):
+                write_lines.append(node.lineno)
+
+    assert add_args_lines, f"{script_path.name}: main() must call add_snapshot_args()"
+    assert take_snap_lines, f"{script_path.name}: main() must call take_snapshot()"
+    assert write_lines, f"{script_path.name}: expected DB write/init_db call in main()"
+    assert min(take_snap_lines) < min(write_lines), (
+        f"{script_path.name}: take_snapshot() (line {min(take_snap_lines)}) must precede "
+        f"first DB write / init_db (line {min(write_lines)})"
     )
-    assert "add_snapshot_args" in src
-    assert "take_snapshot" in src
-    assert "prune_snapshots" in src
+
+    # Every prune_snapshots() call in main() must be guarded by an `if` referencing `snap`.
+    prune_calls = [
+        node
+        for node in ast.walk(main_fn)
+        if isinstance(node, ast.Call) and _call_name(node) == "prune_snapshots"
+    ]
+    assert prune_calls, f"{script_path.name}: main() must call prune_snapshots()"
+
+    guarded_prunes: set[int] = set()
+    for node in ast.walk(main_fn):
+        if isinstance(node, ast.If) and _if_guards_snap(node.test):
+            for body_node in node.body:
+                for sub in ast.walk(body_node):
+                    if isinstance(sub, ast.Call) and _call_name(sub) == "prune_snapshots":
+                        guarded_prunes.add(id(sub))
+
+    for call in prune_calls:
+        assert id(call) in guarded_prunes, (
+            f"{script_path.name}: prune_snapshots() at line {call.lineno} must be guarded "
+            f"on `snap is not None`"
+        )

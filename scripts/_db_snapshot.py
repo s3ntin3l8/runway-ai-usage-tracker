@@ -53,7 +53,7 @@ def add_snapshot_args(parser: argparse.ArgumentParser) -> None:
         metavar="N",
         help=(
             f"Keep the newest N snapshots for this script after a successful run "
-            f"(default: {DEFAULT_KEEP_SNAPSHOTS})."
+            f"(including the one just taken; default: {DEFAULT_KEEP_SNAPSHOTS})."
         ),
     )
 
@@ -161,16 +161,15 @@ def take_snapshot(
     db_size = _database_size_bytes(resolved_db)
     _ensure_disk_space(backups_dir, db_size)
 
-    backups_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-    if os.name != "nt":
-        os.chmod(backups_dir, 0o700)
-
     timestamp = datetime.now(UTC).strftime(_TIMESTAMP_FORMAT)
     dest_path = backups_dir / f"{script_name}-{timestamp}.db"
 
     src_conn: sqlite3.Connection | None = None
     dst_conn: sqlite3.Connection | None = None
     try:
+        backups_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if os.name != "nt":
+            os.chmod(backups_dir, 0o700)
         src_conn = sqlite3.connect(str(resolved_db), timeout=30.0)
         dst_conn = sqlite3.connect(str(dest_path))
         src_conn.backup(dst_conn)
