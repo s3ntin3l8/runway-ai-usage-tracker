@@ -478,6 +478,7 @@ interface LimitCard {
   error_type?: string;    // Populated when collection fails — surfaces as an Error Card
   stale?: boolean;        // Cache served past STALE_CEILING — real but old data (since the stale ceiling was added)
   collection_failing?: boolean;  // Collection is failing; set alongside `stale`, drives frontend cardStale()
+  stale_reason?: 'no_credential' | 'credential_failing' | null;  // Derived at serve time when stale, never stored on the card
   tier?: string;          // "Free" | "Pro" | "Premium" | "Team" | "Enterprise" — the schema's vocabulary; the value is derived at runtime from the provider's plan
   billing_evidence?: string | null;  // "placeholder" | "prepaid_credit" - evidence that decides no billing model
   usage_url?: string;     // Link to provider usage page

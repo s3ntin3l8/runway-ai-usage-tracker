@@ -104,15 +104,15 @@ class TokenCache(TokenCacheStore):
         self, provider: str
     ) -> dict[str, tuple[dict[str, str], dict[str, Any], float]]:
         """Select whole bundles without copying device credentials into legacy state."""
-        entries = dict(self._cache.get(provider, {}))
-        for account_id, sources in self._source_cache.get(provider, {}).items():
+        entries = self._cache.get(provider, {}).copy()
+        for account_id, sources in list(self._source_cache.get(provider, {}).items()):
             # Preserve configured/manual aggregate precedence. Pending device
             # bundles are independently resolved through get_pending_sources().
             if account_id in entries:
                 continue
             candidates = [
                 entry
-                for entry in sources.values()
+                for entry in list(sources.values())
                 if entry[1].get("durable_source") is True
                 and entry[1].get("identity_pending") is not True
             ]
@@ -549,6 +549,19 @@ class TokenCache(TokenCacheStore):
             .get(source_id)
         )
         return self.credential_generation(entry[0]) if entry else None
+
+    def has_account_entry(self, provider: str, account_id: str | None = None) -> bool:
+        """Return whether an active collector-eligible cache entry exists for (provider, account_id)."""
+        canon = canonical_account_id(account_id)
+        now = time.time()
+        entry = self._account_entries(provider).get(canon)
+        if entry is None:
+            return False
+        if entry is self._cache.get(provider, {}).get(canon):
+            tokens, _metadata, ts = entry
+            key_timestamps = self._token_timestamps.get(provider, {}).get(canon, {}).copy()
+            return any(now - key_timestamps.get(k, ts) <= self._ttl for k in list(tokens))
+        return True
 
     async def get_all_stats(self) -> dict[str, Any]:
         """Get flattened stats for all cached providers and accounts."""

@@ -95,6 +95,9 @@ class LimitCard(BaseModel):
     # removed (#312). The frontend prefers this field over parsing the detail
     # display string.
     collection_failing: bool = False
+    # Derived at read time by usage_overview when the card is stale, never stored
+    # on the card itself: "no_credential" | "credential_failing" | None.
+    stale_reason: str | None = None
 
     @field_validator(
         "service_name", "remaining", "unit", "reset", "pace", "detail", "tier", "variant"
