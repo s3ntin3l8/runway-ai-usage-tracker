@@ -7,6 +7,7 @@ or health changes take effect immediately.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any
 
 from sqlmodel import Session, col, select
@@ -37,6 +38,13 @@ def derive_stale_reason(
             ProviderConfig.account_id == canon_aid,
         )
     ).first()
+    if config is None and canon_aid != "default":
+        config = session.exec(
+            select(ProviderConfig).where(
+                ProviderConfig.provider_id == provider_id,
+                ProviderConfig.account_id == "default",
+            )
+        ).first()
     if config is not None and (not config.enabled or config.archived):
         return None
 
@@ -83,6 +91,32 @@ def derive_stale_reason(
     return STALE_REASON_NO_CREDENTIAL
 
 
+def apply_stale_reasons(
+    session: Session,
+    cards: Iterable[dict[str, Any]],
+    *,
+    cache: TokenCache | None = None,
+) -> None:
+    """Populate or clear ``stale_reason`` across cards, deriving once per (provider, account)."""
+    memo: dict[tuple[str, str], str | None] = {}
+    for card in cards:
+        if not (card.get("stale") is True or card.get("collection_failing") is True):
+            card.pop("stale_reason", None)
+            continue
+        provider_id = card.get("provider_id")
+        if not provider_id:
+            card.pop("stale_reason", None)
+            continue
+        key = (provider_id, canonical_account_id(card.get("account_id")))
+        if key not in memo:
+            memo[key] = derive_stale_reason(session, provider_id, key[1], cache=cache)
+        reason = memo[key]
+        if reason is not None:
+            card["stale_reason"] = reason
+        else:
+            card.pop("stale_reason", None)
+
+
 def apply_stale_reason(
     session: Session,
     card: dict[str, Any],
@@ -90,15 +124,4 @@ def apply_stale_reason(
     cache: TokenCache | None = None,
 ) -> None:
     """Populate or clear ``stale_reason`` on a card dict in place."""
-    if not (card.get("stale") is True or card.get("collection_failing") is True):
-        card.pop("stale_reason", None)
-        return
-    provider_id = card.get("provider_id")
-    if not provider_id:
-        card.pop("stale_reason", None)
-        return
-    reason = derive_stale_reason(session, provider_id, card.get("account_id"), cache=cache)
-    if reason is not None:
-        card["stale_reason"] = reason
-    else:
-        card.pop("stale_reason", None)
+    apply_stale_reasons(session, [card], cache=cache)
