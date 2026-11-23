@@ -719,3 +719,240 @@ def test_full_disk_access_action_and_page_markers(settings, monkeypatch):
         "window.addEventListener('focus'",
     ):
         assert marker in html
+
+
+def test_settings_panel_banner_distinguishes_sync_states(tmp_path, monkeypatch):
+    import shutil
+    import subprocess
+
+    from sidecar_app.settings_server import _CSS, _HTML
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+
+    html = _HTML.substitute(
+        css=_CSS,
+        api_url="https://runway.example",
+        version="0.0.0",
+        sidecar_id="test",
+    )
+    script = html.rsplit("<script>", 1)[1].split("</script>", 1)[0]
+    _home, _apps, source_settings = _patch_darwin_dirs(monkeypatch, tmp_path)
+    base_report = source_settings.report({})
+
+    probe = """
+const vm = require('vm');
+const fs = require('fs');
+const baseReport = JSON.parse(fs.readFileSync(process.argv[1], 'utf8'));
+const script = fs.readFileSync(process.argv[2], 'utf8');
+const byId = new Map();
+function makeEl(tag) {
+  const el = {
+    tagName: tag.toUpperCase(),
+    children: [],
+    className: '',
+    textContent: '',
+    title: '',
+    hidden: false,
+    disabled: false,
+    checked: false,
+    _id: '',
+    style: {},
+    setAttribute() {},
+    append(...nodes) {
+      for (const n of nodes) {
+        if (typeof n === 'string') this.children.push({ textContent: n, children: [] });
+        else if (n) this.children.push(n);
+      }
+    },
+    replaceChildren(...nodes) { this.children = []; this.append(...nodes); },
+    get firstChild() { return this.children[0] || null; },
+  };
+  Object.defineProperty(el, 'id', {
+    get() { return this._id; },
+    set(v) { this._id = v; if (v) byId.set(v, el); },
+  });
+  return el;
+}
+function collectText(node) {
+  if (!node) return '';
+  return (node.textContent || '') + (node.children || []).map(collectText).join('');
+}
+const card = makeEl('section'); card.id = 'sources-card';
+const body = makeEl('div'); body.id = 'sources-body';
+const ctx = {
+  document: {
+    getElementById: id => byId.get(id) || makeEl('div'),
+    createElement: makeEl,
+    createTextNode: text => ({ textContent: String(text), children: [] }),
+    activeElement: null,
+  },
+  window: { addEventListener() {} },
+  fetch: async () => ({ ok: true, json: async () => ({}) }),
+  setInterval: () => 0,
+  setTimeout: () => 0,
+  clearTimeout: () => {},
+  URLSearchParams,
+  Map,
+  Set,
+  Math,
+  JSON,
+};
+vm.runInNewContext(script, ctx);
+
+function bannerFor(patch) {
+  ctx.renderSources(Object.assign({}, baseReport, patch));
+  const banner = body.children.find(c => (c.className || '').includes('kc-banner'));
+  return banner ? collectText(banner) : '';
+}
+
+console.log(JSON.stringify({
+  not_paired: bannerFor({ sync_state: 'not_paired', sync_reason: null, forwarding_supported: false }),
+  not_synced_yet: bannerFor({ sync_state: 'not_synced_yet', sync_reason: null, forwarding_supported: false }),
+  redirect: bannerFor({ sync_state: 'sync_failed', sync_reason: 'redirect', forwarding_supported: false }),
+  http_500: bannerFor({ sync_state: 'sync_failed', sync_reason: 'http_500', forwarding_supported: false }),
+  network: bannerFor({ sync_state: 'sync_failed', sync_reason: 'network', forwarding_supported: false }),
+  invalid_reply: bannerFor({ sync_state: 'sync_failed', sync_reason: 'invalid_reply', forwarding_supported: false }),
+  local_state: bannerFor({ sync_state: 'sync_failed', sync_reason: 'local_state', forwarding_supported: false }),
+  re_pair_required: bannerFor({ sync_state: 're_pair_required', sync_reason: 'http_401', re_pair_required: true, forwarding_supported: false }),
+  server_unsupported: bannerFor({ sync_state: 'server_unsupported', sync_reason: 'http_404', forwarding_supported: false }),
+}));
+"""
+    report_path = tmp_path / "report.json"
+    script_path = tmp_path / "page.js"
+    report_path.write_text(json.dumps(base_report), encoding="utf-8")
+    script_path.write_text(script, encoding="utf-8")
+
+    proc = subprocess.run(
+        [node, "-e", probe, str(report_path), str(script_path)],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    banners = json.loads(proc.stdout)
+    assert "Pair this sidecar" in banners["not_paired"]
+    assert "Waiting for the first sync with the server..." in banners["not_synced_yet"]
+    for key in (
+        "not_paired",
+        "not_synced_yet",
+        "redirect",
+        "http_500",
+        "network",
+        "invalid_reply",
+        "local_state",
+        "re_pair_required",
+    ):
+        assert "does not support" not in banners[key]
+    for reason in ("redirect", "http_500", "network", "invalid_reply", "local_state"):
+        assert reason in banners[reason]
+    assert "does not support" in banners["server_unsupported"]
+
+
+def test_get_sources_triggers_or_awaits_sync_once(tmp_path, monkeypatch):
+    from scripts.sidecar_pkg import local_paths, source_protocol, transport
+
+    monkeypatch.setenv("RUNWAY_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setattr(local_paths, "get_sidecar_dir", lambda: tmp_path)
+
+    config = {
+        "api_url": "https://runway.example",
+        "device_api_url": "https://runway.example",
+        "device_id": "a" * 32,
+        "device_key": "synthetic-device-key",
+    }
+    calls = []
+    started = threading.Event()
+    release = threading.Event()
+
+    class _FakeResponse:
+        def __init__(self, url: str):
+            self._url = url
+
+        def geturl(self) -> str:
+            return self._url
+
+        def read(self, _limit: int = -1) -> bytes:
+            return json.dumps(
+                {
+                    "protocol": 1,
+                    "accepted": ["anthropic.claude-code"],
+                    "commands": [],
+                    "withdrawals": [],
+                }
+            ).encode()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    def fake_urlopen(req, **_kw):
+        calls.append(req.full_url)
+        started.set()
+        release.wait(timeout=5)
+        return _FakeResponse(req.full_url)
+
+    monkeypatch.setattr(transport, "urlopen", fake_urlopen)
+
+    server = _SettingsServer(
+        "127.0.0.1",
+        0,
+        lambda: config,
+        lambda: {},
+        lambda value: config.update(value),
+        lambda: None,
+        lambda: None,
+        lambda: None,
+    )
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        # 1. Producing the report triggers a sync once; subsequent polls reuse it.
+        release.set()
+        status, raw = send(server, "GET", "/sources")
+        assert status == 200
+        rep = json.loads(raw)
+        assert rep["sync_state"] == "ok"
+        assert rep["forwarding_supported"] is True
+        assert len(calls) == 1
+
+        status2, raw2 = send(server, "GET", "/sources")
+        assert status2 == 200
+        assert json.loads(raw2)["sync_state"] == "ok"
+        assert len(calls) == 1
+
+        # 2. If a sync is already in flight, GET /sources awaits it without starting another.
+        calls.clear()
+        started.clear()
+        release.clear()
+        source_protocol.CLIENT = None
+        bg = threading.Thread(
+            target=source_protocol.sync,
+            args=(
+                config,
+                tmp_path / "source-control.json",
+                lambda cfg: __import__(
+                    "scripts.sidecar_pkg.source_settings", fromlist=["report"]
+                ).report(cfg),
+            ),
+        )
+        bg.start()
+        assert started.wait(timeout=5)
+
+        result_holder = []
+        getter = threading.Thread(
+            target=lambda: result_holder.append(send(server, "GET", "/sources"))
+        )
+        getter.start()
+        release.set()
+        bg.join(timeout=5)
+        getter.join(timeout=5)
+        assert len(calls) == 1
+        assert result_holder[0][0] == 200
+        assert json.loads(result_holder[0][1])["sync_state"] == "ok"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)

@@ -207,6 +207,29 @@ def report(config: dict[str, Any]) -> dict[str, Any]:
                 and not has_ticket,
             }
         )
+    has_device_creds = bool(config.get("device_id") and config.get("device_key"))
+    has_ingest_pairing = bool(config.get("api_url") and config.get("api_key"))
+    re_pair_required = bool(
+        (client and client.re_pair_required)
+        or (has_ingest_pairing and not has_device_creds)
+        or (
+            config.get("device_id")
+            and config.get("device_api_url", "").rstrip("/")
+            != config.get("api_url", "").rstrip("/")
+        )
+    )
+    if re_pair_required:
+        sync_state = "re_pair_required"
+        sync_reason = client.sync_reason if (client and client.re_pair_required) else None
+    elif not has_device_creds:
+        sync_state = "not_paired"
+        sync_reason = None
+    elif client is None:
+        sync_state = "not_synced_yet"
+        sync_reason = None
+    else:
+        sync_state = client.sync_state
+        sync_reason = client.sync_reason
     return {
         "compatible": any(sys.platform in source.platforms for source in catalog().values()),
         "sources": sources,
@@ -218,14 +241,9 @@ def report(config: dict[str, Any]) -> dict[str, Any]:
         "safari": _safari_report(config),
         "run": SETUP.run_report(),
         "forwarding_supported": bool(client and client.accepted),
-        "re_pair_required": bool(
-            (client and client.re_pair_required)
-            or (
-                config.get("device_id")
-                and config.get("device_api_url", "").rstrip("/")
-                != config.get("api_url", "").rstrip("/")
-            )
-        ),
+        "re_pair_required": re_pair_required,
+        "sync_state": sync_state,
+        "sync_reason": sync_reason,
         "setup_available": sys.platform == "darwin" and getattr(sys, "frozen", False),
     }
 
