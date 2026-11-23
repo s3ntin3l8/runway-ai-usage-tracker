@@ -1117,35 +1117,8 @@ async def test_desktop_profile_success_quota_denial_stays_pending_and_other_sour
     assert [p["source_id"] for p in await cache.get_pending_sources("anthropic")] == [bad]
 
 
-@pytest.mark.asyncio
-async def test_console_cookie_fingerprint_rotation_preserves_source_and_contribution(
-    world, monkeypatch
-):
-    """Replay (#1342): Console cookie rotates to a new fingerprint on an enrolled device.
-
-    Exercises promotion (including the ``existing_target`` branch that calls
-    ``session.delete(source)``), concurrent + sequential sidecar ingest, and
-    ``reconcile_token_cache_from_durable_tags``, asserting after every step
-    that both the pre-rotation and rotated ``CredentialSource`` rows and their
-    non-NULL ``SidecarSourceContribution`` payloads survive.
-
-    Per-path negative result (#1342):
-    - Promotion (``_commit_source_identity``): ``existing_target`` deletes only the
-      pending-slot duplicate while the ``org_x`` row survives with the same
-      ``(provider_id, source_id)``, so ``_retire_removed_origins`` keeps
-      ``payload_encrypted`` non-NULL.
-    - Ingest (``_can_reconcile_row`` / phantom handling): ``_can_reconcile_row``
-      special-cases ``anthropic`` only, but pending-slot rows are phantom accounts
-      and are moved/deleted only when ``target_exists`` is True; ``touch_source``
-      always leaves a surviving row for ``source_id_2`` and never touches ``source_id_1``.
-    - Durable-tag reconciliation (``reconcile_token_cache_from_durable_tags``):
-      moves ``source.account_id`` or deletes only the duplicate pending row while
-      ``existing_target`` survives.
-    - Note: ``_retire_missing_claude_sources`` (manifest endpoint, outside this
-      ingest/promotion/reconcile replay) is the path that deletes a missing
-      same-store fingerprint (``origin_1``) and NULLs its contribution payload
-      when a manifest reports ``origin_2`` under ``completed_providers``.
-    """
+def _console_cookie_replay_setup(world, monkeypatch) -> dict:
+    """Shared enrolled-macOS-device harness for Console cookie rotation replays."""
     from cryptography.fernet import Fernet
 
     from app.core import config, db
@@ -1164,6 +1137,7 @@ async def test_console_cookie_fingerprint_rotation_preserves_source_and_contribu
     encryption = EncryptionService(Fernet.generate_key().decode())
     monkeypatch.setattr("app.services.token_cache.token_cache", cache)
     monkeypatch.setattr("app.api.endpoints.fleet_ingest.token_cache", cache)
+    monkeypatch.setattr("app.api.endpoints.fleet_credentials.token_cache", cache)
     monkeypatch.setattr(sidecar_devices, "encryption_service", encryption)
     monkeypatch.setattr(source_controls, "encryption_service", encryption)
     monkeypatch.setattr(config.settings, "INGEST_API_KEY", "synthetic-shared")
@@ -1202,6 +1176,27 @@ async def test_console_cookie_fingerprint_rotation_preserves_source_and_contribu
             local, local["api_url"] + path, local["api_key"], signing_timestamp(), purpose, body
         )
         return client.post(path, content=body, headers=headers)
+
+    def sync_chrome_source(client: TestClient) -> None:
+        sync_resp = post(
+            client,
+            "/api/v1/fleet/source-sync",
+            "source-sync",
+            {
+                "sources": [
+                    {
+                        "source_id": descriptor.id,
+                        "provider_id": descriptor.provider,
+                        "label": descriptor.label,
+                        "revision": descriptor.revision,
+                        "generation": 1,
+                        "read": True,
+                        "state": "Limited",
+                    }
+                ]
+            },
+        )
+        assert sync_resp.status_code == 200, sync_resp.text
 
     def assert_source_and_payload(source_id: str, expected_account: str | None = None) -> None:
         with Session(engine) as session:
@@ -1263,28 +1258,80 @@ async def test_console_cookie_fingerprint_rotation_preserves_source_and_contribu
             yield session
 
     app.dependency_overrides[get_session] = override_session
+    return {
+        "org_x": org_x,
+        "origin_1": origin_1,
+        "origin_2": origin_2,
+        "device_id": device_id,
+        "sidecar_id": sidecar_id,
+        "source_id_1": source_id_1,
+        "source_id_2": source_id_2,
+        "local": local,
+        "proof": proof,
+        "post": post,
+        "sync_chrome_source": sync_chrome_source,
+        "assert_source_and_payload": assert_source_and_payload,
+        "assert_console_source_count": assert_console_source_count,
+        "assert_no_pending_slot": assert_no_pending_slot,
+        "console_upstream": console_upstream,
+        "cleanup": lambda: app.dependency_overrides.pop(get_session, None),
+    }
+
+
+@pytest.mark.asyncio
+async def test_console_cookie_fingerprint_rotation_preserves_source_and_contribution(
+    world, monkeypatch
+):
+    """Replay (#1342): Console cookie rotates to a new fingerprint on an enrolled device.
+
+    Exercises promotion (including the ``existing_target`` branch that calls
+    ``session.delete(source)``), concurrent + sequential sidecar ingest, and
+    ``reconcile_token_cache_from_durable_tags``, asserting after every step
+    that both the pre-rotation and rotated ``CredentialSource`` rows and their
+    non-NULL ``SidecarSourceContribution`` payloads survive.
+
+    Per-path negative result (#1342):
+    - Promotion (``_commit_source_identity``): ``existing_target`` deletes only the
+      pending-slot duplicate while the ``org_x`` row survives with the same
+      ``(provider_id, source_id)``, so ``_retire_removed_origins`` keeps
+      ``payload_encrypted`` non-NULL.
+    - Ingest (``_can_reconcile_row`` / phantom handling): ``_can_reconcile_row``
+      special-cases ``anthropic`` only, but pending-slot rows are phantom accounts
+      and are moved/deleted only when ``target_exists`` is True; ``touch_source``
+      always leaves a surviving row for ``source_id_2`` and never touches ``source_id_1``.
+    - Durable-tag reconciliation (``reconcile_token_cache_from_durable_tags``):
+      moves ``source.account_id`` or deletes only the duplicate pending row while
+      ``existing_target`` survives.
+    - Note: ``_retire_missing_claude_sources`` (manifest endpoint, exercised in
+      ``test_console_cookie_manifest_retires_missing_same_store_fingerprint``)
+      is the path that deletes a missing same-store fingerprint (``origin_1``)
+      and NULLs its contribution payload when a manifest reports ``origin_2``
+      under ``completed_providers`` (while keeping ``origin_2`` and its
+      contribution intact).
+    """
+    env = _console_cookie_replay_setup(world, monkeypatch)
+    engine, cache = world
+    org_x = env["org_x"]
+    origin_1, origin_2 = env["origin_1"], env["origin_2"]
+    device_id, sidecar_id = env["device_id"], env["sidecar_id"]
+    source_id_1, source_id_2 = env["source_id_1"], env["source_id_2"]
+    local, proof = env["local"], env["proof"]
+    post = env["post"]
+    console_upstream = env["console_upstream"]
+    assert_source_and_payload = env["assert_source_and_payload"]
+    assert_console_source_count = env["assert_console_source_count"]
+    assert_no_pending_slot = env["assert_no_pending_slot"]
+
+    from app.main import app
+    from app.models.db import SidecarSourceContribution
+    from app.services.credential_sources import pending_cache_slot
+    from scripts.sidecar_pkg.source_protocol import signed_headers
+    from scripts.sidecar_pkg.transport import signing_timestamp
+    from tests.fixtures.test_client import TestClient
+
     try:
         client = TestClient(app)
-        # 0. Report macOS Chrome source grant
-        sync_resp = post(
-            client,
-            "/api/v1/fleet/source-sync",
-            "source-sync",
-            {
-                "sources": [
-                    {
-                        "source_id": descriptor.id,
-                        "provider_id": descriptor.provider,
-                        "label": descriptor.label,
-                        "revision": descriptor.revision,
-                        "generation": 1,
-                        "read": True,
-                        "state": "Limited",
-                    }
-                ]
-            },
-        )
-        assert sync_resp.status_code == 200, sync_resp.text
+        env["sync_chrome_source"](client)
 
         # 1. Initial verified Console cookie on org X
         resp1 = post(
@@ -1480,4 +1527,109 @@ async def test_console_cookie_fingerprint_rotation_preserves_source_and_contribu
         assert_source_and_payload(source_id_2, org_x)
         assert_console_source_count(2)
     finally:
-        app.dependency_overrides.pop(get_session, None)
+        env["cleanup"]()
+
+
+@pytest.mark.asyncio
+async def test_console_cookie_manifest_retires_missing_same_store_fingerprint(world, monkeypatch):
+    """Replay (#1342): manifest retirement deletes the replaced fingerprint and NULLs its payload.
+
+    When ``POST /api/v1/fleet/credentials/manifest`` reports ``origin_2`` under
+    ``completed_providers=["anthropic_console"]`` without ``origin_1``,
+    ``_retire_missing_claude_sources`` deletes the pre-rotation ``origin_1``
+    ``CredentialSource`` row and ``source_controls`` NULLs its contribution's
+    ``payload_encrypted``, while ``origin_2`` and its contribution survive.
+    """
+    from app.main import app
+    from app.models.db import SidecarSourceContribution
+    from tests.fixtures.test_client import TestClient
+
+    env = _console_cookie_replay_setup(world, monkeypatch)
+    engine, _cache = world
+    org_x = env["org_x"]
+    origin_1, origin_2 = env["origin_1"], env["origin_2"]
+    device_id, sidecar_id = env["device_id"], env["sidecar_id"]
+    source_id_1, source_id_2 = env["source_id_1"], env["source_id_2"]
+    proof = env["proof"]
+    post = env["post"]
+    console_upstream = env["console_upstream"]
+    assert_source_and_payload = env["assert_source_and_payload"]
+    assert_console_source_count = env["assert_console_source_count"]
+
+    try:
+        client = TestClient(app)
+        env["sync_chrome_source"](client)
+
+        for origin, sid, cookie_val in (
+            (origin_1, source_id_1, "sk-ant-sid01-console-old"),  # pragma: allowlist secret
+            (origin_2, source_id_2, "sk-ant-sid01-console-new"),  # pragma: allowlist secret
+        ):
+            ingest_resp = post(
+                client,
+                "/api/v1/fleet/ingest",
+                "ingest",
+                {
+                    "provider": "sidecar",
+                    "sidecar_id": sidecar_id,
+                    "metrics": [
+                        {
+                            "provider_id": "anthropic_console",
+                            "service_name": "Claude Console",
+                            "remaining": "Token",
+                            "unit": "cookie",
+                            "metadata": {
+                                "credential_origin": origin,
+                                "session_cookie": cookie_val,
+                                "identity_pending": True,
+                                "keychain_consent": proof,
+                            },
+                        }
+                    ],
+                },
+            )
+            assert ingest_resp.status_code == 200, ingest_resp.text
+            cards = await _verify("anthropic_console", console_upstream)
+            assert cards
+            assert_source_and_payload(sid, org_x)
+
+        assert_console_source_count(2)
+
+        manifest_resp = post(
+            client,
+            "/api/v1/fleet/credentials/manifest",
+            "manifest",
+            {
+                "sidecar_id": sidecar_id,
+                "completed_providers": ["anthropic_console"],
+                "entries": [
+                    {
+                        "provider_id": "anthropic_console",
+                        "credential_origin": origin_2,
+                        "keychain_consent": proof,
+                    }
+                ],
+            },
+        )
+        assert manifest_resp.status_code == 200, manifest_resp.text
+
+        with Session(engine) as session:
+            retired_rows = session.exec(
+                select(CredentialSource).where(
+                    CredentialSource.provider_id == "anthropic_console",
+                    CredentialSource.source_id == source_id_1,
+                )
+            ).all()
+            assert retired_rows == []
+            contrib_1 = session.exec(
+                select(SidecarSourceContribution).where(
+                    SidecarSourceContribution.device_id == device_id,
+                    SidecarSourceContribution.provider_id == "anthropic_console",
+                    SidecarSourceContribution.credential_source_id == source_id_1,
+                )
+            ).one()
+            assert contrib_1.payload_encrypted is None
+
+        assert_source_and_payload(source_id_2, org_x)
+        assert_console_source_count(1)
+    finally:
+        env["cleanup"]()
