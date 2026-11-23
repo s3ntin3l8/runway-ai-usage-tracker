@@ -198,7 +198,7 @@ export interface FleetSourceStatus {
   revision: string;
   generation: number;
   read: boolean;
-  state: 'Authorized' | `Authorized (checked ${string})` | 'Off' | 'Setup required' | 'Connecting' | 'Ready' | 'Limited' | 'Action required' | 'Not installed' | 'Withdrawal pending';
+  state: 'Authorized' | `Authorized (checked ${string})` | 'Off' | 'Setup required' | 'Connecting' | 'Ready' | 'Limited' | 'Action required' | 'Needs re-authorization (app updated)' | 'Not installed' | 'Withdrawal pending';
   renewal_requested: boolean;
   renewal_supported: boolean;
   renewal_capable: boolean;

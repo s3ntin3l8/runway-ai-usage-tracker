@@ -513,13 +513,15 @@ function renderSources(report) {
   const enabled = live.filter(s => s.read);
   const authorized = enabled.filter(s => status(s) === 'ok');
   const waiting = enabled.filter(s => status(s) === 'need');
-  const reauth = waiting.filter(s => s.state === 'Needs re-authorization (app updated)');
-  const otherWaiting = waiting.length - reauth.length;
+  const reauthCount = typeof report.reauthorization_count === 'number'
+    ? report.reauthorization_count
+    : waiting.filter(s => s.state === 'Needs re-authorization (app updated)').length;
+  const otherWaiting = Math.max(0, waiting.length - reauthCount);
   const failed = enabled.filter(s => status(s) === 'err');
   const summary = kcEl('div', 'kc-summary'); summary.setAttribute('aria-live', 'polite');
   const part = (cls, n, text) => { const span = kcEl('span', cls); span.append(kcEl('strong', '', String(n)), document.createTextNode(' ' + text)); return span; };
   summary.append(part('', enabled.length, 'of ' + live.length + ' on'), part('', authorized.length, 'authorized'));
-  if (reauth.length) summary.append(part('kc-warn', reauth.length, (reauth.length === 1 ? 'source needs' : 'sources need') + ' re-authorization after the update'));
+  if (reauthCount) summary.append(part('kc-warn', reauthCount, (reauthCount === 1 ? 'source needs' : 'sources need') + ' re-authorization after the update'));
   if (otherWaiting) summary.append(part('kc-warn', otherWaiting, 'need authorization'));
   if (failed.length) summary.append(part('kc-bad', failed.length, 'action required'));
   body.append(summary);

@@ -158,14 +158,15 @@ MOVE_TO_APPLICATIONS_MSG = (
 )
 
 
-def _notify(icon: "pystray.Icon | None", message: str, title: str = "Runway Sidecar") -> None:
+def _notify(icon: "pystray.Icon | None", message: str, title: str = "Runway Sidecar") -> bool:
     """Best-effort tray notification (not every platform/backend supports it)."""
     if icon is None:
-        return
+        return False
     try:
         icon.notify(message, title)
+        return True
     except Exception:
-        pass  # notifications not supported on all platforms
+        return False  # notifications not supported on all platforms
 
 
 def _open_releases(_icon: pystray.Icon, _item: pystray.MenuItem) -> None:
@@ -245,10 +246,13 @@ class SidecarTray:
             return False
         from scripts.sidecar_pkg.source_consent import POLICY
 
-        message = POLICY.reauthorization_notice()
-        if not message:
+        pending = POLICY.pending_reauthorization_notice()
+        if not pending:
             return False
-        _notify(self._icon, message, "Runway Sidecar — Re-authorization Needed")
+        message, identity = pending
+        if not _notify(self._icon, message, "Runway Sidecar — Re-authorization Needed"):
+            return False
+        POLICY.acknowledge_reauthorization_notice(identity)
         return True
 
     def _check_updates_now(self, icon: pystray.Icon) -> None:

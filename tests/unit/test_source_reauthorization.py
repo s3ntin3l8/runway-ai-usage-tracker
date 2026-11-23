@@ -154,6 +154,46 @@ def test_reauthorizing_records_new_identity_and_clears_notice(env, monkeypatch):
     assert "1 source needs re-authorization after the update" in notice
 
 
+def test_successful_read_refreshes_code_identity_across_restart(env):
+    config, state_path, identity = env
+    _authorize(["anthropic.claude-code"])
+
+    identity[0] = "cdhash-v2"
+    restarted = SourcePolicy(config)
+    restarted.configure_state(state_path)
+    restarted.record_read(restarted.ticket("anthropic.claude-code"))
+
+    restarted_again = SourcePolicy(config)
+    restarted_again.configure_state(state_path)
+    assert restarted_again.needs_reauthorization("anthropic.claude-code") is False
+    assert restarted_again.read_state("anthropic.claude-code").startswith("Authorized (checked ")
+    assert restarted_again.reauthorization_notice() is None
+
+
+def test_failed_tray_notification_does_not_suppress_retry(env, monkeypatch):
+    config, state_path, identity = env
+    _authorize(["anthropic.claude-code"])
+
+    identity[0] = "cdhash-v2"
+    restarted = SourcePolicy(config)
+    restarted.configure_state(state_path)
+    monkeypatch.setattr(source_consent, "POLICY", restarted)
+    monkeypatch.setattr(tray.sys, "platform", "darwin")
+
+    instance = tray.SidecarTray.__new__(tray.SidecarTray)
+    instance._icon = Mock()
+    instance._icon.notify.side_effect = RuntimeError("notifications disabled")
+    assert instance.notify_reauthorization() is False
+
+    saved = json.loads(state_path.read_text(encoding="utf-8"))
+    assert "notified_code_identity" not in saved["anthropic.claude-code"]
+
+    instance._icon.notify.side_effect = None
+    assert instance.notify_reauthorization() is True
+    instance._icon.notify.assert_called()
+    assert instance.notify_reauthorization() is False
+
+
 def test_current_code_identity_returns_none_off_darwin(monkeypatch):
     monkeypatch.setattr(source_consent.sys, "platform", "linux")
     assert source_consent.current_code_identity() is None

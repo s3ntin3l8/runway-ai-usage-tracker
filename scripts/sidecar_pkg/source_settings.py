@@ -189,6 +189,7 @@ def report(config: dict[str, Any]) -> dict[str, Any]:
                 "revision": source.revision,
                 "read": has_ticket,
                 "state": state,
+                # Other state_reason values (denied, timed_out, etc.) are left to #1340.
                 "state_reason": (
                     "app_updated" if state == "Needs re-authorization (app updated)" else None
                 ),
