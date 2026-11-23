@@ -131,6 +131,7 @@ class SourceClient:
                     "generation": generation if type(generation) is int and generation >= 0 else 0,
                     "read": policy.ticket(source_id) is not None,
                     "state": row["state"],
+                    "state_reason": row.get("state_reason"),
                     "new": row["new"],
                     "renewal_requested": row["renewal_requested"],
                     "renewal_supported": False,

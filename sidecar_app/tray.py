@@ -239,6 +239,18 @@ class SidecarTray:
         self._update_available = flag
         self._update_icon(self._daemon.status)
 
+    def notify_reauthorization(self) -> bool:
+        """Notify once per code-identity change when Keychain sources need re-authorization."""
+        if sys.platform != "darwin" or self._icon is None:
+            return False
+        from scripts.sidecar_pkg.source_consent import POLICY
+
+        message = POLICY.reauthorization_notice()
+        if not message:
+            return False
+        _notify(self._icon, message, "Runway Sidecar — Re-authorization Needed")
+        return True
+
     def _check_updates_now(self, icon: pystray.Icon) -> None:
         """Report the selected channel's latest release without installing it."""
         try:

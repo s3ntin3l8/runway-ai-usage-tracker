@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import copy
+import ctypes
 import inspect
 import json
 import logging
 import math
 import os
+import sys
 import tempfile
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -22,8 +24,65 @@ from typing import Any
 from scripts.sidecar_pkg.source_catalog import catalog, trusted_rule
 
 READ_STATE_MAX_AGE = 7 * 86400
+REAUTH_REQUIRED_STATE = "Needs re-authorization (app updated)"
+_REQUIRED_RECORD_KEYS = {
+    "revision",
+    "last_read_at",
+    "last_block_reason",
+    "last_block_at",
+}
+_OPTIONAL_RECORD_KEYS = {"code_identity", "notified_code_identity"}
 _BLOCK_REASONS = {"denied", "timed_out", "unavailable", "missing", "identity changed", "ambiguous"}
 logger = logging.getLogger(__name__)
+
+
+def current_code_identity() -> str | None:
+    """Return the running binary's macOS cdhash as lowercase hex, or None."""
+    if sys.platform != "darwin":
+        return None
+    try:
+        sec = ctypes.CDLL("/System/Library/Frameworks/Security.framework/Security")
+        cf = ctypes.CDLL("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation")
+        ptr = ctypes.c_void_p
+        sec.SecCodeCopySelf.argtypes = [ctypes.c_uint32, ctypes.POINTER(ptr)]
+        sec.SecCodeCopySelf.restype = ctypes.c_int32
+        sec.SecCodeCopySigningInformation.argtypes = [ptr, ctypes.c_uint32, ctypes.POINTER(ptr)]
+        sec.SecCodeCopySigningInformation.restype = ctypes.c_int32
+        cf.CFDictionaryGetValue.argtypes = [ptr, ptr]
+        cf.CFDictionaryGetValue.restype = ptr
+        cf.CFGetTypeID.argtypes = [ptr]
+        cf.CFGetTypeID.restype = ctypes.c_ulong
+        cf.CFDataGetTypeID.argtypes = []
+        cf.CFDataGetTypeID.restype = ctypes.c_ulong
+        cf.CFDataGetLength.argtypes = [ptr]
+        cf.CFDataGetLength.restype = ctypes.c_long
+        cf.CFDataGetBytePtr.argtypes = [ptr]
+        cf.CFDataGetBytePtr.restype = ptr
+        cf.CFRelease.argtypes = [ptr]
+        cf.CFRelease.restype = None
+
+        code, info = ptr(), ptr()
+        try:
+            if sec.SecCodeCopySelf(0, ctypes.byref(code)) != 0 or not code:
+                return None
+            if sec.SecCodeCopySigningInformation(code, 2, ctypes.byref(info)) != 0 or not info:
+                return None
+            key = ptr.in_dll(sec, "kSecCodeInfoUnique")
+            value = cf.CFDictionaryGetValue(info, key)
+            if not value or cf.CFGetTypeID(value) != cf.CFDataGetTypeID():
+                return None
+            length = cf.CFDataGetLength(value)
+            raw_ptr = cf.CFDataGetBytePtr(value)
+            if length <= 0 or not raw_ptr:
+                return None
+            return ctypes.string_at(raw_ptr, length).hex()
+        finally:
+            if info:
+                cf.CFRelease(info)
+            if code:
+                cf.CFRelease(code)
+    except Exception:
+        return None
 
 
 @dataclass(frozen=True)
@@ -36,7 +95,12 @@ class ConsentTicket:
 
 
 class SourcePolicy:
-    def __init__(self, config: dict[str, Any]) -> None:
+    def __init__(
+        self,
+        config: dict[str, Any],
+        *,
+        code_identity: Callable[[], str | None] | None = None,
+    ) -> None:
         self._lock = threading.RLock()
         self._config: dict[str, Any] = {}
         self._paused: set[str] = set()
@@ -44,6 +108,7 @@ class SourcePolicy:
         self._successful_reads: dict[str, float] = {}
         self._read_state: dict[str, dict[str, Any]] = {}
         self._state_path: Path | None = None
+        self._code_identity = code_identity
         self.configure(config)
 
     def configure(self, config: dict[str, Any]) -> None:
@@ -126,12 +191,12 @@ class SourcePolicy:
                     descriptor = catalog().get(source_id)
                     if descriptor is None or not isinstance(record, dict):
                         return
-                    if set(record) != {
-                        "revision",
-                        "last_read_at",
-                        "last_block_reason",
-                        "last_block_at",
-                    }:
+                    keys = set(record)
+                    if not (
+                        _REQUIRED_RECORD_KEYS
+                        <= keys
+                        <= (_REQUIRED_RECORD_KEYS | _OPTIONAL_RECORD_KEYS)
+                    ):
                         return
                     if record["revision"] != descriptor.revision:
                         continue
@@ -150,6 +215,13 @@ class SourcePolicy:
                         return
                     if (reason is None) != (record["last_block_at"] is None):
                         return
+                    for id_field in ("code_identity", "notified_code_identity"):
+                        if id_field in record:
+                            id_val = record[id_field]
+                            if id_val is not None and (
+                                not isinstance(id_val, str) or not 0 < len(id_val) <= 128
+                            ):
+                                return
                 self._read_state = {
                     key: value
                     for key, value in saved.items()
@@ -186,32 +258,112 @@ class SourcePolicy:
         descriptor = catalog().get(source_id)
         return record if descriptor and record.get("revision") == descriptor.revision else {}
 
+    def _current_identity(self) -> str | None:
+        provider = self._code_identity if self._code_identity is not None else current_code_identity
+        value = provider()
+        return value if isinstance(value, str) and value else None
+
+    @staticmethod
+    def _with_identity_fields(record: dict[str, Any], existing: dict[str, Any]) -> dict[str, Any]:
+        for field in ("code_identity", "notified_code_identity"):
+            if existing.get(field) is not None:
+                record[field] = existing[field]
+        return record
+
     def record_read(self, ticket: ConsentTicket) -> None:
         with self._lock:
             if self.current(ticket):
                 now = time.time()
+                existing = self._read_record(ticket.source_id)
                 self._successful_reads[ticket.source_id] = now
-                self._read_state[ticket.source_id] = {
-                    "revision": ticket.revision,
-                    "last_read_at": now,
-                    "last_block_reason": self._read_record(ticket.source_id).get(
-                        "last_block_reason"
-                    ),
-                    "last_block_at": self._read_record(ticket.source_id).get("last_block_at"),
-                }
+                self._read_state[ticket.source_id] = self._with_identity_fields(
+                    {
+                        "revision": ticket.revision,
+                        "last_read_at": now,
+                        "last_block_reason": existing.get("last_block_reason"),
+                        "last_block_at": existing.get("last_block_at"),
+                    },
+                    existing,
+                )
                 self._persist_reads()
+
+    def record_authorization(self, ticket: ConsentTicket, code_identity: str | None = None) -> None:
+        """Record the non-secret code identity that authorized this source."""
+        with self._lock:
+            if not self.current(ticket):
+                return
+            identity = code_identity if code_identity is not None else self._current_identity()
+            if not isinstance(identity, str) or not identity:
+                return
+            existing = self._read_record(ticket.source_id)
+            record: dict[str, Any] = {
+                "revision": ticket.revision,
+                "last_read_at": existing.get("last_read_at"),
+                "last_block_reason": existing.get("last_block_reason"),
+                "last_block_at": existing.get("last_block_at"),
+                "code_identity": identity,
+            }
+            self._read_state[ticket.source_id] = record
+            self._persist_reads()
 
     def record_block(self, ticket: ConsentTicket, reason: str) -> None:
         with self._lock:
             if self.current(ticket) and reason in _BLOCK_REASONS:
+                existing = self._read_record(ticket.source_id)
                 self._successful_reads.pop(ticket.source_id, None)
-                self._read_state[ticket.source_id] = {
-                    "revision": ticket.revision,
-                    "last_read_at": self._read_record(ticket.source_id).get("last_read_at"),
-                    "last_block_reason": reason,
-                    "last_block_at": time.time(),
-                }
+                self._read_state[ticket.source_id] = self._with_identity_fields(
+                    {
+                        "revision": ticket.revision,
+                        "last_read_at": existing.get("last_read_at"),
+                        "last_block_reason": reason,
+                        "last_block_at": time.time(),
+                    },
+                    existing,
+                )
                 self._persist_reads()
+
+    def needs_reauthorization(self, source_id: str) -> bool:
+        """True when an enabled source was authorized under a different code identity."""
+        with self._lock:
+            if self.ticket(source_id) is None or source_id in self._successful_reads:
+                return False
+            recorded = self._read_record(source_id).get("code_identity")
+            if not isinstance(recorded, str) or not recorded:
+                return False
+            current = self._current_identity()
+            return current is not None and recorded != current
+
+    def reauthorization_count(self) -> int:
+        with self._lock:
+            return sum(1 for source_id in catalog() if self.needs_reauthorization(source_id))
+
+    def reauthorization_notice(self) -> str | None:
+        """Return a one-time notice for the current code identity if any source needs re-auth."""
+        with self._lock:
+            current = self._current_identity()
+            if current is None:
+                return None
+            affected = [
+                source_id for source_id in catalog() if self.needs_reauthorization(source_id)
+            ]
+            if not affected:
+                return None
+            if not any(
+                self._read_record(source_id).get("notified_code_identity") != current
+                for source_id in affected
+            ):
+                return None
+            for source_id in affected:
+                record = dict(self._read_record(source_id))
+                if record:
+                    record["notified_code_identity"] = current
+                    self._read_state[source_id] = record
+            self._persist_reads()
+            count = len(affected)
+            noun = "source needs" if count == 1 else "sources need"
+            return (
+                f"{count} {noun} re-authorization after the update. Open Settings to re-authorize."
+            )
 
     def last_read(self, source_id: str) -> float | None:
         with self._lock:
@@ -225,14 +377,16 @@ class SourcePolicy:
         with self._lock:
             if self.ticket(source_id) is None:
                 return None
+            if source_id in self._successful_reads and self._read_record(source_id):
+                return "Authorized"
+            if self.needs_reauthorization(source_id):
+                return REAUTH_REQUIRED_STATE
             record = self._read_record(source_id)
             if record.get("last_block_reason") and (
                 record.get("last_read_at") is None
                 or record["last_block_at"] >= record["last_read_at"]
             ):
                 return "Action required"
-            if source_id in self._successful_reads and record:
-                return "Authorized"
             last = record.get("last_read_at")
             if last is not None and 0 <= time.time() - last <= READ_STATE_MAX_AGE:
                 checked = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(last))
