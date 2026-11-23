@@ -58,6 +58,7 @@ from app.core.console import force_utf8_console  # noqa: E402
 from app.core.db import engine, init_db  # noqa: E402
 from app.models.db import ProviderPricing, UsageEvent  # noqa: E402
 from app.models.schemas import UsageEventPush  # noqa: E402
+from scripts._db_snapshot import add_snapshot_args, prune_snapshots, take_snapshot  # noqa: E402
 from scripts.backfill_rollups import backfill as rebuild_rollups  # noqa: E402
 from scripts.sidecar import _discover_codex_log_paths  # noqa: E402
 from scripts.sidecar_pkg.event_extractors.chatgpt import parse_chatgpt_events  # noqa: E402
@@ -176,8 +177,14 @@ def main() -> int:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     p.add_argument("--dry-run", action="store_true", help="report counts, write nothing")
+    add_snapshot_args(p)
     args = p.parse_args()
 
+    snap = take_snapshot(
+        "reclassify_chatgpt_models",
+        enabled=not args.dry_run and not args.no_snapshot,
+        engine=engine,
+    )
     init_db()
     with Session(engine) as session:
         events_changed = reclassify(session, args.dry_run)
@@ -189,6 +196,13 @@ def main() -> int:
         print("Rebuilding rollups for: chatgpt", flush=True)
         rebuild_rollups(["chatgpt"])
 
+    if snap is not None:
+        prune_snapshots(
+            snap.parent,
+            "reclassify_chatgpt_models",
+            keep=args.keep_snapshots,
+            protect=snap,
+        )
     return 0
 
 

@@ -39,6 +39,7 @@ from app.models.db import UsageEvent  # noqa: E402
 from app.models.schemas import UsageEventPush  # noqa: E402
 from app.services.project_label import derive_project  # noqa: E402
 from app.services.worktree_patterns import get_worktree_patterns  # noqa: E402
+from scripts._db_snapshot import add_snapshot_args, prune_snapshots, take_snapshot  # noqa: E402
 from scripts.sidecar import (  # noqa: E402
     _discover_anthropic_log_paths,
     _discover_codex_log_paths,
@@ -160,14 +161,27 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--provider", help="limit to one runway provider id")
     parser.add_argument("--dry-run", action="store_true", help="report counts, write nothing")
+    add_snapshot_args(parser)
     args = parser.parse_args()
 
+    snap = take_snapshot(
+        "backfill_project_context",
+        enabled=not args.dry_run and not args.no_snapshot,
+        engine=engine,
+    )
     init_db()
     providers = [args.provider] if args.provider else _PROVIDERS
 
     with Session(engine) as session:
         changed = backfill(session, providers, args.dry_run)
 
+    if snap is not None:
+        prune_snapshots(
+            snap.parent,
+            "backfill_project_context",
+            keep=args.keep_snapshots,
+            protect=snap,
+        )
     verb = "would update" if args.dry_run else "updated"
     print(f"\nDone — {verb} {changed:,} event(s).", flush=True)
 

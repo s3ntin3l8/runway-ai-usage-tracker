@@ -57,6 +57,7 @@ from app.core.console import force_utf8_console  # noqa: E402
 from app.core.db import engine, init_db  # noqa: E402
 from app.models.db import UsageEvent  # noqa: E402
 from app.models.schemas import UsageEventPush  # noqa: E402
+from scripts._db_snapshot import add_snapshot_args, prune_snapshots, take_snapshot  # noqa: E402
 from scripts.backfill_rollups import backfill as backfill_rollups  # noqa: E402
 from scripts.sidecar import _opencode_account_email  # noqa: E402
 from scripts.sidecar_pkg.event_extractors.opencode import (  # noqa: E402
@@ -229,13 +230,26 @@ def main(argv: list[str] | None = None) -> int:
         help="Report changes without writing (still runs init_db ALTERs to ensure columns exist).",
     )
     p.add_argument("--skip-rollups", action="store_true", help="Skip Phase C (rollup rebuild).")
+    add_snapshot_args(p)
     args = p.parse_args(argv)
     try:
+        snap = take_snapshot(
+            "backfill_opencode_effort",
+            enabled=not args.dry_run and not args.no_snapshot,
+            engine=engine,
+        )
         run(
             db_path=Path(args.db) if args.db else None,
             dry_run=args.dry_run,
             skip_rollups=args.skip_rollups,
         )
+        if snap is not None:
+            prune_snapshots(
+                snap.parent,
+                "backfill_opencode_effort",
+                keep=args.keep_snapshots,
+                protect=snap,
+            )
     except SystemExit as exc:
         return int(exc.code or 1)
     return 0

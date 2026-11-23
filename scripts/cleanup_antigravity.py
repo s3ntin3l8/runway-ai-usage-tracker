@@ -73,6 +73,7 @@ from sqlmodel import Session, delete, select, update  # noqa: E402
 from app.core.console import force_utf8_console  # noqa: E402
 from app.core.db import engine  # noqa: E402
 from app.models.db import LatestUsage, QuotaSnapshot, UsageEvent  # noqa: E402
+from scripts._db_snapshot import add_snapshot_args, prune_snapshots, take_snapshot  # noqa: E402
 
 _PROVIDER = "antigravity"
 
@@ -204,9 +205,15 @@ def main() -> int:
             "standalone with --apply to perform only the gauge wipe."
         ),
     )
+    add_snapshot_args(p)
     args = p.parse_args()
     dry_run = args.dry_run
     prefix = "[DRY-RUN] " if dry_run else ""
+    snap = take_snapshot(
+        "cleanup_antigravity",
+        enabled=not dry_run and not args.no_snapshot,
+        engine=engine,
+    )
 
     with Session(engine) as session:
         n_wiped = 0
@@ -223,6 +230,13 @@ def main() -> int:
                     flush=True,
                 )
                 print(f"  Phase 0 (gauge wipe): {n_wiped} latest_usage row(s) deleted.")
+                if snap is not None:
+                    prune_snapshots(
+                        snap.parent,
+                        "cleanup_antigravity",
+                        keep=args.keep_snapshots,
+                        protect=snap,
+                    )
                 return 0
             print(
                 "No old email-keyed cards found and --email not provided.\n"
@@ -267,6 +281,13 @@ def main() -> int:
     if not args.skip_recost:
         print(f"  Events recost (updated)          : {n_updated}")
         print(f"  Events recost (unchanged)        : {n_unchanged}")
+    if snap is not None:
+        prune_snapshots(
+            snap.parent,
+            "cleanup_antigravity",
+            keep=args.keep_snapshots,
+            protect=snap,
+        )
     return 0
 
 

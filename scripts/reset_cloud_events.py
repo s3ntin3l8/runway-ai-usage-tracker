@@ -42,6 +42,7 @@ from app.services.maintenance.cloud_events_reset import (  # noqa: E402
     apply_cloud_events_reset,
     plan_cloud_events_reset,
 )
+from scripts._db_snapshot import add_snapshot_args, prune_snapshots, take_snapshot  # noqa: E402
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -58,10 +59,16 @@ def main(argv: list[str] | None = None) -> None:
         "--windows-to",
         help="replay the window rebuild of an interrupted run: end of the removed range (ISO 8601)",
     )
+    add_snapshot_args(parser)
     args = parser.parse_args(argv)
     if bool(args.windows_from) != bool(args.windows_to):
         parser.error("--windows-from and --windows-to must be given together")
 
+    snap = take_snapshot(
+        "reset_cloud_events",
+        enabled=args.apply and not args.no_snapshot,
+        engine=engine,
+    )
     init_db()
     with Session(engine) as session:
         plan = plan_cloud_events_reset(session)
@@ -80,6 +87,13 @@ def main(argv: list[str] | None = None) -> None:
                 parse_iso8601_utc(args.windows_to),
             )
         result = apply_cloud_events_reset(session, windows_range=windows_range)
+    if snap is not None:
+        prune_snapshots(
+            snap.parent,
+            "reset_cloud_events",
+            keep=args.keep_snapshots,
+            protect=snap,
+        )
     if result.ts_min and result.ts_max:
         print(
             f"\nRemoved events spanned {result.ts_min.isoformat()} to {result.ts_max.isoformat()}.",

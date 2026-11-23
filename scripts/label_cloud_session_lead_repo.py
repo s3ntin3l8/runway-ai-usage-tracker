@@ -53,6 +53,7 @@ from app.services.maintenance.cloud_session_lead_repo import (  # noqa: E402
     apply_cloud_session_lead_repo,
     plan_cloud_session_lead_repos,
 )
+from scripts._db_snapshot import add_snapshot_args, prune_snapshots, take_snapshot  # noqa: E402
 
 
 def label(session: Session, session_id: str | None, apply: bool) -> int:
@@ -100,8 +101,14 @@ def main() -> None:
     parser.add_argument(
         "--apply", action="store_true", help="label the events (default: report only)"
     )
+    add_snapshot_args(parser)
     args = parser.parse_args()
 
+    snap = take_snapshot(
+        "label_cloud_session_lead_repo",
+        enabled=args.apply and not args.no_snapshot,
+        engine=engine,
+    )
     init_db()
 
     with Session(engine) as session:
@@ -111,6 +118,13 @@ def main() -> None:
         print("\nReport only; pass --apply to label them.", flush=True)
         return
 
+    if snap is not None:
+        prune_snapshots(
+            snap.parent,
+            "label_cloud_session_lead_repo",
+            keep=args.keep_snapshots,
+            protect=snap,
+        )
     print(f"\nDone — labelled {changed:,} event(s).", flush=True)
 
 

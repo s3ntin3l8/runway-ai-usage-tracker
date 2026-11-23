@@ -43,6 +43,7 @@ from sqlmodel import Session, select  # noqa: E402
 from app.core.console import force_utf8_console  # noqa: E402
 from app.core.db import engine  # noqa: E402
 from app.models.db import ProviderConfig  # noqa: E402
+from scripts._db_snapshot import add_snapshot_args, prune_snapshots, take_snapshot  # noqa: E402
 
 
 def _looks_like_jwt(value: str) -> bool:
@@ -58,9 +59,15 @@ def main() -> int:
     g = p.add_mutually_exclusive_group(required=True)
     g.add_argument("--dry-run", action="store_true", help="Report the plan, write nothing.")
     g.add_argument("--apply", action="store_true", help="Move the misfiled key(s).")
+    add_snapshot_args(p)
     args = p.parse_args()
     dry_run = args.dry_run
     prefix = "[DRY-RUN] " if dry_run else ""
+    snap = take_snapshot(
+        "migrate_kimi_coding_key",
+        enabled=not dry_run and not args.no_snapshot,
+        engine=engine,
+    )
 
     with Session(engine) as session:
         rows = session.exec(
@@ -96,6 +103,13 @@ def main() -> int:
         verb = "would be moved" if dry_run else "moved"
         print(f"\n{prefix}{moved} credential(s) {verb}.", flush=True)
 
+    if snap is not None:
+        prune_snapshots(
+            snap.parent,
+            "migrate_kimi_coding_key",
+            keep=args.keep_snapshots,
+            protect=snap,
+        )
     return 0
 
 

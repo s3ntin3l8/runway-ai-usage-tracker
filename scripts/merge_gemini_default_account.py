@@ -52,6 +52,7 @@ from app.services.maintenance.account_merge import (  # noqa: E402
     merge_gauge_series,
     plan_merge_gauge_series,
 )
+from scripts._db_snapshot import add_snapshot_args, prune_snapshots, take_snapshot  # noqa: E402
 
 
 def _resolve_target_email(session: Session, provider_id: str, source: str) -> str | None:
@@ -120,8 +121,22 @@ def main() -> int:
     g = p.add_mutually_exclusive_group(required=True)
     g.add_argument("--dry-run", action="store_true", help="Preview the plan, write nothing.")
     g.add_argument("--apply", action="store_true", help="Execute the migration.")
+    add_snapshot_args(p)
     args = p.parse_args()
-    return migrate(args.provider, args.source, args.email, apply=args.apply)
+    snap = take_snapshot(
+        "merge_gemini_default_account",
+        enabled=args.apply and not args.no_snapshot,
+        engine=engine,
+    )
+    rc = migrate(args.provider, args.source, args.email, apply=args.apply)
+    if rc == 0 and snap is not None:
+        prune_snapshots(
+            snap.parent,
+            "merge_gemini_default_account",
+            keep=args.keep_snapshots,
+            protect=snap,
+        )
+    return rc
 
 
 if __name__ == "__main__":

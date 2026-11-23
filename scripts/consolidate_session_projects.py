@@ -58,6 +58,7 @@ from app.services.maintenance.project_labels import (  # noqa: E402
     apply_session_relabels,
     plan_session_relabels,
 )
+from scripts._db_snapshot import add_snapshot_args, prune_snapshots, take_snapshot  # noqa: E402
 from scripts.sidecar_pkg.event_extractors.opencode import _OC_CANONICAL_MAP  # noqa: E402
 
 # Per-message providers, where cwd drifts within a session and rule 2 applies.
@@ -109,8 +110,14 @@ def main() -> None:
         help="process every provider, not just the per-message default set",
     )
     parser.add_argument("--dry-run", action="store_true", help="report counts, write nothing")
+    add_snapshot_args(parser)
     args = parser.parse_args()
 
+    snap = take_snapshot(
+        "consolidate_session_projects",
+        enabled=not args.dry_run and not args.no_snapshot,
+        engine=engine,
+    )
     init_db()
     if args.provider:
         providers: list[str] | None = [args.provider]
@@ -122,6 +129,13 @@ def main() -> None:
     with Session(engine) as session:
         changed = consolidate(session, providers, args.dry_run)
 
+    if snap is not None:
+        prune_snapshots(
+            snap.parent,
+            "consolidate_session_projects",
+            keep=args.keep_snapshots,
+            protect=snap,
+        )
     verb = "would relabel" if args.dry_run else "relabeled"
     print(f"\nDone — {verb} {changed:,} event(s).", flush=True)
 
