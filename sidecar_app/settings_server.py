@@ -473,10 +473,21 @@ function renderSources(report) {
   const run = report.run, selected = report.browsers, installed = report.installed || {};
   const live = report.sources.filter(s => s.compatible && (s.group === 'app' || selected[s.group]));
   const status = s => kcStatus(s, run);
+  const syncState = report.sync_state || (report.re_pair_required ? 're_pair_required' : (report.forwarding_supported ? 'ok' : 'not_synced_yet'));
   const blocked = report.re_pair_required || !report.forwarding_supported;
 
-  if (report.re_pair_required) body.append(kcBanner('kc-b-err', 'Device authentication is unavailable, so Keychain credentials are withheld.', ['Re-pair this sidecar…', '/pair']));
-  else if (!report.forwarding_supported) body.append(kcBanner('kc-b-warn', 'Your paired server does not support authenticated source controls yet, so Keychain credentials are withheld. You can still choose sources now.'));
+  if (report.re_pair_required || syncState === 're_pair_required') {
+    body.append(kcBanner('kc-b-err', 'Device authentication is unavailable, so Keychain credentials are withheld.', ['Re-pair this sidecar…', '/pair']));
+  } else if (syncState === 'not_synced_yet') {
+    body.append(kcBanner('kc-b-warn', 'Waiting for the first sync with the server...'));
+  } else if (syncState === 'sync_failed') {
+    const reason = report.sync_reason ? ' (' + report.sync_reason + ')' : '';
+    body.append(kcBanner('kc-b-warn', 'Could not sync source controls with the server' + reason + ', so Keychain credentials are withheld. Check the sidecar logs for details.'));
+  } else if (syncState === 'server_unsupported') {
+    body.append(kcBanner('kc-b-warn', 'Your paired server does not support authenticated source controls yet, so Keychain credentials are withheld. You can still choose sources now.'));
+  } else if (!report.forwarding_supported) {
+    body.append(kcBanner('kc-b-warn', 'Source controls have not been accepted by the server yet, so Keychain credentials are withheld.'));
+  }
 
   if (report.safari && report.safari.notice) {
     const note = kcEl('div', 'kc-banner kc-b-warn kc-safari-notice');
@@ -877,9 +888,13 @@ class _Handler(BaseHTTPRequestHandler):
         elif path == "/pair":
             self._serve_pair_page()
         elif path == "/sources":
+            from scripts.sidecar_pkg import source_protocol
+            from scripts.sidecar_pkg.local_paths import get_sidecar_dir
             from scripts.sidecar_pkg.source_settings import report
 
-            self._send_json(report(self.server.get_config()))
+            config = self.server.get_config()
+            source_protocol.ensure_synced(config, get_sidecar_dir() / "source-control.json", report)
+            self._send_json(report(config))
         elif path == "/status":
             self._serve_status()
         elif path == "/logs":

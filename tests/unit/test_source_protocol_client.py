@@ -257,3 +257,182 @@ def test_windows_controls_acknowledge_resume_without_granting_mac_consent(tmp_pa
     assert restored.state["acknowledgments"] == [{"id": 4, "status": "denied"}]
     assert all(source_consent.POLICY.ticket(key) is None for key in source_consent.catalog())
     assert "keychain_sources" not in local
+
+
+def test_sync_failure_reasons_report_fields_and_log_once_per_change(tmp_path, monkeypatch, caplog):
+    import json
+    import logging
+    from urllib.error import HTTPError, URLError
+
+    from scripts.sidecar_pkg import source_settings, transport
+
+    local = config()
+    source_consent.POLICY.configure(local)
+    client = source_protocol.SourceClient(local, tmp_path / "state.json")
+    monkeypatch.setattr(source_protocol, "CLIENT", client)
+
+    # 1. Before any sync has completed.
+    with caplog.at_level(logging.WARNING, logger="scripts.sidecar_pkg.source_protocol"):
+        rep = source_settings.report(local)
+    assert rep["forwarding_supported"] is False
+    assert rep["re_pair_required"] is False
+    assert rep["sync_state"] == "not_synced_yet"
+    assert rep["sync_reason"] is None
+    assert caplog.records == []
+
+    class _FakeResponse:
+        def __init__(self, url: str, body: bytes):
+            self._url = url
+            self._body = body
+
+        def geturl(self) -> str:
+            return self._url
+
+        def read(self, _limit: int = -1) -> bytes:
+            return self._body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    # 2. Redirect (response.geturl() != url).
+    caplog.clear()
+    monkeypatch.setattr(
+        transport,
+        "urlopen",
+        lambda _req, **_kw: _FakeResponse("https://evil.example/secret-token-redirect", b"{}"),
+    )
+    assert not client.sync(local, source_settings.report)
+    assert not client.sync(local, source_settings.report)
+    rep = source_settings.report(local)
+    assert rep["sync_state"] == "sync_failed"
+    assert rep["sync_reason"] == "redirect"
+    assert rep["re_pair_required"] is False
+    assert len(caplog.records) == 1
+    assert "redirect" in caplog.text
+    assert "secret-token-redirect" not in caplog.text
+
+    # 3. 404 -> server_unsupported.
+    caplog.clear()
+    monkeypatch.setattr(
+        transport,
+        "urlopen",
+        lambda req, **_kw: (_ for _ in ()).throw(
+            HTTPError(req.full_url, 404, "secret-404-body", {}, None)
+        ),
+    )
+    assert not client.sync(local, source_settings.report)
+    assert not client.sync(local, source_settings.report)
+    rep = source_settings.report(local)
+    assert rep["sync_state"] == "server_unsupported"
+    assert rep["sync_reason"] == "http_404"
+    assert rep["re_pair_required"] is False
+    assert len(caplog.records) == 1
+    assert "http_404" in caplog.text
+    assert "404" in caplog.text
+    assert "secret-404-body" not in caplog.text
+
+    # 4. 500 -> sync_failed (http_500).
+    caplog.clear()
+    monkeypatch.setattr(
+        transport,
+        "urlopen",
+        lambda req, **_kw: (_ for _ in ()).throw(
+            HTTPError(req.full_url, 500, "secret-500-body", {}, None)
+        ),
+    )
+    assert not client.sync(local, source_settings.report)
+    assert not client.sync(local, source_settings.report)
+    rep = source_settings.report(local)
+    assert rep["sync_state"] == "sync_failed"
+    assert rep["sync_reason"] == "http_500"
+    assert rep["re_pair_required"] is False
+    assert len(caplog.records) == 1
+    assert "http_500" in caplog.text
+    assert "500" in caplog.text
+    assert "secret-500-body" not in caplog.text
+
+    # 5. Network error (URLError).
+    caplog.clear()
+    monkeypatch.setattr(
+        transport,
+        "urlopen",
+        lambda _req, **_kw: (_ for _ in ()).throw(URLError("secret-network-url")),
+    )
+    assert not client.sync(local, source_settings.report)
+    rep = source_settings.report(local)
+    assert rep["sync_state"] == "sync_failed"
+    assert rep["sync_reason"] == "network"
+    assert len(caplog.records) == 1
+    assert "network" in caplog.text
+    assert "URLError" in caplog.text
+    assert "secret-network-url" not in caplog.text
+
+    # 6. Invalid JSON -> invalid_reply.
+    caplog.clear()
+    monkeypatch.setattr(
+        transport,
+        "urlopen",
+        lambda req, **_kw: _FakeResponse(req.full_url, b"{not-json-secret-body"),
+    )
+    assert not client.sync(local, source_settings.report)
+    rep = source_settings.report(local)
+    assert rep["sync_state"] == "sync_failed"
+    assert rep["sync_reason"] == "invalid_reply"
+    assert len(caplog.records) == 1
+    assert "invalid_reply" in caplog.text
+    assert "JSONDecodeError" in caplog.text
+    assert "secret-body" not in caplog.text
+
+    # 7. Reply without protocol: 1 -> server_unsupported.
+    caplog.clear()
+    monkeypatch.setattr(
+        transport,
+        "urlopen",
+        lambda req, **_kw: _FakeResponse(
+            req.full_url, json.dumps({"commands": [], "accepted": []}).encode()
+        ),
+    )
+    assert not client.sync(local, source_settings.report)
+    rep = source_settings.report(local)
+    assert rep["sync_state"] == "server_unsupported"
+    assert rep["sync_reason"] == "unsupported_protocol"
+    assert len(caplog.records) == 1
+    assert "unsupported_protocol" in caplog.text
+
+    # 8. persist() raising OSError -> local_state.
+    caplog.clear()
+    monkeypatch.setattr(
+        transport,
+        "urlopen",
+        lambda req, **_kw: _FakeResponse(req.full_url, json.dumps(reply()).encode()),
+    )
+    real_persist = client.persist
+    monkeypatch.setattr(client, "persist", lambda: (_ for _ in ()).throw(OSError("disk full")))
+    assert not client.sync(local, source_settings.report)
+    rep = source_settings.report(local)
+    assert rep["sync_state"] == "sync_failed"
+    assert rep["sync_reason"] == "local_state"
+    assert len(caplog.records) == 1
+    assert "local_state" in caplog.text
+    assert "OSError" in caplog.text
+
+    # 9. Recovery clears the logged-reason guard so a subsequent failure logs again.
+    monkeypatch.setattr(client, "persist", real_persist)
+    assert client.sync(local, source_settings.report)
+    rep = source_settings.report(local)
+    assert rep["sync_state"] == "ok"
+    assert rep["sync_reason"] is None
+    assert rep["forwarding_supported"] is True
+
+    caplog.clear()
+    monkeypatch.setattr(
+        transport,
+        "urlopen",
+        lambda req, **_kw: (_ for _ in ()).throw(HTTPError(req.full_url, 500, "err", {}, None)),
+    )
+    assert not client.sync(local, source_settings.report)
+    assert len(caplog.records) == 1
+    assert "http_500" in caplog.text

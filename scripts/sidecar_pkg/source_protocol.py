@@ -12,6 +12,7 @@ import pathlib
 import re
 import sys
 import tempfile
+import threading
 from collections.abc import Callable
 from typing import Any
 from urllib import error, request
@@ -64,6 +65,14 @@ def signed_headers(
     }
 
 
+class _UnsupportedProtocolError(ValueError):
+    """Server returned a reply without ``protocol: 1``."""
+
+
+class _LocalStateError(Exception):
+    """Wraps an OSError from persisting local source-control state."""
+
+
 class SourceClient:
     def __init__(self, config: dict[str, Any], path: pathlib.Path):
         self.path = path
@@ -72,6 +81,9 @@ class SourceClient:
         self.accepted: set[str] = set()
         self._faulted = False
         self.re_pair_required = False
+        self.sync_state = "not_synced_yet"
+        self.sync_reason: str | None = None
+        self._last_logged_reason: tuple[str, str] | None = None
         try:
             info = path.stat()
             if path.is_symlink() or (
@@ -143,26 +155,67 @@ class SourceClient:
             "acknowledgments": self.state.get("acknowledgments", []),
         }
 
+    def _record_sync_failure(self, state: str, reason: str, detail: str) -> None:
+        self.sync_state = state
+        self.sync_reason = reason
+        key = (state, reason)
+        if self._last_logged_reason == key:
+            return
+        self._last_logged_reason = key
+        if state == "re_pair_required":
+            logger.warning(
+                "Device authentication rejected (%s: %s); re-pair this sidecar with the server",
+                reason,
+                detail,
+            )
+        elif state == "server_unsupported":
+            logger.warning(
+                "Source sync unsupported (%s: %s); server does not support authenticated source controls",
+                reason,
+                detail,
+            )
+        else:
+            logger.warning("Source sync failed (%s: %s)", reason, detail)
+
+    def _rollback_receive(self, config: dict[str, Any], previous: dict[str, Any]) -> None:
+        self.state = previous
+        self.accepted.clear()
+        self._faulted = True
+        self.apply_runtime(config)
+
     def receive(self, config: dict[str, Any], response: Any) -> None:
         previous = copy.deepcopy(self.state)
         try:
             self._receive(config, response)
-        except (OSError, ValueError, TypeError, AttributeError, KeyError):
-            self.state = previous
-            self.accepted.clear()
-            self._faulted = True
-            self.apply_runtime(config)
+        except _UnsupportedProtocolError as exc:
+            self._rollback_receive(config, previous)
+            self.re_pair_required = False
+            self._record_sync_failure(
+                "server_unsupported", "unsupported_protocol", type(exc).__name__
+            )
+            raise
+        except _LocalStateError as exc:
+            self._rollback_receive(config, previous)
+            self.re_pair_required = False
+            cause = exc.__cause__ or exc
+            self._record_sync_failure("sync_failed", "local_state", type(cause).__name__)
+            raise cause
+        except (OSError, ValueError, TypeError, AttributeError, KeyError) as exc:
+            self._rollback_receive(config, previous)
+            self.re_pair_required = False
+            self._record_sync_failure("sync_failed", "invalid_reply", type(exc).__name__)
             raise
 
     def _receive(self, config: dict[str, Any], response: Any) -> None:
         self.accepted.clear()
+        if isinstance(response, dict) and response.get("protocol") != 1:
+            raise _UnsupportedProtocolError("Unsupported source protocol")
         if (
             not isinstance(response, dict)
-            or response.get("protocol") != 1
             or not isinstance(response.get("commands"), list)
             or not isinstance(response.get("accepted"), list)
         ):
-            raise ValueError("Unsupported source protocol")
+            raise ValueError("Invalid source protocol reply")
         commands = response["commands"]
         if len(commands) > 256:
             raise ValueError("Invalid source commands")
@@ -235,9 +288,15 @@ class SourceClient:
                 self.state.setdefault("withdrawals", {})[source_id] = max(
                     self.state.get("withdrawals", {}).get(source_id, -1), generation
                 )
-        self.persist()
+        try:
+            self.persist()
+        except OSError as exc:
+            raise _LocalStateError() from exc
         self._faulted = False
         self.re_pair_required = False
+        self.sync_state = "ok"
+        self.sync_reason = None
+        self._last_logged_reason = None
         self.apply_runtime(config)
         self.accepted = {
             source_id
@@ -267,24 +326,47 @@ class SourceClient:
                 req, timeout=10, context=build_context_from_config(url, config)
             ) as response:
                 if response.geturl() != url:
+                    self.re_pair_required = False
+                    self._record_sync_failure("sync_failed", "redirect", "redirect")
                     return False
-                self.receive(config, json.loads(response.read(262145)))
-            return True
+                raw = response.read(262145)
         except error.HTTPError as exc:
             if exc.code == 401:
-                if not self.re_pair_required:
-                    logger.warning(
-                        "Device authentication rejected; re-pair this sidecar with the server"
-                    )
                 self.re_pair_required = True
+                self._record_sync_failure("re_pair_required", "http_401", f"HTTPError {exc.code}")
+            elif exc.code == 404:
+                self.re_pair_required = False
+                self._record_sync_failure("server_unsupported", "http_404", f"HTTPError {exc.code}")
+            else:
+                self.re_pair_required = False
+                self._record_sync_failure(
+                    "sync_failed", f"http_{exc.code}", f"HTTPError {exc.code}"
+                )
             self.accepted.clear()
             return False
-        except (OSError, ValueError, TypeError, AttributeError):
+        except (OSError, ValueError, TypeError, AttributeError) as exc:
+            self.re_pair_required = False
+            self._record_sync_failure("sync_failed", "network", type(exc).__name__)
             self.accepted.clear()
+            return False
+
+        try:
+            decoded = json.loads(raw)
+        except (ValueError, TypeError) as exc:
+            self.re_pair_required = False
+            self._record_sync_failure("sync_failed", "invalid_reply", type(exc).__name__)
+            self.accepted.clear()
+            return False
+
+        try:
+            self.receive(config, decoded)
+            return True
+        except (OSError, ValueError, TypeError, AttributeError, KeyError):
             return False
 
 
 CLIENT: SourceClient | None = None
+_SYNC_LOCK = threading.Lock()
 
 
 def prepare(config: dict[str, Any], path: pathlib.Path) -> SourceClient | None:
@@ -312,8 +394,24 @@ def sync(
     path: pathlib.Path,
     report: Callable[[dict[str, Any]], dict[str, Any]],
 ) -> bool:
-    client = prepare(config, path)
-    return client.sync(config, report) if client is not None else False
+    with _SYNC_LOCK:
+        client = prepare(config, path)
+        return client.sync(config, report) if client is not None else False
+
+
+def ensure_synced(
+    config: dict[str, Any],
+    path: pathlib.Path,
+    report: Callable[[dict[str, Any]], dict[str, Any]],
+) -> bool:
+    """Run one source-sync if this client has not synced yet, or await an in-flight sync."""
+    with _SYNC_LOCK:
+        client = prepare(config, path)
+        if client is None:
+            return False
+        if client.sync_state != "not_synced_yet":
+            return client.sync_state == "ok"
+        return client.sync(config, report)
 
 
 def forwarding_allowed(source_id: str, destination: str) -> bool:

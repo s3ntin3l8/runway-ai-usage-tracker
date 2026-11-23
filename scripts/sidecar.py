@@ -5925,6 +5925,13 @@ class DaemonRunner:
           * [p1…] → collect just those providers (per-provider cadence due)
           * trigger=true also resets to None and wakes the sleep early.
         """
+        if self._paused and not self._stop_event.is_set():
+            from scripts.sidecar_pkg import source_protocol
+            from scripts.sidecar_pkg.source_settings import report
+
+            source_protocol.ensure_synced(
+                dict(self._config), get_sidecar_dir() / "source-control.json", report
+            )
         while not self._stop_event.is_set():
             if self._paused:
                 # While paused, sleep in short bursts so stop() is responsive
