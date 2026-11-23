@@ -453,6 +453,11 @@ describe('failingReason / staleTitle', () => {
     expect(failingReason(c)).toBeNull();
     expect(staleTitle(c)).toBe('Collection failing — showing cached data');
   });
+
+  it('returns a credential-missing tooltip when stale_reason is no_credential', () => {
+    const c = card({ stale: true, stale_reason: 'no_credential' });
+    expect(staleTitle(c)).toBe('No credential found — showing cached data');
+  });
 });
 
 

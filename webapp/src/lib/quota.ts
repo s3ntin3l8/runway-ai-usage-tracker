@@ -119,6 +119,9 @@ export function reasonMentionsKeepAlive(reason: string | null | undefined): bool
 
 /** Tooltip for a stale card: the reason when the backend gave one. */
 export function staleTitle(card: LimitCard): string {
+  if (card.stale_reason === 'no_credential') {
+    return 'No credential found — showing cached data';
+  }
   const reason = failingReason(card);
   return reason
     ? `Collection failing — ${reason}. Showing cached data`

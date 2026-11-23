@@ -47,6 +47,7 @@ import {
   forecastEntry,
   forecastResponse,
   historyChart,
+  limitCard,
   sessionsPaginated,
 } from '@/features/provider/test-fixtures';
 import * as api from '@/api/endpoints';
@@ -186,7 +187,35 @@ function renderSurface(pathPattern: string, element: React.ReactElement, route: 
 
 /** Populated api responses — the same shapes the app sees in production. */
 function mockPopulatedApis() {
-  vi.mocked(api.fetchFleetUsage).mockResolvedValue(fleetResponse([fleetEntry()]) as never);
+  vi.mocked(api.fetchFleetUsage).mockResolvedValue(
+    fleetResponse([
+      fleetEntry(),
+      fleetEntry({
+        provider_id: 'openai',
+        account_id: 'work@example.com',
+        critical_gauge: limitCard({
+          provider_id: 'openai',
+          service_name: 'Codex',
+          account_id: 'work@example.com',
+          account_label: 'Work',
+          stale: true,
+          stale_reason: 'no_credential',
+        }),
+      }),
+      fleetEntry({
+        provider_id: 'cursor',
+        account_id: 'dev@example.com',
+        critical_gauge: limitCard({
+          provider_id: 'cursor',
+          service_name: 'Cursor',
+          account_id: 'dev@example.com',
+          account_label: 'Dev',
+          stale: true,
+          stale_reason: 'credential_failing',
+        }),
+      }),
+    ]) as never,
+  );
   vi.mocked(api.fetchProviderConfigs).mockResolvedValue({
     providers: [
       {

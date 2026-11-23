@@ -152,12 +152,12 @@ function SortableProviderCard({
       }}
       className={
         'cursor-pointer touch-manipulation p-3.5 transition-colors duration-150 hover:border-edge-strong ' +
-        (isDragging ? 'z-10 opacity-80 shadow-lg' : '') +
-        (cardStale(gauge) ? ' opacity-60' : '')
+        (isDragging ? 'z-10 opacity-80 shadow-lg' : '')
       }
     >
       {/* Keep the interactive card trigger separate from the footer so stale-reason
-          links are siblings of role="button" rather than nested inside it. */}
+          links are siblings of role="button" rather than nested inside it, and keep
+          stale dimming off the footer links so text-warning preserves WCAG AA contrast. */}
       <div
         {...attributes}
         {...listeners}
@@ -183,7 +183,10 @@ function SortableProviderCard({
           if (isDragging) return;
           listeners?.onKeyDown?.(e);
         }}
-        className="rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-accent"
+        className={
+          'rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-accent' +
+          (cardStale(gauge) ? ' opacity-60' : '')
+        }
       >
         <div className="flex items-center gap-2.5">
         <ProviderGlyph providerId={entry.provider_id} name={name} className="size-6 text-[10px]" />
@@ -276,13 +279,13 @@ function SortableProviderCard({
       ) : null}
       </div>
       <div className="mt-2.5 flex items-center justify-between text-[11px] text-fg-subtle">
-        {kind === 'quota' ? (
-          <Countdown until={gauge.reset_at} className="text-[11px]" />
-        ) : gauge.msgs != null ? (
-          <span>{formatNumber(gauge.msgs)} msgs</span>
-        ) : (
-          <span />
-        )}
+        <div className={cardStale(gauge) ? 'opacity-60' : undefined}>
+          {kind === 'quota' ? (
+            <Countdown until={gauge.reset_at} className="text-[11px]" />
+          ) : gauge.msgs != null ? (
+            <span>{formatNumber(gauge.msgs)} msgs</span>
+          ) : null}
+        </div>
         {cardStale(gauge) ? (
           gauge.stale_reason === 'no_credential' ? (
             <Link

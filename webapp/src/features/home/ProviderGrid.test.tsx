@@ -119,7 +119,8 @@ describe('ProviderGrid', () => {
     );
     renderWithProviders(<ProviderGrid items={items} providerNames={names} onReorder={vi.fn()} />);
     const cardEl = screen.getByRole('button', { name: /claude/i });
-    expect(cardEl.parentElement?.className).toContain('opacity-60');
+    expect(cardEl.className).toContain('opacity-60');
+    expect(cardEl.parentElement?.className).not.toContain('opacity-60');
   });
 
   it('shows a Stale footer label when the gauge is stale', () => {
@@ -149,6 +150,7 @@ describe('ProviderGrid', () => {
     const link = screen.getByRole('link', { name: /no credential, reconnect — claude/i });
     expect(link).toHaveTextContent('No credential, reconnect');
     expect(link).toHaveAttribute('href', '/settings/providers');
+    expect(link).toHaveAttribute('title', 'No credential found — showing cached data');
     expect(screen.queryByText('Stale')).not.toBeInTheDocument();
 
     await userEvent.click(link);
@@ -223,7 +225,8 @@ describe('ProviderGrid', () => {
     );
     renderWithProviders(<ProviderGrid items={items} providerNames={names} onReorder={vi.fn()} />);
     const cardEl = screen.getByRole('button', { name: /claude/i });
-    expect(cardEl.parentElement?.className).toContain('opacity-60');
+    expect(cardEl.className).toContain('opacity-60');
+    expect(cardEl.parentElement?.className).not.toContain('opacity-60');
     expect(screen.getByText('Stale')).toBeInTheDocument();
   });
 
@@ -234,7 +237,8 @@ describe('ProviderGrid', () => {
     );
     renderWithProviders(<ProviderGrid items={items} providerNames={names} onReorder={vi.fn()} />);
     const cardEl = screen.getByRole('button', { name: /claude/i });
-    expect(cardEl.parentElement?.className).toContain('opacity-60');
+    expect(cardEl.className).toContain('opacity-60');
+    expect(cardEl.parentElement?.className).not.toContain('opacity-60');
     expect(screen.getByText('Stale')).toBeInTheDocument();
   });
 
@@ -242,6 +246,7 @@ describe('ProviderGrid', () => {
     const items = buildRiskItems([entry()], []);
     renderWithProviders(<ProviderGrid items={items} providerNames={names} onReorder={vi.fn()} />);
     const cardEl = screen.getByRole('button', { name: /claude/i });
+    expect(cardEl.className).not.toContain('opacity-60');
     expect(cardEl.parentElement?.className).not.toContain('opacity-60');
   });
 
