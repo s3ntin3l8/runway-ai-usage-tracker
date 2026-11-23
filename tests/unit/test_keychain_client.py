@@ -394,3 +394,83 @@ def test_failed_update_exec_reopens_transport(client_factory, monkeypatch, tmp_p
     with pytest.raises(OSError, match="synthetic exec failure"):
         self_update._relaunch_posix("cli", tmp_path / "synthetic")
     assert client.call("copy", {}, {}, group="healthy")["pid"] != first
+
+
+def test_block_reason_accessor_and_logging_once_per_change(client_factory, monkeypatch, caplog):
+    import logging
+
+    from scripts.sidecar_pkg import keychain_client as module
+
+    monkeypatch.setattr(module, "_CLIENT", None)
+    assert module.access_groups_block_reason(["github-cli"]) is None
+
+    client = client_factory()
+    monkeypatch.setattr(module, "_CLIENT", client)
+
+    with caplog.at_level(logging.WARNING, logger=module.__name__):
+        client.block_access("github-cli", "denied")
+        client.block_access("github-cli", "denied")
+        client.block_access("github-cli", "denied")
+
+    assert client.access_block_reason("github-cli") == "denied"
+    assert module.access_groups_block_reason(["other", "github-cli"]) == "denied"
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "github-cli" in warnings[0].message
+    assert "denied" in warnings[0].message
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger=module.__name__):
+        client.block_access("github-cli", "timed_out")
+        client.block_access("claude-code", "unavailable")
+
+    assert client.access_block_reason("github-cli") == "timed_out"
+    assert client.access_block_reason("claude-code") == "unavailable"
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 2
+    assert any("github-cli" in w.message and "timed_out" in w.message for w in warnings)
+    assert any("claude-code" in w.message and "unavailable" in w.message for w in warnings)
+
+    # Clearing and re-blocking logs again.
+    client.clear_access("github-cli")
+    assert client.access_block_reason("github-cli") is None
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger=module.__name__):
+        client.block_access("github-cli", "denied")
+    assert len([r for r in caplog.records if r.levelno == logging.WARNING]) == 1
+
+
+def test_block_reason_vocabulary_is_fixed_and_strips_error_text(
+    client_factory, monkeypatch, caplog, tmp_path
+):
+    import logging
+
+    from scripts.sidecar_pkg import keychain_client as module
+
+    script = tmp_path / "leaky_worker.py"
+    script.write_text(
+        "import plistlib, struct, sys\n"
+        "header = sys.stdin.buffer.read(4)\n"
+        "sys.stdin.buffer.read(struct.unpack('>I', header)[0])\n"
+        "data = plistlib.dumps({'error': 'item=gh:github.com acct=alice-secret-msg'})\n"
+        "sys.stdout.buffer.write(struct.pack('>I', len(data)) + data)\n"
+        "sys.stdout.buffer.flush()\n",
+        encoding="utf-8",
+    )
+    client = module.KeychainClient(command=[sys.executable, str(script)], timeout=5)
+    try:
+        monkeypatch.setattr(module, "_CLIENT", client)
+        with caplog.at_level(logging.WARNING, logger=module.__name__):
+            with pytest.raises(store.KeychainError, match="^unavailable$"):
+                client.call("copy", {}, {}, group="github-cli")
+            client.block_access("other-group", "raw error: acct=bob-secret-detail")
+
+        assert client.access_block_reason("github-cli") == "unavailable"
+        assert client.access_block_reason("other-group") == "unavailable"
+        assert module.BLOCK_REASONS == frozenset({"denied", "timed_out", "unavailable"})
+        for rec in caplog.records:
+            assert "alice-secret-msg" not in rec.message
+            assert "bob-secret-detail" not in rec.message
+            assert "gh:github.com" not in rec.message
+    finally:
+        client.close()

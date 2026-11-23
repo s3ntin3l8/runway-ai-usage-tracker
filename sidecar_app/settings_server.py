@@ -220,6 +220,7 @@ $css
 .kc-rows { border: 1px solid rgba(63,63,70,0.45); border-radius: 0.6rem; overflow: hidden; }
 .kc-row { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 0.7rem; padding: 0.5rem 0.75rem; font-size: 0.8rem; }
 .kc-row + .kc-row, .kc-more { border-top: 1px solid rgba(63,63,70,0.35); }
+.kc-reason { grid-column: 2 / -1; font-size: 0.72rem; color: #fca5a5; line-height: 1.4; }
 .kc-name { display: flex; align-items: center; gap: 0.45rem; flex-wrap: wrap; min-width: 0; }
 .kc-info { color: #3f3f46; cursor: help; font-size: 0.75rem; }
 .kc-tag { font-size: 0.58rem; font-weight: 800; letter-spacing: 0.06em; color: #a78bfa; border: 1px solid rgba(167,139,250,0.5); border-radius: 4px; padding: 0 4px; }
@@ -405,6 +406,11 @@ async function sourceAction(action, source_id, value, extra) {
 
 // ---- Keychain scrapers: one row per source, web sessions one row per service ----
 const KC_LABEL = {ok: 'Authorized', need: 'Needs authorization', err: 'Action required', busy: 'Connecting…', wait: 'Waiting', off: 'Off'};
+const KC_REASON_TEXT = {
+  denied: 'macOS denied access. Click Authorize and choose Always Allow (not Allow)',
+  timed_out: 'macOS did not answer in time. Try again',
+  unavailable: 'The Keychain is unavailable',
+};
 const KC_RANK = {off: 0, ok: 1, wait: 2, busy: 3, need: 4, err: 5};
 const KC_BROWSERS = [['chrome', 'Chrome'], ['edge', 'Edge'], ['chromium', 'Chromium']];
 let lastSourceReport = null, showOffApps = false, showOffWeb = false, kcPoll = null;
@@ -446,9 +452,16 @@ function kcSwitch(id, label, checked, disabled, mixed, onchange) {
   return wrap;
 }
 
-function kcRow(toggle, name, chip) {
+function kcReason(source) {
+  if (!source || source.revoked || source.state !== 'Action required') return '';
+  return KC_REASON_TEXT[source.state_reason] || '';
+}
+
+function kcRow(toggle, name, chip, reasonSource) {
   const row = kcEl('div', 'kc-row');
   row.append(toggle, name, chip);
+  const reason = kcReason(reasonSource);
+  if (reason) row.append(kcEl('div', 'kc-reason', reason));
   return row;
 }
 
@@ -548,7 +561,7 @@ function renderSources(report) {
     const name = kcEl('span', 'kc-name', s.service);
     if (s.new) name.append(kcEl('span', 'kc-tag', 'NEW'));
     name.append(kcInfo(s.dependency));
-    appRows.append(kcRow(kcSwitch('source-' + s.id, 'Use Keychain: ' + s.label, s.read, !!run.active, false, on => sourceAction('set_sources', null, on, {source_ids: [s.id]})), name, kcChip(status(s), s)));
+    appRows.append(kcRow(kcSwitch('source-' + s.id, 'Use Keychain: ' + s.label, s.read, !!run.active, false, on => sourceAction('set_sources', null, on, {source_ids: [s.id]})), name, kcChip(status(s), s), s));
   }
   const offApps = apps.length - apps.filter(s => s.read).length;
   if (offApps) {
@@ -588,13 +601,15 @@ function renderSources(report) {
     if (children.some(s => s.new)) name.append(kcEl('span', 'kc-tag', 'NEW'));
     for (const child of children) {
       const pill = kcEl('span', 'kc-pill'); const dot = kcEl('i', 'kc-d-' + status(child));
-      pill.title = child.label + ': ' + ((status(child) === 'ok' && child.state.startsWith('Authorized (checked ')) || child.state === 'Needs re-authorization (app updated)' ? child.state : KC_LABEL[status(child)]);
+      const childReason = kcReason(child);
+      pill.title = child.label + ': ' + ((status(child) === 'ok' && child.state.startsWith('Authorized (checked ')) || child.state === 'Needs re-authorization (app updated)' ? child.state : KC_LABEL[status(child)]) + (childReason ? ' — ' + childReason : '');
       pill.append(dot, document.createTextNode(KC_BROWSERS.find(b => b[0] === child.group)[1]));
       name.append(pill);
     }
     const worst = children.map(status).reduce((a, b) => KC_RANK[b] > KC_RANK[a] ? b : a, 'off');
     const checked = worst === 'ok' ? children.filter(c => c.state.startsWith('Authorized (checked ')).sort((a, b) => a.last_read_at - b.last_read_at)[0] : null;
-    webRows.append(kcRow(kcSwitch('service-' + service.replace(/[^A-Za-z0-9]+/g, '-'), 'Read ' + service + ' cookies', ons.length > 0, !!run.active, mixed, on => sourceAction('set_sources', null, on, {source_ids: children.map(c => c.id)})), name, kcChip(worst, children.length === 1 ? children[0] : checked)));
+    const reasonSource = children.length === 1 ? children[0] : (worst === 'err' ? children.find(c => status(c) === 'err' && kcReason(c)) || null : null);
+    webRows.append(kcRow(kcSwitch('service-' + service.replace(/[^A-Za-z0-9]+/g, '-'), 'Read ' + service + ' cookies', ons.length > 0, !!run.active, mixed, on => sourceAction('set_sources', null, on, {source_ids: children.map(c => c.id)})), name, kcChip(worst, children.length === 1 ? children[0] : checked), reasonSource));
   }
   if (offServices.length || (showOffWeb && services.size)) {
     const more = kcEl('button', 'kc-more', showOffWeb ? '▴ Hide services that are off' : '▾ ' + offServices.length + ' more off (' + offServices.join(', ') + ')');

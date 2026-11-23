@@ -425,6 +425,14 @@ class SourcePolicy:
                 return f"Authorized (checked {checked})"
             return None
 
+    def block_reason(self, source_id: str) -> str | None:
+        """Return the persisted fixed block reason when this source is Action required."""
+        with self._lock:
+            if self.read_state(source_id) != "Action required":
+                return None
+            reason = self._read_record(source_id).get("last_block_reason")
+            return reason if reason in _BLOCK_REASONS else None
+
     def renewal_allowed(self) -> bool:
         with self._lock:
             return (

@@ -139,7 +139,7 @@ class KeychainRenewer:
                         ok = self._renew_item(store, item) and ok
                 except KeychainError as exc:
                     if exc.reason in {"denied", "timed_out", "unavailable"}:
-                        block_access()
+                        block_access(exc.reason)
                     self._log(service, "permission unavailable" if access_blocked() else exc.reason)
                     ok = False
             else:

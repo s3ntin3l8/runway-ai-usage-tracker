@@ -70,8 +70,8 @@ def access_blocked() -> bool:
     return get_keychain_client().access_blocked("claude-code")
 
 
-def block_access() -> None:
-    get_keychain_client().block_access("claude-code")
+def block_access(reason: str = "denied") -> None:
+    get_keychain_client().block_access("claude-code", reason)
 
 
 def read_candidates(
@@ -90,7 +90,7 @@ def read_candidates(
         except keychain.KeychainError as exc:
             if exc.reason == "cancelled":
                 break
-            block_access()
+            block_access(exc.reason)
             _warn(
                 service,
                 "unavailable or timed out; restart sidecar to retry"
