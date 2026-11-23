@@ -414,6 +414,19 @@ def ensure_synced(
         return client.sync(config, report)
 
 
+def synced_report(
+    config: dict[str, Any],
+    path: pathlib.Path,
+    report: Callable[[dict[str, Any]], dict[str, Any]],
+) -> dict[str, Any]:
+    """Ensure an initial sync has run (or await an in-flight one) and build the report under _SYNC_LOCK."""
+    with _SYNC_LOCK:
+        client = prepare(config, path)
+        if client is not None and client.sync_state == "not_synced_yet":
+            client.sync(config, report)
+        return report(config)
+
+
 def forwarding_allowed(source_id: str, destination: str) -> bool:
     return bool(CLIENT and CLIENT.scope[1] == destination and source_id in CLIENT.accepted)
 

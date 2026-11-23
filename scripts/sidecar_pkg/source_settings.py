@@ -214,6 +214,9 @@ def report(config: dict[str, Any]) -> dict[str, Any]:
     if re_pair_required:
         sync_state = "re_pair_required"
         sync_reason = client.sync_reason if (client and client.re_pair_required) else None
+    elif not config.get("device_id") or not config.get("device_key"):
+        sync_state = "not_paired"
+        sync_reason = None
     elif client is None:
         sync_state = "not_synced_yet"
         sync_reason = None

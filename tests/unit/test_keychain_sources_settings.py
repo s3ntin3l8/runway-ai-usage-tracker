@@ -808,6 +808,7 @@ function bannerFor(patch) {
 }
 
 console.log(JSON.stringify({
+  not_paired: bannerFor({ sync_state: 'not_paired', sync_reason: null, forwarding_supported: false }),
   not_synced_yet: bannerFor({ sync_state: 'not_synced_yet', sync_reason: null, forwarding_supported: false }),
   redirect: bannerFor({ sync_state: 'sync_failed', sync_reason: 'redirect', forwarding_supported: false }),
   http_500: bannerFor({ sync_state: 'sync_failed', sync_reason: 'http_500', forwarding_supported: false }),
@@ -830,8 +831,10 @@ console.log(JSON.stringify({
         check=True,
     )
     banners = json.loads(proc.stdout)
+    assert "Pair this sidecar" in banners["not_paired"]
     assert "Waiting for the first sync with the server..." in banners["not_synced_yet"]
     for key in (
+        "not_paired",
         "not_synced_yet",
         "redirect",
         "http_500",

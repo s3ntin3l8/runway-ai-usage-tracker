@@ -478,6 +478,8 @@ function renderSources(report) {
 
   if (report.re_pair_required || syncState === 're_pair_required') {
     body.append(kcBanner('kc-b-err', 'Device authentication is unavailable, so Keychain credentials are withheld.', ['Re-pair this sidecar…', '/pair']));
+  } else if (syncState === 'not_paired') {
+    body.append(kcBanner('kc-b-warn', 'Pair this sidecar with your server to enable Keychain credentials.', ['Pair this sidecar…', '/pair']));
   } else if (syncState === 'not_synced_yet') {
     body.append(kcBanner('kc-b-warn', 'Waiting for the first sync with the server...'));
   } else if (syncState === 'sync_failed') {
@@ -893,8 +895,11 @@ class _Handler(BaseHTTPRequestHandler):
             from scripts.sidecar_pkg.source_settings import report
 
             config = self.server.get_config()
-            source_protocol.ensure_synced(config, get_sidecar_dir() / "source-control.json", report)
-            self._send_json(report(config))
+            self._send_json(
+                source_protocol.synced_report(
+                    config, get_sidecar_dir() / "source-control.json", report
+                )
+            )
         elif path == "/status":
             self._serve_status()
         elif path == "/logs":

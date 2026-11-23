@@ -436,3 +436,126 @@ def test_sync_failure_reasons_report_fields_and_log_once_per_change(tmp_path, mo
     assert not client.sync(local, source_settings.report)
     assert len(caplog.records) == 1
     assert "http_500" in caplog.text
+
+
+def test_unpaired_report_reports_not_paired(monkeypatch):
+    monkeypatch.setattr(source_protocol, "CLIENT", None)
+    unpaired = source_settings.report({"api_url": "https://runway.example"})
+    assert unpaired["sync_state"] == "not_paired"
+    assert unpaired["sync_reason"] is None
+    assert unpaired["re_pair_required"] is False
+    assert unpaired["forwarding_supported"] is False
+
+    paired_before_sync = source_settings.report(config())
+    assert paired_before_sync["sync_state"] == "not_synced_yet"
+    assert paired_before_sync["sync_reason"] is None
+
+
+def test_synced_report_holds_sync_lock_against_concurrent_sync(tmp_path, monkeypatch):
+    import json
+    import threading
+
+    from scripts.sidecar_pkg import transport
+
+    local = config()
+    source_consent.POLICY.configure(local)
+    state_path = tmp_path / "state.json"
+
+    class _FakeResponse:
+        def __init__(self, url: str):
+            self._url = url
+
+        def geturl(self) -> str:
+            return self._url
+
+        def read(self, _limit: int = -1) -> bytes:
+            return json.dumps(reply()).encode()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(transport, "urlopen", lambda req, **_kw: _FakeResponse(req.full_url))
+    monkeypatch.setattr(source_protocol, "CLIENT", None)
+
+    assert source_protocol.sync(local, state_path, source_settings.report)
+
+    entered_report = threading.Event()
+    release_report = threading.Event()
+    sync_started = threading.Event()
+    sync_done = threading.Event()
+
+    def slow_report(cfg):
+        entered_report.set()
+        release_report.wait(timeout=5)
+        return source_settings.report(cfg)
+
+    report_holder = []
+    reader = threading.Thread(
+        target=lambda: report_holder.append(
+            source_protocol.synced_report(local, state_path, slow_report)
+        )
+    )
+    reader.start()
+    assert entered_report.wait(timeout=5)
+
+    def run_bg_sync():
+        sync_started.set()
+        source_protocol.sync(local, state_path, source_settings.report)
+        sync_done.set()
+
+    writer = threading.Thread(target=run_bg_sync)
+    writer.start()
+    assert sync_started.wait(timeout=5)
+    # Give the background sync thread a moment to block on _SYNC_LOCK; it must not clear
+    # CLIENT.accepted before slow_report finishes.
+    assert not sync_done.wait(timeout=0.05)
+
+    release_report.set()
+    reader.join(timeout=5)
+    writer.join(timeout=5)
+    assert sync_done.is_set()
+    assert report_holder[0]["sync_state"] == "ok"
+    assert report_holder[0]["forwarding_supported"] is True
+
+
+def test_daemon_runner_syncs_before_first_collection(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from scripts import sidecar
+    from scripts.sidecar_pkg import transport
+
+    order = []
+    local = config()
+    local["api_key"] = "synthetic-api-key"
+    local["poll_interval"] = 60
+    monkeypatch.setattr(sidecar, "get_sidecar_dir", lambda: tmp_path)
+    monkeypatch.setattr(
+        source_protocol,
+        "sync",
+        lambda *_args, **_kwargs: order.append("sync") or True,
+    )
+    monkeypatch.setattr(sidecar, "scope_login_dirs", lambda _cfg: None)
+
+    runner = sidecar.DaemonRunner(local)
+
+    def fake_collection(_cfg, providers=None):
+        order.append("collect")
+        runner.stop()
+        return SimpleNamespace(
+            metrics=[],
+            events=[],
+            session_names=[],
+            error_count=0,
+            completed_providers=[],
+        )
+
+    monkeypatch.setattr(sidecar, "run_collection", fake_collection)
+    monkeypatch.setattr(
+        transport, "urlopen", lambda *_a, **_kw: (_ for _ in ()).throw(OSError("stop"))
+    )
+
+    runner._loop()
+    assert order == ["sync", "collect"]
