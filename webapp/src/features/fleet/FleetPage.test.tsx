@@ -81,6 +81,52 @@ describe('FleetPage', () => {
     ]);
   });
 
+  it('shows the Safari to-do only on the sidecar that needs Full Disk Access', async () => {
+    const checked_at = new Date().toISOString();
+    vi.mocked(api.fetchSidecars).mockResolvedValue({
+      sidecars: [
+        sidecar({
+          stale_threshold_minutes: 60,
+          safari_access: { state: 'full_disk_access_missing', checked_at },
+        }),
+        sidecar({
+          hostname: 'readable-mac',
+          sidecar_id: 'readable',
+          safari_access: { state: 'readable', checked_at },
+        }),
+        sidecar({
+          hostname: 'unused-mac',
+          sidecar_id: 'unused',
+          safari_access: { state: 'not_used', checked_at },
+        }),
+        sidecar({ hostname: 'older-mac', sidecar_id: 'older', safari_access: null }),
+      ],
+    });
+    const { container } = renderWithProviders(<FleetPage />);
+    const notices = await screen.findAllByText(/Safari: Full Disk Access/);
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toHaveTextContent('Safari: Full Disk Access needed (checked just now)');
+    expect(container.querySelector('#sidecar-laptop')).toContainElement(notices[0]!);
+  });
+
+  it('shows an old Safari report as historical on an online sidecar', async () => {
+    const checked_at = new Date(Date.now() - 120 * 60_000).toISOString();
+    vi.mocked(api.fetchSidecars).mockResolvedValue({
+      sidecars: [
+        sidecar({
+          stale: false,
+          stale_threshold_minutes: 90,
+          safari_access: { state: 'full_disk_access_missing', checked_at },
+        }),
+      ],
+    });
+    renderWithProviders(<FleetPage />);
+    expect(
+      await screen.findByText('Safari: Full Disk Access was needed (checked 2h ago)'),
+    ).toHaveClass('text-fg-muted');
+    expect(screen.getByRole('img', { name: 'online' })).toBeInTheDocument();
+  });
+
   it.each([
     ['the banner chip', /untagged credentials? on sidecar laptop/i],
     ['the card pill', /^\d+ untagged credentials? — click to resolve/i],

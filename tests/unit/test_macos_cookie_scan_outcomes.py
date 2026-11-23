@@ -31,6 +31,9 @@ def isolated(tmp_path, monkeypatch):
         raise AssertionError("Native credential access forbidden")
 
     monkeypatch.setattr(subprocess, "run", forbidden)
+    sidecar.reset_cookie_store_tracking()
+    yield
+    sidecar.reset_cookie_store_tracking()
 
 
 def test_safari_expiry_is_filtered_by_existing_candidate_interface(tmp_path, monkeypatch):
@@ -193,22 +196,51 @@ def test_desktop_cookie_scan_uses_shared_key_cache_and_reports_expired(tmp_path,
     assert len(calls) == 1
 
 
-def test_candidate_scan_reports_protected_safari_as_inaccessible(tmp_path, monkeypatch):
-    path = tmp_path / "private-account/Cookies.binarycookies"
+@pytest.mark.parametrize(
+    ("blocked_roots", "expected_stores"),
+    [
+        (False, ["Safari/profile-uuid/Cookies.binarycookies"]),
+        (True, ["Safari/Unenumerated/Containers", "Safari/Unenumerated/WebKit"]),
+    ],
+)
+def test_candidate_scan_reports_protected_safari_as_inaccessible(
+    tmp_path, monkeypatch, blocked_roots, expected_stores
+):
+    from scripts.sidecar_pkg.safari_cookies import stores
+
+    home = tmp_path / "private-account"
+    container_root = (
+        home / "Library/Containers/com.apple.Safari/Data/Library/WebKit/WebsiteDataStore"
+    )
+    webkit_root = home / "Library/WebKit/WebsiteDataStore"
+    cookie_path = container_root / "profile-uuid/Cookies/Cookies.binarycookies"
+    if blocked_roots:
+        original_iterdir = Path.iterdir
+
+        def guarded_iterdir(path):
+            if path in (container_root, webkit_root):
+                raise PermissionError("private-account")
+            return original_iterdir(path)
+
+        monkeypatch.setattr(Path, "iterdir", guarded_iterdir)
+    else:
+        cookie_path.parent.mkdir(parents=True)
+        cookie_path.touch()
+        original_open = Path.open
+
+        def guarded_open(path, *args, **kwargs):
+            if path == cookie_path:
+                raise PermissionError("private-account")
+            return original_open(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "open", guarded_open)
+
     monkeypatch.setenv("RUNWAY_CLAUDE_DESKTOP_CREDENTIALS", "0")
     monkeypatch.setattr(
         sidecar.BrowserCookieExtractor,
         "get_all_paths",
-        lambda: [{"type": "safari", "browser": "Safari", "path": path}],
+        lambda: stores(home),
     )
-    original = Path.open
-
-    def guarded(p, *args, **kwargs):
-        if p == path:
-            raise PermissionError("private-account")
-        return original(p, *args, **kwargs)
-
-    monkeypatch.setattr(Path, "open", guarded)
     outcomes = []
     assert (
         sidecar.BrowserCookieExtractor.get_macos_candidates(
@@ -216,10 +248,24 @@ def test_candidate_scan_reports_protected_safari_as_inaccessible(tmp_path, monke
         )
         == []
     )
-    assert len(outcomes) == 1
-    assert outcomes[0]["status"] == "inaccessible"
-    assert outcomes[0]["candidate_count"] == 0
+    assert len(outcomes) == len(expected_stores)
+    assert all(outcome["status"] == "inaccessible" for outcome in outcomes)
+    assert all(outcome["candidate_count"] == 0 for outcome in outcomes)
     assert "private-account" not in json.dumps(outcomes)
+    assert sidecar.blocked_source_entries() == [
+        {
+            "provider_id": "anthropic",
+            "credential_origin": f"cookie:anthropic/{source_store}",
+            "reason": "source_unreadable",
+            "source_store": source_store,
+            "source_detail": "the file could not be opened",
+            "source_remedy": (
+                "grant Full Disk Access to Runway Sidecar on this Mac "
+                "(System Settings → Privacy & Security → Full Disk Access)"
+            ),
+        }
+        for source_store in expected_stores
+    ]
 
 
 def test_safari_reports_empty_when_only_unrelated_cookies_exist(tmp_path, monkeypatch):

@@ -214,6 +214,30 @@ def _heartbeat(client, **extra):
     )
 
 
+def test_safari_access_ingest_and_sidecar_list(client, session):
+    from app.models.db import SidecarRegistry
+
+    blocked = {"state": "full_disk_access_missing", "checked_at": "2026-11-18T10:00:00Z"}
+    assert _heartbeat(client, safari_access=blocked).status_code == 200
+    assert _heartbeat(client, sidecar_id="older-sidecar").status_code == 200
+    assert _heartbeat(client).status_code == 200
+    assert _heartbeat(client, safari_access=None).status_code == 200
+    assert json.loads(session.get(SidecarRegistry, "ka-host").safari_access) == blocked
+
+    response = client.get("/api/v1/fleet/sidecars")
+    assert response.status_code == 200
+    assert {row["sidecar_id"]: row["safari_access"] for row in response.json()["sidecars"]} == {
+        "ka-host": blocked,
+        "older-sidecar": None,
+    }
+
+    readable = {"state": "readable", "checked_at": "2026-11-18T10:01:00Z"}
+    assert _heartbeat(client, safari_access=readable).status_code == 200
+    response = client.get("/api/v1/fleet/sidecars/ka-host")
+    assert response.status_code == 200
+    assert response.json()["safari_access"] == readable
+
+
 def test_ingest_records_the_sidecars_reported_keep_alive(client, session):
     from app.models.db import SidecarRegistry
 

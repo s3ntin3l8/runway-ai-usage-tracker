@@ -53,6 +53,10 @@ export interface Sidecar {
   source_sync_last_at?: string | null;
   login_dirs_desired?: LoginDirectorySettings;
   login_dirs_report?: LoginDirectoryReport | null;
+  safari_access?: {
+    state: 'full_disk_access_missing' | 'readable' | 'not_used';
+    checked_at: string;
+  } | null;
   sidecar_id: string;
   hostname?: string;
   custom_name?: string | null;
