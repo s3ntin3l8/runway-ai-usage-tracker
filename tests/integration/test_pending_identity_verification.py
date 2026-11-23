@@ -1124,10 +1124,27 @@ async def test_console_cookie_fingerprint_rotation_preserves_source_and_contribu
     """Replay (#1342): Console cookie rotates to a new fingerprint on an enrolled device.
 
     Exercises promotion (including the ``existing_target`` branch that calls
-    ``session.delete(source)``), sidecar ingest, and
+    ``session.delete(source)``), concurrent + sequential sidecar ingest, and
     ``reconcile_token_cache_from_durable_tags``, asserting after every step
-    that the ``CredentialSource`` row and non-NULL ``SidecarSourceContribution``
-    payload survive.
+    that both the pre-rotation and rotated ``CredentialSource`` rows and their
+    non-NULL ``SidecarSourceContribution`` payloads survive.
+
+    Per-path negative result (#1342):
+    - Promotion (``_commit_source_identity``): ``existing_target`` deletes only the
+      pending-slot duplicate while the ``org_x`` row survives with the same
+      ``(provider_id, source_id)``, so ``_retire_removed_origins`` keeps
+      ``payload_encrypted`` non-NULL.
+    - Ingest (``_can_reconcile_row`` / phantom handling): ``_can_reconcile_row``
+      special-cases ``anthropic`` only, but pending-slot rows are phantom accounts
+      and are moved/deleted only when ``target_exists`` is True; ``touch_source``
+      always leaves a surviving row for ``source_id_2`` and never touches ``source_id_1``.
+    - Durable-tag reconciliation (``reconcile_token_cache_from_durable_tags``):
+      moves ``source.account_id`` or deletes only the duplicate pending row while
+      ``existing_target`` survives.
+    - Note: ``_retire_missing_claude_sources`` (manifest endpoint, outside this
+      ingest/promotion/reconcile replay) is the path that deletes a missing
+      same-store fingerprint (``origin_1``) and NULLs its contribution payload
+      when a manifest reports ``origin_2`` under ``completed_providers``.
     """
     from cryptography.fernet import Fernet
 
@@ -1208,6 +1225,29 @@ async def test_console_cookie_fingerprint_rotation_preserves_source_and_contribu
             ).one()
             assert contrib.payload_encrypted is not None, f"NULL payload for {source_id}"
 
+    def assert_console_source_count(expected: int) -> None:
+        with Session(engine) as session:
+            count = len(
+                session.exec(
+                    select(CredentialSource).where(
+                        CredentialSource.provider_id == "anthropic_console"
+                    )
+                ).all()
+            )
+            assert count == expected, f"expected {expected} anthropic_console rows, got {count}"
+
+    def assert_no_pending_slot(source_id: str) -> None:
+        slot = pending_cache_slot("anthropic_console", source_id)
+        with Session(engine) as session:
+            pending_row = session.exec(
+                select(CredentialSource).where(
+                    CredentialSource.provider_id == "anthropic_console",
+                    CredentialSource.source_id == source_id,
+                    CredentialSource.account_id == slot,
+                )
+            ).first()
+            assert pending_row is None, f"pending-slot row {slot} still exists for {source_id}"
+
     def console_upstream(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/api/organizations":
             return httpx.Response(
@@ -1272,10 +1312,13 @@ async def test_console_cookie_fingerprint_rotation_preserves_source_and_contribu
         )
         assert resp1.status_code == 200, resp1.text
         assert_source_and_payload(source_id_1, pending_cache_slot("anthropic_console", source_id_1))
+        assert_console_source_count(1)
 
         cards1 = await _verify("anthropic_console", console_upstream)
         assert cards1
+        assert_no_pending_slot(source_id_1)
         assert_source_and_payload(source_id_1, org_x)
+        assert_console_source_count(1)
 
         # 2. Fingerprint rotates to origin_2 (new source_id_2)
         resp2 = post(
@@ -1302,11 +1345,13 @@ async def test_console_cookie_fingerprint_rotation_preserves_source_and_contribu
             },
         )
         assert resp2.status_code == 200, resp2.text
+        assert_source_and_payload(source_id_1, org_x)
         assert_source_and_payload(source_id_2, pending_cache_slot("anthropic_console", source_id_2))
+        assert_console_source_count(2)
 
         # 3. Seed an existing target CredentialSource row on org X for source_id_2
         # so promotion hits the ``existing_target`` branch (``session.delete(source)``),
-        # and run promotion + ingest + durable-tag reconciliation.
+        # and run promotion concurrently with an ingest from the same sidecar.
         with Session(engine) as session:
             session.add(
                 CredentialSource(
@@ -1321,9 +1366,71 @@ async def test_console_cookie_fingerprint_rotation_preserves_source_and_contribu
             )
             session.commit()
 
-        cards2 = await _verify("anthropic_console", console_upstream)
+        concurrent_ingest_body = {
+            "provider": "sidecar",
+            "sidecar_id": sidecar_id,
+            "metrics": [
+                {
+                    "provider_id": "anthropic_console",
+                    "service_name": "Claude Console",
+                    "remaining": "Token",
+                    "unit": "cookie",
+                    "account_id": None,
+                    "metadata": {
+                        "credential_origin": origin_2,
+                        "session_cookie": "sk-ant-sid01-console-new",  # pragma: allowlist secret
+                        "identity_pending": True,
+                        "keychain_consent": proof,
+                    },
+                }
+            ],
+        }
+
+        async def async_post(path: str, purpose: str, body_obj: dict) -> httpx.Response:
+            body = json.dumps(body_obj).encode()
+            headers = signed_headers(
+                local, local["api_url"] + path, local["api_key"], signing_timestamp(), purpose, body
+            )
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app),
+                base_url="http://testserver",
+            ) as async_client:
+                return await async_client.post(path, content=body, headers=headers)
+
+        cards2, concurrent_resp = await asyncio.gather(
+            _verify("anthropic_console", console_upstream),
+            async_post("/api/v1/fleet/ingest", "ingest", concurrent_ingest_body),
+        )
         assert cards2
+        assert concurrent_resp.status_code == 200, concurrent_resp.text
+        assert_no_pending_slot(source_id_2)
+        assert_source_and_payload(source_id_1, org_x)
         assert_source_and_payload(source_id_2, org_x)
+        assert_console_source_count(2)
+        with Session(engine) as session:
+            tag = CredentialTagRepo.get(
+                session,
+                provider_id="anthropic_console",
+                credential_origin=origin_2,
+                sidecar_id=sidecar_id,
+            )
+            assert tag is not None
+            assert tag.account_id == org_x
+            assert tag.set_by == "identity_verification"
+            pending_tag = session.exec(
+                select(PendingCredentialTag).where(
+                    PendingCredentialTag.sidecar_id == sidecar_id,
+                    PendingCredentialTag.provider_id == "anthropic_console",
+                    PendingCredentialTag.credential_origin == origin_2,
+                )
+            ).first()
+            assert pending_tag is None
+        assert await cache.get_pending_sources("anthropic_console") == []
+        promoted_candidates = await cache.get_source_candidates("anthropic_console", org_x)
+        assert any(
+            c["source_id"] == source_id_2 and c.get("identity_pending") is False
+            for c in promoted_candidates
+        )
 
         # 4. Subsequent ingest from the same sidecar (with stale pending flag, then resolved)
         for pending_flag in (True, False):
@@ -1352,12 +1459,25 @@ async def test_console_cookie_fingerprint_rotation_preserves_source_and_contribu
                 },
             )
             assert resp3.status_code == 200, resp3.text
+            assert_source_and_payload(source_id_1, org_x)
             assert_source_and_payload(source_id_2, org_x)
+            assert_console_source_count(2)
+        with Session(engine) as session:
+            contrib_2 = session.exec(
+                select(SidecarSourceContribution).where(
+                    SidecarSourceContribution.device_id == device_id,
+                    SidecarSourceContribution.provider_id == "anthropic_console",
+                    SidecarSourceContribution.credential_source_id == source_id_2,
+                )
+            ).one()
+            assert contrib_2.account_id == org_x
 
         # 5. Durable-tag reconciliation
         await CollectorManager().reconcile_token_cache_from_durable_tags(
             provider_id="anthropic_console"
         )
+        assert_source_and_payload(source_id_1, org_x)
         assert_source_and_payload(source_id_2, org_x)
+        assert_console_source_count(2)
     finally:
         app.dependency_overrides.pop(get_session, None)
