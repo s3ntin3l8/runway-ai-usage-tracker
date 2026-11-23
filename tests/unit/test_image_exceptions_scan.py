@@ -152,6 +152,14 @@ class TestTheDocumentMatchesTheScan:
         candidate_for_arch = {
             entry for entry in CANDIDATE_POINT_RELEASE_EXCEPTIONS if entry[-1] == architecture
         }
+        assert candidate_for_arch <= shipped, (
+            f"CANDIDATE_POINT_RELEASE_EXCEPTIONS for {architecture} missing from "
+            f"image-exceptions.json: {sorted(candidate_for_arch - shipped)}"
+        )
+        assert not (candidate_for_arch & recorded), (
+            f"CANDIDATE_POINT_RELEASE_EXCEPTIONS for {architecture} already in "
+            f"published-release.json and should be retired: {sorted(candidate_for_arch & recorded)}"
+        )
         assert shipped - candidate_for_arch == recorded, (
             "the shipped exception document and the recorded scan disagree for "
             f"{architecture}: "
