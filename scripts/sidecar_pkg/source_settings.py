@@ -189,10 +189,7 @@ def report(config: dict[str, Any]) -> dict[str, Any]:
                 "revision": source.revision,
                 "read": has_ticket,
                 "state": state,
-                # Other state_reason values (denied, timed_out, etc.) are left to #1340.
-                "state_reason": (
-                    "app_updated" if state == "Needs re-authorization (app updated)" else None
-                ),
+                "state_reason": _state_reason(source.id, source.services, state),
                 "last_read_at": POLICY.last_read(source.id),
                 "remote_paused": remote.get(source.id, {}).get("paused") is True,
                 "revoked": _is_revoked(config, remote, source.id),
@@ -360,6 +357,32 @@ def _is_revoked(config: dict[str, Any], remote: dict[str, Any], source_id: str) 
     return type(generation) is int and type(revoked) is int and generation <= revoked
 
 
+def access_group(source_id: str, service: str) -> str:
+    """Map a catalog source ID and Keychain service name to its KeychainClient access group."""
+    if source_id == "anthropic.claude-code":
+        return "claude-code"
+    if source_id == "github.gh-cli":
+        return "github-cli"
+    return "storage:" + service
+
+
+def _source_groups(source_id: str, services: tuple[str, ...]) -> list[str]:
+    return [access_group(source_id, service) for service in services]
+
+
+def _state_reason(source_id: str, services: tuple[str, ...], state: str) -> str | None:
+    from scripts.sidecar_pkg.keychain_client import access_groups_block_reason
+    from scripts.sidecar_pkg.source_consent import POLICY, REAUTH_REQUIRED_STATE
+
+    if state == REAUTH_REQUIRED_STATE:
+        return "app_updated"
+    if state != "Action required":
+        return None
+    return access_groups_block_reason(_source_groups(source_id, services)) or POLICY.block_reason(
+        source_id
+    )
+
+
 def _authorization_state(source_id: str, services: tuple[str, ...], setup_state: str) -> str:
     from scripts.sidecar_pkg.keychain_client import access_groups_blocked
     from scripts.sidecar_pkg.source_consent import POLICY, REAUTH_REQUIRED_STATE
@@ -369,14 +392,6 @@ def _authorization_state(source_id: str, services: tuple[str, ...], setup_state:
     read_state = POLICY.read_state(source_id)
     if read_state == REAUTH_REQUIRED_STATE:
         return read_state
-    groups = [
-        "claude-code"
-        if source_id == "anthropic.claude-code"
-        else "github-cli"
-        if source_id == "github.gh-cli"
-        else "storage:" + service
-        for service in services
-    ]
-    if access_groups_blocked(groups):
+    if access_groups_blocked(_source_groups(source_id, services)):
         return "Action required"
     return read_state or (setup_state if setup_state != "Off" else "Setup required")

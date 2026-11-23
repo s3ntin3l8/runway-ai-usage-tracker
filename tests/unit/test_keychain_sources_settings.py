@@ -6,7 +6,10 @@ import threading
 
 import pytest
 
+from scripts.sidecar_pkg.macos_keychain_store import _WorkerAPI
 from sidecar_app.settings_server import _SettingsServer
+
+_WORKER_CALL = _WorkerAPI.call
 
 
 @pytest.fixture
@@ -956,3 +959,225 @@ def test_get_sources_triggers_or_awaits_sync_once(tmp_path, monkeypatch):
         server.shutdown()
         server.server_close()
         thread.join(timeout=2)
+
+
+@pytest.mark.parametrize(
+    ("exc_factory", "expected_reason", "expected_panel_text"),
+    [
+        (
+            lambda: __import__(
+                "scripts.sidecar_pkg.keychain_protocol", fromlist=["KeychainError"]
+            ).KeychainError("denied"),
+            "denied",
+            "macOS denied access. Click Authorize and choose Always Allow (not Allow)",
+        ),
+        (
+            lambda: __import__(
+                "scripts.sidecar_pkg.keychain_protocol", fromlist=["KeychainError"]
+            ).KeychainError("timed_out"),
+            "timed_out",
+            "macOS did not answer in time. Try again",
+        ),
+        (
+            lambda: __import__(
+                "scripts.sidecar_pkg.keychain_protocol", fromlist=["KeychainError"]
+            ).KeychainError("unavailable"),
+            "unavailable",
+            "The Keychain is unavailable",
+        ),
+        (
+            lambda: OSError("Keychain item gh:github.com acct=secret-acct failed"),
+            "unavailable",
+            "The Keychain is unavailable",
+        ),
+    ],
+)
+def test_blocked_keychain_source_logs_once_reports_state_reason_and_renders_panel(
+    tmp_path, monkeypatch, caplog, exc_factory, expected_reason, expected_panel_text
+):
+    import logging
+    import shutil
+    import subprocess
+
+    from app.models.source_controls import SourceSyncRequest
+    from scripts.sidecar_pkg import (
+        keychain_client,
+        macos_keychain_store,
+        source_consent,
+        source_protocol,
+    )
+    from scripts.sidecar_pkg.keychain_protocol import KeychainError
+    from scripts.sidecar_pkg.macos_keychain_store import read_secret
+    from scripts.sidecar_pkg.source_catalog import KEYCHAIN_RULES
+    from sidecar_app.settings_server import _CSS, _HTML
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+
+    _home, _apps, source_settings = _patch_darwin_dirs(monkeypatch, tmp_path)
+    config = source_settings.update(
+        {"api_url": "https://runway.example"},
+        {"action": "enable", "source_id": "github.gh-cli"},
+    )
+    policy = source_consent.SourcePolicy(config)
+    policy.configure_state(tmp_path / "reads.json")
+    monkeypatch.setattr(source_consent, "POLICY", policy)
+    monkeypatch.setattr(macos_keychain_store.sys, "platform", "darwin")
+    monkeypatch.setattr(macos_keychain_store._WorkerAPI, "call", _WORKER_CALL)
+
+    # Use a real KeychainClient instance (never spawning) for state/logging + fake _start().
+    client = keychain_client.KeychainClient(command=["synthetic-never-started"])
+    monkeypatch.setattr(keychain_client, "_CLIENT", client)
+    monkeypatch.setattr(
+        client,
+        "_start",
+        lambda: (_ for _ in ()).throw(exc_factory()),
+    )
+
+    rule = next(r for r in KEYCHAIN_RULES["github"]["rules"] if r["type"] == "exec")
+    with caplog.at_level(logging.WARNING, logger=keychain_client.__name__):
+        with source_consent.rule_scope("github", rule):
+            for _ in range(2):
+                with pytest.raises(KeychainError) as exc_info:
+                    read_secret("gh:github.com", group="github-cli")
+                assert exc_info.value.reason == expected_reason
+
+    assert client.access_block_reason("github-cli") == expected_reason
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "github-cli" in warnings[0].message
+    assert expected_reason in warnings[0].message
+    assert "secret-acct" not in warnings[0].message
+    assert "gh:github.com" not in warnings[0].message
+
+    report = source_settings.report(config)
+    gh_row = next(r for r in report["sources"] if r["id"] == "github.gh-cli")
+    assert gh_row["state"] == "Action required"
+    assert gh_row["state_reason"] == expected_reason
+
+    proto_client = source_protocol.SourceClient(
+        {"device_id": "device-" + "a" * 32, "api_url": "https://runway.example"},
+        tmp_path / "control.json",
+    )
+    payload = proto_client.payload(config, report)
+    SourceSyncRequest.model_validate(payload)
+    fleet_row = next(r for r in payload["sources"] if r["source_id"] == "github.gh-cli")
+    assert fleet_row["state"] == "Action required"
+    assert fleet_row["state_reason"] == expected_reason
+    assert "secret-acct" not in json.dumps(report)
+    assert "secret-acct" not in json.dumps(payload)
+
+    html = _HTML.substitute(
+        css=_CSS,
+        api_url="https://runway.example",
+        version="0.0.0",
+        sidecar_id="test",
+    )
+    script = html.rsplit("<script>", 1)[1].split("</script>", 1)[0]
+    probe = """
+const vm = require('vm');
+const fs = require('fs');
+const report = JSON.parse(fs.readFileSync(process.argv[1], 'utf8'));
+const script = fs.readFileSync(process.argv[2], 'utf8');
+const byId = new Map();
+function makeEl(tag) {
+  const el = {
+    tagName: tag.toUpperCase(), children: [], className: '', textContent: '', title: '',
+    hidden: false, disabled: false, checked: false, _id: '', style: {}, setAttribute() {},
+    append(...nodes) {
+      for (const n of nodes) {
+        if (typeof n === 'string') this.children.push({ textContent: n, children: [] });
+        else if (n) this.children.push(n);
+      }
+    },
+    replaceChildren(...nodes) { this.children = []; this.append(...nodes); },
+  };
+  Object.defineProperty(el, 'id', {
+    get() { return this._id; },
+    set(v) { this._id = v; if (v) byId.set(v, el); },
+  });
+  return el;
+}
+function collectText(node) {
+  if (!node) return '';
+  return (node.textContent || '') + (node.children || []).map(collectText).join('');
+}
+const card = makeEl('section'); card.id = 'sources-card';
+const body = makeEl('div'); body.id = 'sources-body';
+const ctx = {
+  document: {
+    getElementById: (id) => byId.get(id) || makeEl('div'),
+    createElement: (tag) => makeEl(tag),
+    createTextNode: (t) => ({ textContent: String(t), children: [] }),
+  },
+  window: { addEventListener() {} },
+  fetch: async () => ({ ok: true, json: async () => ({}) }),
+  setTimeout: () => 0, clearTimeout: () => {}, setInterval: () => 0,
+  URLSearchParams, Map, Set, Math, JSON,
+};
+vm.runInNewContext(script, ctx);
+ctx.renderSources(report);
+console.log(collectText(body));
+"""
+    report_file = tmp_path / "report.json"
+    report_file.write_text(json.dumps(report), encoding="utf-8")
+    script_file = tmp_path / "page.js"
+    script_file.write_text(script, encoding="utf-8")
+    res = subprocess.run(
+        [node, "-e", probe, str(report_file), str(script_file)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=True,
+    )
+    assert expected_panel_text in res.stdout
+    assert "secret-acct" not in res.stdout
+
+
+def test_panel_renders_reason_for_all_action_required_state_reasons(tmp_path):
+    import shutil
+    import subprocess
+
+    from sidecar_app.settings_server import _CSS, _HTML
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+
+    html = _HTML.substitute(
+        css=_CSS,
+        api_url="https://runway.example",
+        version="0.0.0",
+        sidecar_id="test",
+    )
+    script = html.rsplit("<script>", 1)[1].split("</script>", 1)[0]
+    probe = """
+const vm = require('vm');
+const fs = require('fs');
+const script = fs.readFileSync(process.argv[1], 'utf8');
+const ctx = {
+  document: { getElementById: () => null, createElement: () => ({}), createTextNode: () => ({}) },
+  window: { addEventListener() {} },
+  fetch: async () => ({ ok: true, json: async () => ({}) }),
+  setTimeout: () => 0, clearTimeout: () => {}, setInterval: () => 0,
+  URLSearchParams, Map, Set, Math, JSON,
+};
+vm.runInNewContext(script, ctx);
+for (const reason of ['denied', 'timed_out', 'unavailable', 'missing', 'identity changed', 'ambiguous']) {
+  const text = ctx.kcReason({ revoked: false, state: 'Action required', state_reason: reason });
+  if (!text) {
+    console.error('Missing KC_REASON_TEXT for ' + reason);
+    process.exit(1);
+  }
+}
+"""
+    script_file = tmp_path / "page.js"
+    script_file.write_text(script, encoding="utf-8")
+    subprocess.run(
+        [node, "-e", probe, str(script_file)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=True,
+    )

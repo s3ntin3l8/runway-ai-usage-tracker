@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import atexit
 import contextlib
+import logging
 import os
 import plistlib
 import selectors
@@ -23,6 +24,9 @@ from scripts.sidecar_pkg.keychain_protocol import (
     KeychainError,
     encode_frame,
 )
+
+BLOCK_REASONS: frozenset[str] = frozenset({"denied", "timed_out", "unavailable"})
+logger = logging.getLogger(__name__)
 
 
 def native_helper_path() -> Path:
@@ -66,9 +70,17 @@ class KeychainClient:
         with self._state_lock:
             return group in self._blocked
 
-    def block_access(self, group: str, reason: str = "denied") -> None:
+    def access_block_reason(self, group: str) -> str | None:
         with self._state_lock:
-            self._blocked[group] = reason
+            return self._blocked.get(group)
+
+    def block_access(self, group: str, reason: str = "unavailable") -> None:
+        normalized = reason if reason in BLOCK_REASONS else "unavailable"
+        with self._state_lock:
+            previous = self._blocked.get(group)
+            self._blocked[group] = normalized
+        if previous != normalized:
+            logger.warning("Keychain access blocked (%s): %s", group, normalized)
 
     def clear_access(self, group: str) -> None:
         """Called only after an explicit local setup verified fresh worker access."""
@@ -303,3 +315,15 @@ def access_groups_blocked(groups: list[str]) -> bool:
     """Inspect suppression without creating a client or dispatching credential IO."""
     client = _CLIENT
     return client is not None and any(client.access_blocked(group) for group in groups)
+
+
+def access_groups_block_reason(groups: list[str]) -> str | None:
+    """Return the fixed block reason for the first suppressed group, if any."""
+    client = _CLIENT
+    if client is None:
+        return None
+    for group in groups:
+        reason = client.access_block_reason(group)
+        if reason is not None:
+            return reason
+    return None
