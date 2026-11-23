@@ -117,7 +117,7 @@ Check `--help` before running one. `--provider` scopes a repair to one provider 
 
 **Pre-write snapshots.** Before its first write, each writing script takes a
 consistent SQLite online backup into `<config dir>/backups/<script>-<UTC timestamp>.db`
-(`RUNWAY_CONFIG_DIR` or `~/.config/runway`, mode `0700`) and prints its path and
+(`RUNWAY_CONFIG_DIR`, else `~/.config/runway`; macOS: `~/Library/Application Support/runway`, Windows: `%APPDATA%\runway`, mode `0700`) and prints its path and
 size. A disk-space guard requires at least `1.2x` the database size free before
 writing anything. Pass `--no-snapshot` to skip snapshotting or `--keep-snapshots N`
 to control retention (default `2` per script after a successful run; `--dry-run`
