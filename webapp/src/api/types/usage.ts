@@ -75,6 +75,7 @@ export interface LimitCard {
   pct_used?: number | null;
   stale?: boolean;
   collection_failing?: boolean;
+  stale_reason?: 'no_credential' | 'credential_failing' | null;
 }
 
 // Live aggregation of usage_events over a quota window, split by model,

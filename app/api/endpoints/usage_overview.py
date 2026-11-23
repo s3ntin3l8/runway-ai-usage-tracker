@@ -36,6 +36,7 @@ from app.services.event_query import (
 from app.services.queries import (
     query_cumulative_live,
 )
+from app.services.stale_reason import apply_stale_reason
 
 # Window type rank for selecting the "longest" window among multiple cards.
 # Higher rank = longer / more authoritative window.
@@ -101,6 +102,9 @@ async def fetch_all_limits(
     if not results:
         # Bootstrap fallback: table not yet populated
         results = await manager.collect_all()
+
+    for item in results:
+        apply_stale_reason(session, item)
 
     # Validate and serialize with None values included
     limit_cards = [LimitCard(**item) for item in results]
@@ -295,6 +299,8 @@ def _fetch_fleet_view_sync(session: Session) -> dict[str, Any]:
 
     for gcards in groups.values():
         apply_untracked_spend(session, gcards)
+        for card in gcards:
+            apply_stale_reason(session, card)
 
     now = datetime.now(UTC)
     # Per-sidecar contribution for the user-local current month, computed live

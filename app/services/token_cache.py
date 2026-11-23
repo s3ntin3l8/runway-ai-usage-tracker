@@ -550,6 +550,22 @@ class TokenCache(TokenCacheStore):
         )
         return self.credential_generation(entry[0]) if entry else None
 
+    def has_account_entry(self, provider: str, account_id: str | None = None) -> bool:
+        """Return whether a non-expired cache or source-cache entry exists for (provider, account_id)."""
+        canon = canonical_account_id(account_id)
+        now = time.time()
+        legacy = self._cache.get(provider, {}).get(canon)
+        if legacy is not None:
+            tokens, _metadata, ts = legacy
+            key_timestamps = self._token_timestamps.get(provider, {}).get(canon, {})
+            if any(now - key_timestamps.get(k, ts) <= self._ttl for k in tokens):
+                return True
+        sources = self._source_cache.get(provider, {}).get(canon, {})
+        return any(
+            metadata.get("durable_source") is True or now - ts <= self._ttl
+            for _tokens, metadata, ts in sources.values()
+        )
+
     async def get_all_stats(self) -> dict[str, Any]:
         """Get flattened stats for all cached providers and accounts."""
         async with self._lock:
