@@ -203,8 +203,11 @@ def report(config: dict[str, Any]) -> dict[str, Any]:
                 and not has_ticket,
             }
         )
+    has_device_creds = bool(config.get("device_id") and config.get("device_key"))
+    has_ingest_pairing = bool(config.get("api_url") and config.get("api_key"))
     re_pair_required = bool(
         (client and client.re_pair_required)
+        or (has_ingest_pairing and not has_device_creds)
         or (
             config.get("device_id")
             and config.get("device_api_url", "").rstrip("/")
@@ -214,7 +217,7 @@ def report(config: dict[str, Any]) -> dict[str, Any]:
     if re_pair_required:
         sync_state = "re_pair_required"
         sync_reason = client.sync_reason if (client and client.re_pair_required) else None
-    elif not config.get("device_id") or not config.get("device_key"):
+    elif not has_device_creds:
         sync_state = "not_paired"
         sync_reason = None
     elif client is None:

@@ -446,6 +446,17 @@ def test_unpaired_report_reports_not_paired(monkeypatch):
     assert unpaired["re_pair_required"] is False
     assert unpaired["forwarding_supported"] is False
 
+    ingest_only = source_settings.report(
+        {
+            "api_url": "https://runway.example",
+            "api_key": "synthetic-ingest-key",  # pragma: allowlist secret
+        }
+    )
+    assert ingest_only["sync_state"] == "re_pair_required"
+    assert ingest_only["sync_reason"] is None
+    assert ingest_only["re_pair_required"] is True
+    assert ingest_only["forwarding_supported"] is False
+
     paired_before_sync = source_settings.report(config())
     assert paired_before_sync["sync_state"] == "not_synced_yet"
     assert paired_before_sync["sync_reason"] is None

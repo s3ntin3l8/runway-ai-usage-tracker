@@ -399,21 +399,6 @@ def sync(
         return client.sync(config, report) if client is not None else False
 
 
-def ensure_synced(
-    config: dict[str, Any],
-    path: pathlib.Path,
-    report: Callable[[dict[str, Any]], dict[str, Any]],
-) -> bool:
-    """Run one source-sync if this client has not synced yet, or await an in-flight sync."""
-    with _SYNC_LOCK:
-        client = prepare(config, path)
-        if client is None:
-            return False
-        if client.sync_state != "not_synced_yet":
-            return client.sync_state == "ok"
-        return client.sync(config, report)
-
-
 def synced_report(
     config: dict[str, Any],
     path: pathlib.Path,
