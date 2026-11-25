@@ -305,3 +305,201 @@ async def test_hints_are_fetched_even_when_the_list_fills_the_request_budget(
         session_digest(base.SECRET_ID),
         session_digest(REMOTE),
     }
+
+
+# -- discovery from the account's claude.ai conversations (#1397) ------------------------------
+
+PHONE = "cse_01RnkWmQ71CuyetqrPAhjUYB"  # pragma: allowlist secret
+
+
+class ClaudeAiServer(HintServer):
+    """Adds claude.ai: the cookie's account and the conversation list."""
+
+    def __init__(self, *args, conversations=(), email=base.ACCOUNT, status=200):
+        super().__init__(*args)
+        self.conversations, self.email, self.status = list(conversations), email, status
+        self.web_calls: list[str] = []
+        self.list_status = 200
+        self.hang = False
+
+    def __call__(self, request):
+        if request.url.host != "claude.ai":
+            return super().__call__(request)
+        self.web_calls.append(request.url.path)
+        assert "sessionKey=fixture-cookie" in request.headers["cookie"]
+        if self.status != 200:
+            return httpx.Response(self.status, json={})
+        if self.hang:
+            raise httpx.ReadTimeout("slow", request=request)
+        if request.url.path == "/api/account":
+            return httpx.Response(200, json={"email_address": self.email})
+        if self.list_status != 200:
+            return httpx.Response(self.list_status, json={})
+        assert request.url.path == f"/api/organizations/{ORG}/chat_conversations_v2"
+        offset = int(request.url.params["offset"])
+        limit = int(request.url.params["limit"])
+        return httpx.Response(200, json=self.conversations[offset : offset + limit])
+
+
+@pytest.fixture
+async def cookie(environment):
+    await base.probe.token_cache.store(
+        "anthropic",
+        {"cookie_sessionKey": "fixture-cookie"},
+        account_id=base.ACCOUNT,
+        source_id="fixture-cookie-source",
+        source_metadata={"credential_origin": "cookie:anthropic/Chrome/Default/Cookies"},
+    )
+
+
+@pytest.fixture(autouse=True)
+def fresh_discovery():
+    remote_sessions._LAST_DISCOVERY.clear()
+    yield
+    remote_sessions._LAST_DISCOVERY.clear()
+
+
+def conversation(workspace=None, **extra):
+    row = {"uuid": "conv", "name": "a private title", **extra}
+    if workspace is not None:
+        row["workspace_session_id"] = workspace
+    return row
+
+
+@pytest.mark.asyncio
+async def test_sessions_linked_to_conversations_are_discovered_and_read(environment, cookie):
+    phone = remote_row(PHONE, kind="anthropic_cloud")  # started on the phone: cloud runner
+    server = ClaudeAiServer(
+        [cloud_row()],
+        {base.SECRET_ID: two_turns(), PHONE: two_turns(), REMOTE: two_turns()},
+        {PHONE: phone, REMOTE: remote_row()},
+        conversations=[
+            conversation(PHONE.replace("cse_", "session_")),
+            conversation(REMOTE),
+            conversation(),  # an ordinary chat
+            conversation("not-a-session-id"),
+        ],
+    )
+    report = await cycle(server)
+    assert report.outcome == "ok" and report.discovered == 2 and report.remote_sessions == 2
+    assert {r.session_id for r in events(environment)} == {
+        session_digest(base.SECRET_ID),
+        session_digest(PHONE),
+        session_digest(REMOTE),
+    }
+
+
+@pytest.mark.asyncio
+async def test_an_ordinary_cloud_session_is_not_read_through_a_conversation(environment, cookie):
+    # A cloud-runner session without the Cowork tag is the list's business, never a hint's.
+    server = ClaudeAiServer(
+        [],
+        {PHONE: two_turns()},
+        {PHONE: remote_row(PHONE, kind="anthropic_cloud", tags=[])},
+        conversations=[conversation(PHONE)],
+    )
+    report = await cycle(server)
+    assert "hint_skipped" in report.notes and events(environment) == []
+
+
+@pytest.mark.asyncio
+async def test_a_cookie_of_another_account_discovers_nothing(environment, cookie):
+    server = ClaudeAiServer(
+        [], {}, {}, conversations=[conversation(PHONE)], email="someone-else@example.com"
+    )
+    report = await cycle(server)
+    assert "discovery_cookie_other_account" in report.notes and report.discovered == 0
+    assert server.web_calls == ["/api/account"] and server.session_reads() == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status,note", [(403, "permission_denied"), (429, "rate_limited")])
+async def test_a_failing_conversation_list_never_fails_the_cycle(environment, cookie, status, note):
+    server = ClaudeAiServer([cloud_row()], {base.SECRET_ID: two_turns()}, {}, status=status)
+    report = await cycle(server)
+    assert report.outcome == "ok" and report.sessions_read == 1
+    assert f"discovery_{note}" in report.notes
+
+
+@pytest.mark.asyncio
+async def test_conversations_are_listed_at_most_once_an_hour(environment, cookie, monkeypatch):
+    server = ClaudeAiServer([], {}, {}, conversations=[conversation()])
+    await cycle(server)
+    await cycle(server)
+    assert server.web_calls.count("/api/account") == 1
+    monkeypatch.setattr(remote_sessions, "DISCOVERY_INTERVAL", 0.0)
+    await cycle(server)
+    assert server.web_calls.count("/api/account") == 2
+
+
+@pytest.mark.asyncio
+async def test_the_conversation_list_is_paged_and_bounded(environment, cookie, monkeypatch):
+    monkeypatch.setattr(remote_sessions, "DISCOVERY_PAGE", 1)
+    monkeypatch.setattr(remote_sessions, "DISCOVERY_MAX_PAGES", 2)
+    server = ClaudeAiServer(
+        [], {}, {}, conversations=[conversation(PHONE), conversation(REMOTE), conversation(OTHER)]
+    )
+    report = await cycle(server)
+    assert report.discovered == 2 and "discovery_max_pages" in report.notes
+
+
+@pytest.mark.asyncio
+async def test_without_a_cookie_nothing_is_asked_of_claude_ai(environment):
+    server = ClaudeAiServer([], {}, {})
+    report = await cycle(server)
+    assert report.outcome == "ok" and server.web_calls == []
+
+
+@pytest.mark.asyncio
+async def test_conversation_titles_never_reach_the_logs(environment, cookie, caplog):
+    server = ClaudeAiServer(
+        [], {PHONE: two_turns()}, {PHONE: remote_row(PHONE)}, conversations=[conversation(PHONE)]
+    )
+    with caplog.at_level("DEBUG"):
+        async with httpx.AsyncClient(transport=httpx.MockTransport(server)) as client:
+            await collector.collect_all(client)
+    assert "a private title" not in caplog.text and PHONE not in caplog.text
+    assert "fixture-cookie" not in caplog.text and "discovered=1" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_a_failing_list_after_the_account_check_never_fails_the_cycle(environment, cookie):
+    server = ClaudeAiServer([cloud_row()], {base.SECRET_ID: two_turns()}, {})
+    server.list_status = 403
+    report = await cycle(server)
+    assert report.outcome == "ok" and report.sessions_read == 1
+    assert "discovery_permission_denied" in report.notes
+
+
+@pytest.mark.asyncio
+async def test_a_slow_claude_ai_ends_discovery_not_the_cycle(environment, cookie, monkeypatch):
+    import asyncio
+
+    async def stall(*args, **kwargs):
+        await asyncio.sleep(60)
+
+    monkeypatch.setattr(collector, "DISCOVERY_TIMEOUT", 0.05)
+    monkeypatch.setattr(remote_sessions, "discover_from_conversations", stall)
+    report = await cycle(ClaudeAiServer([cloud_row()], {base.SECRET_ID: two_turns()}, {}))
+    assert report.outcome == "ok" and report.sessions_read == 1
+    assert "discovery_timeout" in report.notes
+
+
+@pytest.mark.asyncio
+async def test_a_connection_failure_is_a_discovery_note(environment, cookie):
+    server = ClaudeAiServer([], {}, {})
+    server.hang = True
+    report = await cycle(server)
+    assert report.outcome == "ok" and "discovery_timeout" in report.notes
+
+
+@pytest.mark.asyncio
+async def test_relisting_known_sessions_does_not_count_them_as_discovered(
+    environment, cookie, monkeypatch
+):
+    server = ClaudeAiServer([], {}, {}, conversations=[conversation(PHONE)])
+    server.statuses[PHONE] = 404
+    first = await cycle(server)
+    monkeypatch.setattr(remote_sessions, "DISCOVERY_INTERVAL", 0.0)
+    again = await cycle(server)
+    assert (first.discovered, again.discovered) == (1, 0)

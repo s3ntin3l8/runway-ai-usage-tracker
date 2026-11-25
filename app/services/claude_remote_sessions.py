@@ -2,28 +2,48 @@
 
 Claude Desktop's remote Cowork sessions run in Anthropic's cloud and leave no local transcript.
 ``GET /v1/code/sessions`` and every other list leave them out, but each one can be fetched by id;
-the sidecar reads the ids from Claude Desktop's ``remote-session-spaces.json`` and sends them here.
+the sidecar reads the ids from Claude Desktop's ``remote-session-spaces.json`` and sends them here,
+and the cloud collector finds the rest (also those started on the phone or the web) in the account's
+claude.ai conversation list (``discover_from_conversations``).
 The id itself is stored encrypted and never logged; the digest is the same one-way stand-in the
 cloud checkpoints and events use.
 """
 
 from __future__ import annotations
 
+import asyncio
+import re
 import time
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
+import httpx
 from sqlmodel import Session, col, select
 
 from app.core.db import engine
 from app.core.encryption import DecryptionError, encryption_service
 from app.models.db import ClaudeRemoteSessionHint
 from app.models.schemas_ingest import RemoteSessionHintIn
+from app.services.account_identity import canonical_account_id
 from app.services.claude_cloud_events import session_digest
+from app.services.claude_verification import claude_get
+from app.services.collectors.anthropic_console import ConsoleAPIError
 
-ENVIRONMENT_KIND = "ccs"
+# Mac-bound remote Cowork sessions are ``ccs``; ones started on the phone or the web run on the
+# cloud runner (``anthropic_cloud``). The list leaves out both; the product tag tells them apart
+# from ordinary cloud-runner sessions.
+ENVIRONMENT_KINDS = frozenset({"ccs", "anthropic_cloud"})
 REMOTE_COWORK_TAG = "product:cowork-remote"
+# claude.ai links each Cowork session to a chat conversation; its list is the only one that names
+# the sessions started on another device (#1397).
+DISCOVERY_SOURCE = "claude.ai"
+DISCOVERY_INTERVAL = 3600.0
+DISCOVERY_PAGE = 100
+DISCOVERY_MAX_PAGES = 20
+_WORKSPACE_ID = re.compile(r"(?:session|cse)_(01[A-Za-z0-9]{22})")
+# When each account last listed its conversations (process-local; a restart lists again once).
+_LAST_DISCOVERY: dict[str, float] = {}
 # A hint already stored is re-stamped at most this often, so a sidecar that sends its list on every
 # heartbeat does not turn each heartbeat into a write.
 _TOUCH_INTERVAL = 3600.0
@@ -39,7 +59,7 @@ def is_remote_cowork(row: dict[str, Any]) -> bool:
     """
     tags = row.get("tags")
     return (
-        row.get("environment_kind") == ENVIRONMENT_KIND
+        row.get("environment_kind") in ENVIRONMENT_KINDS
         and isinstance(tags, list)
         and REMOTE_COWORK_TAG in tags
     )
@@ -163,3 +183,84 @@ def mark_checked(checked: dict[str, float], now: float | None = None) -> None:
                 row.last_event_at = checked[row.session_digest]
             session.add(row)
         session.commit()
+
+
+def discovery_due(account: str, now: float | None = None) -> bool:
+    stamp = time.time() if now is None else now
+    return stamp - _LAST_DISCOVERY.get(account, 0.0) >= DISCOVERY_INTERVAL
+
+
+async def discover_from_conversations(
+    client: httpx.AsyncClient, cookie: str, account: str, org_uuid: str, *, pause: float = 0.0
+) -> tuple[list[str], str]:
+    """Remote Cowork session ids from the account's claude.ai conversations, and an outcome label.
+
+    The cookie must belong to ``account`` (``/api/account`` is checked) and only the verified
+    organization is listed, so a cookie of another person never feeds this account's hints. Only
+    ``workspace_session_id`` is read from a row; titles and messages are never looked at. The labels
+    are fixed strings, safe to log.
+    """
+    _LAST_DISCOVERY[account] = time.time()
+    try:
+        holder = await claude_get(client, "anthropic", "/api/account", cookie)
+        email = holder.get("email_address") if isinstance(holder, dict) else None
+        if not isinstance(email, str) or canonical_account_id(email) != account:
+            return [], "cookie_other_account"
+        ids: list[str] = []
+        for page in range(DISCOVERY_MAX_PAGES):
+            if page and pause:
+                await asyncio.sleep(pause)
+            body = await claude_get(
+                client,
+                "anthropic",
+                f"/api/organizations/{org_uuid}/chat_conversations_v2"
+                f"?limit={DISCOVERY_PAGE}&offset={page * DISCOVERY_PAGE}",
+                cookie,
+            )
+            rows = (
+                body
+                if isinstance(body, list)
+                else body.get("data")
+                if isinstance(body, dict)
+                else None
+            )
+            if not isinstance(rows, list):
+                return ids, "unsupported_contract"
+            for row in rows:
+                raw = row.get("workspace_session_id") if isinstance(row, dict) else None
+                match = _WORKSPACE_ID.fullmatch(raw) if isinstance(raw, str) else None
+                if match and (sid := f"cse_{match.group(1)}") not in ids:
+                    ids.append(sid)
+            if len(rows) < DISCOVERY_PAGE:
+                return ids, "ok"
+        return ids, "max_pages"
+    except ConsoleAPIError as exc:
+        return [], exc.error_type or "unavailable"
+
+
+def store_discovered(ids: list[str], account_uuid: str, org_uuid: str) -> int:
+    """Hints for the discovered ids under the verified login's account and organization.
+
+    Returns how many were new: re-listing a known session only re-stamps it.
+    """
+    if not ids:
+        return 0
+    with Session(engine) as session:
+        known = set(
+            session.exec(
+                select(ClaudeRemoteSessionHint.session_digest).where(
+                    col(ClaudeRemoteSessionHint.session_digest).in_(
+                        [session_digest(sid) for sid in ids]
+                    )
+                )
+            ).all()
+        )
+        upsert_hints(
+            session,
+            [
+                RemoteSessionHintIn(session_id=sid, account_uuid=account_uuid, org_uuid=org_uuid)
+                for sid in ids
+            ],
+            DISCOVERY_SOURCE,
+        )
+    return len({session_digest(sid) for sid in ids} - known)
