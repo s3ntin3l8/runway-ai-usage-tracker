@@ -105,7 +105,8 @@ creates no event and is never logged.
    fixes a session's account and organization. After the list pass, hints whose account and organization
    UUIDs equal the verified login's are fetched, longest unchecked first (so every hint is reached however
    many a Mac reports), at most 50 per pass and never past half the cycle's request cap, skipping ids the
-   list already returned. A session whose last event is more than a week old is fetched once a day. A
+   list already returned. A session whose last event is more than a week old, or that did not resolve
+   (missing, unreadable, not remote Cowork), is fetched once a day. A
    fetched row is kept only when `environment_kind == "ccs"` **and** its tags contain
    `product:cowork-remote`; a kept row is then read exactly like an `anthropic_cloud` row (same
    checkpoints, reducer and event ids). The hint pass never fails the cycle: a missing or unreadable
@@ -223,6 +224,10 @@ closed turn's `committed_sequence` and the encrypted cursor of the page that hol
 reducer's serialised state (including the previous result's `modelUsage` per model, for 5.3), an `open_tail`
 flag, stall, turn, message and remainder counters, and the last cross-check label. No content, no ids.
 The collector's per-account health lives in `claude_cloud_collector_state`.
+One `claude_remote_session_hint` row per remote Cowork session a sidecar reported (5.1): the session
+digest in clear, the session id **encrypted** (it is needed to fetch the session), the Claude account and
+organization UUIDs, the reporting sidecar, when it was first and last reported, and when it was last
+fetched with the `last_event_at` seen then. No content.
 
 ## 7. Acceptance criteria (checked on prod, read-only SQL plus the cycle log)
 

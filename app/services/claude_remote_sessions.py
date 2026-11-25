@@ -57,14 +57,21 @@ def upsert_hints(
     account, so a later report that disagrees only re-stamps the hint and never moves it.
     """
     stamp = time.time() if now is None else now
-    written = 0
-    for hint in hints:
-        digest = session_digest(hint.session_id)
-        row = session.exec(
+    by_digest = {session_digest(hint.session_id): hint for hint in hints}
+    if not by_digest:
+        return 0
+    # One query for the whole list: a sidecar sends it with every heartbeat.
+    existing = {
+        row.session_digest: row
+        for row in session.exec(
             select(ClaudeRemoteSessionHint).where(
-                col(ClaudeRemoteSessionHint.session_digest) == digest
+                col(ClaudeRemoteSessionHint.session_digest).in_(list(by_digest))
             )
-        ).first()
+        ).all()
+    }
+    written = 0
+    for digest, hint in by_digest.items():
+        row = existing.get(digest)
         if row is None:
             row = ClaudeRemoteSessionHint(
                 session_digest=digest,
@@ -95,8 +102,12 @@ class Hint:
 
 
 def _due(row: ClaudeRemoteSessionHint, now: float) -> bool:
-    if row.last_checked <= 0 or row.last_event_at <= 0:
+    if row.last_checked <= 0:
         return True
+    if row.last_event_at <= 0:
+        # Fetched but never resolved (deleted, unreadable, not remote Cowork): back off like a
+        # settled session instead of spending a request on it every cycle.
+        return now - row.last_checked >= SETTLED_RECHECK
     if now - row.last_event_at < SETTLED_AFTER:
         return True
     # A session quiet for a week is only looked at once a day, in case it is resumed.

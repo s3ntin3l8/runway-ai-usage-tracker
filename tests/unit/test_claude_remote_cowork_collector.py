@@ -249,3 +249,38 @@ def test_a_later_report_never_moves_a_hint_to_another_account(environment, hints
     with Session(environment) as session:
         row = session.exec(select(ClaudeRemoteSessionHint)).one()
     assert (row.account_uuid, row.last_seen) == (SUBJECT, 10_000.0)
+
+
+@pytest.mark.asyncio
+async def test_a_hint_that_never_resolves_is_only_rechecked_once_a_day(
+    environment, hints, monkeypatch
+):
+    hints(OTHER)
+    server = HintServer([], {}, {})
+    server.statuses[OTHER] = 404
+    await cycle(server)
+    await cycle(server)
+    assert fetched(server) == [OTHER]
+    monkeypatch.setattr(remote_sessions, "SETTLED_RECHECK", 0.0)  # a day has passed
+    await cycle(server)
+    assert fetched(server) == [OTHER, OTHER]
+
+
+def test_a_heartbeat_resending_the_whole_list_writes_only_new_hints(environment, hints):
+    from sqlmodel import select
+
+    from app.models.db import ClaudeRemoteSessionHint
+
+    hints(REMOTE, now=1.0)
+    with Session(environment) as session:
+        written = remote_sessions.upsert_hints(
+            session,
+            [
+                RemoteSessionHintIn(session_id=sid, account_uuid=SUBJECT, org_uuid=ORG)
+                for sid in (REMOTE, OTHER, OTHER)
+            ],
+            "mac",
+            now=2.0,
+        )
+        assert written == 1
+        assert len(session.exec(select(ClaudeRemoteSessionHint)).all()) == 2
