@@ -11,6 +11,7 @@ from app.models.db_claude_cloud import (
     ClaudeCloudSessionUsage,
     ClaudeCloudVerification,
     ClaudeCloudVerificationArchive,
+    ClaudeRemoteSessionHint,
 )
 from app.models.db_credentials import (
     CredentialSource,
@@ -55,6 +56,7 @@ __all__ = [
     "ClaudeCloudSessionUsage",
     "ClaudeCloudVerification",
     "ClaudeCloudVerificationArchive",
+    "ClaudeRemoteSessionHint",
     "CredentialSource",
     "CredentialTag",
     "encryption_service",

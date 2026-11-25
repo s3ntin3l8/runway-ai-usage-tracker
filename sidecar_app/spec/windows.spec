@@ -94,6 +94,7 @@ a = Analysis(
         "scripts.sidecar_pkg.safari_cookies",
         "scripts.sidecar_pkg.cookie_scan",
         "scripts.sidecar_pkg.cowork_events",
+        "scripts.sidecar_pkg.cowork_remote",
         "cryptography.hazmat.primitives.padding",
         "cryptography.hazmat.primitives.ciphers",
         "scripts.sidecar_pkg.event_extractors.anthropic",

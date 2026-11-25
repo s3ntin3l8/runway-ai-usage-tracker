@@ -4656,6 +4656,9 @@ class CollectionResult:
     error_count: int
     completed_providers: list[str]
     cowork_batch: Any = None
+    #: Remote Cowork session ids this Mac ran (``scripts/sidecar_pkg/cowork_remote.py``);
+    #: sent with the first batch so the server can read their usage from the cloud.
+    remote_sessions: list[dict[str, str]] = field(default_factory=list)
     #: Session names that changed since the last accepted push (see
     #: ``scripts/sidecar_pkg/session_names.py``); sent with the first batch.
     session_names: list[dict[str, Any]] = field(default_factory=list)
@@ -5177,6 +5180,22 @@ def run_collection(config: dict[str, Any], providers: list[str] | None = None) -
             if "anthropic" in completed_providers_this_cycle:
                 completed_providers_this_cycle.remove("anthropic")
 
+    remote_sessions: list[dict[str, str]] = []
+    if (
+        _events_enabled
+        and platform.system() == "Darwin"
+        and not credential_scan_only
+        and ("all" in enabled_providers or "anthropic" in enabled_providers)
+    ):
+        try:
+            from scripts.sidecar_pkg.cowork_remote import collect_remote_session_hints
+
+            remote_sessions = collect_remote_session_hints(
+                Path.home() / "Library/Application Support/Claude/local-agent-mode-sessions"
+            )
+        except Exception:
+            logging.debug("Remote Cowork session ids unavailable", exc_info=True)
+
     # Silent-listener manifest (PR #288): report every credential the
     # sidecar couldn't resolve this cycle, even if zero — silent cycles
     # let the server prune stale pending entries. The POST is gated on
@@ -5280,6 +5299,7 @@ def run_collection(config: dict[str, Any], providers: list[str] | None = None) -
         error_count,
         completed_providers_this_cycle,
         cowork_batch,
+        remote_sessions,
         _session_names.select_for_push(all_session_names),
     )
 
@@ -5447,6 +5467,7 @@ class DaemonRunner:
             metrics = collection_result.metrics
             events = collection_result.events
             session_name_records = collection_result.session_names
+            remote_session_records = collection_result.remote_sessions
             collection_errors = collection_result.error_count
             completed_providers = collection_result.completed_providers
 
@@ -5519,6 +5540,7 @@ class DaemonRunner:
                     "events": event_batch,
                     # First batch only; at most the server's per-request cap.
                     "session_names": session_name_records if first_batch else None,
+                    "claude_remote_sessions": remote_session_records if first_batch else None,
                     "sidecar_id": get_hostname(),
                     "sidecar_version": sidecar_version,
                     "os_platform": os_platform,
