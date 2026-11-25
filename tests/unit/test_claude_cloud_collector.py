@@ -16,6 +16,7 @@ from app.models.db import ClaudeCloudSessionCheckpoint, CredentialSource, UsageE
 from app.services import claude_cloud_collector as collector
 from app.services import claude_cloud_probe as probe
 from app.services import claude_cloud_support as support
+from app.services import claude_remote_sessions as remote_sessions
 from app.services.claude_cloud_events import session_digest
 from app.services.token_cache import TokenCache
 from tests.fixtures.claude_cloud_history import assistant, result, system
@@ -146,6 +147,7 @@ async def environment(monkeypatch, tmp_path):
     monkeypatch.setattr(support, "Session", Session)
     monkeypatch.setattr(support, "engine", engine)
     monkeypatch.setattr(collector, "engine", engine)
+    monkeypatch.setattr(remote_sessions, "engine", engine)
     monkeypatch.setattr("app.services.source_controls._ENABLED", False)
     from cryptography.fernet import Fernet
 
@@ -156,6 +158,7 @@ async def environment(monkeypatch, tmp_path):
     service = EncryptionService()
     monkeypatch.setattr(support, "encryption_service", service)
     monkeypatch.setattr(collector, "encryption_service", service)
+    monkeypatch.setattr(remote_sessions, "encryption_service", service)
     cache = TokenCache()
     monkeypatch.setattr(probe, "token_cache", cache)
     with Session(engine) as session:

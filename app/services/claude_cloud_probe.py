@@ -163,6 +163,8 @@ class Probe:
         self.report = empty_report(request.report_version)
         self.tokens: dict[str, str] = {}
         self.expected_org: str | None = None
+        self.account_uuid: str | None = None
+        self.org_uuid: str | None = None
         self.authority: tuple[Any, ...] = ()
         self.total_bytes = 0
         self.total_byte_limit = total_byte_limit
@@ -253,6 +255,9 @@ class Probe:
         ):
             if expected is not None and support.strict_uuid(expected) != actual:
                 raise ProbeError("identity_mismatch")
+        # The verified holder and organization: the cloud collector matches remote session hints
+        # against them.
+        self.account_uuid, self.org_uuid = subject, org
         self.report["account_verified"] = self.report["organization_verified"] = True
         headers.update(
             {

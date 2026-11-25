@@ -15,7 +15,9 @@ and never a source.
 
 It reuses the verifier's read-only plumbing (``claude_cloud_probe.Probe``): exact cached source, Code
 provenance, no refresh, account and organization checks, fixed host, bounded responses. Bridge rows
-are skipped, so local scraping is never double counted. While events of the first (coarse) collector
+are skipped, so local scraping is never double counted. Remote Cowork sessions (``ccs``, Claude
+Desktop's cloud-run Cowork) are missing from every list; a Mac's sidecar reports their ids and they are
+fetched one by one and read the same way (``claude_remote_sessions``). While events of the first (coarse) collector
 exist the cycle writes nothing and reports ``migration_required``.
 """
 
@@ -44,6 +46,7 @@ from app.models.db import ClaudeCloudCollectorState, ClaudeCloudSessionCheckpoin
 from app.models.schemas import SessionNameIn, UsageEventPush
 from app.services import claude_cloud_probe as probe
 from app.services import claude_cloud_support as support
+from app.services import claude_remote_sessions as remote_sessions
 from app.services.claude_cloud_events import (
     PROVIDER_ID,
     ClaudeCloudHistoryReducer,
@@ -69,6 +72,8 @@ PAGE_PAUSE = 0.25
 # Per cycle: history pages and total requests (list, identity and history together).
 HISTORY_PAGES_PER_CYCLE = 40
 REQUESTS_PER_CYCLE = 200
+# Remote Cowork hints fetched per list pass (one request each; see ``_hinted_rows``).
+MAX_HINTS_PER_CYCLE = 50
 # A session that cannot close one turn within its page budget gets a larger one next time.
 MAX_STALL_FACTOR = 10
 # While a cycle ends with work left, the next one runs this soon instead of at the interval.
@@ -94,6 +99,7 @@ class CycleReport:
     sessions_read: int = 0
     events: int = 0
     names_updated: int = 0
+    remote_sessions: int = 0
     backlog: bool = False
     stats: Counter[str] = field(default_factory=Counter)
     crosscheck: Counter[str] = field(default_factory=Counter)
@@ -391,22 +397,93 @@ async def _list_rows(
         report.pages += read.pages
         report.listed += read.listed
         report.notes.extend(read.notes)
-    rows: list[_Row] = []
-    for row in read.rows:
-        sid = row["id"]
-        digest = session_digest(sid)
-        raw = row.get("last_event_at")
-        rows.append(
-            _Row(
-                session_id=sid,
-                digest=digest,
-                facts=_facts(row, attempt.account, digest),
-                last_event_at=_timestamp(raw),
-                last_event_raw=raw if isinstance(raw, str) else None,
-                block=_block(row),
-                title=title if isinstance(title := row.get("title"), str) else None,
-            )
+    return [_row_from(row, attempt.account) for row in read.rows]
+
+
+def _row_from(row: dict[str, Any], account: str) -> _Row:
+    sid = row["id"]
+    digest = session_digest(sid)
+    raw = row.get("last_event_at")
+    return _Row(
+        session_id=sid,
+        digest=digest,
+        facts=_facts(row, account, digest),
+        last_event_at=_timestamp(raw),
+        last_event_raw=raw if isinstance(raw, str) else None,
+        block=_block(row),
+        title=title if isinstance(title := row.get("title"), str) else None,
+    )
+
+
+async def _hinted_rows(
+    attempt: _CollectorProbe, headers: dict[str, str], listed: list[_Row], report: CycleReport
+) -> list[_Row]:
+    """Remote Cowork sessions a sidecar reported, which no session list returns.
+
+    Only hints for the verified login's own account and organization are fetched, and a fetched
+    session is kept only when it is a remote Cowork session (``remote_sessions.is_remote_cowork``),
+    so a hint can never make the collector read a local (``bridge``) session. The pass is bounded
+    (``MAX_HINTS_PER_CYCLE``, half the cycle's requests) and never fails the cycle: a missing
+    session is skipped, and a rate limit, timeout or spent byte budget ends the pass, so the listed
+    sessions are still read.
+    """
+    if attempt.account_uuid is None or attempt.org_uuid is None:
+        return []
+    try:
+        hints = await asyncio.to_thread(
+            remote_sessions.load_hints, attempt.account_uuid, attempt.org_uuid, MAX_HINTS_PER_CYCLE
         )
+    except SQLAlchemyError:
+        report.notes.append("hints_unavailable")
+        return []
+    known = {row.session_id for row in listed}
+    rows: list[_Row] = []
+    checked: dict[str, float] = {}
+    for index, hint in enumerate(hints):
+        if hint.session_id in known:
+            continue
+        if int(attempt.report["requests"]) >= REQUESTS_PER_CYCLE // 2:
+            report.notes.append("hints_deferred")
+            break
+        if index and PAGE_PAUSE:
+            await asyncio.sleep(PAGE_PAUSE)
+        attempt.report["stage"] = "hint_get"
+        try:
+            payload = await attempt.get(
+                f"/v1/code/sessions/{quote(hint.session_id, safe='')}", headers
+            )
+        except probe.ProbeError as exc:
+            label = str(exc)
+            if label in ("unavailable", "rejected", "unsupported_contract"):
+                # A deleted or unreadable session must not stop the others.
+                report.notes.append(f"hint_{label}")
+                checked[hint.digest] = 0.0
+                continue
+            if label in ("rate_limited", "response_limit"):
+                report.notes.append(f"hint_{label}")
+                break
+            raise
+        except httpx.HTTPError:
+            report.notes.append("hint_unavailable")
+            break
+        checked[hint.digest] = 0.0
+        # The single-session read wraps the row; the list returns it bare.
+        row = payload.get("response_shape", payload) if isinstance(payload, dict) else None
+        if not isinstance(row, dict) or row.get("id") != hint.session_id:
+            report.notes.append("hint_unsupported_contract")
+            continue
+        if not remote_sessions.is_remote_cowork(row):
+            report.notes.append("hint_skipped")
+            continue
+        found = _row_from(row, attempt.account)
+        if found.last_event_at is not None:
+            checked[hint.digest] = found.last_event_at.timestamp()
+        rows.append(found)
+    try:
+        await asyncio.to_thread(remote_sessions.mark_checked, checked)
+    except SQLAlchemyError:
+        report.notes.append("hints_unavailable")
+    report.remote_sessions = len(rows)
     return rows
 
 
@@ -587,6 +664,7 @@ async def _sync(attempt: _CollectorProbe, headers: dict[str, str], report: Cycle
     rows = _PENDING.get(attempt.account)
     if rows is None:
         rows = await _list_rows(attempt, headers, report)
+        rows += await _hinted_rows(attempt, headers, rows, report)
         await _update_names(rows, report)
     else:
         report.notes.append("backlog_resumed")
@@ -766,12 +844,14 @@ async def collect_all(client: httpx.AsyncClient) -> dict[str, CycleReport]:
             logger.warning("Claude cloud collector: state write failed (%s)", type(exc).__name__)
         logger.info(
             "Claude cloud collector: outcome=%s list_pages=%d history_pages=%d listed=%d cloud=%d "
-            "read=%d new_events=%d names_updated=%d crosscheck=%s stats=%s notes=%s logins=%s",
+            "remote_cowork=%d read=%d new_events=%d names_updated=%d crosscheck=%s stats=%s "
+            "notes=%s logins=%s",
             report.outcome,
             report.pages,
             report.history_pages,
             report.listed,
             report.cloud_sessions,
+            report.remote_sessions,
             report.sessions_read,
             report.events,
             report.names_updated,

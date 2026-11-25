@@ -334,3 +334,96 @@ def test_bad_name_entry_does_not_reject_the_payload(session):
     assert r.status_code == 200, r.text
     assert r.json()["events_inserted"] == 1
     assert r.json()["names_upserted"] == 0
+
+
+REMOTE_ACCT = "00000000-0000-4000-8000-00000000a0c1"
+REMOTE_ORG = "00000000-0000-4000-8000-0000000000f9"
+REMOTE_ID = "cse_01Qx7pLm3RtV9wKe2NbYh4Ds"
+
+
+def _remote_payload(*hints: dict) -> dict:
+    payload = _names_payload()
+    del payload["session_names"]
+    payload["claude_remote_sessions"] = list(hints)
+    return payload
+
+
+def _remote_hint(session_id: str = REMOTE_ID) -> dict:
+    return {"session_id": session_id, "account_uuid": REMOTE_ACCT, "org_uuid": REMOTE_ORG}
+
+
+@pytest.fixture
+def keyed_hints(monkeypatch):
+    from cryptography.fernet import Fernet
+
+    from app.core.encryption import EncryptionService
+    from app.services import claude_remote_sessions
+
+    service = EncryptionService(Fernet.generate_key().decode())
+    monkeypatch.setattr(claude_remote_sessions, "encryption_service", service)
+    return service
+
+
+def test_ingest_stores_remote_cowork_hints_encrypted_and_never_logs_them(
+    session, caplog, keyed_hints
+):
+    from app.models.db import ClaudeRemoteSessionHint
+    from app.services.claude_cloud_events import session_digest
+
+    with caplog.at_level("DEBUG"):
+        r = _post_ingest(_remote_payload(_remote_hint()))
+    assert r.status_code == 200, r.text
+    assert r.json()["events_inserted"] == 1
+    rows = session.exec(select(ClaudeRemoteSessionHint)).all()
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.session_digest == session_digest(REMOTE_ID)
+    assert REMOTE_ID not in row.session_id_encrypted
+    assert keyed_hints.decrypt_json(row.session_id_encrypted) == {"session_id": REMOTE_ID}
+    assert (row.account_uuid, row.org_uuid, row.sidecar_id) == (REMOTE_ACCT, REMOTE_ORG, "dev-01")
+    assert REMOTE_ID not in caplog.text
+
+
+def test_a_repeated_hint_is_not_rewritten_on_every_heartbeat(session, keyed_hints):
+    from app.models.db import ClaudeRemoteSessionHint
+
+    _post_ingest(_remote_payload(_remote_hint()))
+    first = session.exec(select(ClaudeRemoteSessionHint)).one()
+    stamp, cipher = first.last_seen, first.session_id_encrypted
+    r = _post_ingest(_remote_payload(_remote_hint()))
+    assert r.status_code == 200, r.text
+    session.expire_all()
+    again = session.exec(select(ClaudeRemoteSessionHint)).one()
+    assert (again.last_seen, again.session_id_encrypted) == (stamp, cipher)
+
+
+def test_malformed_remote_hints_are_dropped_without_failing_events(session, keyed_hints):
+    from app.models.db import ClaudeRemoteSessionHint
+
+    bad = [
+        {
+            "session_id": "session_01Qx7pLm3RtV9wKe2NbYh4Ds",
+            "account_uuid": REMOTE_ACCT,
+            "org_uuid": REMOTE_ORG,
+        },
+        {"session_id": REMOTE_ID, "account_uuid": "nope", "org_uuid": REMOTE_ORG},
+        "not a hint",
+    ]
+    r = _post_ingest(_remote_payload(*bad, _remote_hint("cse_01Hn4TzW8cJq2XvPa6LmRe9K")))
+    assert r.status_code == 200, r.text
+    assert r.json()["events_inserted"] == 1
+    assert len(session.exec(select(ClaudeRemoteSessionHint)).all()) == 1
+    payload = _remote_payload()
+    payload["claude_remote_sessions"] = {"not": "a list"}
+    assert _post_ingest(payload).status_code == 200
+
+
+def test_a_failing_hint_write_does_not_fail_events(session, caplog):
+    with patch(
+        "app.services.claude_remote_sessions.upsert_hints", side_effect=RuntimeError("boom")
+    ):
+        r = _post_ingest(_remote_payload(_remote_hint()))
+    assert r.status_code == 200, r.text
+    assert r.json()["events_inserted"] == 1
+    assert len(session.exec(select(UsageEvent)).all()) == 1
+    assert REMOTE_ID not in caplog.text

@@ -95,3 +95,28 @@ class ClaudeCloudCollectorState(SQLModel, table=True):  # type: ignore[call-arg]
     consecutive_failures: int = 0
     # 1 while the last cycle left sessions unread.
     backlog: int = 0
+
+
+class ClaudeRemoteSessionHint(SQLModel, table=True):  # type: ignore[call-arg]
+    """A remote Cowork session id a sidecar found on a Mac (``scripts/sidecar_pkg/cowork_remote.py``).
+
+    Anthropic's session lists leave these sessions out, so the cloud collector fetches each hinted
+    id directly. The id is needed to fetch the session and is stored encrypted; ``session_digest``
+    is the same one-way stand-in the checkpoints and events use. ``account_uuid``/``org_uuid`` come
+    from Claude Desktop's directory names and must match the login the collector reads with.
+    """
+
+    __tablename__ = "claude_remote_session_hint"
+    __table_args__ = (UniqueConstraint("session_digest", name="uq_claude_remote_session_hint"),)
+    id: int | None = Field(default=None, primary_key=True)
+    session_digest: str
+    session_id_encrypted: str
+    account_uuid: str = Field(index=True)
+    org_uuid: str
+    sidecar_id: str | None = None
+    first_seen: float = 0.0
+    last_seen: float = 0.0
+    # Collector bookkeeping: when the session was last fetched and its ``last_event_at`` then
+    # (epoch seconds; 0 = unknown). They decide which hints the next cycle fetches.
+    last_checked: float = 0.0
+    last_event_at: float = 0.0

@@ -172,6 +172,22 @@ def read_login_directory_report(value: str | None) -> LoginDirectoryReport | Non
         return None
 
 
+REMOTE_SESSIONS_MAX_PER_REQUEST = 500
+_UUID_PATTERN = r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+
+
+class RemoteSessionHintIn(BaseModel):
+    """A remote Cowork session a Mac ran: its API id and the Claude account/org it belongs to.
+
+    Set by the sidecar (``scripts/sidecar_pkg/cowork_remote.py``), read by the Claude cloud
+    collector, which fetches the session by id because Anthropic's lists leave it out.
+    """
+
+    session_id: str = Field(pattern=r"^cse_01[A-Za-z0-9]{22}$")
+    account_uuid: str = Field(pattern=_UUID_PATTERN)
+    org_uuid: str = Field(pattern=_UUID_PATTERN)
+
+
 SESSION_NAME_MAX_LENGTH = 200
 SESSION_NAMES_MAX_PER_REQUEST = 2000
 
@@ -263,8 +279,28 @@ class IngestRequest(BaseModel):
     # Session names (display titles). Optional: an older sidecar sends none, and
     # an older server ignores the field. Empty names are dropped by the server.
     session_names: list[SessionNameIn] | None = None
+    # Remote Cowork session ids from a Mac (first batch only); older sidecars send none.
+    claude_remote_sessions: list[RemoteSessionHintIn] | None = None
     # api_key is now passed via X-Signature header for security
     # NOTE: deltas field removed — replaced by events[]
+
+    @field_validator("claude_remote_sessions", mode="before")
+    @classmethod
+    def lenient_remote_sessions(cls, value: Any) -> list[RemoteSessionHintIn] | None:
+        """Best-effort like the names: a malformed entry is dropped, never a rejected payload."""
+        if not isinstance(value, list):
+            return None
+        kept: list[RemoteSessionHintIn] = []
+        for item in value[:REMOTE_SESSIONS_MAX_PER_REQUEST]:
+            try:
+                kept.append(
+                    item
+                    if isinstance(item, RemoteSessionHintIn)
+                    else RemoteSessionHintIn.model_validate(item)
+                )
+            except ValueError:
+                continue
+        return kept
 
     @field_validator("session_names", mode="before")
     @classmethod

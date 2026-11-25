@@ -902,10 +902,10 @@ async def _write_local_cards(
 
 
 def _ingest_events(ctx: _IngestContext) -> tuple[Any, bool, int, bool]:
-    """Ingest the pushed events, then the session names.
+    """Ingest the pushed events, then the session names and remote Cowork hints.
 
-    The names upsert is best-effort and sits in its own try/except, so a name
-    failure can never fail the events above it.
+    The names and hints are best-effort, each in its own try/except, so neither
+    can fail the events above them.
     """
     session = ctx.session
     payload = ctx.payload
@@ -943,6 +943,19 @@ def _ingest_events(ctx: _IngestContext) -> tuple[Any, bool, int, bool]:
             logger.error(
                 "Session name upsert failed (%d names): %s",
                 len(payload.session_names),
+                type(e).__name__,
+            )
+    # Remote Cowork session ids: best-effort like the names; ids are never logged.
+    if payload.claude_remote_sessions:
+        from app.services.claude_remote_sessions import upsert_hints
+
+        try:
+            upsert_hints(session, payload.claude_remote_sessions, payload.sidecar_id)
+        except Exception as e:
+            session.rollback()
+            logger.error(
+                "Remote Cowork session hints failed (%d hints): %s",
+                len(payload.claude_remote_sessions),
                 type(e).__name__,
             )
     return ingest_result, events_error, names_upserted, names_error
