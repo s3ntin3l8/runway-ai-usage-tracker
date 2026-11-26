@@ -298,6 +298,7 @@ def poll_anthropic_events(
                 try:
                     baseline = datetime.fromisoformat(cursor["baseline"])
                 except ValueError:
+                    # An invalid saved baseline falls back to the account watermark.
                     pass
             offset = cursor.get("offset", 0)
             appended = (
