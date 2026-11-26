@@ -75,6 +75,8 @@ HISTORY_PAGES_PER_CYCLE = 40
 REQUESTS_PER_CYCLE = 200
 # Remote Cowork hints fetched per list pass (one request each; see ``_hinted_rows``).
 MAX_HINTS_PER_CYCLE = 50
+# Listing the account's claude.ai conversations for remote Cowork ids (hourly; see ``_discover``).
+DISCOVERY_TIMEOUT = 60.0
 # A session that cannot close one turn within its page budget gets a larger one next time.
 MAX_STALL_FACTOR = 10
 # While a cycle ends with work left, the next one runs this soon instead of at the interval.
@@ -101,6 +103,7 @@ class CycleReport:
     events: int = 0
     names_updated: int = 0
     remote_sessions: int = 0
+    discovered: int = 0
     backlog: bool = False
     stats: Counter[str] = field(default_factory=Counter)
     crosscheck: Counter[str] = field(default_factory=Counter)
@@ -365,6 +368,9 @@ class _CollectorProbe(probe.Probe):
             report_version=1,
         )
         super().__init__(cast(ClaudeCloudProbeRequest, request), client, total_byte_limit=MAX_BYTES)
+        # The account's claude.ai cookie, for remote Cowork discovery (read before the exact Code
+        # source is selected: inside it the cache only answers for that source).
+        self.claude_cookie: str | None = None
 
     async def get(self, *args: Any, **kwargs: Any) -> Any:
         # The endpoint lock is held per request, so a sweep never turns an operator-triggered
@@ -416,6 +422,41 @@ def _row_from(row: dict[str, Any], account: str) -> _Row:
     )
 
 
+async def _claude_cookie(account: str) -> str | None:
+    """The account's claude.ai session cookie, found as ``anthropic_web`` finds it; None without one.
+
+    Same keys in the same order, including a session key pasted into the OAuth token field.
+    """
+    for kind in ("cookie_sessionKey", "session_cookie"):
+        value = await probe.token_cache.get_token("anthropic", kind, account_id=account)
+        if isinstance(value, str) and value.strip():
+            return value
+    value = await probe.token_cache.get_token("anthropic", "oauth_token", account_id=account)
+    return value if isinstance(value, str) and value.startswith("sk-ant-sid") else None
+
+
+async def _discover(attempt: _CollectorProbe, report: CycleReport) -> None:
+    """Hints from the account's claude.ai conversations; never fails the cycle."""
+    cookie, attempt.claude_cookie = attempt.claude_cookie, None
+    if cookie is None or attempt.account_uuid is None or attempt.org_uuid is None:
+        return
+    try:
+        # Its own bound, so a slow claude.ai cannot spend the cycle's timeout.
+        async with asyncio.timeout(DISCOVERY_TIMEOUT):
+            ids, outcome = await remote_sessions.discover_from_conversations(
+                attempt.client, cookie, attempt.account, attempt.org_uuid, pause=PAGE_PAUSE
+            )
+        report.discovered = await asyncio.to_thread(
+            remote_sessions.store_discovered, ids, attempt.account_uuid, attempt.org_uuid
+        )
+    except TimeoutError:
+        outcome = "timeout"
+    except Exception as exc:  # noqa: BLE001 - discovery is a side input; type only
+        outcome = type(exc).__name__
+    if outcome != "ok":
+        report.notes.append(f"discovery_{outcome}")
+
+
 async def _hinted_rows(
     attempt: _CollectorProbe, headers: dict[str, str], listed: list[_Row], report: CycleReport
 ) -> list[_Row]:
@@ -432,6 +473,7 @@ async def _hinted_rows(
     """
     if attempt.account_uuid is None or attempt.org_uuid is None:
         return []
+    await _discover(attempt, report)
     try:
         hints = await asyncio.to_thread(
             remote_sessions.load_hints, attempt.account_uuid, attempt.org_uuid, MAX_HINTS_PER_CYCLE
@@ -444,6 +486,8 @@ async def _hinted_rows(
     checked: dict[str, float] = {}
     for index, hint in enumerate(hints):
         if hint.session_id in known:
+            # Read through the list; stamp it so it stops taking one of this pass's slots.
+            checked[hint.digest] = 0.0
             continue
         if index and PAGE_PAUSE:
             await asyncio.sleep(PAGE_PAUSE)
@@ -715,6 +759,8 @@ async def _read(attempt: _CollectorProbe, source_id: str, report: CycleReport) -
             attempt.tokens, attempt.expected_org, attempt.authority = await probe.load_source(
                 attempt.account, source_id
             )
+            if remote_sessions.discovery_due(attempt.account):
+                attempt.claude_cookie = await _claude_cookie(attempt.account)
             async with probe.token_cache.using_source("anthropic", attempt.account, source_id):
                 headers = await attempt.identity()
                 try:
@@ -844,7 +890,7 @@ async def collect_all(client: httpx.AsyncClient) -> dict[str, CycleReport]:
             logger.warning("Claude cloud collector: state write failed (%s)", type(exc).__name__)
         logger.info(
             "Claude cloud collector: outcome=%s list_pages=%d history_pages=%d listed=%d cloud=%d "
-            "remote_cowork=%d read=%d new_events=%d names_updated=%d crosscheck=%s stats=%s "
+            "remote_cowork=%d discovered=%d read=%d new_events=%d names_updated=%d crosscheck=%s stats=%s "
             "notes=%s logins=%s",
             report.outcome,
             report.pages,
@@ -852,6 +898,7 @@ async def collect_all(client: httpx.AsyncClient) -> dict[str, CycleReport]:
             report.listed,
             report.cloud_sessions,
             report.remote_sessions,
+            report.discovered,
             report.sessions_read,
             report.events,
             report.names_updated,

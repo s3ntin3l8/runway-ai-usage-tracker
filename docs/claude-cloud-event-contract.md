@@ -9,8 +9,8 @@ the default.
 ## 1. Scope
 
 Sessions of Claude Code that ran on Anthropic's cloud runner (`environment_kind == "anthropic_cloud"`
-in `GET /v1/code/sessions`), and Claude Desktop's remote Cowork sessions (`environment_kind == "ccs"`
-tagged `product:cowork-remote`; see 5.1). Local and bridged sessions are scraped locally and are not
+in `GET /v1/code/sessions`), and remote Cowork sessions (tagged `product:cowork-remote`: `environment_kind == "ccs"` when bound
+to a Mac, `"anthropic_cloud"` when started on the phone or the web; see 5.1). Local and bridged sessions are scraped locally and are not
 touched. Chat, local Cowork (read by the sidecar) and side-model capture for local sessions are out of
 scope. The cross-check, the on/off switch and
 the health record are described under [Claude cloud-runner sessions](collection_logic.md#claude-cloud-runner-sessions).
@@ -98,9 +98,17 @@ creates no event and is never logged.
    `page_with_terminal_omission`). Keep rows with `environment_kind == "anthropic_cloud"`.
    Remote Cowork sessions are on no list (verified 2026-11-25 against `GET /v1/code/sessions`,
    `GET /v1/sessions` and their filters), but each can be read with `GET /v1/code/sessions/{id}`, whose
-   body wraps the row as `{"response_shape": {...}}`. A Mac's sidecar reports their ids
-   (`scripts/sidecar_pkg/cowork_remote.py`, from Claude Desktop's
-   `local-agent-mode-sessions/<accountUuid>/<orgUuid>/remote-session-spaces.json`); the server keeps them
+   body wraps the row as `{"response_shape": {...}}`. Their ids come from two places: a Mac's sidecar
+   reports the ones that Mac ran (`scripts/sidecar_pkg/cowork_remote.py`, from Claude Desktop's
+   `local-agent-mode-sessions/<accountUuid>/<orgUuid>/remote-session-spaces.json`), and once an hour the
+   collector lists the account's claude.ai conversations
+   (`GET https://claude.ai/api/organizations/{org}/chat_conversations_v2`, paged, at most 20 pages of
+   100) with the account's claude.ai cookie, after `/api/account` proves the cookie is the same account,
+   for the verified organization only, reading nothing but each row's `workspace_session_id`
+   (`session_…`/`cse_…`). That list also names the sessions started on another device; a session with no
+   conversation row (seen for some phone sessions, 2026-07..09) is not found. Discovery has its own 60 s
+   bound and never fails the cycle; a failure is a `discovery_<reason>` note and is retried after 15
+   minutes. A pass that hits the page bound is continued from there by the next one. The server keeps them
    encrypted in `claude_remote_session_hint` (`app/services/claude_remote_sessions.py`); the first report
    fixes a session's account and organization. After the list pass, hints whose account and organization
    UUIDs equal the verified login's are fetched, longest unchecked first (so every hint is reached however
@@ -108,7 +116,7 @@ creates no event and is never logged.
    no longer fits the cycle's request cap waits for the catch-up cycle. Ids the list
    already returned are skipped. A session whose last event is more than a week old, or that did not resolve
    (missing, unreadable, not remote Cowork), is fetched once a day. A
-   fetched row is kept only when `environment_kind == "ccs"` **and** its tags contain
+   fetched row is kept only when `environment_kind` is `ccs` or `anthropic_cloud` **and** its tags contain
    `product:cowork-remote`; a kept row is then read exactly like an `anthropic_cloud` row (same
    checkpoints, reducer and event ids). The hint pass never fails the cycle: a missing or unreadable
    session is noted (`hint_unavailable`, `hint_rejected`, …) and skipped, and a rate limit, timeout or
@@ -225,9 +233,9 @@ closed turn's `committed_sequence` and the encrypted cursor of the page that hol
 reducer's serialised state (including the previous result's `modelUsage` per model, for 5.3), an `open_tail`
 flag, stall, turn, message and remainder counters, and the last cross-check label. No content, no ids.
 The collector's per-account health lives in `claude_cloud_collector_state`.
-One `claude_remote_session_hint` row per remote Cowork session a sidecar reported (5.1): the session
+One `claude_remote_session_hint` row per remote Cowork session a sidecar reported or claude.ai listed (5.1): the session
 digest in clear, the session id **encrypted** (it is needed to fetch the session), the Claude account and
-organization UUIDs, the reporting sidecar, when it was first and last reported, and when it was last
+organization UUIDs, the reporter (a sidecar id, or `claude.ai`), when it was first and last reported, and when it was last
 fetched with the `last_event_at` seen then. No content.
 
 ## 7. Acceptance criteria (checked on prod, read-only SQL plus the cycle log)
