@@ -168,6 +168,8 @@ class Probe:
         self.authority: tuple[Any, ...] = ()
         self.total_bytes = 0
         self.total_byte_limit = total_byte_limit
+        # One response's ceiling; the cloud collector raises it for history pages.
+        self.response_byte_limit = MAX_RESPONSE_BYTES
 
     async def check_source(self) -> None:
         try:
@@ -203,7 +205,7 @@ class Probe:
             async for chunk in response.aiter_bytes(chunk_size=65536):
                 self.total_bytes += len(chunk)
                 if (
-                    len(body) + len(chunk) > MAX_RESPONSE_BYTES
+                    len(body) + len(chunk) > self.response_byte_limit
                     or self.total_bytes > self.total_byte_limit
                 ):
                     raise ProbeError("response_limit")

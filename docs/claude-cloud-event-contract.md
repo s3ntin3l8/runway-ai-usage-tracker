@@ -124,7 +124,12 @@ creates no event and is never logged.
    real remote Cowork histories matched their usage blocks as closely as `anthropic_cloud` sessions do.
 2. A session needs reading when its `last_event_at` is later than the stored one (the list's
    `updated_at` is unrelated to usage and is not used). New sessions are read from the start.
-3. Read `GET /v1/code/sessions/{id}/events` (`limit=50`, `sort_order=asc`, `cursor`). The API pages by
+3. Read `GET /v1/code/sessions/{id}/events` (`limit=50`, `sort_order=asc`, `cursor`). Pages carry tool
+   output and can be large (a remote Cowork session measured 2026-11-26: 185 MB over 230 pages, pages
+   up to 6.6 MB), so one response may be up to 16 MB and a cycle reads up to 96 MB. A cycle stops before
+   a further page could cross its total and the catch-up cycle continues from the checkpoint; that stop
+   does not count as a stall. A session with a single page above 16 MB is skipped
+   (`session_response_limit`) without failing the cycle. The API pages by
    an opaque cursor only, so the checkpoint stores the last **closed turn** boundary: its
    `committed_sequence` and the entry cursor of the page that holds it (encrypted, never logged).
    Resuming requests that cursor and skips records with `sequence_num <= committed_sequence`; a rejected

@@ -1101,3 +1101,45 @@ async def test_the_cycle_log_carries_the_count_but_never_a_title(environment, ca
     assert reports
     text = "\n".join(r.getMessage() for r in caplog.records)
     assert "Fake secret title" not in text and "names_updated=" in text
+
+
+# -- byte budgets: remote Cowork histories carry tool output (pages up to 6.6 MB measured) --------
+
+
+def padded(records, size):
+    """The same history with every record carrying ``size`` bytes of tool output."""
+    return [{**record, "tool_output": "x" * size} for record in records]
+
+
+@pytest.mark.asyncio
+async def test_a_history_page_larger_than_a_megabyte_is_read(environment):
+    server = Server([cloud_row()], {SECRET_ID: padded(two_turns(), 300_000)})  # ~2 MB pages
+    report = await cycle(server)
+    assert report.outcome == "ok" and report.sessions_read == 1
+    assert per_model(events(environment)) == {"opus-5.5": [20, 140, 400, 30]}
+
+
+@pytest.mark.asyncio
+async def test_a_spent_byte_budget_leaves_the_rest_for_the_catch_up_cycle(environment, monkeypatch):
+    monkeypatch.setattr(collector, "HISTORY_RESPONSE_BYTES", 400_000)
+    monkeypatch.setattr(collector, "MAX_BYTES", 700_000)  # stops after page 2 of 3
+    server = Server([cloud_row()], {SECRET_ID: padded(two_turns(), 100_000)}, page=2)
+    first = await cycle(server)
+    assert first.outcome == "partial" and first.backlog
+    assert checkpoint(environment).stalls == 0  # bytes, not a turn too long for the page budget
+    for _ in range(5):
+        if not (await cycle(server)).backlog:
+            break
+    assert per_model(events(environment)) == {"opus-5.5": [20, 140, 400, 30]}
+
+
+@pytest.mark.asyncio
+async def test_a_page_beyond_the_response_ceiling_skips_only_that_session(environment, monkeypatch):
+    monkeypatch.setattr(collector, "HISTORY_RESPONSE_BYTES", 200_000)
+    server = Server(
+        [cloud_row(OTHER_ID), cloud_row()],
+        {OTHER_ID: padded(two_turns(), 100_000), SECRET_ID: two_turns()},
+    )
+    report = await cycle(server)
+    assert report.outcome == "ok" and "session_response_limit" in report.notes
+    assert {r.session_id for r in events(environment)} == {session_digest(SECRET_ID)}

@@ -66,7 +66,11 @@ CLOUD_KIND = "anthropic_cloud"
 LIST_LIMIT = 20
 HISTORY_LIMIT = 50
 MAX_LIST_PAGES = 200
-MAX_BYTES = 32 * 1024 * 1024
+# Bytes per cycle, and per response. Remote Cowork histories carry tool output: one measured
+# session was 185 MB over 230 pages of 50 events, pages up to 6.6 MB. A cycle stops reading
+# before a further page could cross the cycle total, and the catch-up cycle continues.
+MAX_BYTES = 96 * 1024 * 1024
+HISTORY_RESPONSE_BYTES = 16 * 1024 * 1024
 CYCLE_TIMEOUT = 300.0
 PAGE_PAUSE = 0.25
 # Per cycle: history pages and total requests (list, identity and history together; the remote
@@ -368,6 +372,7 @@ class _CollectorProbe(probe.Probe):
             report_version=1,
         )
         super().__init__(cast(ClaudeCloudProbeRequest, request), client, total_byte_limit=MAX_BYTES)
+        self.response_byte_limit = HISTORY_RESPONSE_BYTES
         # The account's claude.ai cookie, for remote Cowork discovery (read before the exact Code
         # source is selected: inside it the cache only answers for that source).
         self.claude_cookie: str | None = None
@@ -531,6 +536,11 @@ async def _hinted_rows(
     return rows
 
 
+def _bytes_spent(attempt: _CollectorProbe) -> bool:
+    """Whether one more page could cross the cycle's byte total (the rest waits for catch-up)."""
+    return attempt.total_bytes > attempt.total_byte_limit - attempt.response_byte_limit
+
+
 def _needs_reading(row: _Row, checkpoint: _Checkpoint, now: float) -> bool:
     if not checkpoint.known or checkpoint.last_event_at is None:
         return True
@@ -633,9 +643,15 @@ async def _read_session(
             checkpoint.committed_sequence = closed[0]
         if next_cursor is None:
             break
-        if used >= pages_left:
+        out_of_pages = used >= pages_left
+        if out_of_pages or _bytes_spent(attempt):
             report.stats.update({k: v for k, v in reducer.stats.items() if k != "turns"})
-            stalls = 0 if closed_any else checkpoint.stalls + 1
+            # Only the page budget counts toward a stall: a session cut short because other
+            # sessions spent the cycle's bytes has not shown that its turn is too long.
+            if closed_any:
+                stalls = 0
+            else:
+                stalls = checkpoint.stalls + 1 if out_of_pages else checkpoint.stalls
             if stalls >= MAX_STALL_FACTOR:
                 # No turn closed even with the largest budget: this one is longer than a cycle can
                 # read, and re-reading it every cycle would starve the account. Skip the session
@@ -731,13 +747,19 @@ async def _sync(attempt: _CollectorProbe, headers: dict[str, str], report: Cycle
             left = min(_page_budget(checkpoint), left)
         else:
             left = min(_page_budget(checkpoint), HISTORY_PAGES_PER_CYCLE - pages_used, left)
-        if left <= 0:
+        if left <= 0 or _bytes_spent(attempt):
             report.backlog = True
             _PENDING[attempt.account] = [item[0] for item in due[index:]]
             return
         try:
             pages_used += await _read_session(attempt, headers, row, checkpoint, report, left)
         except probe.ProbeError as exc:
+            if str(exc) == "response_limit":
+                # A single page larger than HISTORY_RESPONSE_BYTES (the cycle total cannot be the
+                # cause: reading stops before it could be crossed). Skip this session, not the
+                # others, and say so.
+                report.notes.append("session_response_limit")
+                continue
             if str(exc) != "unsupported_contract":
                 raise
             # One session's history that breaks the contract does not stop the others.
