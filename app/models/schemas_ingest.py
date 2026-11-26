@@ -93,6 +93,8 @@ class UsageEventPush(BaseModel):
     tool_names: list[str] | None = None
     tokens_input: int = 0
     tokens_output: int = 0
+    # Claude transcript records can report progressively larger usage for one message.
+    streamed_usage: bool = False
     tokens_cache_read: int = 0
     tokens_cache_create: int = 0
     # Anthropic splits cache writes by TTL (1h writes cost 2x base input, 5m cost

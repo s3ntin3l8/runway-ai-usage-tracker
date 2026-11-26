@@ -2489,7 +2489,7 @@ def _extract_events_for_provider(
     if not account_ids:
         return 0
     # Lazy import — these are only needed in the events branch.
-    from scripts.sidecar_pkg.event_extractors.anthropic import parse_anthropic_events
+    from scripts.sidecar_pkg.event_extractors.anthropic import poll_anthropic_events
     from scripts.sidecar_pkg.event_extractors.antigravity import parse_antigravity_events
     from scripts.sidecar_pkg.event_extractors.chatgpt import parse_chatgpt_events
     from scripts.sidecar_pkg.event_extractors.gemini import parse_gemini_events
@@ -2499,7 +2499,9 @@ def _extract_events_for_provider(
     from scripts.sidecar_pkg.event_extractors.xai import parse_xai_events
 
     dispatch: dict[str, Any] = {
-        "anthropic": _make_account_extractor(parse_anthropic_events, _discover_anthropic_log_paths),
+        "anthropic": _make_account_extractor(
+            poll_anthropic_events, _discover_anthropic_log_paths, with_watermark=True
+        ),
         "chatgpt": _make_account_extractor(parse_chatgpt_events, _discover_codex_log_paths),
         "gemini": _make_account_extractor(parse_gemini_events, _discover_gemini_log_paths),
         "opencode": _make_account_extractor_opencode(parse_opencode_events),
@@ -2620,7 +2622,7 @@ def _extract_directory_events(
     blocked: list[dict[str, str]],
 ) -> tuple[int, bool]:
     """A directory's logs belong to its own login, never another root's first identity."""
-    from scripts.sidecar_pkg.event_extractors.anthropic import parse_anthropic_events
+    from scripts.sidecar_pkg.event_extractors.anthropic import poll_anthropic_events
     from scripts.sidecar_pkg.event_extractors.chatgpt import parse_chatgpt_events
     from scripts.sidecar_pkg.identity import canonical_account_id
 
@@ -2634,10 +2636,9 @@ def _extract_directory_events(
         Path.home() / ".config" / name,
     ]
     roots = list(dict.fromkeys(root.resolve() for root in roots))
-    parser = parse_anthropic_events if claude else parse_chatgpt_events
     failures = 0
     manifest_complete = True
-    seen: set[tuple[str, str]] = set()
+    seen: dict[tuple[str, str], int] = {}
     for root in roots:
         logs = root / ("projects" if claude else "sessions")
         if not logs.is_dir():
@@ -2678,13 +2679,20 @@ def _extract_directory_events(
         )
         try:
             paths = list(dict.fromkeys(path.resolve() for path in logs.glob("**/*.jsonl")))
-            events = parser(paths, account_id=account_id, since=since)
+            events = (
+                poll_anthropic_events(paths, account_id, since, watermark)
+                if claude
+                else parse_chatgpt_events(paths, account_id=account_id, since=since)
+            )
             before = len(out_events)
             for event in events:
                 key = (account_id, event.event_id)
-                if key in seen:
+                previous_output = seen.get(key)
+                if previous_output is not None and (
+                    not claude or event.tokens_output <= previous_output
+                ):
                     continue
-                seen.add(key)
+                seen[key] = event.tokens_output
                 payload = event.model_dump(mode="json")
                 payload["account_source"] = source
                 payload["credential_origin"] = origin
@@ -2707,7 +2715,7 @@ def _extract_directory_events(
     return failures, manifest_complete
 
 
-def _make_account_extractor(parser: Any, paths_finder: Any) -> Any:
+def _make_account_extractor(parser: Any, paths_finder: Any, *, with_watermark: bool = False) -> Any:
     """Bind a parser to a path-discovery callable so we can pass ``account_id``."""
 
     def _extract(
@@ -2720,17 +2728,17 @@ def _make_account_extractor(parser: Any, paths_finder: Any) -> Any:
         paths = paths_finder()
         if not paths:
             return []
-        # Every path-list parser (anthropic / chatgpt / gemini) takes the
-        # whole ``list[Path]`` — passing one ``Path`` at a time made the
-        # parser iterate a PosixPath and raise ``TypeError`` (issue #320).
+        # Path-list parsers take the whole ``list[Path]`` — passing one
+        # ``Path`` at a time made the parser iterate a PosixPath and raise
+        # ``TypeError`` (issue #320).
         paths_list = list(paths)
         since = watermark.last_pushed(__extract_provider_id(parser), account_id) or (
             datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=bootstrap_days)
         )
-        all_evts = parser(paths_list, account_id=account_id, since=since)
+        parser_options = {"watermark": watermark} if with_watermark else {}
+        all_evts = parser(paths_list, account_id=account_id, since=since, **parser_options)
         # Deduplicate by event_id across paths (the same session file can be
-        # reachable via overlapping discovery roots, e.g. CLAUDE_CONFIG_DIR
-        # plus ~/.claude/projects).
+        # reachable via overlapping discovery roots).
         seen: set[str] = set()
         deduped = []
         for ev in all_evts:
@@ -4662,6 +4670,8 @@ class CollectionResult:
     #: Session names that changed since the last accepted push (see
     #: ``scripts/sidecar_pkg/session_names.py``); sent with the first batch.
     session_names: list[dict[str, Any]] = field(default_factory=list)
+    #: Timestamp watermarks and pending CLI transcript positions for this cycle.
+    watermark: Any = None
 
 
 def run_collection(config: dict[str, Any], providers: list[str] | None = None) -> CollectionResult:
@@ -5167,7 +5177,7 @@ def run_collection(config: dict[str, Any], providers: list[str] | None = None) -
                 Path.home() / "Library/Application Support/Claude/local-agent-mode-sessions",
                 get_sidecar_dir() / "cowork-progress.json",
                 server_account_tag_hints.get("anthropic", {}),
-                existing_ids={e["event_id"] for e in all_events if e["provider_id"] == "anthropic"},
+                existing_events=all_events,
             )
             all_events.extend(cowork_batch.events)
             blocked_origins_this_cycle.extend(cowork_batch.blocked)
@@ -5301,6 +5311,7 @@ def run_collection(config: dict[str, Any], providers: list[str] | None = None) -
         cowork_batch,
         remote_sessions,
         _session_names.select_for_push(all_session_names),
+        _watermark,
     )
 
 
@@ -5669,14 +5680,14 @@ class DaemonRunner:
                         "Server reported an event-ingest failure; keeping the event "
                         "watermark so the events are re-sent next cycle"
                     )
-                if events and not events_failed:
+                if not events_failed:
                     try:
                         from scripts.sidecar_pkg.event_watermark import EventWatermark
                         from scripts.sidecar_pkg.otel_receiver import (
                             EVENT_ID_PREFIX as OTEL_EVENT_ID_PREFIX,
                         )
 
-                        wm = EventWatermark(
+                        wm = collection_result.watermark or EventWatermark(
                             Path(
                                 os.path.expanduser("~/.config/runway-sidecar/event-watermark.json")
                             )
@@ -5693,16 +5704,19 @@ class DaemonRunner:
                                     ts = datetime.datetime.fromisoformat(
                                         ts_str.replace("Z", "+00:00")
                                     )
-                                    wm.advance(ev["provider_id"], ev["account_id"], ts)
+                                    wm.advance(
+                                        ev["provider_id"], ev["account_id"], ts, persist=False
+                                    )
                                     alias = _EVENT_WATERMARK_ALIASES.get(
                                         (ev["provider_id"], ev.get("event_id", ""))
                                     )
                                     if alias is not None:
-                                        wm.advance(alias[0], alias[1], ts)
+                                        wm.advance(alias[0], alias[1], ts, persist=False)
                                 except Exception:
                                     logging.debug(
                                         "Failed to advance event watermark", exc_info=True
                                     )
+                        wm.commit()
                     except Exception as e:
                         logging.warning(f"Failed to advance event watermark: {e}")
 
