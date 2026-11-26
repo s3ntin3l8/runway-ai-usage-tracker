@@ -1,9 +1,10 @@
 """Parse Claude assistant-message JSONL logs into UsageEventPush records."""
 
 import json
+import os
 import sys
 from collections.abc import Callable
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,7 @@ if str(_REPO_ROOT) not in sys.path:
 from app.core.source_apps import CLAUDE_CODE  # noqa: E402
 from app.models.schemas import UsageEventPush  # noqa: E402
 from app.services.model_normalization import normalize_anthropic_model  # noqa: E402
+from scripts.sidecar_pkg.event_watermark import EventWatermark, transcript_fingerprint  # noqa: E402
 from scripts.sidecar_pkg.session_names import make_record  # noqa: E402
 
 # Kept under its old name for importers inside the sidecar package.
@@ -85,6 +87,7 @@ def _build_advisor_events(
                 tool_names=None,
                 tokens_input=inp,
                 tokens_output=out,
+                streamed_usage=True,
                 tokens_cache_read=cache_read,
                 tokens_cache_create=cache_create,
                 tokens_cache_create_1h=cache_1h,
@@ -104,6 +107,8 @@ def parse_anthropic_events(
     since: datetime,
     *,
     ranges: dict[Path, tuple[int, int]] | None = None,
+    progress: dict[Path, int] | None = None,
+    floors: dict[Path, datetime] | None = None,
 ) -> list[UsageEventPush]:
     """Extract UsageEventPush records from Claude JSONL log files.
 
@@ -121,6 +126,10 @@ def parse_anthropic_events(
                 for line in f:
                     if end is not None and f.tell() > end:
                         break
+                    if progress is not None and line.endswith(b"\n"):
+                        # A valid final JSON record can lack a newline. Parse it
+                        # now, but replay that line if the file grows.
+                        progress[fp] = f.tell()
                     try:
                         e = json.loads(line)
                     except Exception:
@@ -135,7 +144,7 @@ def parse_anthropic_events(
                             ts = datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
                         except ValueError:
                             continue
-                        if ts <= since:
+                        if ts <= (floors[fp] if floors is not None else since):
                             continue
 
                         msg = e.get("message", {})
@@ -189,6 +198,7 @@ def parse_anthropic_events(
                             subagent_type=subagent_type,
                             tokens_input=int(usage.get("input_tokens", 0)),
                             tokens_output=int(usage.get("output_tokens", 0)),
+                            streamed_usage=True,
                             tokens_cache_read=int(usage.get("cache_read_input_tokens", 0)),
                             tokens_cache_create=int(usage.get("cache_creation_input_tokens", 0)),
                             tokens_cache_create_1h=int(
@@ -246,6 +256,10 @@ def parse_anthropic_events(
                         continue
 
         except Exception:
+            if progress is not None:
+                # Other transcripts can still be delivered. Keep this one's
+                # last accepted position so its unread bytes can be retried.
+                progress.pop(fp, None)
             continue
     result: list[UsageEventPush] = []
     for dedup_key, main_event in events.items():
@@ -254,6 +268,77 @@ def parse_anthropic_events(
         if iterations:
             result.extend(_build_advisor_events(main_event, iterations))
     return result
+
+
+def _file_stamp(stat: os.stat_result) -> list[int]:
+    return [stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns]
+
+
+def poll_anthropic_events(
+    paths: list[Path], account_id: str, since: datetime, watermark: EventWatermark
+) -> list[UsageEventPush]:
+    """Bootstrap at the account timestamp, then collect each transcript's new bytes."""
+    ranges: dict[Path, tuple[int, int]] = {}
+    floors: dict[Path, datetime] = {}
+    stamps: dict[Path, list[int]] = {}
+    baselines: dict[Path, datetime] = {}
+    oldest = datetime.min.replace(tzinfo=UTC)
+    for path in paths:
+        try:
+            path = path.resolve()
+            if path in ranges:
+                continue
+            stamp = _file_stamp(path.stat())
+            cursor = watermark.anthropic_transcript(path, account_id)
+            previous_stamp = cursor.get("stamp")
+            if previous_stamp == stamp:
+                continue
+            baseline = since
+            if isinstance(cursor.get("baseline"), str):
+                try:
+                    baseline = datetime.fromisoformat(cursor["baseline"])
+                except ValueError:
+                    pass
+            offset = cursor.get("offset", 0)
+            appended = (
+                isinstance(previous_stamp, list)
+                and len(previous_stamp) == len(stamp)
+                and previous_stamp[:2] == stamp[:2]
+                and stamp[2] > previous_stamp[2]
+                and isinstance(offset, int)
+                and 0 < offset <= stamp[2]
+                and cursor.get("fingerprint") == transcript_fingerprint(path, offset)
+            )
+            ranges[path] = (offset if appended else 0, stamp[2])
+            floors[path] = oldest if appended else baseline
+            baselines[path] = baseline
+            stamps[path] = stamp
+        except (OSError, RuntimeError):
+            continue
+
+    progress = {path: start for path, (start, _) in ranges.items()}
+    events = parse_anthropic_events(
+        list(ranges), account_id, since, ranges=ranges, progress=progress, floors=floors
+    )
+    cursors: dict[str, dict[str, Any]] = {}
+    for path, end in progress.items():
+        stamp = stamps[path]
+        try:
+            fingerprint = transcript_fingerprint(path, end)
+            unchanged = _file_stamp(path.stat()) == stamp
+        except OSError:
+            unchanged = False
+        # A write during parsing can invalidate what we read. Retry from the
+        # original floor in that case, even if the account watermark advances.
+        cursors[str(path)] = {
+            "account": account_id,
+            "baseline": baselines[path].isoformat(),
+            "stamp": stamp if unchanged else None,
+            "offset": end if unchanged else 0,
+            "fingerprint": fingerprint if unchanged else None,
+        }
+    watermark.stage_anthropic_transcripts(cursors)
+    return events
 
 
 _NAME_MARKERS = (b'"agent-name"', b'"ai-title"')

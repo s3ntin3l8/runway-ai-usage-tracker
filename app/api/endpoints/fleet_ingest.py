@@ -921,6 +921,7 @@ def _ingest_events(ctx: _IngestContext) -> tuple[Any, bool, int, bool]:
             logger.info(
                 f"Ingested {ingest_result.events_inserted} events "
                 f"({ingest_result.events_duplicate} dup, "
+                f"{ingest_result.events_refreshed} refreshed, "
                 f"{ingest_result.events_reattributed} re-attributed) "
                 f"from {payload.sidecar_id or 'unknown'}"
             )
@@ -1155,6 +1156,7 @@ async def ingest_metrics(
         "events_received": ingest_result.events_received if ingest_result else 0,
         "events_inserted": ingest_result.events_inserted if ingest_result else 0,
         "events_duplicate": ingest_result.events_duplicate if ingest_result else 0,
+        "events_refreshed": ingest_result.events_refreshed if ingest_result else 0,
         "events_reattributed": ingest_result.events_reattributed if ingest_result else 0,
         # True when this batch's events were NOT stored — the sidecar keeps
         # its watermark and re-sends them next cycle instead of losing them.

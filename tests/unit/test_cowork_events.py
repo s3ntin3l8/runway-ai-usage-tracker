@@ -2,8 +2,10 @@
 
 import json
 import os
+from datetime import UTC, date, datetime
 
 import pytest
+import time_machine
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
@@ -148,15 +150,27 @@ def test_orgs_keep_their_own_identity_and_origins(tmp_path):
     assert len({e["credential_origin"] for e in batch.events}) == 2
 
 
-def test_existing_cli_ids_deduplicate_without_consuming_unowned_progress(tmp_path):
+def test_cli_overlap_requires_the_larger_payload_before_checkpointing(tmp_path):
     base = tmp_path / "desktop"
     session(base)
-    from scripts.sidecar_pkg.cowork_events import collect_cowork
+    state = tmp_path / "state.json"
+    full = collect(base, state).events[0]
+    partial = {**full, "tokens_output": 1}
 
-    batch = collect_cowork(base, tmp_path / "state.json", {}, existing_ids={"msg-a"})
+    batch = collect(base, state, existing_events=[partial])
+    assert batch.events == [full]
+    batch.mark_owned([partial])
+    assert collect(base, state).events == [full]
+    batch.mark_owned([full])
+    assert collect(base, state).events == []
+
+    state.unlink()
+    batch = collect(base, state, existing_events=[full])
     assert batch.events == []
     batch.mark_owned([])
-    assert len(collect(base, tmp_path / "state.json").events) == 1
+    assert collect(base, state).events == [full]
+    batch.mark_owned([full])
+    assert collect(base, state).events == []
 
 
 def test_no_symlink_escape_or_unassociated_files(tmp_path):
@@ -396,29 +410,155 @@ def test_queue_sync_failure_does_not_own_checkpoint(tmp_path, monkeypatch):
     assert len(collect(base, state).events) == 1
 
 
-def test_cowork_batch_replay_uses_server_event_deduplication(tmp_path):
-    from app.models.db import UsageEvent
+@pytest.mark.parametrize("source", ["cowork", "cli", "cli-custom"])
+@time_machine.travel("2026-07-02T12:00:00Z")
+def test_streamed_usage_reaches_ingestion_across_sidecar_cycles(tmp_path, monkeypatch, source):
+    from app.core.db import configure_sqlite_engine
+    from app.models.db import ProviderPricing, UsageEvent, UsagePeriodRollup
     from app.models.schemas import UsageEventPush
     from app.services.event_ingestor import EventIngestor
+    from scripts import sidecar
+    from scripts.sidecar_pkg.credentials import CredentialCache
 
-    base = tmp_path / "desktop"
-    session(base)
-    batch = collect(base, tmp_path / "state.json")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    monkeypatch.setenv("RUNWAY_CONFIG_DIR", str(tmp_path / "runway"))
+    monkeypatch.setattr(
+        sidecar.platform, "system", lambda: "Darwin" if source == "cowork" else "Linux"
+    )
+    monkeypatch.setattr(sidecar.GenericCollector, "collect_provider", lambda *a, **kw: ([], []))
+    monkeypatch.setattr(sidecar, "_post_credential_manifest", lambda **kw: None)
+    monkeypatch.setattr(sidecar, "_tail_log", lambda n: [])
+    monkeypatch.setattr(sidecar, "queue_flush", lambda *a, **kw: None)
+    monkeypatch.setattr(sidecar.DaemonRunner, "_apply_ingest_instructions", lambda *a, **kw: None)
+    monkeypatch.setitem(
+        sidecar._LEGACY_EVENT_ACCOUNT_DISCOVERY, "anthropic", lambda: "alice@example.com"
+    )
+    cache = CredentialCache()
+    cache.replace(accounts={"anthropic": ["alice@example.com"]})
+    monkeypatch.setattr(sidecar, "_get_credential_cache", lambda: cache)
+
+    root = tmp_path / "work-claude" if source == "cli-custom" else tmp_path / ".claude"
+    monkeypatch.setattr(
+        sidecar, "custom_login_dirs", lambda *_: [root] if source == "cli-custom" else []
+    )
+    if source == "cowork":
+        path = session(tmp_path / "Library/Application Support/Claude/local-agent-mode-sessions")
+    else:
+        path = root / "projects" / "cli-one.jsonl"
+        path.parent.mkdir(parents=True)
+        (root / ".claude.json").write_text(
+            json.dumps({"oauthAccount": {"emailAddress": "alice@example.com"}})
+        )
+
+    first_stamp = "2026-07-01T23:59:59Z"
+    # Both CLI paths repeat exactly the timestamp they already pushed.
+    # Cowork also exercises a later record that falls on a different day.
+    final_stamp = "2026-07-02T00:00:01Z" if source == "cowork" else first_stamp
+    path.write_text(json.dumps(record(ts=first_stamp)) + "\n")
+
     engine = create_engine(
         "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
     )
+    configure_sqlite_engine(engine)
     SQLModel.metadata.create_all(engine)
     try:
         with Session(engine) as db:
-            pushes = [UsageEventPush(**e) for e in batch.events]
-            assert EventIngestor(db).ingest(pushes, sidecar_id="mac-test").events_inserted == 1
-            assert EventIngestor(db).ingest(pushes, sidecar_id="mac-test").events_duplicate == 1
-            rows = db.exec(select(UsageEvent)).all()
-            assert len(rows) == 1
-            assert rows[0].tokens_input == 11
-            assert rows[0].tokens_output == 7
-            assert rows[0].tokens_cache_read == 23
-            assert rows[0].tokens_cache_create == 13
+            rates = {
+                "provider_id": "anthropic",
+                "model_id": "sonnet-4.5",
+                "input_per_mtok": 3,
+                "cache_read_per_mtok": 0.3,
+                "cache_create_per_mtok": 3.75,
+                "cache_create_1h_per_mtok": 6,
+            }
+            db.add(ProviderPricing(**rates, effective_from=date(2026, 7, 1), output_per_mtok=15))
+            db.add(ProviderPricing(**rates, effective_from=date(2026, 7, 2), output_per_mtok=30))
+            db.commit()
+            ingestor = EventIngestor(db)
+            sent = []
+            results = []
+            reject = False
+
+            def post(_url, payload, *_args, **_kwargs):
+                pushes = [UsageEventPush(**e) for e in payload["events"]]
+                sent.append(pushes)
+                if reject:
+                    return True, {"events_error": True}, 200
+                results.append(ingestor.ingest(pushes, sidecar_id="same-host"))
+                return True, {}, 200
+
+            config = {
+                "api_url": "http://localhost:9999",
+                "api_key": "synthetic",  # pragma: allowlist secret
+            }
+            monkeypatch.setattr(sidecar, "http_post_signed_with_retry", post)
+            runner = sidecar.DaemonRunner(config)
+            assert runner.run_once(providers=["anthropic"])
+            assert results[-1].events_inserted == 1
+            (partial,) = sent[-1]
+            row = db.exec(select(UsageEvent)).one()
+            row_id = row.id
+            assert row.tokens_output == 7
+
+            final = record(ts=final_stamp)
+            final["message"]["usage"].update({"output_tokens": 41, "input_tokens": 19})
+            with path.open("w" if source == "cli-custom" else "a") as file:
+                file.write(json.dumps(final) + "\n")
+
+            reject = True
+            runner.run_once(providers=["anthropic"])
+            assert [push.tokens_output for push in sent[-1]] == [41]
+            reject = False
+            # A new runner still reads the last accepted cursor after a failure.
+            runner = sidecar.DaemonRunner(config)
+            assert runner.run_once(providers=["anthropic"])
+            assert results[-1].events_refreshed == 1
+            (updated,) = sent[-1]
+            assert updated.event_id == partial.event_id
+            assert runner.run_once(providers=["anthropic"])
+            assert sent[-1] == []
+
+            assert ingestor.ingest([updated, partial], sidecar_id="same-host").events_duplicate == 2
+            foreign = updated.model_copy(
+                update={"account_id": "foreign@example.com", "tokens_output": 90}
+            )
+            assert ingestor.ingest([foreign], sidecar_id="other-host").events_duplicate == 1
+            assert (
+                ingestor.ingest(
+                    [foreign.model_copy(update={"account_id": "alice@example.com"})],
+                    sidecar_id="other-host",
+                ).events_duplicate
+                == 1
+            )
+
+            expected_cost = round((19 * 3 + 41 * 15 + 23 * 0.3 + 5 * 6 + 8 * 3.75) / 1_000_000, 6)
+
+            def assert_final(account):
+                event = db.exec(select(UsageEvent)).one()
+                assert event.id == row_id
+                assert event.sidecar_id == "same-host"
+                assert event.account_id == account
+                assert event.ts == datetime(2026, 7, 1, 23, 59, 59, tzinfo=UTC)
+                assert (event.tokens_input, event.tokens_output) == (19, 41)
+                assert event.cost_usd == pytest.approx(expected_cost)
+                assert event.cost_output == pytest.approx(41 * 15 / 1_000_000)
+                rollups = db.exec(select(UsagePeriodRollup)).all()
+                active = [r for r in rollups if r.account_id == account]
+                assert len(active) == 20
+                assert {r.period_key for r in active if r.period_type == "day"} == {"2026-07-01"}
+                for r in active:
+                    assert (r.msgs, r.tokens_input, r.tokens_output) == (1, 19, 41)
+                    assert r.cost_usd == pytest.approx(expected_cost)
+                for r in rollups:
+                    if r.account_id != account:
+                        assert (r.msgs, r.tokens_input, r.tokens_output) == (0, 0, 0)
+                        assert r.cost_usd == pytest.approx(0)
+
+            assert_final("alice@example.com")
+            retag = partial.model_copy(update={"account_id": "retagged@example.com"})
+            assert ingestor.ingest([retag], sidecar_id="same-host").events_reattributed == 1
+            assert_final("retagged@example.com")
     finally:
         engine.dispose()
 

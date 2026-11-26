@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import os
@@ -13,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from scripts.sidecar_pkg.event_extractors.anthropic import parse_anthropic_events
+from scripts.sidecar_pkg.event_watermark import transcript_fingerprint as _fingerprint
 from scripts.sidecar_pkg.identity import canonical_account_id
 
 
@@ -28,42 +28,6 @@ def _load(path: Path) -> dict[str, Any]:
         return {}
 
 
-_HEAD_BYTES = 4 * 1024
-_TAIL_BYTES = 64 * 1024
-
-
-def _fingerprint(path: Path, end: int) -> str:
-    """Digest a committed region: all of it while it fits the window, else head and tail.
-
-    The committed region is re-checked on every scan, so hashing it whole
-    would re-read the whole transcript history each cycle and leave the
-    per-cycle byte budget. A region up to the window size is hashed in full;
-    a larger one contributes only its head and its tail, which is where a
-    rewrite lands: Claude Code rewrites a transcript in place, and the bytes
-    that change sit at the end of the file. The middle of a larger region is
-    not covered; that gap is tracked in #802.
-    """
-    head = min(end, _HEAD_BYTES)
-    tail_start = max(head, end - _TAIL_BYTES)
-    digest = hashlib.sha256()
-    digest.update(head.to_bytes(8, "big"))
-    digest.update((end - tail_start).to_bytes(8, "big"))
-    with path.open("rb") as f:
-        block = f.read(head)
-        if block:
-            digest.update(block)
-        if end > head:
-            f.seek(tail_start)
-            remaining = end - tail_start
-            while remaining > 0:
-                chunk = f.read(min(remaining, 1024 * 1024))
-                if not chunk:
-                    break
-                digest.update(chunk)
-                remaining -= len(chunk)
-    return digest.hexdigest()
-
-
 def _within(path: Path, root: Path) -> bool:
     return path.resolve().is_relative_to(root.resolve())
 
@@ -75,12 +39,21 @@ class CoworkBatch:
     events: list[dict[str, Any]]
     blocked: list[dict[str, str]]
     state_path: Path
-    checkpoints: dict[str, tuple[dict[str, Any], set[str]]] = field(default_factory=dict)
-    owned: set[str] = field(default_factory=set)
+    checkpoints: dict[str, tuple[dict[str, Any], dict[tuple[str, str], int]]] = field(
+        default_factory=dict
+    )
+    owned: dict[tuple[str, str], int] = field(default_factory=dict)
 
     def mark_owned(self, events: list[dict[str, Any]]) -> None:
-        self.owned.update(e["event_id"] for e in events if e.get("provider_id") == "anthropic")
-        ready = {k: v[0] for k, v in self.checkpoints.items() if v[1] <= self.owned}
+        for event in events:
+            if event.get("provider_id") == "anthropic":
+                key = (event["event_id"], event["account_id"])
+                self.owned[key] = max(self.owned.get(key, -1), event["tokens_output"])
+        ready = {
+            path: cursor
+            for path, (cursor, required) in self.checkpoints.items()
+            if all(self.owned.get(key, -1) >= output for key, output in required.items())
+        }
         if not ready:
             return
         data = _load(self.state_path)
@@ -107,13 +80,17 @@ def collect_cowork(
     *,
     max_bytes: int = 4 * 1024 * 1024,
     max_events: int = 500,
-    existing_ids: set[str] | None = None,
+    existing_events: list[dict[str, Any]] | None = None,
 ) -> CoworkBatch:
     """Backfill complete lines independently of CLI timestamps, oldest files first."""
     batch = CoworkBatch([], [], state_path)
     state = _load(state_path)
     seen_paths: set[Path] = set()
-    seen_ids = set(existing_ids or ())
+    seen = {
+        event["event_id"]: event
+        for event in existing_events or ()
+        if event["provider_id"] == "anthropic"
+    }
     manifests: list[tuple[Path, dict[str, Any]]] = []
     identities: dict[Path, set[str]] = {}
     for path in sorted(base.glob("*/*/local_*.json")):
@@ -215,16 +192,22 @@ def collect_cowork(
             parsed = parse_anthropic_events(
                 [path], account, datetime.min.replace(tzinfo=UTC), ranges={path: (start, end)}
             )
-            required: set[str] = set()
+            required: dict[tuple[str, str], int] = {}
             for event in parsed:
-                required.add(event.event_id)
-                if event.event_id in seen_ids:
-                    continue
-                seen_ids.add(event.event_id)
-                payload = event.model_dump(mode="json")
-                payload["account_source"] = source
-                payload["credential_origin"] = origin
-                batch.events.append(payload)
+                payload = seen.get(event.event_id)
+                # Keep the first producer's account for overlapping files. An
+                # acknowledged smaller payload on that account does not cover
+                # a larger update from this range.
+                if payload is None or (
+                    payload["account_id"] == account
+                    and event.tokens_output > payload["tokens_output"]
+                ):
+                    payload = event.model_dump(mode="json")
+                    payload["account_source"] = source
+                    payload["credential_origin"] = origin
+                    seen[event.event_id] = payload
+                    batch.events.append(payload)
+                required[(event.event_id, payload["account_id"])] = payload["tokens_output"]
             if source == "default" and required:
                 blocked_origins.add(origin)
             batch.checkpoints[str(path)] = (

@@ -72,10 +72,10 @@ class UsageEvent(SQLModel, table=True):  # type: ignore[call-arg]
     """One assistant-message-level usage record. Source of truth.
 
     Idempotency: (provider_id, event_id) is UNIQUE — re-pushing the same log
-    entry from a sidecar is a no-op, and re-pushing it under a *different*
-    account (the operator retagged the credential, a hint arrived) moves the
-    existing row instead of counting it twice (see ``EventIngestor``). The
-    older (provider_id, account_id, event_id) constraint is kept — it is
+    entry from a sidecar is a no-op. Its original sidecar can refresh growing
+    Claude transcript usage or move the row to a different account (see
+    ``EventIngestor``). The older (provider_id, account_id, event_id)
+    constraint is kept — it is
     implied by the new index and dropping it would mean rebuilding the table.
     """
 

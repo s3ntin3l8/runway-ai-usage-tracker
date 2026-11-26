@@ -59,6 +59,24 @@ def test_ingest_duplicate_event_is_noop():
     assert len(s.exec(select(UsageEvent)).all()) == 1
 
 
+def test_pending_streamed_transcript_keeps_its_largest_usage_and_original_timestamp():
+    from app.core.source_apps import CLAUDE_CODE
+
+    with _seeded_session() as s:
+        ingestor = EventIngestor(s)
+        partial = _make_push(
+            account_id="default", source_app=CLAUDE_CODE, streamed_usage=True, tokens_output=1
+        )
+        final = partial.model_copy(update={"tokens_output": 50, "ts": "2026-05-09T14:23:11+00:00"})
+        ingestor.ingest([partial, final, partial], sidecar_id="dev-01")
+
+        pending = s.exec(select(PendingUsageEvent)).one()
+        winning = UsageEventPush.model_validate_json(pending.payload_json)
+        assert winning.ts == partial.ts
+        assert winning.tokens_output == 50
+        assert s.exec(select(UsageEvent)).all() == []
+
+
 def test_ingest_updates_rollups():
     s = _seeded_session()
     EventIngestor(s).ingest(
