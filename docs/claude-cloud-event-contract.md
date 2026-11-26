@@ -127,9 +127,13 @@ creates no event and is never logged.
 3. Read `GET /v1/code/sessions/{id}/events` (`limit=50`, `sort_order=asc`, `cursor`). Pages carry tool
    output and can be large (a remote Cowork session measured 2026-11-26: 185 MB over 230 pages, pages
    up to 6.6 MB), so one response may be up to 16 MB and a cycle reads up to 96 MB. A cycle stops before
-   a further page could cross its total and the catch-up cycle continues from the checkpoint; that stop
-   does not count as a stall. A session with a single page above 16 MB is skipped
-   (`session_response_limit`) without failing the cycle. The API pages by
+   a further page could cross its total, notes `byte_capped`, and the catch-up cycle continues from the
+   checkpoint. Such a stop counts as a stall only for a session that read at least half of the cycle's
+   usable bytes itself (`STALL_BYTE_SHARE`); one cut short by other sessions' bytes keeps its count. So a
+   single turn larger than the usable bytes ends, after `MAX_STALL_FACTOR` cycles, in
+   `stalled_turn_skipped` like a turn longer than the page budget: its `last_event_at` is recorded as
+   handled and it is not read again until the session changes (that turn's usage is missed). A session
+   with a single page above 16 MB is skipped (`session_response_limit`) without failing the cycle. The API pages by
    an opaque cursor only, so the checkpoint stores the last **closed turn** boundary: its
    `committed_sequence` and the entry cursor of the page that holds it (encrypted, never logged).
    Resuming requests that cursor and skips records with `sequence_num <= committed_sequence`; a rejected

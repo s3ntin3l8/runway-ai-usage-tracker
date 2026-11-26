@@ -71,6 +71,9 @@ MAX_LIST_PAGES = 200
 # before a further page could cross the cycle total, and the catch-up cycle continues.
 MAX_BYTES = 96 * 1024 * 1024
 HISTORY_RESPONSE_BYTES = 16 * 1024 * 1024
+# A byte stop counts toward a stall only for a session that read at least this share of the cycle's
+# usable bytes itself (see ``_stalls_after_stop``); after MAX_STALL_FACTOR it is skipped.
+STALL_BYTE_SHARE = 0.5
 CYCLE_TIMEOUT = 300.0
 PAGE_PAUSE = 0.25
 # Per cycle: history pages and total requests (list, identity and history together; the remote
@@ -575,7 +578,7 @@ def _stalls_after_stop(
     """The session's stall count after a read stopped by the page or the byte budget.
 
     A stall is a turn that did not close within the budget the session had. One cut short because
-    other sessions spent the cycle's bytes (it read less than half the usable bytes itself) has not
+    other sessions spent the cycle's bytes (it read less than STALL_BYTE_SHARE of the usable bytes) has not
     shown that, so its count is left alone; one that spent most of the bytes itself has, and after
     MAX_STALL_FACTOR it is skipped and noted instead of being re-read every cycle.
     """
@@ -583,7 +586,7 @@ def _stalls_after_stop(
         return 0
     own_bytes = attempt.total_bytes - start_bytes
     usable = attempt.total_byte_limit - attempt.response_byte_limit
-    if out_of_pages or own_bytes * 2 >= usable:
+    if out_of_pages or own_bytes >= usable * STALL_BYTE_SHARE:
         return checkpoint.stalls + 1
     return checkpoint.stalls
 
@@ -780,7 +783,10 @@ async def _sync(attempt: _CollectorProbe, headers: dict[str, str], report: Cycle
             left = min(_page_budget(checkpoint), left)
         else:
             left = min(_page_budget(checkpoint), HISTORY_PAGES_PER_CYCLE - pages_used, left)
-        if left <= 0 or _bytes_spent(attempt):
+        out_of_bytes = _bytes_spent(attempt)
+        if left <= 0 or out_of_bytes:
+            if out_of_bytes:
+                report.notes.append("byte_capped")
             report.backlog = True
             _PENDING[attempt.account] = [item[0] for item in due[index:]]
             return
