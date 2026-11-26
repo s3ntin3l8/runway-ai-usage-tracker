@@ -785,7 +785,7 @@ async def _sync(attempt: _CollectorProbe, headers: dict[str, str], report: Cycle
             left = min(_page_budget(checkpoint), HISTORY_PAGES_PER_CYCLE - pages_used, left)
         out_of_bytes = _bytes_spent(attempt)
         if left <= 0 or out_of_bytes:
-            if out_of_bytes:
+            if left > 0:  # the bytes, not the page or request budget, ended the cycle
                 report.notes.append("byte_capped")
             report.backlog = True
             _PENDING[attempt.account] = [item[0] for item in due[index:]]

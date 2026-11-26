@@ -133,9 +133,9 @@ creates no event and is never logged.
    single turn larger than the usable bytes ends, after `MAX_STALL_FACTOR` cycles, in
    `stalled_turn_skipped` like a turn longer than the page budget: its `last_event_at` is recorded as
    handled and it is not read again until the session changes (that turn's usage is missed). A session
-   with a single page above 16 MB is skipped (`session_response_limit`) without failing the cycle. The API pages by
-   an opaque cursor only, so the checkpoint stores the last **closed turn** boundary: its
-   `committed_sequence` and the entry cursor of the page that holds it (encrypted, never logged).
+   with a single page above 16 MB is skipped (`session_response_limit`) without failing the cycle.
+   The API pages by an opaque cursor only, so the checkpoint stores the last **closed turn** boundary:
+   its `committed_sequence` and the entry cursor of the page that holds it (encrypted, never logged).
    Resuming requests that cursor and skips records with `sequence_num <= committed_sequence`; a rejected
    cursor falls back to reading from the start with the same skip (log label `cursor_rejected`). The open
    tail after the last result is read again each cycle; message ids make re-emission harmless.
