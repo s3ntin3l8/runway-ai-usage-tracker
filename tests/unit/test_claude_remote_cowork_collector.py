@@ -354,9 +354,11 @@ async def cookie(environment):
 
 @pytest.fixture(autouse=True)
 def fresh_discovery():
-    remote_sessions._LAST_DISCOVERY.clear()
+    remote_sessions._NEXT_DISCOVERY.clear()
+    remote_sessions._RESUME_OFFSET.clear()
     yield
-    remote_sessions._LAST_DISCOVERY.clear()
+    remote_sessions._NEXT_DISCOVERY.clear()
+    remote_sessions._RESUME_OFFSET.clear()
 
 
 def conversation(workspace=None, **extra):
@@ -427,7 +429,7 @@ async def test_conversations_are_listed_at_most_once_an_hour(environment, cookie
     await cycle(server)
     await cycle(server)
     assert server.web_calls.count("/api/account") == 1
-    monkeypatch.setattr(remote_sessions, "DISCOVERY_INTERVAL", 0.0)
+    remote_sessions._NEXT_DISCOVERY.clear()  # an hour has passed
     await cycle(server)
     assert server.web_calls.count("/api/account") == 2
 
@@ -500,6 +502,65 @@ async def test_relisting_known_sessions_does_not_count_them_as_discovered(
     server = ClaudeAiServer([], {}, {}, conversations=[conversation(PHONE)])
     server.statuses[PHONE] = 404
     first = await cycle(server)
-    monkeypatch.setattr(remote_sessions, "DISCOVERY_INTERVAL", 0.0)
+    remote_sessions._NEXT_DISCOVERY.clear()  # an hour has passed
     again = await cycle(server)
+    assert server.web_calls.count("/api/account") == 2
     assert (first.discovered, again.discovered) == (1, 0)
+
+
+@pytest.mark.asyncio
+async def test_a_failed_discovery_is_retried_sooner_than_an_hour(environment, cookie, monkeypatch):
+    server = ClaudeAiServer([], {}, {}, conversations=[conversation()])
+    server.list_status = 429
+    await cycle(server)
+    await cycle(server)
+    assert server.web_calls.count("/api/account") == 1  # the retry delay holds
+    monkeypatch.setattr(remote_sessions, "DISCOVERY_RETRY", 0.0)
+    await cycle(server)  # still within the stamp of the failed pass: not due yet
+    remote_sessions._NEXT_DISCOVERY.clear()
+    server.list_status = 200
+    report = await cycle(server)
+    assert (
+        server.web_calls.count("/api/account") == 2 and "discovery_rate_limited" not in report.notes
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_bounded_pass_is_continued_by_the_next_one(environment, cookie, monkeypatch):
+    monkeypatch.setattr(remote_sessions, "DISCOVERY_PAGE", 1)
+    monkeypatch.setattr(remote_sessions, "DISCOVERY_MAX_PAGES", 2)
+    monkeypatch.setattr(remote_sessions, "DISCOVERY_INTERVAL", 0.0)
+    server = ClaudeAiServer(
+        [], {}, {}, conversations=[conversation(PHONE), conversation(REMOTE), conversation(OTHER)]
+    )
+    server.statuses.update({PHONE: 404, REMOTE: 404, OTHER: 404})
+    first = await cycle(server)
+    second = await cycle(server)
+    assert (first.discovered, second.discovered) == (2, 1)
+    assert "discovery_max_pages" in first.notes and "discovery_max_pages" not in second.notes
+
+
+@pytest.mark.asyncio
+async def test_a_hint_the_list_returned_stops_taking_a_slot(environment, hints):
+    from sqlmodel import select
+
+    from app.models.db import ClaudeRemoteSessionHint
+
+    hints(REMOTE)
+    await cycle(HintServer([cloud_row(REMOTE)], {REMOTE: two_turns()}, {}))
+    with Session(environment) as session:
+        assert session.exec(select(ClaudeRemoteSessionHint)).one().last_checked > 0
+
+
+@pytest.mark.asyncio
+async def test_a_session_key_in_the_oauth_field_is_used_like_the_web_strategy(environment):
+    await base.probe.token_cache.store(
+        "anthropic",
+        {"oauth_token": "sk-ant-sid01-fixture"},  # pragma: allowlist secret
+        account_id=base.ACCOUNT,
+        source_id="pasted-source",
+        source_metadata={"credential_origin": "config"},
+    )
+    assert (
+        await collector._claude_cookie(base.ACCOUNT) == "sk-ant-sid01-fixture"
+    )  # pragma: allowlist secret

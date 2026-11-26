@@ -39,11 +39,14 @@ REMOTE_COWORK_TAG = "product:cowork-remote"
 # the sessions started on another device (#1397).
 DISCOVERY_SOURCE = "claude.ai"
 DISCOVERY_INTERVAL = 3600.0
+DISCOVERY_RETRY = 900.0
 DISCOVERY_PAGE = 100
 DISCOVERY_MAX_PAGES = 20
 _WORKSPACE_ID = re.compile(r"(?:session|cse)_(01[A-Za-z0-9]{22})")
-# When each account last listed its conversations (process-local; a restart lists again once).
-_LAST_DISCOVERY: dict[str, float] = {}
+# Per account, process-local (a restart lists again from the start once): when the next pass is
+# due, and where a pass that hit DISCOVERY_MAX_PAGES left off.
+_NEXT_DISCOVERY: dict[str, float] = {}
+_RESUME_OFFSET: dict[str, int] = {}
 # A hint already stored is re-stamped at most this often, so a sidecar that sends its list on every
 # heartbeat does not turn each heartbeat into a write.
 _TOUCH_INTERVAL = 3600.0
@@ -75,11 +78,22 @@ def upsert_hints(
 
     The first report decides a session's account and organization: a session belongs to one
     account, so a later report that disagrees only re-stamps the hint and never moves it.
+    ``sidecar_id`` names the reporter: a sidecar, or ``DISCOVERY_SOURCE`` for claude.ai.
     """
+    return _upsert(session, hints, sidecar_id, now)[0]
+
+
+def _upsert(
+    session: Session,
+    hints: Iterable[RemoteSessionHintIn],
+    sidecar_id: str | None,
+    now: float | None,
+) -> tuple[int, int]:
+    """``(rows written, rows created)``."""
     stamp = time.time() if now is None else now
     by_digest = {session_digest(hint.session_id): hint for hint in hints}
     if not by_digest:
-        return 0
+        return 0, 0
     # One query for the whole list: a sidecar sends it with every heartbeat.
     existing = {
         row.session_digest: row
@@ -89,10 +103,11 @@ def upsert_hints(
             )
         ).all()
     }
-    written = 0
+    written = created = 0
     for digest, hint in by_digest.items():
         row = existing.get(digest)
         if row is None:
+            created += 1
             row = ClaudeRemoteSessionHint(
                 session_digest=digest,
                 session_id_encrypted=encryption_service.encrypt_json(
@@ -112,7 +127,7 @@ def upsert_hints(
         written += 1
     if written:
         session.commit()
-    return written
+    return written, created
 
 
 @dataclass(frozen=True)
@@ -187,7 +202,7 @@ def mark_checked(checked: dict[str, float], now: float | None = None) -> None:
 
 def discovery_due(account: str, now: float | None = None) -> bool:
     stamp = time.time() if now is None else now
-    return stamp - _LAST_DISCOVERY.get(account, 0.0) >= DISCOVERY_INTERVAL
+    return stamp >= _NEXT_DISCOVERY.get(account, 0.0)
 
 
 async def discover_from_conversations(
@@ -199,14 +214,22 @@ async def discover_from_conversations(
     organization is listed, so a cookie of another person never feeds this account's hints. Only
     ``workspace_session_id`` is read from a row; titles and messages are never looked at. The labels
     are fixed strings, safe to log.
+
+    A completed pass waits ``DISCOVERY_INTERVAL``; one that failed is retried after
+    ``DISCOVERY_RETRY`` (set before the first request, so a pass cancelled by its timeout is retried
+    too). A pass stops after ``DISCOVERY_MAX_PAGES`` and the next one continues from there, so every
+    conversation is reached however many an account has. Ids found before a failure are kept.
     """
-    _LAST_DISCOVERY[account] = time.time()
+    started = time.time()
+    _NEXT_DISCOVERY[account] = started + DISCOVERY_RETRY
+    ids: list[str] = []
     try:
         holder = await claude_get(client, "anthropic", "/api/account", cookie)
         email = holder.get("email_address") if isinstance(holder, dict) else None
         if not isinstance(email, str) or canonical_account_id(email) != account:
+            _NEXT_DISCOVERY[account] = started + DISCOVERY_INTERVAL
             return [], "cookie_other_account"
-        ids: list[str] = []
+        offset = _RESUME_OFFSET.get(account, 0)
         for page in range(DISCOVERY_MAX_PAGES):
             if page and pause:
                 await asyncio.sleep(pause)
@@ -214,7 +237,7 @@ async def discover_from_conversations(
                 client,
                 "anthropic",
                 f"/api/organizations/{org_uuid}/chat_conversations_v2"
-                f"?limit={DISCOVERY_PAGE}&offset={page * DISCOVERY_PAGE}",
+                f"?limit={DISCOVERY_PAGE}&offset={offset}",
                 cookie,
             )
             rows = (
@@ -231,11 +254,16 @@ async def discover_from_conversations(
                 match = _WORKSPACE_ID.fullmatch(raw) if isinstance(raw, str) else None
                 if match and (sid := f"cse_{match.group(1)}") not in ids:
                     ids.append(sid)
+            offset += len(rows)
             if len(rows) < DISCOVERY_PAGE:
+                _RESUME_OFFSET.pop(account, None)
+                _NEXT_DISCOVERY[account] = started + DISCOVERY_INTERVAL
                 return ids, "ok"
+        _RESUME_OFFSET[account] = offset
+        _NEXT_DISCOVERY[account] = started + DISCOVERY_INTERVAL
         return ids, "max_pages"
     except ConsoleAPIError as exc:
-        return [], exc.error_type or "unavailable"
+        return ids, exc.error_type or "unavailable"
 
 
 def store_discovered(ids: list[str], account_uuid: str, org_uuid: str) -> int:
@@ -246,21 +274,12 @@ def store_discovered(ids: list[str], account_uuid: str, org_uuid: str) -> int:
     if not ids:
         return 0
     with Session(engine) as session:
-        known = set(
-            session.exec(
-                select(ClaudeRemoteSessionHint.session_digest).where(
-                    col(ClaudeRemoteSessionHint.session_digest).in_(
-                        [session_digest(sid) for sid in ids]
-                    )
-                )
-            ).all()
-        )
-        upsert_hints(
+        return _upsert(
             session,
             [
                 RemoteSessionHintIn(session_id=sid, account_uuid=account_uuid, org_uuid=org_uuid)
                 for sid in ids
             ],
             DISCOVERY_SOURCE,
-        )
-    return len({session_digest(sid) for sid in ids} - known)
+            None,
+        )[1]

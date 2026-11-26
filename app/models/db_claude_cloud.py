@@ -98,7 +98,8 @@ class ClaudeCloudCollectorState(SQLModel, table=True):  # type: ignore[call-arg]
 
 
 class ClaudeRemoteSessionHint(SQLModel, table=True):  # type: ignore[call-arg]
-    """A remote Cowork session id a sidecar found on a Mac (``scripts/sidecar_pkg/cowork_remote.py``).
+    """A remote Cowork session id a Mac's sidecar reported (``scripts/sidecar_pkg/cowork_remote.py``)
+    or the cloud collector found in the account's claude.ai conversations (``sidecar_id`` "claude.ai").
 
     Anthropic's session lists leave these sessions out, so the cloud collector fetches each hinted
     id directly. The id is needed to fetch the session and is stored encrypted; ``session_digest``

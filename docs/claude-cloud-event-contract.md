@@ -107,7 +107,8 @@ creates no event and is never logged.
    for the verified organization only, reading nothing but each row's `workspace_session_id`
    (`session_…`/`cse_…`). That list also names the sessions started on another device; a session with no
    conversation row (seen for some phone sessions, 2026-07..09) is not found. Discovery has its own 60 s
-   bound and never fails the cycle; a failure is a `discovery_<reason>` note. The server keeps them
+   bound and never fails the cycle; a failure is a `discovery_<reason>` note and is retried after 15
+   minutes. A pass that hits the page bound is continued from there by the next one. The server keeps them
    encrypted in `claude_remote_session_hint` (`app/services/claude_remote_sessions.py`); the first report
    fixes a session's account and organization. After the list pass, hints whose account and organization
    UUIDs equal the verified login's are fetched, longest unchecked first (so every hint is reached however
@@ -234,7 +235,7 @@ flag, stall, turn, message and remainder counters, and the last cross-check labe
 The collector's per-account health lives in `claude_cloud_collector_state`.
 One `claude_remote_session_hint` row per remote Cowork session a sidecar reported or claude.ai listed (5.1): the session
 digest in clear, the session id **encrypted** (it is needed to fetch the session), the Claude account and
-organization UUIDs, the reporting sidecar, when it was first and last reported, and when it was last
+organization UUIDs, the reporter (a sidecar id, or `claude.ai`), when it was first and last reported, and when it was last
 fetched with the `last_event_at` seen then. No content.
 
 ## 7. Acceptance criteria (checked on prod, read-only SQL plus the cycle log)

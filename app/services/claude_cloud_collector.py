@@ -423,12 +423,16 @@ def _row_from(row: dict[str, Any], account: str) -> _Row:
 
 
 async def _claude_cookie(account: str) -> str | None:
-    """The account's claude.ai session cookie, as the web quota strategy finds it; None without one."""
+    """The account's claude.ai session cookie, found as ``anthropic_web`` finds it; None without one.
+
+    Same keys in the same order, including a session key pasted into the OAuth token field.
+    """
     for kind in ("cookie_sessionKey", "session_cookie"):
         value = await probe.token_cache.get_token("anthropic", kind, account_id=account)
         if isinstance(value, str) and value.strip():
             return value
-    return None
+    value = await probe.token_cache.get_token("anthropic", "oauth_token", account_id=account)
+    return value if isinstance(value, str) and value.startswith("sk-ant-sid") else None
 
 
 async def _discover(attempt: _CollectorProbe, report: CycleReport) -> None:
@@ -482,6 +486,8 @@ async def _hinted_rows(
     checked: dict[str, float] = {}
     for index, hint in enumerate(hints):
         if hint.session_id in known:
+            # Read through the list; stamp it so it stops taking one of this pass's slots.
+            checked[hint.digest] = 0.0
             continue
         if index and PAGE_PAUSE:
             await asyncio.sleep(PAGE_PAUSE)
