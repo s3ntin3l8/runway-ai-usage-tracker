@@ -1143,3 +1143,67 @@ async def test_a_page_beyond_the_response_ceiling_skips_only_that_session(enviro
     report = await cycle(server)
     assert report.outcome == "ok" and "session_response_limit" in report.notes
     assert {r.session_id for r in events(environment)} == {session_digest(SECRET_ID)}
+
+
+def one_long_turn(messages, size):
+    """One turn of ``messages`` assistant records, each carrying ``size`` bytes, then its result."""
+    ids = [f"m{i}" for i in range(messages)]
+    usage = {
+        "inputTokens": 5 * messages,
+        "outputTokens": 2 * messages,
+        "cacheReadInputTokens": 100 * messages,
+        "cacheCreationInputTokens": 10 * messages,
+    }
+    return padded([system(1, cwd="/home/user/the-repo"), *turn(2, ids, usage)], size)
+
+
+@pytest.mark.asyncio
+async def test_a_turn_larger_than_the_byte_budget_is_skipped_not_reread_forever(
+    environment, monkeypatch
+):
+    monkeypatch.setattr(collector, "HISTORY_RESPONSE_BYTES", 300_000)
+    monkeypatch.setattr(collector, "MAX_BYTES", 900_000)  # 600 kB usable: the turn is ~1 MB
+    monkeypatch.setattr(collector, "MAX_STALL_FACTOR", 3)
+    server = Server([cloud_row()], {SECRET_ID: one_long_turn(9, 100_000)}, page=2)
+    notes = []
+    for _ in range(6):
+        report = await cycle(server)
+        notes.extend(report.notes)
+        if "stalled_turn_skipped" in report.notes:
+            break
+    assert "byte_capped" in notes and "stalled_turn_skipped" in notes
+
+
+def test_a_session_cut_short_by_others_bytes_keeps_its_stall_count():
+    attempt = collector._CollectorProbe(ACCOUNT, SOURCE, httpx.AsyncClient())
+    attempt.total_bytes = collector.MAX_BYTES  # spent, mostly by earlier sessions
+    checkpoint = collector._Checkpoint(stalls=2)
+    usable = collector.MAX_BYTES - collector.HISTORY_RESPONSE_BYTES
+    others = attempt.total_bytes - usable // 4  # this session read a quarter of the usable bytes
+    mine = attempt.total_bytes - usable  # this session read all of them
+    stop = {"closed_any": False, "out_of_pages": False}
+    assert collector._stalls_after_stop(attempt, checkpoint, start_bytes=others, **stop) == 2
+    assert collector._stalls_after_stop(attempt, checkpoint, start_bytes=mine, **stop) == 3
+    assert (
+        collector._stalls_after_stop(
+            attempt, checkpoint, start_bytes=others, closed_any=False, out_of_pages=True
+        )
+        == 3
+    )
+
+
+@pytest.mark.asyncio
+async def test_pages_of_a_skipped_session_count_against_the_cycle(environment, monkeypatch):
+    monkeypatch.setattr(collector, "HISTORY_RESPONSE_BYTES", 200_000)
+    monkeypatch.setattr(collector, "HISTORY_PAGES_PER_CYCLE", 4)
+    big = two_turns()
+    big[4] = {**big[4], "tool_output": "x" * 300_000}  # page 3 of OTHER_ID is too large
+    server = Server(
+        [cloud_row(OTHER_ID, last_event_at=LIVE), cloud_row()],
+        {OTHER_ID: big, SECRET_ID: two_turns()},
+        page=2,
+    )
+    report = await cycle(server)
+    assert "session_response_limit" in report.notes
+    # OTHER_ID read 2 pages before its oversized one, so SECRET_ID gets the 2 that are left.
+    assert report.backlog and report.history_pages == 4

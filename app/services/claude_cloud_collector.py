@@ -371,8 +371,12 @@ class _CollectorProbe(probe.Probe):
             max_history_pages=0,
             report_version=1,
         )
-        super().__init__(cast(ClaudeCloudProbeRequest, request), client, total_byte_limit=MAX_BYTES)
-        self.response_byte_limit = HISTORY_RESPONSE_BYTES
+        super().__init__(
+            cast(ClaudeCloudProbeRequest, request),
+            client,
+            total_byte_limit=MAX_BYTES,
+            response_byte_limit=HISTORY_RESPONSE_BYTES,
+        )
         # The account's claude.ai cookie, for remote Cowork discovery (read before the exact Code
         # source is selected: inside it the cache only answers for that source).
         self.claude_cookie: str | None = None
@@ -560,6 +564,30 @@ def _page_budget(checkpoint: _Checkpoint) -> int:
     return HISTORY_PAGES_PER_CYCLE * (1 + min(checkpoint.stalls, MAX_STALL_FACTOR - 1))
 
 
+def _stalls_after_stop(
+    attempt: _CollectorProbe,
+    checkpoint: _Checkpoint,
+    *,
+    closed_any: bool,
+    out_of_pages: bool,
+    start_bytes: int,
+) -> int:
+    """The session's stall count after a read stopped by the page or the byte budget.
+
+    A stall is a turn that did not close within the budget the session had. One cut short because
+    other sessions spent the cycle's bytes (it read less than half the usable bytes itself) has not
+    shown that, so its count is left alone; one that spent most of the bytes itself has, and after
+    MAX_STALL_FACTOR it is skipped and noted instead of being re-read every cycle.
+    """
+    if closed_any:
+        return 0
+    own_bytes = attempt.total_bytes - start_bytes
+    usable = attempt.total_byte_limit - attempt.response_byte_limit
+    if out_of_pages or own_bytes * 2 >= usable:
+        return checkpoint.stalls + 1
+    return checkpoint.stalls
+
+
 async def _read_session(
     attempt: _CollectorProbe,
     headers: dict[str, str],
@@ -581,6 +609,7 @@ async def _read_session(
     turns_closed = 0
     closed_any = False
     quiet = _quiet(row, time.time())
+    start_bytes = attempt.total_bytes
     while True:
         params: dict[str, Any] = {"limit": HISTORY_LIMIT, "sort_order": "asc"}
         if cursor is not None:
@@ -644,14 +673,18 @@ async def _read_session(
         if next_cursor is None:
             break
         out_of_pages = used >= pages_left
-        if out_of_pages or _bytes_spent(attempt):
+        out_of_bytes = not out_of_pages and _bytes_spent(attempt)
+        if out_of_pages or out_of_bytes:
             report.stats.update({k: v for k, v in reducer.stats.items() if k != "turns"})
-            # Only the page budget counts toward a stall: a session cut short because other
-            # sessions spent the cycle's bytes has not shown that its turn is too long.
-            if closed_any:
-                stalls = 0
-            else:
-                stalls = checkpoint.stalls + 1 if out_of_pages else checkpoint.stalls
+            if out_of_bytes:
+                report.notes.append("byte_capped")
+            stalls = _stalls_after_stop(
+                attempt,
+                checkpoint,
+                closed_any=closed_any,
+                out_of_pages=out_of_pages,
+                start_bytes=start_bytes,
+            )
             if stalls >= MAX_STALL_FACTOR:
                 # No turn closed even with the largest budget: this one is longer than a cycle can
                 # read, and re-reading it every cycle would starve the account. Skip the session
@@ -751,9 +784,12 @@ async def _sync(attempt: _CollectorProbe, headers: dict[str, str], report: Cycle
             report.backlog = True
             _PENDING[attempt.account] = [item[0] for item in due[index:]]
             return
+        pages_before = report.history_pages
         try:
             pages_used += await _read_session(attempt, headers, row, checkpoint, report, left)
         except probe.ProbeError as exc:
+            # The pages a skipped session did read still count against this cycle's budget.
+            pages_used += report.history_pages - pages_before
             if str(exc) == "response_limit":
                 # A single page larger than HISTORY_RESPONSE_BYTES (the cycle total cannot be the
                 # cause: reading stops before it could be crossed). Skip this session, not the

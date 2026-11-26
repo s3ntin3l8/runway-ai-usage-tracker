@@ -156,6 +156,7 @@ class Probe:
         client: httpx.AsyncClient,
         *,
         total_byte_limit: int = MAX_TOTAL_BYTES,
+        response_byte_limit: int = MAX_RESPONSE_BYTES,
     ):
         self.request = request
         self.client = client
@@ -169,7 +170,7 @@ class Probe:
         self.total_bytes = 0
         self.total_byte_limit = total_byte_limit
         # One response's ceiling; the cloud collector raises it for history pages.
-        self.response_byte_limit = MAX_RESPONSE_BYTES
+        self.response_byte_limit = response_byte_limit
 
     async def check_source(self) -> None:
         try:
