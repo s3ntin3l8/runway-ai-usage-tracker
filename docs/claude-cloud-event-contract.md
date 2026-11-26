@@ -104,9 +104,9 @@ creates no event and is never logged.
    encrypted in `claude_remote_session_hint` (`app/services/claude_remote_sessions.py`); the first report
    fixes a session's account and organization. After the list pass, hints whose account and organization
    UUIDs equal the verified login's are fetched, longest unchecked first (so every hint is reached however
-   many a Mac reports), at most 50 per pass however many requests the list took (history reads the cycle's request cap no
-   longer covers wait for the catch-up cycle), skipping ids the
-   list already returned. A session whose last event is more than a week old, or that did not resolve
+   many a Mac reports), at most 50 per pass however many requests the list has taken; a history read that
+   no longer fits the cycle's request cap waits for the catch-up cycle. Ids the list
+   already returned are skipped. A session whose last event is more than a week old, or that did not resolve
    (missing, unreadable, not remote Cowork), is fetched once a day. A
    fetched row is kept only when `environment_kind == "ccs"` **and** its tags contain
    `product:cowork-remote`; a kept row is then read exactly like an `anthropic_cloud` row (same
