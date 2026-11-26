@@ -271,7 +271,8 @@ Everything lives in the sidecar config directory:
 
 - `queue/YYYY-MM-DD.jsonl`: the offline queue. When the server is unreachable, payloads are stored here (oldest files dropped past `queue_max_size_mb`) and replayed on reconnect.
 - `sidecar.log`: the log (not rotated).
-- `sidecar.pid`, event watermarks (last-pushed position per provider and account) and, with pairing, the device key in an owner-only config.
+- `event-watermark.json`: last-pushed timestamps per provider and account. For Claude Code it also stores each transcript's account, byte offset, file stamp (device, inode, size, modification and change times), fingerprint of the committed bytes, and initial scan cutoff. The sidecar resumes appends from the offset and uses the initial cutoff again when it needs to reread a rewritten transcript. It saves these positions after an accepted push.
+- `sidecar.pid` and, with pairing, the device key in an owner-only config.
 
 What is forwarded and how the server treats it is described in [`fleet-protocol.md`](fleet-protocol.md). Which local sources a sidecar may read is governed by [source consent](source-consent.md).
 

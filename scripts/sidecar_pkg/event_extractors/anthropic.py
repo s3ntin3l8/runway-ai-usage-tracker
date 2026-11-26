@@ -291,7 +291,23 @@ def poll_anthropic_events(
             stamp = _file_stamp(path.stat())
             cursor = watermark.anthropic_transcript(path, account_id)
             previous_stamp = cursor.get("stamp")
-            if previous_stamp == stamp:
+            offset = cursor.get("offset", 0)
+            same_stamp = previous_stamp == stamp
+            grew = (
+                isinstance(previous_stamp, list)
+                and len(previous_stamp) == len(stamp)
+                and previous_stamp[:2] == stamp[:2]
+                and stamp[2] > previous_stamp[2]
+            )
+            resume = (
+                (same_stamp or grew)
+                and isinstance(offset, int)
+                and 0 <= offset <= stamp[2]
+                and cursor.get("fingerprint") == transcript_fingerprint(path, offset)
+            )
+            # Same-size in-place writes can share a filesystem timestamp tick.
+            # An incomplete tail still needs to be read, even if its prefix matches.
+            if same_stamp and resume and offset == stamp[2]:
                 continue
             baseline = since
             if isinstance(cursor.get("baseline"), str):
@@ -300,18 +316,8 @@ def poll_anthropic_events(
                 except ValueError:
                     # An invalid saved baseline falls back to the account watermark.
                     pass
-            offset = cursor.get("offset", 0)
-            appended = (
-                isinstance(previous_stamp, list)
-                and len(previous_stamp) == len(stamp)
-                and previous_stamp[:2] == stamp[:2]
-                and stamp[2] > previous_stamp[2]
-                and isinstance(offset, int)
-                and 0 < offset <= stamp[2]
-                and cursor.get("fingerprint") == transcript_fingerprint(path, offset)
-            )
-            ranges[path] = (offset if appended else 0, stamp[2])
-            floors[path] = oldest if appended else baseline
+            ranges[path] = (offset if resume else 0, stamp[2])
+            floors[path] = oldest if resume and offset > 0 else baseline
             baselines[path] = baseline
             stamps[path] = stamp
         except (OSError, RuntimeError):

@@ -279,6 +279,7 @@ class EventIngestor:
                 # so a mixed-case email from a sidecar can't split an account
                 # into an events-only twin of its quota card.
                 account_id = canonical_account_id(push.account_id)
+                existing: UsageEvent | None = None
 
                 if push.account_source == "default" or (
                     push.account_source is None and account_id == "default"
@@ -306,56 +307,16 @@ class EventIngestor:
                         # listing an event that is already counted.
                         self._drop_pending_copies(push)
                     else:
-                        existing = self.session.exec(
-                            select(UsageEvent.id).where(
-                                UsageEvent.provider_id == push.provider_id,
-                                UsageEvent.event_id == push.event_id,
-                            )
-                        ).first()
-                        if existing is not None:
-                            # A stale or replayed unresolved payload must not
-                            # create a second pending copy of an event that has
-                            # already been assigned to a real account.
+                        existing = self._stored_event(push.provider_id, push.event_id)
+                        if existing is None:
+                            self._upsert_pending(push, sidecar_id, ts, result)
+                            continue
+                        # An unresolved replay can update usage for its original
+                        # account, but cannot move it or create a pending copy.
+                        if not _is_streamed_transcript(push):
                             result.events_duplicate += 1
                             continue
-                        sidecar = sidecar_id or "local"
-                        row = self.session.exec(
-                            select(PendingUsageEvent).where(
-                                PendingUsageEvent.provider_id == push.provider_id,
-                                PendingUsageEvent.event_id == push.event_id,
-                                PendingUsageEvent.sidecar_id == sidecar,
-                            )
-                        ).first()
-                        payload = json.dumps(
-                            push.model_dump(mode="json"), separators=(",", ":"), sort_keys=True
-                        )
-                        if row is None:
-                            self.session.add(
-                                PendingUsageEvent(
-                                    provider_id=push.provider_id,
-                                    event_id=push.event_id,
-                                    sidecar_id=sidecar,
-                                    ts=ts,
-                                    payload_json=payload,
-                                )
-                            )
-                            result.events_inserted += 1
-                        else:
-                            if _is_streamed_transcript(push):
-                                stored = json.loads(row.payload_json)
-                                if push.tokens_output <= stored.get("tokens_output", 0):
-                                    payload = row.payload_json
-                                else:
-                                    # The pending record will be promoted with
-                                    # its first timestamp when assigned.
-                                    payload = push.model_copy(
-                                        update={"ts": stored["ts"]}
-                                    ).model_dump_json()
-                            row.payload_json = payload
-                            row.last_seen = datetime.now(UTC)
-                            self.session.add(row)
-                            result.events_duplicate += 1
-                        continue
+                        account_id = existing.account_id
 
                 if push.kind == "error":
                     ev = UsageEvent(
@@ -376,7 +337,9 @@ class EventIngestor:
                     if self._try_insert_event(ev):
                         result.events_inserted += 1
                     else:
-                        self._reconcile_duplicate(ev, result)
+                        self._reconcile_duplicate(
+                            self._stored_event(ev.provider_id, ev.event_id), ev, result
+                        )
                     continue  # error events don't roll up
 
                 # PAYG accounts prefer a provider-reported amount (e.g. an
@@ -451,19 +414,22 @@ class EventIngestor:
                     web_search_requests=push.web_search_requests,
                     web_fetch_requests=push.web_fetch_requests,
                 )
-                self._price_event(ev, billing_type)
-                if not self._try_insert_event(ev):
-                    self._reconcile_duplicate(
-                        ev,
-                        result,
-                        billing_type=billing_type,
-                        streamed=_is_streamed_transcript(push),
-                    )
-                    continue
-                # Rollups share the same outer transaction; if anything past
-                # this point raises, the whole batch rolls back.
-                update_rollups_for_event(self.session, ev)
-                result.events_inserted += 1
+                if existing is None:
+                    self._price_event(ev, billing_type)
+                    if self._try_insert_event(ev):
+                        # Rollups share the outer transaction with the event.
+                        update_rollups_for_event(self.session, ev)
+                        result.events_inserted += 1
+                        continue
+                    existing = self._stored_event(ev.provider_id, ev.event_id)
+
+                self._reconcile_duplicate(
+                    existing,
+                    ev,
+                    result,
+                    billing_type=billing_type,
+                    streamed=_is_streamed_transcript(push),
+                )
         except Exception:
             self.session.rollback()
             raise
@@ -496,8 +462,58 @@ class EventIngestor:
         ev.cost_cache_read = resolved.breakdown.cache_read
         ev.cost_cache_create = resolved.breakdown.cache_create
 
+    def _upsert_pending(
+        self,
+        push: UsageEventPush,
+        sidecar_id: str | None,
+        ts: datetime,
+        result: IngestResult,
+    ) -> None:
+        sidecar = sidecar_id or "local"
+        row = self.session.exec(
+            select(PendingUsageEvent).where(
+                PendingUsageEvent.provider_id == push.provider_id,
+                PendingUsageEvent.event_id == push.event_id,
+                PendingUsageEvent.sidecar_id == sidecar,
+            )
+        ).first()
+        payload = json.dumps(push.model_dump(mode="json"), separators=(",", ":"), sort_keys=True)
+        if row is None:
+            self.session.add(
+                PendingUsageEvent(
+                    provider_id=push.provider_id,
+                    event_id=push.event_id,
+                    sidecar_id=sidecar,
+                    ts=ts,
+                    payload_json=payload,
+                )
+            )
+            result.events_inserted += 1
+        else:
+            if _is_streamed_transcript(push):
+                stored = json.loads(row.payload_json)
+                if push.tokens_output <= stored.get("tokens_output", 0):
+                    payload = row.payload_json
+                else:
+                    # The pending record will be promoted with
+                    # its first timestamp when assigned.
+                    payload = push.model_copy(update={"ts": stored["ts"]}).model_dump_json()
+            row.payload_json = payload
+            row.last_seen = datetime.now(UTC)
+            self.session.add(row)
+            result.events_duplicate += 1
+
+    def _stored_event(self, provider_id: str, event_id: str) -> UsageEvent | None:
+        return self.session.exec(
+            select(UsageEvent).where(
+                UsageEvent.provider_id == provider_id,
+                UsageEvent.event_id == event_id,
+            )
+        ).first()
+
     def _reconcile_duplicate(
         self,
+        existing: UsageEvent | None,
         incoming: UsageEvent,
         result: IngestResult,
         *,
@@ -505,12 +521,6 @@ class EventIngestor:
         streamed: bool = False,
     ) -> None:
         """Only the original sidecar can move or refresh a stored event."""
-        existing = self.session.exec(
-            select(UsageEvent).where(
-                UsageEvent.provider_id == incoming.provider_id,
-                UsageEvent.event_id == incoming.event_id,
-            )
-        ).first()
         if existing is None or existing.sidecar_id != incoming.sidecar_id:
             result.events_duplicate += 1
             return

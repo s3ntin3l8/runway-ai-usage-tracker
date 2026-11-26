@@ -1,3 +1,4 @@
+import pytest
 from sqlmodel import Session, SQLModel, create_engine, select
 from sqlmodel.pool import StaticPool
 
@@ -75,6 +76,50 @@ def test_pending_streamed_transcript_keeps_its_largest_usage_and_original_timest
         assert winning.ts == partial.ts
         assert winning.tokens_output == 50
         assert s.exec(select(UsageEvent)).all() == []
+
+
+def test_unresolved_streamed_replay_refreshes_the_original_account():
+    from app.core.source_apps import CLAUDE_CODE
+
+    with _seeded_session() as s:
+        tag = CredentialTag(
+            provider_id="anthropic",
+            credential_origin="provider:anthropic",
+            account_id="user@x.com",
+            sidecar_id="dev-01",
+            set_by="operator",
+        )
+        s.add(tag)
+        s.commit()
+        push = _make_push(
+            account_id="default",
+            account_source="default",
+            source_app=CLAUDE_CODE,
+            streamed_usage=True,
+            tokens_output=1,
+        )
+        ingestor = EventIngestor(s)
+        assert ingestor.ingest([push], sidecar_id="dev-01").events_inserted == 1
+        event = s.exec(select(UsageEvent)).one()
+        identity = (event.id, event.account_id, event.ts, event.sidecar_id)
+        partial_cost = event.cost_usd
+        s.delete(tag)
+        s.commit()
+
+        final = push.model_copy(update={"tokens_output": 50, "ts": "2026-05-09T14:23:11+00:00"})
+        assert ingestor.ingest([final], sidecar_id="other-host").events_duplicate == 1
+        assert ingestor.ingest([final], sidecar_id="dev-01").events_refreshed == 1
+        assert ingestor.ingest([final, push], sidecar_id="dev-01").events_duplicate == 2
+
+        event = s.exec(select(UsageEvent)).one()
+        assert (event.id, event.account_id, event.ts, event.sidecar_id) == identity
+        assert event.attribution_source == "tag"
+        assert event.tokens_output == 50
+        assert event.cost_usd > partial_cost
+        assert s.exec(select(PendingUsageEvent)).all() == []
+        for rollup in s.exec(select(UsagePeriodRollup)).all():
+            assert (rollup.account_id, rollup.msgs, rollup.tokens_output) == ("user@x.com", 1, 50)
+            assert rollup.cost_usd == pytest.approx(event.cost_usd)
 
 
 def test_ingest_updates_rollups():

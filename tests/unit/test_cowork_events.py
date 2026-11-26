@@ -410,7 +410,7 @@ def test_queue_sync_failure_does_not_own_checkpoint(tmp_path, monkeypatch):
     assert len(collect(base, state).events) == 1
 
 
-@pytest.mark.parametrize("source", ["cowork", "cli", "cli-custom"])
+@pytest.mark.parametrize("source", ["cowork", "cli", "cli-custom", "cli-same-stamp"])
 @time_machine.travel("2026-07-02T12:00:00Z")
 def test_streamed_usage_reaches_ingestion_across_sidecar_cycles(tmp_path, monkeypatch, source):
     from app.core.db import configure_sqlite_engine
@@ -419,6 +419,7 @@ def test_streamed_usage_reaches_ingestion_across_sidecar_cycles(tmp_path, monkey
     from app.services.event_ingestor import EventIngestor
     from scripts import sidecar
     from scripts.sidecar_pkg.credentials import CredentialCache
+    from scripts.sidecar_pkg.event_extractors import anthropic
 
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
@@ -452,10 +453,13 @@ def test_streamed_usage_reaches_ingestion_across_sidecar_cycles(tmp_path, monkey
         )
 
     first_stamp = "2026-07-01T23:59:59Z"
-    # Both CLI paths repeat exactly the timestamp they already pushed.
+    # The CLI paths repeat exactly the timestamp they already pushed.
     # Cowork also exercises a later record that falls on a different day.
     final_stamp = "2026-07-02T00:00:01Z" if source == "cowork" else first_stamp
-    path.write_text(json.dumps(record(ts=first_stamp)) + "\n")
+    first = record(ts=first_stamp)
+    first_output = 17 if source == "cli-same-stamp" else 7
+    first["message"]["usage"]["output_tokens"] = first_output
+    path.write_bytes((json.dumps(first) + "\n").encode())
 
     engine = create_engine(
         "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
@@ -499,12 +503,18 @@ def test_streamed_usage_reaches_ingestion_across_sidecar_cycles(tmp_path, monkey
             (partial,) = sent[-1]
             row = db.exec(select(UsageEvent)).one()
             row_id = row.id
-            assert row.tokens_output == 7
+            assert row.tokens_output == first_output
 
             final = record(ts=final_stamp)
             final["message"]["usage"].update({"output_tokens": 41, "input_tokens": 19})
-            with path.open("w" if source == "cli-custom" else "a") as file:
-                file.write(json.dumps(final) + "\n")
+            final_line = (json.dumps(final) + "\n").encode()
+            if source == "cli-same-stamp":
+                # Simulate a same-size, same-inode rewrite within one timestamp tick.
+                stamp = anthropic._file_stamp(path.stat())
+                assert stamp[2] == len(final_line)
+                monkeypatch.setattr(anthropic, "_file_stamp", lambda _stat: stamp)
+            with path.open("wb" if source in {"cli-custom", "cli-same-stamp"} else "ab") as file:
+                file.write(final_line)
 
             reject = True
             runner.run_once(providers=["anthropic"])
