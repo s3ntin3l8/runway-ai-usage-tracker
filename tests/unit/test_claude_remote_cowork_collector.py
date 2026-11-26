@@ -284,3 +284,24 @@ def test_a_heartbeat_resending_the_whole_list_writes_only_new_hints(environment,
         )
         assert written == 1
         assert len(session.exec(select(ClaudeRemoteSessionHint)).all()) == 2
+
+
+@pytest.mark.asyncio
+async def test_hints_are_fetched_even_when_the_list_fills_the_request_budget(
+    environment, hints, monkeypatch
+):
+    # Prod's list alone took 142 pages; the hint pass must not depend on what the list spent.
+    monkeypatch.setattr(collector, "REQUESTS_PER_CYCLE", 2)
+    hints(REMOTE)
+    server = HintServer(
+        [cloud_row()], {base.SECRET_ID: two_turns(), REMOTE: two_turns()}, {REMOTE: remote_row()}
+    )
+    first = await cycle(server)
+    assert fetched(server) == [REMOTE]
+    assert first.backlog and first.outcome == "partial"
+    monkeypatch.setattr(collector, "REQUESTS_PER_CYCLE", 200)
+    await cycle(server)  # the catch-up cycle reads the waiting histories
+    assert {r.session_id for r in events(environment)} == {
+        session_digest(base.SECRET_ID),
+        session_digest(REMOTE),
+    }

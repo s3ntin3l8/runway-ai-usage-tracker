@@ -69,7 +69,8 @@ MAX_LIST_PAGES = 200
 MAX_BYTES = 32 * 1024 * 1024
 CYCLE_TIMEOUT = 300.0
 PAGE_PAUSE = 0.25
-# Per cycle: history pages and total requests (list, identity and history together).
+# Per cycle: history pages and total requests (list, identity and history together; the remote
+# Cowork hint pass may add up to MAX_HINTS_PER_CYCLE on top).
 HISTORY_PAGES_PER_CYCLE = 40
 REQUESTS_PER_CYCLE = 200
 # Remote Cowork hints fetched per list pass (one request each; see ``_hinted_rows``).
@@ -422,8 +423,10 @@ async def _hinted_rows(
 
     Only hints for the verified login's own account and organization are fetched, and a fetched
     session is kept only when it is a remote Cowork session (``remote_sessions.is_remote_cowork``),
-    so a hint can never make the collector read a local (``bridge``) session. The pass is bounded
-    (``MAX_HINTS_PER_CYCLE``, half the cycle's requests) and never fails the cycle: a missing
+    so a hint can never make the collector read a local (``bridge``) session. The pass is bounded by
+    ``MAX_HINTS_PER_CYCLE`` on its own, not by what the list pass spent: an account whose list alone
+    fills the cycle's request budget would otherwise never fetch a hint. History reads the remaining
+    budget cannot cover wait for the catch-up cycle. The pass never fails the cycle: a missing
     session is skipped, and a rate limit, timeout or spent byte budget ends the pass, so the listed
     sessions are still read.
     """
@@ -442,9 +445,6 @@ async def _hinted_rows(
     for index, hint in enumerate(hints):
         if hint.session_id in known:
             continue
-        if int(attempt.report["requests"]) >= REQUESTS_PER_CYCLE // 2:
-            report.notes.append("hints_deferred")
-            break
         if index and PAGE_PAUSE:
             await asyncio.sleep(PAGE_PAUSE)
         attempt.report["stage"] = "hint_get"
