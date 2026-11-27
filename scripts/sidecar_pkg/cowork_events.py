@@ -52,6 +52,7 @@ def _write(path: Path, files: dict[str, Any]) -> None:
 # scans instead of never, while the per-scan read stays bounded.
 _CHUNK_BYTES = 256 * 1024
 _AUDIT_BYTES = 8 * 1024 * 1024
+_AUDIT_FIELDS = ("audit_next", "audit_done", "audited", "audit_mtime_ns")
 
 
 def _chunk_count(end: int) -> int:
@@ -95,10 +96,16 @@ def _audit(
 ) -> tuple[dict[str, dict[str, Any]], dict[str, int]]:
     """Re-read up to ``budget`` bytes of committed chunks; drop a cursor whose chunk changed.
 
-    Transcripts written since their last full audit go first, then the one
-    audited longest ago. A missing digest (a state from before #802) is filled
-    in from the current bytes, which starts its coverage from now. Returns the
-    updated cursors and the offsets of the dropped ones, both keyed by path.
+    Every eligible transcript gets an equal slice of the budget (at least one
+    chunk), so one large transcript cannot starve the others. A pass over a
+    transcript's chunks may span many scans: ``audit_done`` counts the chunks
+    checked in the current pass, and the pass completes, setting ``audited``
+    and ``audit_mtime_ns``, once it reaches the chunk count. Transcripts
+    written since their last completed pass go first, then the one whose pass
+    completed longest ago. A missing digest (a state from before #802) is
+    filled in from the current bytes, which starts its coverage from now.
+    Returns the updated cursors and the offsets of the dropped ones, both
+    keyed by path.
     """
     updated: dict[str, dict[str, Any]] = {}
     dropped: dict[str, int] = {}
@@ -120,28 +127,37 @@ def _audit(
                     key,
                 )
             )
+    if not order:
+        return updated, dropped
+    share = max(_CHUNK_BYTES, budget // len(order))
     for _, _, key in sorted(order):
-        if budget < _CHUNK_BYTES:
+        if budget <= 0:
             break
+        allowance = min(share, budget)
         cursor = state[key]
         offset = cursor["offset"]
         chunks = _chunks_of(cursor, offset)
         count = len(chunks)
         index = cursor.get("audit_next")
         index = index % count if isinstance(index, int) and index >= 0 else 0
-        checked = 0
+        done = cursor.get("audit_done")
+        done = min(done, count) if isinstance(done, int) and done >= 0 else 0
+        complete = False
         changed = False
         try:
             with Path(key).open("rb") as f:
-                while checked < count and budget >= _CHUNK_BYTES:
+                while allowance > 0 and not complete:
+                    size = min(_CHUNK_BYTES, offset - index * _CHUNK_BYTES)
                     digest = _chunk_digest(f, index, offset)
-                    budget -= _CHUNK_BYTES
+                    allowance -= size
+                    budget -= size
                     if digest is None or chunks[index] not in (None, digest):
                         changed = True
                         break
                     chunks[index] = digest
                     index = (index + 1) % count
-                    checked += 1
+                    done += 1
+                    complete = done >= count
         except OSError:
             continue
         if changed:
@@ -149,10 +165,11 @@ def _audit(
             dropped[key] = offset
             del state[key]
             continue
-        cursor = dict(cursor, chunks=chunks, audit_next=index)
-        if checked == count:
-            cursor["audited"] = time.time()
-            cursor["audit_mtime_ns"] = tracked[key].st_mtime_ns
+        cursor = dict(cursor, chunks=chunks, audit_next=index, audit_done=done)
+        if complete:
+            cursor.update(
+                audit_done=0, audited=time.time(), audit_mtime_ns=tracked[key].st_mtime_ns
+            )
         state[key] = updated[key] = cursor
     return updated, dropped
 
@@ -365,6 +382,9 @@ def collect_cowork(
                     "fingerprint": _fingerprint(path, end),
                     "chunks": _extend_chunks(path, _chunks_of(old, start), start, end),
                     "account": account,
+                    # Carry the audit walk across commits, so a transcript that
+                    # grows every scan still has its older chunks re-read.
+                    **{k: old[k] for k in _AUDIT_FIELDS if valid and k in old},
                 },
                 required,
             )
