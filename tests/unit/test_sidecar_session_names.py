@@ -222,6 +222,8 @@ def cycle(tmp_path, monkeypatch):
         sidecar, "_discover_anthropic_log_paths", lambda: sorted(projects.glob("*.jsonl"))
     )
     monkeypatch.setattr(sidecar, "_extract_events_for_provider", lambda **kw: 0)
+    # Same result on every host: no Cowork batch, as on a Linux CI runner (#1409).
+    monkeypatch.setattr(sidecar.platform, "system", lambda: "Linux")
     monkeypatch.setattr(sidecar, "queue_flush", lambda *a, **k: 0)
     monkeypatch.setattr(sidecar, "queue_push", lambda payload, *a: True)
 
