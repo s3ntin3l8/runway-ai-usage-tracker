@@ -68,8 +68,14 @@ def world(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_world_workers_cannot_read_or_rollback_another_transaction(world):
-    """Manager workers need the independent SQLite transactions used in production."""
+@pytest.mark.parametrize("writer_outcome", ["commit", "rollback"])
+async def test_world_workers_see_only_committed_rows_of_another_transaction(world, writer_outcome):
+    """Manager workers need the independent SQLite transactions used in production.
+
+    A worker never reads another worker's uncommitted row, and the writer alone decides
+    whether that row survives: its commit keeps it, its own rollback discards it. (With a
+    shared StaticPool connection a reader could roll back the writer's work instead.)
+    """
     engine, _ = world
     with Session(engine) as writer:
         writer.add(
@@ -84,24 +90,27 @@ async def test_world_workers_cannot_read_or_rollback_another_transaction(world):
                 return reader.exec(select(PendingCredentialTag)).all()
 
         observed = await asyncio.to_thread(read_in_worker)
-        writer.commit()
+        if writer_outcome == "commit":
+            writer.commit()
+        else:
+            writer.rollback()
     with Session(engine) as reader:
         persisted = reader.exec(select(PendingCredentialTag)).all()
-    assert (len(observed), len(persisted)) == (0, 1)
+    expected = 1 if writer_outcome == "commit" else 0
+    assert (len(observed), len(persisted)) == (0, expected)
 
 
 @pytest.mark.asyncio
-async def test_seed_uses_ingest_pending_slot_for_both_claude_providers(world):
-    engine, cache = world
-    for provider in ("anthropic", "anthropic_console"):
-        source_id = await _seed(world, provider, f"cookie:{provider}/store#aaaaaaaaaaaa", {})
-        pending = await cache.get_pending_sources(provider)
-        assert pending[0]["account_slot"] == source_id
-        with Session(engine) as session:
-            row = session.exec(
-                select(CredentialSource).where(CredentialSource.provider_id == provider)
-            ).one()
-            assert row.account_id == source_id
+@pytest.mark.parametrize(
+    "provider,slot",
+    [("anthropic", "source"), ("anthropic_console", "source"), ("chatgpt", "default")],
+)
+async def test_seed_uses_ingest_pending_slot(world, provider, slot):
+    """Claude files a pending bundle under its own source id; everyone else under default."""
+    _engine, cache = world
+    source_id = await _seed(world, provider, f"cookie:{provider}/store#aaaaaaaaaaaa", {})
+    pending = await cache.get_pending_sources(provider)
+    assert pending[0]["account_slot"] == (source_id if slot == "source" else "default")
 
 
 async def _seed(world, provider: str, origin: str, tokens: dict):
@@ -177,6 +186,7 @@ def _outcome(engine, provider: str, source_id: str):
         return source.account_id, tag
 
 
+CLAUDE_ORG = "11111111-1111-4111-8111-111111111111"
 CLAUDE_USAGE = {"five_hour": {"utilization": 10.0, "resets_at": "2099-01-01T00:00:00Z"}}
 
 
@@ -213,6 +223,12 @@ async def test_a_pending_claude_cookie_is_verified_and_promoted_to_its_email(wor
     account, tag = _outcome(engine, "anthropic", source_id)
     assert account == BOB
     assert tag is not None and tag.set_by == "identity_verification" and tag.sidecar_id == SIDECAR
+    from app.models.db import ProviderConfig
+
+    with Session(engine) as session:
+        config = session.exec(select(ProviderConfig)).one()
+        # Initial automatic promotion is authorized to bind the proved organization.
+        assert (config.account_id, config.claude_organization_id) == (BOB, CLAUDE_ORG)
     promoted = await cache.get_source_candidates("anthropic", BOB)
     assert [c["source_id"] for c in promoted] == [source_id]
     assert promoted[0]["identity_pending"] is False
@@ -519,11 +535,20 @@ async def test_verification_does_not_overwrite_a_tag_the_operator_set_meanwhile(
         )
         session.commit()
 
-    await _verify("chatgpt", _chatgpt([]))
+    manager = CollectorManager()
+    key = _verifier(manager, "chatgpt")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(_chatgpt([]))) as client:
+        cards = await manager._collect_with_source_failover(key, client, {})
 
     _account, tag = _outcome(engine, "chatgpt", source_id)
     assert tag is not None
     assert (tag.account_id, tag.set_by) == ("operator-choice@example.com", "operator")
+    # The contradictory assignment fails closed: nothing is published for the proved
+    # account, and the attempt says why.
+    assert cards == []
+    assert manager.smart_collectors[key].last_collection_reason == (
+        "credential source assigned to another account"
+    )
 
 
 @pytest.mark.asyncio
@@ -891,6 +916,89 @@ async def test_poller_revalidates_claude_proof_after_manager_returns(world, monk
             assert session.exec(select(LatestUsage)).all() == []
     finally:
         await manager.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("config_state", ["missing", "unbound"])
+async def test_poller_proof_validation_leaves_the_account_config_unchanged(
+    world, monkeypatch, config_state
+):
+    """Read validation is pure: the poller commits its session, so a check that created a
+    config row or bound an organization would persist it. A missing or unbound row still
+    validates; only promotion, selection or publication binds."""
+    from app.models.db import LatestUsage, ProviderConfig
+    from app.services.poller import BackgroundPoller
+
+    engine, cache = world
+    await _seed(
+        world,
+        "anthropic",
+        "cookie:anthropic/chrome/Default/store#aaaaaaaaaaaa",
+        {"cookie_sessionKey": CLAUDE_COOKIE},
+    )
+    manager = CollectorManager()
+    manager.collector_registry = {"anthropic": manager.collector_registry["anthropic"]}
+    manager._client = httpx.AsyncClient(
+        transport=httpx.MockTransport(_claude_web()),
+        event_hooks={"response": [cache.observe_response]},
+    )
+    collect_all = manager.collect_all
+
+    async def config_changes_after_collection():
+        result = await collect_all()
+        assert result and result[0].claude_source_proof.organization_id == CLAUDE_ORG
+        with Session(engine) as session:
+            config = session.exec(select(ProviderConfig)).one()
+            if config_state == "missing":
+                session.delete(config)
+            else:
+                config.claude_organization_id = None
+                session.add(config)
+            session.commit()
+        return result
+
+    monkeypatch.setattr(manager, "collect_all", config_changes_after_collection)
+    monkeypatch.setattr("app.services.poller.manager", manager)
+    monkeypatch.setattr("app.services.poller.engine", engine)
+    try:
+        await BackgroundPoller().poll_now()
+        with Session(engine) as session:
+            configs = session.exec(select(ProviderConfig)).all()
+            if config_state == "missing":
+                assert configs == []
+            else:
+                assert [c.claude_organization_id for c in configs] == [None]
+            assert [row.account_id for row in session.exec(select(LatestUsage)).all()] == [BOB]
+    finally:
+        await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_a_sidecar_source_without_origin_metadata_still_publishes(world):
+    """Legacy sidecar bundles carry no ``credential_origin``: they skip identity promotion
+    and the operator-assignment guard entirely and keep publishing as before."""
+    _engine, cache = world
+    await cache.store(
+        "chatgpt",
+        {"cookie___Secure-next-auth.session-token": CHATGPT_COOKIE},
+        account_id="default",
+        source_id=f"sidecar:{SIDECAR}:legacy",
+        source=SIDECAR,
+        source_metadata={"source_type": "cookie", "sidecar_id": SIDECAR},
+    )
+    manager = CollectorManager()
+    cls, name, ttl = manager.collector_registry["chatgpt"]
+    key = "chatgpt:default"
+    manager.smart_collectors[key] = SmartCollector(
+        collector=cls(account_id="default"), collector_name=name, ttl=ttl
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(_chatgpt([]))) as client:
+        cards = await manager._collect_with_source_failover(key, client, {})
+
+    assert cards and not any(card.get("error_type") for card in cards)
+    assert manager.smart_collectors[key].last_collection_reason != (
+        "credential source assigned to another account"
+    )
 
 
 @pytest.mark.asyncio
