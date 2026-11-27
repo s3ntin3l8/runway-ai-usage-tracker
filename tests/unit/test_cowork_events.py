@@ -373,8 +373,8 @@ def test_fingerprint_covers_the_head_and_the_tail_of_the_committed_region(tmp_pa
     middle[100000:100010] = b"0123456789"
     path.write_bytes(bytes(middle) + b"tail-one")
     # The window is bounded on purpose, so a rewrite that touches neither the
-    # head nor the tail of the committed region is not detected. Tracked in
-    # the follow-up issue linked from the pull request.
+    # head nor the tail of the committed region is not detected by it; the
+    # Cowork reader's chunk audit covers that (see the audit tests below).
     assert _fingerprint(path, path.stat().st_size) == window
     # A region that fits the window is covered in full.
     small = b"s" * (32 * 1024)
@@ -592,3 +592,196 @@ def test_queue_ownership_syncs_file_and_directory(tmp_path, monkeypatch):
     assert sidecar.queue_push({"events": [{"provider_id": "anthropic", "event_id": "x"}]})
     assert False in synced
     assert True in synced
+
+
+# Middle-of-history rewrites (#802): the chunk audit re-reads committed chunks.
+
+_PAD = json.dumps({"type": "user", "padding": "x" * 4000}) + "\n"
+
+
+def _large_session(base, n=120):
+    """A transcript of ~1 MiB with one assistant record far from the head and the tail."""
+    path = session(base)
+    path.write_text(
+        _PAD * n + json.dumps(record("mid-a")) + "\n" + _PAD * n + json.dumps(record("end")) + "\n"
+    )
+    return path
+
+
+def _rewrite_middle(path, *, append=""):
+    stat = path.stat()
+    data = path.read_bytes().replace(b'"mid-a"', b'"mid-b"')
+    path.write_bytes(data + append.encode())
+    if not append:
+        try:
+            os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+        except OSError:
+            pytest.skip("mtime not settable on this filesystem")
+        assert path.stat().st_size == stat.st_size
+
+
+def _ids(batch):
+    return {e["event_id"] for e in batch.events}
+
+
+def test_middle_rewrite_with_same_size_and_mtime_is_replayed(tmp_path):
+    base = tmp_path / "desktop"
+    path = _large_session(base)
+    state = tmp_path / "state.json"
+    batch = collect(base, state)
+    assert _ids(batch) == {"mid-a", "end"}
+    batch.mark_owned(batch.events)
+    assert collect(base, state).events == []
+    _rewrite_middle(path)
+    assert "mid-b" in _ids(collect(base, state))
+
+
+def test_middle_rewrite_plus_append_is_replayed(tmp_path):
+    base = tmp_path / "desktop"
+    path = _large_session(base)
+    state = tmp_path / "state.json"
+    batch = collect(base, state)
+    batch.mark_owned(batch.events)
+    _rewrite_middle(path, append=json.dumps(record("tail")) + "\n")
+    assert {"mid-b", "tail"} <= _ids(collect(base, state))
+
+
+def test_state_without_chunks_is_backfilled_not_replayed(tmp_path):
+    base = tmp_path / "desktop"
+    _large_session(base)
+    state = tmp_path / "state.json"
+    batch = collect(base, state)
+    batch.mark_owned(batch.events)
+    data = json.loads(state.read_text())
+    for cursor in data["files"].values():
+        del cursor["chunks"]  # a cursor written before the audit existed
+    state.write_text(json.dumps(data))
+    assert collect(base, state).events == []
+    (cursor,) = json.loads(state.read_text())["files"].values()
+    assert cursor["chunks"] and all(isinstance(c, str) for c in cursor["chunks"])
+
+
+def test_idle_transcript_audit_advances_across_cycles_and_finds_a_rewrite(tmp_path):
+    from scripts.sidecar_pkg.cowork_events import _CHUNK_BYTES
+
+    base = tmp_path / "desktop"
+    path = _large_session(base)
+    state = tmp_path / "state.json"
+    batch = collect(base, state)
+    batch.mark_owned(batch.events)
+    data = json.loads(state.read_text())
+    (cursor,) = data["files"].values()
+    count = len(cursor["chunks"])
+    assert count >= 4
+    cursor["chunks"] = [None] * count
+    state.write_text(json.dumps(data))
+    for cycle in range(1, count + 1):
+        # One chunk per scan: the idle file has no events, yet its audit
+        # progress is persisted and moves on.
+        assert collect(base, state, audit_bytes=_CHUNK_BYTES).events == []
+        (cursor,) = json.loads(state.read_text())["files"].values()
+        assert sum(c is not None for c in cursor["chunks"]) == cycle
+    _rewrite_middle(path)
+    found = set()
+    for _ in range(count):
+        found |= _ids(collect(base, state, audit_bytes=_CHUNK_BYTES))
+        if found:
+            break
+    assert "mid-b" in found
+
+
+def _org_session(base, org, pads, mid="m"):
+    root = base / "account-one" / org
+    root.mkdir(parents=True)
+    (root / "local_one.json").write_text(
+        json.dumps({"sessionId": "local_one", "cliSessionId": "cli-one", "emailAddress": "a@x.io"})
+    )
+    path = root / "local_one" / ".claude" / "projects" / "p" / "cli-one.jsonl"
+    path.parent.mkdir(parents=True)
+    path.write_text(_PAD * pads + json.dumps(record(mid)) + "\n" + _PAD * pads + "\n")
+    return path
+
+
+def _cursors(state):
+    return json.loads(state.read_text())["files"]
+
+
+def test_audit_budget_is_shared_fairly_across_transcripts(tmp_path, monkeypatch):
+    from scripts.sidecar_pkg import cowork_events
+
+    base = tmp_path / "desktop"
+    paths = [str(_org_session(base, org, 100, f"m-{org}").resolve()) for org in ("o1", "o2", "o3")]
+    state = tmp_path / "state.json"
+    batch = collect(base, state)
+    batch.mark_owned(batch.events)
+    reads = []
+    real = cowork_events._chunk_digest
+    monkeypatch.setattr(
+        cowork_events, "_chunk_digest", lambda f, i, end: reads.append(i) or real(f, i, end)
+    )
+    for _ in range(3):
+        before = {k: _cursors(state)[k].get("audit_next", 0) for k in paths}
+        reads.clear()
+        assert collect(base, state, audit_bytes=3 * cowork_events._CHUNK_BYTES).events == []
+        assert len(reads) == 3
+        after = _cursors(state)
+        # Every transcript advanced by one chunk in the same scan.
+        assert all(after[k]["audit_next"] != before[k] for k in paths)
+
+
+def test_transcript_larger_than_the_budget_does_not_starve_the_others(tmp_path):
+    from scripts.sidecar_pkg.cowork_events import _CHUNK_BYTES
+
+    base = tmp_path / "desktop"
+    big = str(_org_session(base, "big", 400, "m-big").resolve())  # ~13 chunks
+    small = _org_session(base, "small", 60, "mid-a")  # ~4 chunks
+    state = tmp_path / "state.json"
+    batch = collect(base, state, max_bytes=10**9)
+    batch.mark_owned(batch.events)
+    budget = 4 * _CHUNK_BYTES
+    count = len(_cursors(state)[big]["chunks"])
+    assert count * _CHUNK_BYTES > 2 * budget
+    for _ in range(count):
+        assert collect(base, state, audit_bytes=budget).events == []
+    # The big transcript's pass spans several scans and still completes.
+    assert "audited" in _cursors(state)[big]
+    _rewrite_middle(small)
+    found = set()
+    for _ in range(10):
+        found |= _ids(collect(base, state, audit_bytes=budget))
+    assert "mid-b" in found
+
+
+def test_audit_walk_survives_a_commit_on_a_growing_transcript(tmp_path):
+    from scripts.sidecar_pkg.cowork_events import _CHUNK_BYTES
+
+    base = tmp_path / "desktop"
+    path = _large_session(base)
+    state = tmp_path / "state.json"
+    batch = collect(base, state)
+    batch.mark_owned(batch.events)
+    assert collect(base, state, audit_bytes=_CHUNK_BYTES).events == []
+    key = str(path.resolve())
+    walked = _cursors(state)[key]["audit_next"]
+    with path.open("a") as f:
+        f.write(json.dumps(record("tail")) + "\n")
+    batch = collect(base, state, audit_bytes=_CHUNK_BYTES)
+    assert _ids(batch) == {"tail"}
+    batch.mark_owned(batch.events)
+    assert _cursors(state)[key]["audit_next"] == walked + 1
+
+
+def test_many_transcripts_on_a_small_budget_all_complete_a_pass(tmp_path):
+    from scripts.sidecar_pkg.cowork_events import _CHUNK_BYTES
+
+    base = tmp_path / "desktop"
+    paths = [str(_org_session(base, f"o{i}", 40, f"m{i}").resolve()) for i in range(6)]
+    state = tmp_path / "state.json"
+    batch = collect(base, state)
+    batch.mark_owned(batch.events)
+    # Fewer chunks per scan than transcripts: each scan serves a different
+    # subset, and every transcript still completes its pass.
+    for _ in range(25):
+        assert collect(base, state, audit_bytes=2 * _CHUNK_BYTES).events == []
+    cursors = _cursors(state)
+    assert all("audited" in cursors[k] for k in paths)
