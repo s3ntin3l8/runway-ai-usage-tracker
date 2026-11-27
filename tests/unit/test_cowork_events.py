@@ -373,8 +373,8 @@ def test_fingerprint_covers_the_head_and_the_tail_of_the_committed_region(tmp_pa
     middle[100000:100010] = b"0123456789"
     path.write_bytes(bytes(middle) + b"tail-one")
     # The window is bounded on purpose, so a rewrite that touches neither the
-    # head nor the tail of the committed region is not detected. Tracked in
-    # the follow-up issue linked from the pull request.
+    # head nor the tail of the committed region is not detected by it; the
+    # Cowork reader's chunk audit covers that (see the audit tests below).
     assert _fingerprint(path, path.stat().st_size) == window
     # A region that fits the window is covered in full.
     small = b"s" * (32 * 1024)
@@ -592,3 +592,129 @@ def test_queue_ownership_syncs_file_and_directory(tmp_path, monkeypatch):
     assert sidecar.queue_push({"events": [{"provider_id": "anthropic", "event_id": "x"}]})
     assert False in synced
     assert True in synced
+
+
+# Middle-of-history rewrites (#802): the chunk audit re-reads committed chunks.
+
+_PAD = json.dumps({"type": "user", "padding": "x" * 4000}) + "\n"
+
+
+def _large_session(base, n=120):
+    """A transcript of ~1 MiB with one assistant record far from the head and the tail."""
+    path = session(base)
+    path.write_text(
+        _PAD * n + json.dumps(record("mid-a")) + "\n" + _PAD * n + json.dumps(record("end")) + "\n"
+    )
+    return path
+
+
+def _rewrite_middle(path, *, append=""):
+    stat = path.stat()
+    data = path.read_bytes().replace(b'"mid-a"', b'"mid-b"')
+    path.write_bytes(data + append.encode())
+    if not append:
+        try:
+            os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+        except OSError:
+            pytest.skip("mtime not settable on this filesystem")
+        assert path.stat().st_size == stat.st_size
+
+
+def _ids(batch):
+    return {e["event_id"] for e in batch.events}
+
+
+def test_middle_rewrite_with_same_size_and_mtime_is_replayed(tmp_path):
+    base = tmp_path / "desktop"
+    path = _large_session(base)
+    state = tmp_path / "state.json"
+    batch = collect(base, state)
+    assert _ids(batch) == {"mid-a", "end"}
+    batch.mark_owned(batch.events)
+    assert collect(base, state).events == []
+    _rewrite_middle(path)
+    assert "mid-b" in _ids(collect(base, state))
+
+
+def test_middle_rewrite_plus_append_is_replayed(tmp_path):
+    base = tmp_path / "desktop"
+    path = _large_session(base)
+    state = tmp_path / "state.json"
+    batch = collect(base, state)
+    batch.mark_owned(batch.events)
+    _rewrite_middle(path, append=json.dumps(record("tail")) + "\n")
+    assert {"mid-b", "tail"} <= _ids(collect(base, state))
+
+
+def test_state_without_chunks_is_backfilled_not_replayed(tmp_path):
+    base = tmp_path / "desktop"
+    _large_session(base)
+    state = tmp_path / "state.json"
+    batch = collect(base, state)
+    batch.mark_owned(batch.events)
+    data = json.loads(state.read_text())
+    for cursor in data["files"].values():
+        del cursor["chunks"]  # a cursor written before the audit existed
+    state.write_text(json.dumps(data))
+    assert collect(base, state).events == []
+    (cursor,) = json.loads(state.read_text())["files"].values()
+    assert cursor["chunks"] and all(isinstance(c, str) for c in cursor["chunks"])
+
+
+def test_idle_transcript_audit_advances_across_cycles_and_finds_a_rewrite(tmp_path):
+    from scripts.sidecar_pkg.cowork_events import _CHUNK_BYTES
+
+    base = tmp_path / "desktop"
+    path = _large_session(base)
+    state = tmp_path / "state.json"
+    batch = collect(base, state)
+    batch.mark_owned(batch.events)
+    data = json.loads(state.read_text())
+    (cursor,) = data["files"].values()
+    count = len(cursor["chunks"])
+    assert count >= 4
+    cursor["chunks"] = [None] * count
+    state.write_text(json.dumps(data))
+    for cycle in range(1, count + 1):
+        # One chunk per scan: the idle file has no events, yet its audit
+        # progress is persisted and moves on.
+        assert collect(base, state, audit_bytes=_CHUNK_BYTES).events == []
+        (cursor,) = json.loads(state.read_text())["files"].values()
+        assert sum(c is not None for c in cursor["chunks"]) == cycle
+    _rewrite_middle(path)
+    found = set()
+    for _ in range(count):
+        found |= _ids(collect(base, state, audit_bytes=_CHUNK_BYTES))
+        if found:
+            break
+    assert "mid-b" in found
+
+
+def test_audit_reads_at_most_its_budget_per_scan(tmp_path, monkeypatch):
+    from scripts.sidecar_pkg import cowork_events
+
+    base = tmp_path / "desktop"
+    for org in ("org-one", "org-two", "org-three"):
+        root = base / "account-one" / org
+        root.mkdir(parents=True)
+        (root / "local_one.json").write_text(
+            json.dumps(
+                {"sessionId": "local_one", "cliSessionId": "cli-one", "emailAddress": "a@x.io"}
+            )
+        )
+        path = root / "local_one" / ".claude" / "projects" / "p" / "cli-one.jsonl"
+        path.parent.mkdir(parents=True)
+        path.write_text(_PAD * 200 + json.dumps(record(f"m-{org}")) + "\n")
+    state = tmp_path / "state.json"
+    batch = collect(base, state)
+    batch.mark_owned(batch.events)
+    reads = []
+    real = cowork_events._chunk_digest
+    monkeypatch.setattr(
+        cowork_events, "_chunk_digest", lambda f, i, end: reads.append(i) or real(f, i, end)
+    )
+    budget = 3 * cowork_events._CHUNK_BYTES
+    for _ in range(4):
+        reads.clear()
+        assert collect(base, state, audit_bytes=budget).events == []
+        assert len(reads) == 3
