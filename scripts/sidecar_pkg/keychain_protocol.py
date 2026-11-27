@@ -39,6 +39,31 @@ def keychain_reason(exc: KeychainError) -> str:
     return f"{reason}{status}"
 
 
+#: The GitHub CLI keeps one item per logged-in account plus an account-less copy
+#: of the active account's token, which is what ``gh auth token`` returns
+#: (macOS stores the empty account as no attribute; the helper reports it as "").
+GH_SERVICE = "gh:github.com"
+
+
+def select_item(items: list[dict[str, Any]]) -> dict[str, Any]:
+    """The one item a search result stands for, shared by every read and authorization path.
+
+    Every path must pick the same item, or the user would authorize one item while the
+    background read uses another. Only the GitHub CLI's account-less active-token item
+    may win over its siblings; anything else with several matches stays ambiguous.
+    """
+    if not items:
+        raise KeychainError("missing")
+    if len(items) > 1 and all(item.get("service") == GH_SERVICE for item in items):
+        # The ctypes backend omits the key instead of reporting "", so treat both alike.
+        active = [item for item in items if item.get("account") in ("", None)]
+        if len(active) == 1:
+            return active[0]
+    if len(items) != 1:
+        raise KeychainError("ambiguous")
+    return items[0]
+
+
 def encode_frame(value: dict[str, Any]) -> bytes:
     data = plistlib.dumps(value, fmt=plistlib.FMT_BINARY)
     if not 0 < len(data) <= MAX_FRAME:

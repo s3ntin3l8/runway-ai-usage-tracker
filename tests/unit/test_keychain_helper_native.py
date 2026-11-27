@@ -188,3 +188,16 @@ def test_invalid_service_names_never_call_security(native_harness, tmp_path, ser
     responses, calls = run(native_harness, tmp_path, service=service)
     assert responses == [{"error": "unavailable"}, {"error": "unavailable"}]
     assert calls == ["interaction:off"]
+
+
+def test_github_cli_item_without_an_account_reads_as_the_empty_account(native_harness, tmp_path):
+    responses, calls = run(native_harness, tmp_path, "gh-no-account", service="gh:github.com")
+    item = {**ITEM, "service": "gh:github.com", "account": ""}
+    assert responses == [{"result": [item]}, {"result": {**item, "data": b"synthetic-secret"}}]
+    assert calls == ["interaction:off", "search", "metadata", "data", "interaction:off"]
+
+
+def test_other_items_without_an_account_are_still_refused(native_harness, tmp_path):
+    responses, calls = run(native_harness, tmp_path, "no-account")
+    assert responses == [{"error": "unavailable"}, {"error": "unavailable"}]
+    assert calls == ["interaction:off", "search"]

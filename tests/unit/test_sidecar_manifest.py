@@ -9,6 +9,8 @@ import sys
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from tests.unit._sidecar_helpers import (
     REPO_ROOT,
     isolate_host_credentials,  # noqa: F401 — fixture
@@ -384,6 +386,42 @@ class TestPostCredentialManifest:
         cards, _ = sidecar.GenericCollector.collect_provider("github", config)
 
         assert len([c for c in cards if c.get("remaining") == "Token"]) == 1
+
+    @pytest.mark.parametrize(
+        ("stored", "expected"),
+        [
+            # gh stores through go-keyring, which wraps the token on macOS.
+            ("go-keyring-base64:" + base64.b64encode(b"gho_wrapped").decode(), "gho_wrapped"),
+            ("gho_plain", "gho_plain"),
+        ],
+    )
+    def test_macos_github_cli_keychain_token_is_unwrapped(self, monkeypatch, stored, expected):
+        from scripts.sidecar_pkg import macos_keychain_store, source_catalog
+        from scripts.sidecar_pkg import source_consent as consent
+
+        monkeypatch.setattr(source_catalog, "trusted_rule", lambda *_a: True)
+
+        monkeypatch.setattr(sidecar.platform, "system", lambda: "Darwin")
+        monkeypatch.setattr(sidecar, "expand_file_rule_paths", lambda _paths: [])
+        monkeypatch.setattr(
+            consent, "POLICY", consent.SourcePolicy(consent.SourcePolicy.enable_all({}))
+        )
+        monkeypatch.setattr(macos_keychain_store, "read_secret", lambda *a, **k: stored.encode())
+        config = {
+            "name": "GitHub Copilot",
+            "rules": [
+                {
+                    "type": "exec",
+                    "command": ["gh", "auth", "token", "--hostname", "github.com"],
+                    "mapping": {"value": "api_key"},
+                },
+            ],
+        }
+
+        cards, _ = sidecar.GenericCollector.collect_provider("github", config)
+
+        tokens = [c["metadata"]["api_key"] for c in cards if c.get("remaining") == "Token"]
+        assert tokens == [expected]
 
     def test_health_observation_accepts_epoch_zero_jwt_expiry(self):
         header = base64.urlsafe_b64encode(b'{"alg":"none"}').rstrip(b"=").decode()

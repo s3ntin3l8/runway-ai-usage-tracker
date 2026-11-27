@@ -11,7 +11,7 @@ from typing import Any
 
 from scripts.sidecar_pkg.claude_code_keychain import account_name, service_candidates
 from scripts.sidecar_pkg.keychain_client import KeychainClient, native_helper_path
-from scripts.sidecar_pkg.keychain_protocol import KeychainError, keychain_reason
+from scripts.sidecar_pkg.keychain_protocol import KeychainError, keychain_reason, select_item
 
 AUTHORIZATION_TIMEOUT = 60
 
@@ -51,11 +51,9 @@ def authorize_once(api: Any, services: list[str], account: str | None) -> None:
         if not isinstance(matches, list) or any(not isinstance(item, dict) for item in matches):
             raise KeychainError("unavailable")
         selected.extend((service, item) for item in matches)
-    if not selected:
-        raise KeychainError("missing")
-    if len(selected) != 1:
-        raise KeychainError("ambiguous")
-    service, item = selected[0]
+    # The same choice the background read makes, so the grant covers the item it reads.
+    chosen = select_item([item for _, item in selected])
+    service, item = next(pair for pair in selected if pair[1] is chosen)
     reference = item.get("persistent")
     if not isinstance(reference, bytes) or not reference:
         raise KeychainError("unavailable")
