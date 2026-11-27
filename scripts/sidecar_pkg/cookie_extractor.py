@@ -297,8 +297,14 @@ def _claude_desktop_candidates(provider: str, scan_outcomes: list) -> list[tuple
         from scripts.sidecar_pkg.claude_desktop import scan_session_cookie
 
         scanned = scan_session_cookie(Path.home() / "Library/Application Support/Claude/Cookies")
-    except ImportError:
-        logging.warning("Claude Desktop credential helper unavailable; trying browser sources")
+    except ImportError as exc:
+        # The helper's own lazy imports (cookie decryption, cryptography) land here too:
+        # name the module so a hidden import missing from a frozen build can be found.
+        logging.warning(
+            "Claude Desktop cookie unavailable (cannot import %s); trying browser sources",
+            exc.name or "a dependency",
+            exc_info=True,
+        )
         return []
     report_scan("Claude Desktop", base_origin, scanned, scan_outcomes)
     return [
@@ -590,6 +596,17 @@ class BrowserCookieExtractor:
                     if candidate not in candidates:
                         candidates.append(candidate)
         report_scan_summary(scan_outcomes[first_outcome:])
+        for _value, origin in candidates:
+            # The source and its fingerprint tell the sources apart (and match Fleet's
+            # rows); the profile and store names stay out of INFO, as in the scan summary.
+            base, _, fingerprint = origin.partition("#")
+            source = base.removeprefix("cookie:").split("/")
+            logging.info(
+                "  [%s] cookie source: %s%s",
+                provider,
+                source[1] if len(source) > 1 else "browser",
+                f" #{fingerprint}" if fingerprint else "",
+            )
         return candidates
 
     @staticmethod

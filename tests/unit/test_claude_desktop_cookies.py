@@ -215,7 +215,9 @@ def test_keychain_command_failure_is_reported_and_backed_off(desktop, monkeypatc
 
 
 @pytest.mark.parametrize("missing", ["helper", "padding", "ciphers"])
-def test_missing_desktop_dependency_preserves_browser_fallback(desktop, monkeypatch, missing):
+def test_missing_desktop_dependency_preserves_browser_fallback(
+    desktop, monkeypatch, caplog, missing
+):
     import builtins
 
     write_cookie(desktop)
@@ -245,20 +247,33 @@ def test_missing_desktop_dependency_preserves_browser_fallback(desktop, monkeypa
             )
             or (missing == "ciphers" and name == "cryptography.hazmat.primitives.ciphers")
         ):
-            raise ImportError("synthetic missing dependency")
+            raise ImportError("synthetic missing dependency", name=name)
         return original_import(name, global_ns, local_ns, fromlist, level)
 
     monkeypatch.setattr(builtins, "__import__", guarded_import)
     assert claude_values() == ["synthetic-browser-cookie"]
+    if missing == "helper":
+        assert "cannot import scripts.sidecar_pkg.claude_desktop" in caplog.text
 
 
-def test_desktop_cookie_scan_is_logged_without_value(desktop, monkeypatch, caplog):
+def test_cookie_sources_are_logged_without_value(desktop, monkeypatch, caplog):
     caplog.set_level("INFO")
     write_cookie(desktop)
     storage_key(monkeypatch)
-    assert claude_values() == ["sk-ant-synthetic"]
+    store = firefox_store(desktop.parent)
+    monkeypatch.setattr(sidecar.BrowserCookieExtractor, "get_all_paths", lambda: [store])
+    candidates = sidecar.BrowserCookieExtractor.get_macos_candidates(
+        "anthropic", ["claude.ai"], "sessionKey"
+    )
+    assert [value for value, _ in candidates] == ["sk-ant-synthetic", "synthetic-browser"]
     assert "macOS cookie scan summary: scans=1" in caplog.text
+    for source, (_value, origin) in zip(["Claude Desktop", "Firefox"], candidates, strict=True):
+        fingerprint = origin.partition("#")[2]
+        assert fingerprint
+        assert f"[anthropic] cookie source: {source} #{fingerprint}" in caplog.text
     assert "sk-ant-synthetic" not in caplog.text
+    assert "synthetic-browser" not in caplog.text
+    assert "synthetic.default" not in caplog.text
 
 
 def firefox_store(directory, value="synthetic-browser"):
