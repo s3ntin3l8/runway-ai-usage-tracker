@@ -72,6 +72,7 @@ applied until it's fixed — the dependency order below reflects that.
 | `cloud_coarse_events` · Warn | Claude cloud usage from the first collector | Coarse summary rows from the first cloud collector. | Remove them and rebuild rollups; the replacement collector re-reads history. |
 | `cloud_events_reset` · Warn | Claude cloud usage with outdated labels | Cloud events stored under an outdated source id. | Remove events and checkpoints; the collector re-reads with current labels. |
 | `cloud_session_lead_repo` · Warn | A cloud session's events carry no project label | A multi-repository cloud session with unlabelled events. | Label them with the repository its labelled events name most often. |
+| `duplicate_telemetry_events` · Warn | Claude Code calls counted twice | A Claude Code telemetry event (`otel\|…`) whose request the session's transcript already stored (Claude Desktop Code's `sdk` main loop, before the receiver skipped it). | Remove the telemetry copies; rebuild the affected rollups and closed windows. |
 | `pending_events` · Info | Events need account assignment | Events awaiting account assignment. | Decide the account in Fleet. |
 | `alert_channels` · Warn | Credential alerts have no delivery channel | No active webhook has credential alerts on. | Not fixable here; add a webhook under Settings → Alerts. |
 

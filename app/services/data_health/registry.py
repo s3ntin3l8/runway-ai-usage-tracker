@@ -16,6 +16,9 @@ from app.services.data_health.checks.cloud_session_lead_repo import (
     CloudSessionLeadRepoCheck,
 )
 from app.services.data_health.checks.config_default_keyed import ConfigDefaultKeyedCheck
+from app.services.data_health.checks.duplicate_telemetry_events import (
+    DuplicateTelemetryEventsCheck,
+)
 from app.services.data_health.checks.fallback_priced_events import (
     FallbackPricedEventsCheck,
 )
@@ -73,6 +76,7 @@ REGISTRY: list[Check] = [
     CloudCoarseEventsCheck(),
     CloudEventsResetCheck(),
     CloudSessionLeadRepoCheck(),
+    DuplicateTelemetryEventsCheck(),
     PendingEventsCheck(),
     AlertChannelsCheck(),
 ]

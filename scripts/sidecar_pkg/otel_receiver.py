@@ -65,8 +65,10 @@ _ATTRIBUTES = _STRING_ATTRIBUTES | _TOKEN_ATTRIBUTES
 _EVENT_NAME = "event.name"
 _API_REQUEST = "api_request"
 
-#: The transcripts already record these calls.
-_MAIN_THREAD_SOURCE = "repl_main_thread"
+#: The transcripts already record these calls: the CLI's main loop, and the main loop
+#: of a session driven through the SDK (Claude Desktop's local Code sessions report
+#: ``sdk``; storing those again counted every Desktop Code call twice).
+_TRANSCRIPT_SOURCES = frozenset({"repl_main_thread", "sdk"})
 _AGENT_PREFIX = "agent:"
 
 _FIELD_MAX_LENGTH = 128
@@ -113,7 +115,7 @@ def _timestamp(value: str | None) -> str | None:
 
 def _is_covered_by_transcripts(query_source: str | None) -> bool:
     return query_source is not None and (
-        query_source == _MAIN_THREAD_SOURCE or query_source.startswith(_AGENT_PREFIX)
+        query_source in _TRANSCRIPT_SOURCES or query_source.startswith(_AGENT_PREFIX)
     )
 
 
