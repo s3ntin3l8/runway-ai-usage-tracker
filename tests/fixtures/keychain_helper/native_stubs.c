@@ -61,6 +61,12 @@ OSStatus RunwayTestCopy(CFDictionaryRef query, CFTypeRef *output) {
         CFDictionarySetValue(item, kSecAttrAccount, account);
         CFRelease(account);
     }
+    /* gh's active-token item: the empty account is stored as no attribute at all. */
+    if (!strcmp(scenario, "gh-no-account")) {
+        CFDictionarySetValue(item, kSecAttrService, CFSTR("gh:github.com"));
+        CFDictionaryRemoveValue(item, kSecAttrAccount);
+    }
+    if (!strcmp(scenario, "no-account")) CFDictionaryRemoveValue(item, kSecAttrAccount);
     CFDataRef reference = CFDataCreate(NULL, (const UInt8 *)"ref", 3);
     CFDictionarySetValue(item, kSecValuePersistentRef, reference);
     CFRelease(reference);

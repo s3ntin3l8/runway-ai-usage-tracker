@@ -165,3 +165,25 @@ def test_authorization_help_exits_before_desktop_or_native_initialization(entry)
     )
     assert result.returncode == 0
     assert "Authorize one Claude Code Keychain read" in result.stdout
+
+
+def test_github_cli_authorizes_the_item_the_background_read_selects(authorization):
+    per_account = {"persistent": b"per-account", "service": "gh:github.com", "account": "someone"}
+    active = {"persistent": b"active", "service": "gh:github.com", "account": ""}
+    api = Mock()
+    api.call.return_value = [per_account, active]
+    api.authorize_read.return_value = {**active, "data": b"synthetic-secret-never-print"}
+    authorization.authorize_once(api, ["gh:github.com"], None)
+    api.authorize_read.assert_called_once_with(b"active")
+
+
+@pytest.mark.parametrize("accounts", [["a", "b"], ["", ""]])
+def test_github_cli_without_exactly_one_active_item_stays_ambiguous(authorization, accounts):
+    api = Mock()
+    api.call.return_value = [
+        {"persistent": f"ref-{index}".encode(), "service": "gh:github.com", "account": account}
+        for index, account in enumerate(accounts)
+    ]
+    with pytest.raises(KeychainError, match="ambiguous"):
+        authorization.authorize_once(api, ["gh:github.com"], None)
+    api.authorize_read.assert_not_called()

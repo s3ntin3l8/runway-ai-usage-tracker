@@ -348,3 +348,40 @@ def test_archive_byte_limit_leaves_original_and_prior_history_intact(tmp_path, m
         store.archive(current, 0)
     assert store.current_handle() == current and store.snapshot(current) == state
     assert store.archived_snapshot(handle) == state
+
+
+def test_archive_waits_out_a_writer_longer_than_the_claim_bound(tmp_path):
+    """An archive outlasts a concurrent write longer than a claim's 250 ms bound."""
+    import threading
+    import time
+
+    from app.services.claude_cloud_checkpoints import (
+        ADMIN_LOCK_WAIT_SECONDS,
+        LOCK_RETRY_SECONDS,
+        LOCK_WAIT_SECONDS,
+    )
+
+    store, _, path, _, _, handle = terminal(tmp_path)
+    locked, release = threading.Event(), threading.Event()
+
+    def blocker():
+        db = sqlite3.connect(path, isolation_level=None)
+        db.execute("BEGIN IMMEDIATE")
+        locked.set()
+        release.wait(5)
+        db.execute("ROLLBACK")
+        db.close()
+
+    thread = threading.Thread(target=blocker)
+    thread.start()
+    locked.wait(5)
+    threading.Timer(LOCK_WAIT_SECONDS * 2.4, release.set).start()
+    started = time.monotonic()
+    store.archive(handle, 0)
+    waited = time.monotonic() - started
+    assert LOCK_WAIT_SECONDS * 2 <= waited < ADMIN_LOCK_WAIT_SECONDS + LOCK_RETRY_SECONDS
+    thread.join()
+    with sqlite3.connect(path) as db:
+        assert (
+            db.execute("SELECT count(*) FROM claude_cloud_verification_archives").fetchone()[0] == 1
+        )

@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from scripts.sidecar_pkg.keychain_protocol import KeychainError
+from scripts.sidecar_pkg.keychain_protocol import KeychainError, select_item
 
 RECOVERY_SERVICE = "Runway Claude Code renewal"
 
@@ -137,9 +137,7 @@ class KeychainStore:
             raise
         if not matches:
             return None
-        if len(matches) != 1:
-            raise KeychainError("ambiguous")
-        item = self.read(matches[0]["persistent"])
+        item = self.read(select_item(matches)["persistent"])
         if item.service != service or (account is not None and item.account != account):
             raise KeychainError("identity changed")
         return item
