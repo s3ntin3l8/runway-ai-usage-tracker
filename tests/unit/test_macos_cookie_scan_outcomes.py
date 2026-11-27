@@ -471,26 +471,19 @@ def test_scan_logging_keeps_store_details_at_debug_and_info_aggregated(caplog):
     assert "private-profile" not in caplog.text
 
 
-def test_legacy_desktop_cookie_path_reports_scan_outcome(tmp_path, monkeypatch, caplog):
-    import logging
-
+def test_get_cookie_never_reads_the_desktop_store(tmp_path, monkeypatch):
+    """macOS collection reads Desktop through get_macos_candidates, beside the browsers."""
     from scripts.sidecar_pkg import claude_desktop
-    from scripts.sidecar_pkg.cookie_scan import StoreScan
 
     monkeypatch.setattr(sidecar.platform, "system", lambda: "Darwin")
     monkeypatch.delenv("RUNWAY_CLAUDE_DESKTOP_CREDENTIALS", raising=False)
-    monkeypatch.setattr(
-        claude_desktop,
-        "scan_session_cookie",
-        lambda path: StoreScan("candidates", ["synthetic-session"]),
-    )
-    with caplog.at_level(logging.INFO):
-        assert (
-            sidecar.BrowserCookieExtractor.get_cookie("claude.ai", "sessionKey")
-            == "synthetic-session"
-        )
-    assert "macOS cookie scan summary: scans=1" in caplog.text
-    assert "synthetic-session" not in caplog.text
+    monkeypatch.setattr(sidecar.BrowserCookieExtractor, "get_all_paths", lambda: [])
+
+    def forbidden(path):
+        raise AssertionError("get_cookie must not read the Claude Desktop store")
+
+    monkeypatch.setattr(claude_desktop, "scan_session_cookie", forbidden)
+    assert sidecar.BrowserCookieExtractor.get_cookie("claude.ai", "sessionKey") is None
 
 
 @pytest.mark.parametrize("denied_errno", [1, 13])  # EPERM, EACCES
