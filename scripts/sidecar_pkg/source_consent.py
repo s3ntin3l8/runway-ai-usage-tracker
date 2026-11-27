@@ -31,21 +31,43 @@ _REQUIRED_RECORD_KEYS = {
     "last_block_reason",
     "last_block_at",
 }
-_OPTIONAL_RECORD_KEYS = {"code_identity", "notified_code_identity"}
+_IDENTITY_KEYS = ("helper_identity", "notified_helper_identity")
+# Before the helper was the identity, these held the main app's cdhash, which changes on
+# every release. They are still accepted on load (old state files stay valid) but dropped.
+_LEGACY_IDENTITY_KEYS = ("code_identity", "notified_code_identity")
+_OPTIONAL_RECORD_KEYS = set(_IDENTITY_KEYS) | set(_LEGACY_IDENTITY_KEYS)
 _BLOCK_REASONS = {"denied", "timed_out", "unavailable", "missing", "identity changed", "ambiguous"}
 logger = logging.getLogger(__name__)
 
 
-def current_code_identity() -> str | None:
-    """Return the running binary's macOS cdhash as lowercase hex, or None."""
+def current_helper_identity() -> str | None:
+    """Return the bundled Keychain helper's macOS cdhash as lowercase hex, or None.
+
+    The helper is the code identity macOS binds the "Always Allow" grant to, and release
+    signing keeps its cdhash fixed (``scripts/check_helper_cdhash.py``). The main app binary
+    changes on every release, so it must not decide whether a grant was lost.
+    """
     if sys.platform != "darwin":
         return None
     try:
+        from scripts.sidecar_pkg.keychain_client import native_helper_path
+
+        helper = os.fsencode(native_helper_path())
+        if not os.path.isfile(helper):
+            logger.debug("Keychain helper missing; code identity unavailable")
+            return None
         sec = ctypes.CDLL("/System/Library/Frameworks/Security.framework/Security")
         cf = ctypes.CDLL("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation")
         ptr = ctypes.c_void_p
-        sec.SecCodeCopySelf.argtypes = [ctypes.c_uint32, ctypes.POINTER(ptr)]
-        sec.SecCodeCopySelf.restype = ctypes.c_int32
+        cf.CFURLCreateFromFileSystemRepresentation.argtypes = [
+            ptr,
+            ctypes.c_char_p,
+            ctypes.c_long,
+            ctypes.c_bool,
+        ]
+        cf.CFURLCreateFromFileSystemRepresentation.restype = ptr
+        sec.SecStaticCodeCreateWithPath.argtypes = [ptr, ctypes.c_uint32, ctypes.POINTER(ptr)]
+        sec.SecStaticCodeCreateWithPath.restype = ctypes.c_int32
         sec.SecCodeCopySigningInformation.argtypes = [ptr, ctypes.c_uint32, ctypes.POINTER(ptr)]
         sec.SecCodeCopySigningInformation.restype = ctypes.c_int32
         cf.CFDictionaryGetValue.argtypes = [ptr, ptr]
@@ -61,10 +83,13 @@ def current_code_identity() -> str | None:
         cf.CFRelease.argtypes = [ptr]
         cf.CFRelease.restype = None
 
-        code, info = ptr(), ptr()
+        url, code, info = ptr(), ptr(), ptr()
         try:
-            if sec.SecCodeCopySelf(0, ctypes.byref(code)) != 0 or not code:
-                logger.debug("SecCodeCopySelf failed; code identity unavailable")
+            url.value = cf.CFURLCreateFromFileSystemRepresentation(None, helper, len(helper), False)
+            if not url:
+                return None
+            if sec.SecStaticCodeCreateWithPath(url, 0, ctypes.byref(code)) != 0 or not code:
+                logger.debug("SecStaticCodeCreateWithPath failed; code identity unavailable")
                 return None
             if sec.SecCodeCopySigningInformation(code, 2, ctypes.byref(info)) != 0 or not info:
                 logger.debug("SecCodeCopySigningInformation failed; code identity unavailable")
@@ -85,6 +110,8 @@ def current_code_identity() -> str | None:
                 cf.CFRelease(info)
             if code:
                 cf.CFRelease(code)
+            if url:
+                cf.CFRelease(url)
     except Exception:
         logger.debug("Failed to read macOS code identity", exc_info=True)
         return None
@@ -220,7 +247,7 @@ class SourcePolicy:
                         return
                     if (reason is None) != (record["last_block_at"] is None):
                         return
-                    for id_field in ("code_identity", "notified_code_identity"):
+                    for id_field in _OPTIONAL_RECORD_KEYS:
                         if id_field in record:
                             id_val = record[id_field]
                             if id_val is not None and (
@@ -228,7 +255,7 @@ class SourcePolicy:
                             ):
                                 return
                 self._read_state = {
-                    key: value
+                    key: {k: v for k, v in value.items() if k not in _LEGACY_IDENTITY_KEYS}
                     for key, value in saved.items()
                     if value["revision"] == catalog()[key].revision
                 }
@@ -264,13 +291,15 @@ class SourcePolicy:
         return record if descriptor and record.get("revision") == descriptor.revision else {}
 
     def _current_identity(self) -> str | None:
-        provider = self._code_identity if self._code_identity is not None else current_code_identity
+        provider = (
+            self._code_identity if self._code_identity is not None else current_helper_identity
+        )
         value = provider()
         return value if isinstance(value, str) and value else None
 
     @staticmethod
     def _with_identity_fields(record: dict[str, Any], existing: dict[str, Any]) -> dict[str, Any]:
-        for field in ("code_identity", "notified_code_identity"):
+        for field in _IDENTITY_KEYS:
             if existing.get(field) is not None:
                 record[field] = existing[field]
         return record
@@ -287,13 +316,12 @@ class SourcePolicy:
                     "last_block_reason": existing.get("last_block_reason"),
                     "last_block_at": existing.get("last_block_at"),
                 }
+                self._with_identity_fields(record, existing)
                 current = self._current_identity()
-                if existing.get("code_identity") is not None and current is not None:
-                    # A successful read proves this binary can reach the item, so refresh
-                    # code_identity rather than re-flagging the source after a restart.
-                    record["code_identity"] = current
-                else:
-                    self._with_identity_fields(record, existing)
+                if current is not None:
+                    # A successful read proves the helper can reach the item, so record its
+                    # identity (also for records that predate tracking it).
+                    record["helper_identity"] = current
                 self._read_state[ticket.source_id] = record
                 self._persist_reads()
 
@@ -311,7 +339,7 @@ class SourcePolicy:
                 "last_read_at": existing.get("last_read_at"),
                 "last_block_reason": existing.get("last_block_reason"),
                 "last_block_at": existing.get("last_block_at"),
-                "code_identity": identity,
+                "helper_identity": identity,
             }
             self._read_state[ticket.source_id] = record
             self._persist_reads()
@@ -337,7 +365,7 @@ class SourcePolicy:
         with self._lock:
             if self.ticket(source_id) is None or source_id in self._successful_reads:
                 return False
-            recorded = self._read_record(source_id).get("code_identity")
+            recorded = self._read_record(source_id).get("helper_identity")
             if not isinstance(recorded, str) or not recorded:
                 return False
             current = self._current_identity()
@@ -359,7 +387,7 @@ class SourcePolicy:
             if not affected:
                 return None
             if not any(
-                self._read_record(source_id).get("notified_code_identity") != current
+                self._read_record(source_id).get("notified_helper_identity") != current
                 for source_id in affected
             ):
                 return None
@@ -380,8 +408,8 @@ class SourcePolicy:
                 if not self.needs_reauthorization(source_id):
                     continue
                 record = dict(self._read_record(source_id))
-                if record and record.get("notified_code_identity") != code_identity:
-                    record["notified_code_identity"] = code_identity
+                if record and record.get("notified_helper_identity") != code_identity:
+                    record["notified_helper_identity"] = code_identity
                     self._read_state[source_id] = record
                     changed = True
             if changed:

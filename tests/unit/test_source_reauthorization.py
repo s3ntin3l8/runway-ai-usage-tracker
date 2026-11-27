@@ -20,7 +20,7 @@ def env(tmp_path, monkeypatch):
     config = SourcePolicy.change(config, "anthropic.chrome", read=True)
     state_path = tmp_path / "source-reads.json"
     identity = ["cdhash-v1"]
-    monkeypatch.setattr(source_consent, "current_code_identity", lambda: identity[0])
+    monkeypatch.setattr(source_consent, "current_helper_identity", lambda: identity[0])
     policy = SourcePolicy(config)
     policy.configure_state(state_path)
     monkeypatch.setattr(source_consent, "POLICY", policy)
@@ -64,7 +64,7 @@ def test_changed_identity_marks_sources_reports_count_and_notifies_once_per_chan
 
     saved_text = state_path.read_text(encoding="utf-8")
     saved = json.loads(saved_text)
-    assert saved["anthropic.claude-code"]["code_identity"] == "cdhash-v1"
+    assert saved["anthropic.claude-code"]["helper_identity"] == "cdhash-v1"
     assert not any(
         word in saved_text
         for word in ("secret", "token", "cookie", "account", "synthetic.example", "generation")
@@ -141,8 +141,8 @@ def test_reauthorizing_records_new_identity_and_clears_notice(env, monkeypatch):
     assert restarted.reauthorization_notice() is None
 
     saved = json.loads(state_path.read_text(encoding="utf-8"))
-    assert saved["anthropic.claude-code"]["code_identity"] == "cdhash-v2"
-    assert "notified_code_identity" not in saved["anthropic.claude-code"]
+    assert saved["anthropic.claude-code"]["helper_identity"] == "cdhash-v2"
+    assert "notified_helper_identity" not in saved["anthropic.claude-code"]
 
     # A subsequent update notifies once again.
     identity[0] = "cdhash-v3"
@@ -154,7 +154,7 @@ def test_reauthorizing_records_new_identity_and_clears_notice(env, monkeypatch):
     assert "1 source needs re-authorization after the update" in notice
 
 
-def test_successful_read_refreshes_code_identity_across_restart(env):
+def test_successful_read_refreshes_helper_identity_across_restart(env):
     config, state_path, identity = env
     _authorize(["anthropic.claude-code"])
 
@@ -186,7 +186,7 @@ def test_failed_tray_notification_does_not_suppress_retry(env, monkeypatch):
     assert instance.notify_reauthorization() is False
 
     saved = json.loads(state_path.read_text(encoding="utf-8"))
-    assert "notified_code_identity" not in saved["anthropic.claude-code"]
+    assert "notified_helper_identity" not in saved["anthropic.claude-code"]
 
     instance._icon.notify.side_effect = None
     assert instance.notify_reauthorization() is True
@@ -194,6 +194,61 @@ def test_failed_tray_notification_does_not_suppress_retry(env, monkeypatch):
     assert instance.notify_reauthorization() is False
 
 
-def test_current_code_identity_returns_none_off_darwin(monkeypatch):
+def test_current_helper_identity_returns_none_off_darwin(monkeypatch):
     monkeypatch.setattr(source_consent.sys, "platform", "linux")
-    assert source_consent.current_code_identity() is None
+    assert source_consent.current_helper_identity() is None
+
+
+def test_current_helper_identity_returns_none_when_helper_missing(monkeypatch, tmp_path):
+    monkeypatch.setattr(source_consent.sys, "platform", "darwin")
+    monkeypatch.setattr(keychain_client, "native_helper_path", lambda: tmp_path / "absent")
+    assert source_consent.current_helper_identity() is None
+
+
+def test_main_binary_change_alone_gives_no_notice(env, monkeypatch):
+    """An app update that keeps the helper's cdhash keeps the grant: no notice."""
+    config, state_path, _identity = env
+    _authorize(["anthropic.claude-code", "anthropic.chrome"])
+
+    # Only the main binary changed; the helper identity (what the env fixture fakes) did not.
+    restarted = SourcePolicy(config)
+    restarted.configure_state(state_path)
+    monkeypatch.setattr(source_consent, "POLICY", restarted)
+    assert restarted.reauthorization_count() == 0
+    assert restarted.reauthorization_notice() is None
+
+
+def test_legacy_main_binary_identity_is_ignored_and_replaced_on_read(env, monkeypatch):
+    config, state_path, _identity = env
+    _authorize(["anthropic.claude-code"])
+
+    # A state file written before this fix holds the main app's cdhash under the old keys.
+    saved = json.loads(state_path.read_text(encoding="utf-8"))
+    record = saved["anthropic.claude-code"]
+    record.pop("helper_identity")
+    record["code_identity"] = "old-app-cdhash"
+    record["notified_code_identity"] = "old-app-cdhash"
+    state_path.write_text(json.dumps(saved), encoding="utf-8")
+
+    restarted = SourcePolicy(config)
+    restarted.configure_state(state_path)
+    monkeypatch.setattr(source_consent, "POLICY", restarted)
+    assert restarted.needs_reauthorization("anthropic.claude-code") is False
+    assert restarted.reauthorization_notice() is None
+
+    restarted.record_read(restarted.ticket("anthropic.claude-code"))
+    saved = json.loads(state_path.read_text(encoding="utf-8"))["anthropic.claude-code"]
+    assert saved["helper_identity"] == "cdhash-v1"
+    assert "code_identity" not in saved
+    assert "notified_code_identity" not in saved
+
+
+def test_unavailable_helper_identity_gives_no_notice(env, monkeypatch):
+    config, state_path, identity = env
+    _authorize(["anthropic.claude-code"])
+
+    identity[0] = None
+    restarted = SourcePolicy(config)
+    restarted.configure_state(state_path)
+    assert restarted.needs_reauthorization("anthropic.claude-code") is False
+    assert restarted.reauthorization_notice() is None

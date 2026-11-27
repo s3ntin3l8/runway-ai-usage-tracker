@@ -59,6 +59,12 @@ helper does not transfer automatically. Release signing keeps the helper's CDHas
 stable across builds and fails the build if it drifts
 (`scripts/check_helper_cdhash.py`).
 
+**Needs re-authorization (app updated)** compares the helper's CDHash recorded at
+authorization (or the last successful read) with the installed helper's. An ordinary
+update keeps the helper, so it does not ask again; only a release that intentionally
+changes the helper (and updates `kc_helper.cdhash`) does. The main app binary's
+identity changes on every ad-hoc-signed release and is not used for this.
+
 ## States
 
 Each source shows one of: **Off**, **Not installed**, **Setup required**,
