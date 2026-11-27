@@ -1199,3 +1199,68 @@ async def test_a_chosen_organization_is_priced_on_its_own_cards():
 
     assert result.organization_id == ORG_B
     assert result.billing_type == "subscription"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("rotated", [False, True])
+async def test_a_bundle_replaced_during_the_save_leaves_no_organizations_behind(
+    claude_db, monkeypatch, rotated
+):
+    """Organizations are saved off the event loop; a cookie that rotates meanwhile must
+    not leave the pending row offering the replaced login's organizations."""
+    import asyncio
+
+    from sqlmodel import select
+
+    from app.models.db import PendingCredentialTag
+    from app.services import claude_verification
+    from app.services.collectors.anthropic_console import AnthropicConsoleCollector
+    from app.services.token_cache import token_cache
+
+    source_id = await seed_claude_source(claude_db, "anthropic_console")
+    loop = asyncio.get_running_loop()
+    persist = claude_verification.persist_pending_organizations
+
+    def persist_while_the_sidecar_rotates(provider, pinned, result):
+        stored = persist(provider, pinned, result)
+        if rotated:
+            # The new bundle lands on the event loop while this worker is saving.
+            asyncio.run_coroutine_threadsafe(
+                token_cache.store(
+                    "anthropic_console",
+                    {"session_cookie": "rotated-cookie"},
+                    account_id=source_id,
+                    source_id=source_id,
+                ),
+                loop,
+            ).result()
+        return stored
+
+    monkeypatch.setattr(
+        claude_verification, "persist_pending_organizations", persist_while_the_sidecar_rotates
+    )
+
+    def upstream(request):
+        if request.url.path == "/api/organizations":
+            return httpx.Response(
+                200, json=[{"uuid": ORG_A, "name": "API org", "capabilities": ["api"]}]
+            )
+        return httpx.Response(200, json={"amount": 1234, "currency": "USD"})
+
+    collector = AnthropicConsoleCollector(account_id="default")
+    async with token_cache.using_source("anthropic_console", source_id, source_id):
+        async with httpx.AsyncClient(transport=httpx.MockTransport(upstream)) as client:
+            result = await claude_verification.verify_collector_cookie(
+                collector, client, "anthropic_console", "test-cookie"
+            )
+
+    with RealSession(claude_db) as session:
+        row = session.exec(select(PendingCredentialTag)).one()
+    if rotated:
+        assert (result.complete, result.organization_id) == (False, None)
+        assert getattr(collector, "verified_source_generation", None) is None
+        assert (row.claude_organizations_json, row.claude_organizations_complete) == (None, False)
+    else:
+        assert result.organization_id == ORG_A
+        assert ORG_A in (row.claude_organizations_json or "")
+        assert row.claude_organizations_complete is True

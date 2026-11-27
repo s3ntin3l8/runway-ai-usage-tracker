@@ -41,8 +41,9 @@ class CollectorClaudeIdentity:
             return "credential binding changed during collection"
         # Only reached for a sidecar candidate with a credential origin: the failover
         # loop skips promotion entirely when that optional metadata is absent, which is
-        # what keeps legacy collection publishing. The origin is a non-empty string there
-        # (ingest validates it as ``str | None``), so a contradictory explicit operator
+        # what keeps legacy collection publishing. The origin is a non-empty string there:
+        # ingest drops a non-string origin at the boundary (``fleet_ingest._credential_origin``)
+        # and durable sources store ``str | None``, so a contradictory explicit operator
         # assignment always fails closed.
         from sqlmodel import Session
 

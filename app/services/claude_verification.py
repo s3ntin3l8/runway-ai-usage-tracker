@@ -307,11 +307,35 @@ def selected_organization(provider: str, account_id: str | None) -> str | None:
         return row.claude_organization_id if row else None
 
 
-def persist_pending_organizations(
-    provider: str, source_id: str, result: ClaudeVerification
-) -> None:
+def persist_pending_organizations(provider: str, source_id: str, result: ClaudeVerification) -> str:
+    """Record the organizations a pending source reaches; returns the stored JSON."""
     import json
 
+    from sqlmodel import Session, select
+
+    from app.core.db import engine
+    from app.models.db import PendingCredentialTag
+    from app.services.credential_sources import sidecar_source_id
+
+    organizations = json.dumps(result.organizations)
+    with Session(engine) as session:
+        for row in session.exec(
+            select(PendingCredentialTag).where(PendingCredentialTag.provider_id == provider)
+        ).all():
+            if sidecar_source_id(row.sidecar_id, row.credential_origin) == source_id:
+                row.claude_organizations_json = organizations
+                row.claude_organizations_complete = result.complete
+                session.add(row)
+        session.commit()
+    return organizations
+
+
+def retract_pending_organizations(provider: str, source_id: str, organizations: str) -> None:
+    """Forget organizations a replaced bundle reported, unless something newer replaced them.
+
+    Only rows still holding exactly what ``persist_pending_organizations`` wrote are
+    cleared, so a verification of the new bundle that already landed is kept.
+    """
     from sqlmodel import Session, select
 
     from app.core.db import engine
@@ -322,9 +346,12 @@ def persist_pending_organizations(
         for row in session.exec(
             select(PendingCredentialTag).where(PendingCredentialTag.provider_id == provider)
         ).all():
-            if sidecar_source_id(row.sidecar_id, row.credential_origin) == source_id:
-                row.claude_organizations_json = json.dumps(result.organizations)
-                row.claude_organizations_complete = result.complete
+            if (
+                sidecar_source_id(row.sidecar_id, row.credential_origin) == source_id
+                and row.claude_organizations_json == organizations
+            ):
+                row.claude_organizations_json = None
+                row.claude_organizations_complete = False
                 session.add(row)
         session.commit()
 
@@ -352,9 +379,13 @@ async def verify_collector_cookie(
         # No result obtained with the old secret proves the newly arrived bundle.
         return ClaudeVerification(complete=False)
     if selection:
-        await asyncio.to_thread(persist_pending_organizations, provider, selection[1], result)
+        stored = await asyncio.to_thread(
+            persist_pending_organizations, provider, selection[1], result
+        )
         if source_rotated():
-            # The bundle moved while the organizations were being saved.
+            # The bundle was replaced while the organizations were being saved: they
+            # describe the old login, so the pending row must not keep offering them.
+            await asyncio.to_thread(retract_pending_organizations, provider, selection[1], stored)
             return ClaudeVerification(complete=False)
     if result.organization_id and result.account_id:
         collector.verified_source_generation = token_cache.credential_generation(

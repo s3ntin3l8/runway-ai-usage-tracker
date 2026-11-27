@@ -606,3 +606,39 @@ async def test_ingest_keeps_the_reported_agy_version(client: TestClient, session
     assert tokens.get("agy_version") == "1.5.2"
     # The token itself must survive untouched.
     assert tokens.get("oauth_token") == "ya29.live"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("origin", [12345, ["cookie:chatgpt/session"], {"path": "x"}, True])
+async def test_ingest_treats_a_non_string_credential_origin_as_absent(
+    client, session: Session, monkeypatch, origin
+):
+    """``LimitCard.metadata`` is untyped: a malformed origin must not reach the tag,
+    durable-source or identity code, which all take ``str | None``. It is dropped at the
+    boundary and the bundle is stored like a legacy one without origin metadata."""
+    from app.models.db import CredentialTag, PendingCredentialTag
+    from app.services.token_cache import TokenCache
+
+    cache = TokenCache()
+    monkeypatch.setattr("app.api.endpoints.fleet_ingest.token_cache", cache)
+    card = {
+        "service_name": "ChatGPT",
+        "remaining": "Token",
+        "unit": "cookie",
+        "account_id": "bob@example.com",
+        "metadata": {
+            "provider_id": "chatgpt",
+            "credential_origin": origin,
+            "cookie___Secure-next-auth.session-token": "fake-session",  # pragma: allowlist secret
+        },
+    }
+    response = _ingest(client, "laptop", [card])
+    assert response.status_code == 200, response.text
+
+    descriptors = await cache.get_all_source_descriptors("chatgpt")
+    assert [(d["account_id"], d["credential_origin"]) for d in descriptors] == [
+        ("bob@example.com", None)
+    ]
+    assert await cache.get_pending_sources("chatgpt") == []
+    assert session.exec(select(CredentialTag)).all() == []
+    assert session.exec(select(PendingCredentialTag)).all() == []
