@@ -122,7 +122,9 @@ never combines bundles or falls back to another source or a merged credential.
 A source must have an enabled persisted source record and an active account.
 Identity-pending sources and known-expired access credentials are not called.
 Eligible origins are Claude credential files (`path:` from the sidecar producer or
-`file:`, both retaining the recognized Code filename check), the existing Claude OAuth environment
+`file:`, both retaining the recognized Code filename check; the filename is read
+without a `#` fingerprint suffix, while every source, contribution and device
+comparison uses the full origin), the existing Claude OAuth environment
 source, explicit configuration, and enrolled Claude Code Keychain contributions.
 Desktop OAuth sources are excluded from this Code-specific probe by their origin.
 The `oauth_read_only: "1"` marker prevents server refresh; sidecar egress also adds

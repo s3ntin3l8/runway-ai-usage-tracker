@@ -635,7 +635,7 @@ async def _store_credentials(ctx: _IngestContext, tokens_to_store: list[_TokenBu
             if p_id == "anthropic" and (
                 p_tokens.get("oauth_read_only") == "1"
                 or bool(p_tokens.get("refresh_token"))
-                or (origin or "").startswith(("file:", "keychain:"))
+                or (origin or "").startswith(("file:", "path:", "keychain:"))
             ):
                 p_tokens = {key: value for key, value in p_tokens.items() if key != "refresh_token"}
                 p_tokens["oauth_read_only"] = "1"
