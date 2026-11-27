@@ -297,7 +297,7 @@ class SetupController:
                     identity = (
                         self._code_identity()
                         if self._code_identity is not None
-                        else consent.current_code_identity()
+                        else consent.current_helper_identity()
                     )
                     consent.POLICY.record_authorization(ticket, identity)
                 else:

@@ -138,6 +138,23 @@ jobs:
           codesign --verify --strict --verbose=2 "$app"
           python scripts/check_helper_cdhash.py "$helper"
 
+      - name: Check the sidecar reads the helper's identity (macOS)
+        # The "Needs re-authorization (app updated)" notice compares this value across
+        # updates; it must be the helper's golden CDHash, not the app binary's.
+        if: runner.os == 'macOS'
+        run: |
+          python - <<'EOF'
+          from pathlib import Path
+          from scripts.check_helper_cdhash import GOLDEN, parse_golden
+          from scripts.sidecar_pkg import keychain_client, source_consent
+          helper = Path("dist/Runway Sidecar.app/Contents/Frameworks/keychain_helper/kc_helper")
+          keychain_client.native_helper_path = lambda: helper
+          got = source_consent.current_helper_identity()
+          want = parse_golden(GOLDEN.read_text())["arm64"]
+          assert got == want, f"helper identity {got!r} != golden {want!r}"
+          print("Sidecar reads the helper's golden CDHash")
+          EOF
+
       - name: Package self-update payload (macOS)
         # Same `zip -r` shape the updater has always consumed (symlinks are
         # followed; Python's zipfile cannot restore them).
