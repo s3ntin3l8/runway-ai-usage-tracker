@@ -20,6 +20,13 @@ from app.models.schemas import UsageEventPush  # noqa: E402
 from app.services.model_normalization import normalize_anthropic_model  # noqa: E402
 from scripts.sidecar_pkg.event_watermark import EventWatermark, transcript_fingerprint  # noqa: E402
 from scripts.sidecar_pkg.session_names import make_record  # noqa: E402
+from scripts.sidecar_pkg.transcript_audit import (  # noqa: E402
+    AUDIT_BYTES,
+    AUDIT_FIELDS,
+    audit,
+    chunks_of,
+    extend_chunks,
+)
 
 # Kept under its old name for importers inside the sidecar package.
 _normalize_anthropic_model = normalize_anthropic_model
@@ -274,8 +281,22 @@ def _file_stamp(stat: os.stat_result) -> list[int]:
     return [stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns]
 
 
+# The audit walk of each (account, transcript) for the life of the process.
+_AUDIT_PROGRESS: dict[tuple[str, str], dict[str, Any]] = {}
+
+
+def _same_cli_file(cursor: dict[str, Any], stat: os.stat_result) -> bool:
+    stamp = cursor.get("stamp")
+    return isinstance(stamp, list) and stamp[:2] == [stat.st_dev, stat.st_ino]
+
+
 def poll_anthropic_events(
-    paths: list[Path], account_id: str, since: datetime, watermark: EventWatermark
+    paths: list[Path],
+    account_id: str,
+    since: datetime,
+    watermark: EventWatermark,
+    *,
+    audit_bytes: int = AUDIT_BYTES,
 ) -> list[UsageEventPush]:
     """Bootstrap at the account timestamp, then collect each transcript's new bytes."""
     ranges: dict[Path, tuple[int, int]] = {}
@@ -283,13 +304,57 @@ def poll_anthropic_events(
     stamps: dict[Path, list[int]] = {}
     baselines: dict[Path, datetime] = {}
     oldest = datetime.min.replace(tzinfo=UTC)
+    prior: dict[Path, tuple[dict[str, Any], list[str | None]]] = {}
+    idle: dict[str, dict[str, Any]] = {}
+    # The fingerprint below covers only the head and the tail of a consumed
+    # region. A rolling chunk audit re-reads a bounded slice of every
+    # transcript's consumed region per scan (#1407): a changed chunk forces a
+    # replay from the transcript's baseline. An idle transcript's walk lives in
+    # _AUDIT_PROGRESS, and its cursor is staged only when the audit filled in
+    # a missing digest, so an idle sidecar does not rewrite the watermark
+    # file every cycle. The walk reaches the file with the next cursor
+    # written for a transcript; a restart resumes from that point.
+    resolved: list[Path] = []
     for path in paths:
         try:
-            path = path.resolve()
+            resolved.append(path.resolve())
+        except (OSError, RuntimeError):
+            continue
+    resolved = list(dict.fromkeys(resolved))
+    audited: dict[str, dict[str, Any]] = {}
+    tracked: dict[str, os.stat_result] = {}
+    for path in resolved:
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        cursor = watermark.anthropic_transcript(path, account_id)
+        if cursor:
+            walk = _AUDIT_PROGRESS.get((account_id, str(path)))
+            if walk and walk["offset"] == cursor.get("offset"):
+                cursor = {**cursor, **walk["fields"], "chunks": walk["chunks"]}
+            audited[str(path)] = cursor
+            tracked[str(path)] = stat
+    stored = {key: cursor.get("chunks") for key, cursor in audited.items()}
+    updated, dropped = audit(audited, tracked, audit_bytes, _same_cli_file)
+    for key, cursor in updated.items():
+        _AUDIT_PROGRESS[(account_id, key)] = {
+            "offset": cursor["offset"],
+            "chunks": cursor["chunks"],
+            "fields": {k: cursor[k] for k in AUDIT_FIELDS if k in cursor},
+        }
+    for key in dropped:
+        _AUDIT_PROGRESS.pop((account_id, key), None)
+    for path in resolved:
+        try:
             if path in ranges:
                 continue
             stamp = _file_stamp(path.stat())
-            cursor = watermark.anthropic_transcript(path, account_id)
+            cursor = (
+                updated.get(str(path))
+                or audited.get(str(path))
+                or watermark.anthropic_transcript(path, account_id)
+            )
             previous_stamp = cursor.get("stamp")
             offset = cursor.get("offset", 0)
             same_stamp = previous_stamp == stamp
@@ -301,6 +366,7 @@ def poll_anthropic_events(
             )
             resume = (
                 (same_stamp or grew)
+                and str(path) not in dropped
                 and isinstance(offset, int)
                 and 0 <= offset <= stamp[2]
                 and cursor.get("fingerprint") == transcript_fingerprint(path, offset)
@@ -308,6 +374,8 @@ def poll_anthropic_events(
             # Same-size in-place writes can share a filesystem timestamp tick.
             # An incomplete tail still needs to be read, even if its prefix matches.
             if same_stamp and resume and offset == stamp[2]:
+                if str(path) in updated and updated[str(path)]["chunks"] != stored[str(path)]:
+                    idle[str(path)] = updated[str(path)]
                 continue
             baseline = since
             if isinstance(cursor.get("baseline"), str):
@@ -317,6 +385,14 @@ def poll_anthropic_events(
                     # An invalid saved baseline falls back to the account watermark.
                     pass
             ranges[path] = (offset if resume else 0, stamp[2])
+            prior[path] = (
+                (
+                    {k: cursor[k] for k in AUDIT_FIELDS if k in cursor},
+                    chunks_of(cursor, offset),
+                )
+                if resume
+                else ({}, [])
+            )
             floors[path] = oldest if resume and offset > 0 else baseline
             baselines[path] = baseline
             stamps[path] = stamp
@@ -327,11 +403,13 @@ def poll_anthropic_events(
     events = parse_anthropic_events(
         list(ranges), account_id, since, ranges=ranges, progress=progress, floors=floors
     )
-    cursors: dict[str, dict[str, Any]] = {}
+    cursors: dict[str, dict[str, Any]] = dict(idle)
     for path, end in progress.items():
         stamp = stamps[path]
+        fields, chunks = prior[path]
         try:
             fingerprint = transcript_fingerprint(path, end)
+            chunks = extend_chunks(path, chunks, ranges[path][0], end)
             unchanged = _file_stamp(path.stat()) == stamp
         except OSError:
             unchanged = False
@@ -343,6 +421,7 @@ def poll_anthropic_events(
             "stamp": stamp if unchanged else None,
             "offset": end if unchanged else 0,
             "fingerprint": fingerprint if unchanged else None,
+            **({"chunks": chunks, **fields} if unchanged else {}),
         }
     watermark.stage_anthropic_transcripts(cursors)
     return events

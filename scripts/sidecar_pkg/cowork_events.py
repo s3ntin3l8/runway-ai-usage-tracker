@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import os
 import tempfile
-import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -16,6 +14,13 @@ from typing import Any
 from scripts.sidecar_pkg.event_extractors.anthropic import parse_anthropic_events
 from scripts.sidecar_pkg.event_watermark import transcript_fingerprint as _fingerprint
 from scripts.sidecar_pkg.identity import canonical_account_id
+from scripts.sidecar_pkg.transcript_audit import (
+    AUDIT_BYTES,
+    AUDIT_FIELDS,
+    audit,
+    chunks_of,
+    extend_chunks,
+)
 
 
 def _load(path: Path) -> dict[str, Any]:
@@ -44,139 +49,8 @@ def _write(path: Path, files: dict[str, Any]) -> None:
             os.unlink(name)
 
 
-# The head-and-tail fingerprint (shared with the CLI reader) proves the
-# committed region on every scan but misses a rewrite in its middle (#802).
-# Each cursor therefore also carries one digest per chunk of the committed
-# region, and a rolling audit re-reads a bounded number of chunks per scan
-# across all tracked transcripts. A middle rewrite is found within a few
-# scans instead of never, while the per-scan read stays bounded.
-_CHUNK_BYTES = 256 * 1024
-_AUDIT_BYTES = 8 * 1024 * 1024
-_AUDIT_FIELDS = ("audit_next", "audit_done", "audited", "audit_mtime_ns")
-
-
-def _chunk_count(end: int) -> int:
-    return -(-end // _CHUNK_BYTES)
-
-
-def _chunk_span(index: int, end: int) -> tuple[int, int]:
-    """Start and length of chunk ``index`` of the region ``[0, end)``."""
-    lo = index * _CHUNK_BYTES
-    return lo, min(lo + _CHUNK_BYTES, end) - lo
-
-
-def _chunk_digest(f: Any, index: int, end: int) -> str | None:
-    """Digest chunk ``index`` of the region ``[0, end)``; None when the file is shorter."""
-    lo, size = _chunk_span(index, end)
-    f.seek(lo)
-    data = f.read(size)
-    if len(data) != size:
-        return None
-    return hashlib.sha256(data).hexdigest()[:32]
-
-
-def _chunks_of(cursor: dict[str, Any], offset: int) -> list[str | None]:
-    """The cursor's chunk digests; a state written before #802 has none yet (all None)."""
-    chunks = cursor.get("chunks")
-    if (
-        isinstance(chunks, list)
-        and len(chunks) == _chunk_count(offset)
-        and all(c is None or isinstance(c, str) for c in chunks)
-    ):
-        return list(chunks)
-    return [None] * _chunk_count(offset)
-
-
-def _extend_chunks(path: Path, prior: list[str | None], start: int, end: int) -> list[str | None]:
-    """Keep the chunks wholly below ``start`` and digest the rest of ``[0, end)``."""
-    base = start // _CHUNK_BYTES
-    chunks = prior[:base] + [None] * max(0, base - len(prior))
-    with path.open("rb") as f:
-        chunks.extend(_chunk_digest(f, i, end) for i in range(base, _chunk_count(end)))
-    return chunks
-
-
-def _audit(
-    state: dict[str, Any], tracked: dict[str, os.stat_result], budget: int
-) -> tuple[dict[str, dict[str, Any]], dict[str, int]]:
-    """Re-read up to ``budget`` bytes of committed chunks; drop a cursor whose chunk changed.
-
-    Every eligible transcript gets an equal slice of the budget (at least one
-    chunk), so one large transcript cannot starve the others. A pass over a
-    transcript's chunks may span many scans: ``audit_done`` counts the chunks
-    checked in the current pass, and the pass completes, setting ``audited``
-    and ``audit_mtime_ns``, once it reaches the chunk count. Transcripts
-    written since their last completed pass go first, then the one whose pass
-    completed longest ago. A missing digest (a state from before #802) is
-    filled in from the current bytes, which starts its coverage from now.
-    Returns the updated cursors and the offsets of the dropped ones, both
-    keyed by path.
-    """
-    updated: dict[str, dict[str, Any]] = {}
-    dropped: dict[str, int] = {}
-    order = []
-    for key, stat in tracked.items():
-        cursor = state.get(key)
-        if (
-            isinstance(cursor, dict)
-            and isinstance(cursor.get("offset"), int)
-            and 0 < cursor["offset"] <= stat.st_size
-            and cursor.get("device") == stat.st_dev
-            and cursor.get("inode") == stat.st_ino
-        ):
-            audited = cursor.get("audited")
-            order.append(
-                (
-                    cursor.get("audit_mtime_ns") == stat.st_mtime_ns,
-                    audited if isinstance(audited, (int, float)) else 0,
-                    key,
-                )
-            )
-    if not order:
-        return updated, dropped
-    share = max(_CHUNK_BYTES, budget // len(order))
-    for _, _, key in sorted(order):
-        if budget <= 0:
-            break
-        allowance = min(share, budget)
-        cursor = state[key]
-        offset = cursor["offset"]
-        chunks = _chunks_of(cursor, offset)
-        count = len(chunks)
-        index = cursor.get("audit_next")
-        index = index % count if isinstance(index, int) and index >= 0 else 0
-        done = cursor.get("audit_done")
-        done = min(done, count) if isinstance(done, int) and done >= 0 else 0
-        complete = False
-        changed = False
-        try:
-            with Path(key).open("rb") as f:
-                while allowance > 0 and not complete:
-                    _, size = _chunk_span(index, offset)
-                    digest = _chunk_digest(f, index, offset)
-                    allowance -= size
-                    budget -= size
-                    if digest is None or chunks[index] not in (None, digest):
-                        changed = True
-                        break
-                    chunks[index] = digest
-                    index = (index + 1) % count
-                    done += 1
-                    complete = done >= count
-        except OSError:
-            continue
-        if changed:
-            logging.warning("Cowork transcript changed inside consumed history; replaying it")
-            dropped[key] = offset
-            del state[key]
-            continue
-        cursor = dict(cursor, chunks=chunks, audit_next=index, audit_done=done)
-        if complete:
-            cursor.update(
-                audit_done=0, audited=time.time(), audit_mtime_ns=tracked[key].st_mtime_ns
-            )
-        state[key] = updated[key] = cursor
-    return updated, dropped
+def _same_file(cursor: dict[str, Any], stat: os.stat_result) -> bool:
+    return cursor.get("device") == stat.st_dev and cursor.get("inode") == stat.st_ino
 
 
 def _save_audit(path: Path, updated: dict[str, dict[str, Any]], dropped: dict[str, int]) -> None:
@@ -237,7 +111,7 @@ def collect_cowork(
     *,
     max_bytes: int = 4 * 1024 * 1024,
     max_events: int = 500,
-    audit_bytes: int = _AUDIT_BYTES,
+    audit_bytes: int = AUDIT_BYTES,
     existing_events: list[dict[str, Any]] | None = None,
 ) -> CoworkBatch:
     """Backfill complete lines independently of CLI timestamps, oldest files first."""
@@ -302,7 +176,7 @@ def collect_cowork(
         except OSError:
             continue
     try:
-        _save_audit(state_path, *_audit(state, tracked, audit_bytes))
+        _save_audit(state_path, *audit(state, tracked, audit_bytes, _same_file))
     except OSError:
         logging.warning("Cowork transcript audit unavailable")
     remaining = max_bytes
@@ -385,11 +259,11 @@ def collect_cowork(
                     "inode": stat.st_ino,
                     "mtime_ns": stat.st_mtime_ns,  # diagnostic only; never decides a skip
                     "fingerprint": _fingerprint(path, end),
-                    "chunks": _extend_chunks(path, _chunks_of(old, start), start, end),
+                    "chunks": extend_chunks(path, chunks_of(old, start), start, end),
                     "account": account,
                     # Carry the audit walk across commits, so a transcript that
                     # grows every scan still has its older chunks re-read.
-                    **{k: old[k] for k in _AUDIT_FIELDS if valid and k in old},
+                    **{k: old[k] for k in AUDIT_FIELDS if valid and k in old},
                 },
                 required,
             )
