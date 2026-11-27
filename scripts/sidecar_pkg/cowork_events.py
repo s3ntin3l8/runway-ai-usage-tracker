@@ -87,9 +87,12 @@ class CoworkBatch:
 
     def mark_owned(self, events: list[dict[str, Any]]) -> None:
         for event in events:
-            if event.get("provider_id") == "anthropic":
-                key = (event["event_id"], event["account_id"])
-                self.owned[key] = max(self.owned.get(key, -1), event["tokens_output"])
+            # The pushed batch also carries other producers' events. A Cowork event always
+            # has an account, so one without it can never settle a Cowork checkpoint.
+            account = event.get("account_id")
+            if event.get("provider_id") == "anthropic" and isinstance(account, str):
+                key = (event["event_id"], account)
+                self.owned[key] = max(self.owned.get(key, -1), event.get("tokens_output") or 0)
         ready = {
             path: cursor
             for path, (cursor, required) in self.checkpoints.items()

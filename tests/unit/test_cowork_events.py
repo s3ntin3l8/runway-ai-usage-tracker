@@ -785,3 +785,15 @@ def test_many_transcripts_on_a_small_budget_all_complete_a_pass(tmp_path):
         assert collect(base, state, audit_bytes=2 * _CHUNK_BYTES).events == []
     cursors = _cursors(state)
     assert all("audited" in cursors[k] for k in paths)
+
+
+def test_mark_owned_ignores_pushed_events_without_an_account(tmp_path):
+    """The pushed batch mixes Cowork events with other producers' events (#1409)."""
+    base = tmp_path / "desktop"
+    session(base)
+    state = tmp_path / "state.json"
+    batch = collect(base, state)
+    other = {"provider_id": "anthropic", "event_id": "synthetic", "tokens_output": 1}
+    foreign = {"provider_id": "openai", "event_id": "x", "account_id": "a", "tokens_output": 1}
+    batch.mark_owned([other, foreign, *batch.events])
+    assert collect(base, state).events == []  # the Cowork checkpoint still committed
