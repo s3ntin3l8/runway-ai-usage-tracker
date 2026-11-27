@@ -21,6 +21,15 @@ from app.models.claude_cloud_verification import CheckpointEnvelope, Verificatio
 
 MAX_PLAINTEXT = 16 * 1024 * 1024
 LEASE_SECONDS = 45
+# How long a write waits for SQLite's write lock before failing closed. The wait
+# is a Python loop with a monotonic deadline, not SQLite's busy handler: that
+# handler makes about a dozen 1-50 ms sleeps inside 250 ms, and each one can
+# overshoot by tens of milliseconds when macOS coalesces timers for a
+# low-priority process. The 250 ms budget became 1-2 s (#1358). Here one
+# overshoot past the deadline is the most a refusal can add.
+LOCK_WAIT_SECONDS = 0.25
+LOCK_RETRY_SECONDS = 0.01
+_SQLITE_BUSY = 5
 
 
 MAX_ARCHIVES = 64
@@ -48,24 +57,64 @@ class CheckpointStore:
         self.clock = clock
 
     @contextmanager
-    def _connection(self) -> Iterator[sqlite3.Connection]:
+    def _connection(
+        self, *, busy_timeout: float = LOCK_WAIT_SECONDS
+    ) -> Iterator[sqlite3.Connection]:
+        """A FULL-synchronous connection; reads use it directly, writes via `_write`.
+
+        Reads keep SQLite's busy handler. They do not wait on writers only because
+        the database is in WAL mode, which `app/core/db.py` sets and SQLite persists
+        in the file header; this store never sets the journal mode itself.
+        """
         connection = None
         try:
             connection = sqlite3.connect(
                 "file:" + quote(str(self.database.resolve())) + "?mode=rw",
                 uri=True,
-                timeout=0.25,
+                timeout=busy_timeout,
                 isolation_level=None,
             )
             connection.row_factory = sqlite3.Row
             connection.execute("PRAGMA synchronous=FULL")
-            connection.execute("PRAGMA busy_timeout=250")
+            connection.execute(f"PRAGMA busy_timeout={int(busy_timeout * 1000)}")
             yield connection
         except sqlite3.Error:
             raise CheckpointError("checkpoint_unavailable") from None
         finally:
             if connection is not None:
                 connection.close()
+
+    @staticmethod
+    def _until_unlocked(step: Callable[[], object], deadline: float) -> None:
+        """Retry `step` while SQLite reports SQLITE_BUSY, up to `deadline`."""
+        while True:
+            try:
+                step()
+                return
+            except sqlite3.OperationalError as error:
+                remaining = deadline - time.monotonic()
+                if (getattr(error, "sqlite_errorcode", 0) & 0xFF) != _SQLITE_BUSY or remaining <= 0:
+                    raise
+            time.sleep(min(LOCK_RETRY_SECONDS, remaining))
+
+    @contextmanager
+    def _write(self) -> Iterator[sqlite3.Connection]:
+        """One FULL-synchronous write transaction whose lock wait is bounded.
+
+        BEGIN IMMEDIATE and COMMIT (which in rollback-journal mode still waits for
+        readers) are retried until a monotonic deadline. Past it, the error leaves
+        through `_connection` as checkpoint_unavailable and closing the connection
+        rolls back, so a refused write never advances persisted state.
+        """
+        # BEGIN and COMMIT share one deadline on purpose: the bound is on the whole
+        # write, so a caller waits at most LOCK_WAIT_SECONDS (plus one sleep
+        # overshoot) however the wait splits. A COMMIT left with little budget fails
+        # closed and rolls back; the caller retries the write as a whole.
+        deadline = time.monotonic() + LOCK_WAIT_SECONDS
+        with self._connection(busy_timeout=0) as connection:
+            self._until_unlocked(lambda: connection.execute("BEGIN IMMEDIATE"), deadline)
+            yield connection
+            self._until_unlocked(connection.commit, deadline)
 
     def _require_encryption(self) -> None:
         if not self.crypto.is_enabled:
@@ -132,8 +181,7 @@ class CheckpointStore:
     def create(self, state: VerificationState) -> str:
         handle = secrets.token_hex(16)
         encrypted = self._encode(handle, 0, state)
-        with self._connection() as connection:
-            connection.execute("BEGIN IMMEDIATE")
+        with self._write() as connection:
             if connection.execute("SELECT id FROM claude_cloud_verification WHERE id=1").fetchone():
                 raise CheckpointError("job_exists")
             if connection.execute(
@@ -147,7 +195,6 @@ class CheckpointStore:
                 "VALUES (1,?,0,?,NULL,0)",
                 (handle, encrypted),
             )
-            connection.commit()
         return handle
 
     def _archived_row(self, handle: str) -> sqlite3.Row:
@@ -196,8 +243,7 @@ class CheckpointStore:
         self._require_encryption()
         if type(revision) is not int or revision < 0:
             raise CheckpointError("invalid_revision")
-        with self._connection() as connection:
-            connection.execute("BEGIN IMMEDIATE")
+        with self._write() as connection:
             archived = connection.execute(
                 "SELECT * FROM claude_cloud_verification_archives WHERE job_handle=?", (handle,)
             ).fetchone()
@@ -251,8 +297,7 @@ class CheckpointStore:
             ).rowcount
             if changed != 1:
                 raise CheckpointError("checkpoint_changed")
-            connection.commit()
-            return saved["revision"]
+        return saved["revision"]
 
     def snapshot(self, handle: str) -> VerificationState:
         return self._decode(self._row(handle))
@@ -264,7 +309,7 @@ class CheckpointStore:
         state.outcome = reason
         revision = row["revision"] + 1
         encrypted = self._encode(row["job_handle"], revision, state)
-        with self._connection() as connection:
+        with self._write() as connection:
             changed = connection.execute(
                 "UPDATE claude_cloud_verification SET revision=?,state_encrypted=?,"
                 "lease_owner=NULL,lease_expires=0 WHERE id=1 AND job_handle=? AND revision=? "
@@ -288,7 +333,7 @@ class CheckpointStore:
         if not state.created_at <= now < state.deadline:
             self._stop(row, state, "expired")
         owner = secrets.token_hex(16)
-        with self._connection() as connection:
+        with self._write() as connection:
             changed = connection.execute(
                 "UPDATE claude_cloud_verification SET lease_owner=?,lease_expires=? "
                 "WHERE id=1 AND job_handle=? AND revision=? AND lease_owner IS NULL",
@@ -345,7 +390,7 @@ class CheckpointStore:
         self._transition(previous, checked)
         revision = claim.revision + 1
         encrypted = self._encode(claim.handle, revision, checked)
-        with self._connection() as connection:
+        with self._write() as connection:
             changed = connection.execute(
                 "UPDATE claude_cloud_verification SET revision=?,state_encrypted=?,lease_expires=? "
                 "WHERE id=1 AND job_handle=? AND revision=? AND lease_owner=? AND lease_expires>?",
@@ -365,7 +410,7 @@ class CheckpointStore:
         claim.state = checked
 
     def release(self, claim: Claim) -> None:
-        with self._connection() as connection:
+        with self._write() as connection:
             connection.execute(
                 "UPDATE claude_cloud_verification SET lease_owner=NULL,lease_expires=0 "
                 "WHERE id=1 AND job_handle=? AND lease_owner=?",
@@ -376,7 +421,7 @@ class CheckpointStore:
         row = self._row(handle)
         if row["lease_owner"] is not None and row["lease_expires"] > self.clock():
             raise CheckpointError("busy")
-        with self._connection() as connection:
+        with self._write() as connection:
             changed = connection.execute(
                 "DELETE FROM claude_cloud_verification WHERE id=1 AND job_handle=? AND revision=? "
                 "AND (lease_owner IS NULL OR lease_expires<=?)",

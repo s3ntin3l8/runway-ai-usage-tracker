@@ -372,6 +372,130 @@ def test_database_contention_is_bounded_and_does_not_advance_state(tmp_path):
     store.release(owner)
 
 
+class _SlackClock:
+    """Fake monotonic time whose sleeps overshoot, as macOS timer coalescing does.
+
+    The claim path must not rely on SQLite's busy handler (#1358): each of its short
+    sleeps can overshoot by tens of milliseconds. Here every sleep overshoots by 80 ms,
+    so the bound is pinned without depending on the host's scheduler.
+    """
+
+    overshoot = 0.08
+
+    def __init__(self, on_sleep=None):
+        self.now = 0.0
+        self.sleeps = 0
+        self.on_sleep = on_sleep
+
+    def monotonic(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.sleeps += 1
+        self.now += seconds + self.overshoot
+        if self.on_sleep is not None:
+            self.on_sleep(self.sleeps)
+
+
+def _install_clock(monkeypatch, clock):
+    import time
+
+    from app.services import claude_cloud_checkpoints
+
+    class FakeTime:
+        """Fake monotonic/sleep; every other attribute is the real `time` module's."""
+
+        monotonic = staticmethod(clock.monotonic)
+        sleep = staticmethod(clock.sleep)
+
+        def __getattr__(self, name):
+            return getattr(time, name)
+
+    monkeypatch.setattr(claude_cloud_checkpoints, "time", FakeTime())
+
+
+def _raw_row(path):
+    with sqlite3.connect(path) as db:
+        return db.execute(
+            "SELECT job_handle, revision, state_encrypted, lease_owner, lease_expires "
+            "FROM claude_cloud_verification WHERE id=1"
+        ).fetchone()
+
+
+@pytest.mark.parametrize("hold", ["write_lock", "reader_at_commit", "stale_lease_stop"])
+def test_claim_refusal_is_bounded_by_its_deadline_and_advances_nothing(tmp_path, monkeypatch, hold):
+    from app.services.claude_cloud_checkpoints import (
+        LOCK_RETRY_SECONDS,
+        LOCK_WAIT_SECONDS,
+        CheckpointError,
+    )
+
+    store, state, path, _, clock = setup_store(tmp_path)
+    handle = store.create(state)
+    if hold == "stale_lease_stop":
+        # A lease that expired leaves claim on the `_stop` write path.
+        stale = store.claim(handle)
+        clock[0] += 60
+        del stale
+    before = _raw_row(path)
+    fake = _SlackClock()
+    _install_clock(monkeypatch, fake)
+    blocker = sqlite3.connect(path, isolation_level=None)
+    try:
+        if hold == "reader_at_commit":
+            # A reader's SHARED lock lets BEGIN IMMEDIATE through but makes COMMIT wait.
+            blocker.execute("BEGIN")
+            blocker.execute("SELECT * FROM claude_cloud_verification").fetchall()
+        else:
+            blocker.execute("BEGIN IMMEDIATE")
+        with pytest.raises(CheckpointError, match="^checkpoint_unavailable$"):
+            store.claim(handle)
+        assert fake.sleeps >= 1
+        assert fake.now <= LOCK_WAIT_SECONDS + LOCK_RETRY_SECONDS + fake.overshoot
+    finally:
+        blocker.rollback()
+        blocker.close()
+    assert _raw_row(path) == before
+    if hold == "stale_lease_stop":
+        with pytest.raises(CheckpointError, match="^interrupted$"):
+            store.claim(handle)
+        return
+    owner = store.claim(handle)
+    assert owner.revision == before[1]
+    store.release(owner)
+
+
+@pytest.mark.parametrize("hold", ["write_lock", "reader_at_commit"])
+def test_claim_succeeds_once_the_blocker_releases_inside_the_deadline(tmp_path, monkeypatch, hold):
+    from app.services.claude_cloud_checkpoints import LOCK_WAIT_SECONDS
+
+    store, state, path, _, _ = setup_store(tmp_path)
+    handle = store.create(state)
+    blocker = sqlite3.connect(path, isolation_level=None)
+    if hold == "reader_at_commit":
+        blocker.execute("BEGIN")
+        blocker.execute("SELECT * FROM claude_cloud_verification").fetchall()
+    else:
+        blocker.execute("BEGIN IMMEDIATE")
+
+    def release(sleeps):
+        if sleeps == 1:
+            blocker.rollback()
+
+    fake = _SlackClock(on_sleep=release)
+    _install_clock(monkeypatch, fake)
+    try:
+        owner = store.claim(handle)
+    finally:
+        blocker.close()
+    # It waited for the blocker and got the lock well inside the deadline.
+    assert fake.sleeps >= 1
+    assert fake.now <= LOCK_WAIT_SECONDS
+    row = _raw_row(path)
+    assert row[3] == owner.owner and row[1] == owner.revision == 0
+    store.release(owner)
+
+
 def test_usage_only_records_keep_private_model_scopes_after_restart(tmp_path):
     from app.services.claude_cloud_ledger import usage_only_record
     from scripts.audit_claude_usage import audit_messages

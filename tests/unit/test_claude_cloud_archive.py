@@ -146,8 +146,8 @@ def test_failed_commit_rolls_back_both_copy_and_slot_release(tmp_path, monkeypat
             raise sqlite3.OperationalError("synthetic commit failure")
 
     @contextmanager
-    def connection():
-        with original() as db:
+    def connection(**options):
+        with original(**options) as db:
             yield Connection(db)
 
     with monkeypatch.context() as patch:
