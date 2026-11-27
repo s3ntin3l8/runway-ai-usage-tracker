@@ -55,7 +55,8 @@ def select_item(items: list[dict[str, Any]]) -> dict[str, Any]:
     if not items:
         raise KeychainError("missing")
     if len(items) > 1 and all(item.get("service") == GH_SERVICE for item in items):
-        active = [item for item in items if item.get("account") == ""]
+        # The ctypes backend omits the key instead of reporting "", so treat both alike.
+        active = [item for item in items if item.get("account") in ("", None)]
         if len(active) == 1:
             return active[0]
     if len(items) != 1:

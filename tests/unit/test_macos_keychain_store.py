@@ -548,3 +548,10 @@ def test_find_keeps_other_services_with_an_empty_account_ambiguous():
     ]
     with pytest.raises(store.KeychainError, match="ambiguous"):
         store.KeychainStore(api, allowed=lambda: True).find("service", None)
+
+
+def test_select_item_treats_a_missing_account_key_as_the_github_cli_active_item():
+    # The ctypes backend drops the key when the attribute is absent rather than reporting "".
+    per_account = {"persistent": b"per-account", "service": "gh:github.com", "account": "someone"}
+    active = {"persistent": b"active", "service": "gh:github.com"}
+    assert store.select_item([per_account, active]) is active

@@ -3685,6 +3685,7 @@ class GenericCollector:
                     if platform.system() == "Darwin":
                         # gh delegates to native credential helpers; never launch
                         # an uncontrolled security requester from the scraper.
+                        from scripts.sidecar_pkg.keyring_value import decode_envelope
                         from scripts.sidecar_pkg.macos_keychain_store import (
                             KeychainError,
                             read_secret,
@@ -3695,8 +3696,6 @@ class GenericCollector:
                             and consent.service_ticket("gh:github.com") is not None
                         ):
                             try:
-                                from scripts.sidecar_pkg.keyring_value import decode_envelope
-
                                 raw = read_secret("gh:github.com", group="github-cli")
                                 # gh stores through go-keyring, which wraps the token
                                 # in a "go-keyring-base64:" envelope on macOS.
