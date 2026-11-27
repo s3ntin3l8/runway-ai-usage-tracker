@@ -284,6 +284,29 @@ def report_cookie_stores() -> None:
     )
 
 
+def _claude_desktop_candidates(provider: str, scan_outcomes: list) -> list[tuple[str, str]]:
+    """Claude Desktop's session cookies, each under its own fingerprinted origin.
+
+    A missing Desktop dependency must not hide the browser stores scanned after it.
+    """
+    from scripts.sidecar_pkg.cookie_scan import report_scan
+    from scripts.sidecar_pkg.identity import credential_fingerprint, keyed_credential_origin
+
+    base_origin = f"cookie:{provider}/Claude Desktop/Default/Cookies"
+    try:
+        from scripts.sidecar_pkg.claude_desktop import scan_session_cookie
+
+        scanned = scan_session_cookie(Path.home() / "Library/Application Support/Claude/Cookies")
+    except ImportError:
+        logging.warning("Claude Desktop credential helper unavailable; trying browser sources")
+        return []
+    report_scan("Claude Desktop", base_origin, scanned, scan_outcomes)
+    return [
+        (value, keyed_credential_origin(base_origin, credential_fingerprint(value)))
+        for value in scanned.values
+    ]
+
+
 class BrowserCookieExtractor:
     """Unified extractor for cookies across multiple browsers."""
 
@@ -493,16 +516,7 @@ class BrowserCookieExtractor:
         if provider == "anthropic" and os.getenv(
             "RUNWAY_CLAUDE_DESKTOP_CREDENTIALS", "1"
         ).strip().lower() not in {"0", "false", "off", "no"}:
-            from scripts.sidecar_pkg.claude_desktop import scan_session_cookie
-
-            base_origin = f"cookie:{provider}/Claude Desktop/Default/Cookies"
-            scanned = scan_session_cookie(
-                Path.home() / "Library/Application Support/Claude/Cookies"
-            )
-            report_scan("Claude Desktop", base_origin, scanned, scan_outcomes)
-            for value in scanned.values:
-                origin = keyed_credential_origin(base_origin, credential_fingerprint(value))
-                candidates.append((value, origin))
+            candidates.extend(_claude_desktop_candidates(provider, scan_outcomes))
         for target in BrowserCookieExtractor.get_all_paths():
             browser = target["browser"]
             path = target["path"]
@@ -598,39 +612,9 @@ class BrowserCookieExtractor:
         dotted = "." + bare
         like_subdomain = "%." + bare
 
-        # Desktop uses its own Electron store and Keychain service. Keep this
-        # scoped to Claude's session cookie; other provider rules never read it.
-        if (
-            platform.system() == "Darwin"
-            and bare == "claude.ai"
-            and name == "sessionKey"
-            and os.getenv("RUNWAY_CLAUDE_DESKTOP_CREDENTIALS", "1").strip().lower()
-            not in {"0", "false", "off", "no"}
-        ):
-            try:
-                from scripts.sidecar_pkg.claude_desktop import scan_session_cookie
-                from scripts.sidecar_pkg.cookie_scan import report_scan, report_scan_summary
-
-                scanned = scan_session_cookie(
-                    Path.home() / "Library/Application Support/Claude/Cookies"
-                )
-                outcomes = []
-                report_scan(
-                    "Claude Desktop",
-                    "cookie:anthropic/Claude Desktop/Default/Cookies",
-                    scanned,
-                    outcomes,
-                )
-                report_scan_summary(outcomes)
-                desktop_cookie = next(iter(scanned.values), None)
-                if desktop_cookie:
-                    logging.info("Claude session cookie source: Claude Desktop")
-                    return desktop_cookie
-            except ImportError:
-                logging.warning(
-                    "Claude Desktop credential helper unavailable; trying browser sources"
-                )
-
+        # Claude Desktop's own store is read only on macOS, where the sidecar collects
+        # through ``get_macos_candidates``: it sends the Desktop cookie and every browser
+        # cookie as separate sources, so the server can fail over between them (#1406).
         for target in BrowserCookieExtractor.get_all_paths():
             # Safari's store is not a SQLite database and macOS keeps its own
             # decryption path, so neither is probed. Only the SQLite stores

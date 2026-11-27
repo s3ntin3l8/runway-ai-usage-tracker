@@ -141,7 +141,6 @@ def test_desktop_keychain_failure_does_not_retry_after_ten_minutes(tmp_path, mon
 
 def test_get_cookie_browser_wrapper_passes_schema_and_exact_host(tmp_path, monkeypatch, helper):
     monkeypatch.setattr(sidecar.platform, "system", lambda: "Darwin")
-    monkeypatch.setenv("RUNWAY_CLAUDE_DESKTOP_CREDENTIALS", "off")
     path = tmp_path / "Cookies"
     with sqlite3.connect(path) as conn:
         conn.execute("CREATE TABLE meta (key TEXT, value TEXT)")
