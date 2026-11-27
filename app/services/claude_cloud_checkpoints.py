@@ -60,6 +60,12 @@ class CheckpointStore:
     def _connection(
         self, *, busy_timeout: float = LOCK_WAIT_SECONDS
     ) -> Iterator[sqlite3.Connection]:
+        """A FULL-synchronous connection; reads use it directly, writes via `_write`.
+
+        Reads keep SQLite's busy handler. They do not wait on writers only because
+        the database is in WAL mode, which `app/core/db.py` sets and SQLite persists
+        in the file header; this store never sets the journal mode itself.
+        """
         connection = None
         try:
             connection = sqlite3.connect(
@@ -100,6 +106,10 @@ class CheckpointStore:
         through `_connection` as checkpoint_unavailable and closing the connection
         rolls back, so a refused write never advances persisted state.
         """
+        # BEGIN and COMMIT share one deadline on purpose: the bound is on the whole
+        # write, so a caller waits at most LOCK_WAIT_SECONDS (plus one sleep
+        # overshoot) however the wait splits. A COMMIT left with little budget fails
+        # closed and rolls back; the caller retries the write as a whole.
         deadline = time.monotonic() + LOCK_WAIT_SECONDS
         with self._connection(busy_timeout=0) as connection:
             self._until_unlocked(lambda: connection.execute("BEGIN IMMEDIATE"), deadline)

@@ -399,12 +399,19 @@ class _SlackClock:
 
 def _install_clock(monkeypatch, clock):
     import time
-    import types
 
     from app.services import claude_cloud_checkpoints
 
-    fake = types.SimpleNamespace(monotonic=clock.monotonic, sleep=clock.sleep, time=time.time)
-    monkeypatch.setattr(claude_cloud_checkpoints, "time", fake)
+    class FakeTime:
+        """Fake monotonic/sleep; every other attribute is the real `time` module's."""
+
+        monotonic = staticmethod(clock.monotonic)
+        sleep = staticmethod(clock.sleep)
+
+        def __getattr__(self, name):
+            return getattr(time, name)
+
+    monkeypatch.setattr(claude_cloud_checkpoints, "time", FakeTime())
 
 
 def _raw_row(path):
@@ -460,6 +467,8 @@ def test_claim_refusal_is_bounded_by_its_deadline_and_advances_nothing(tmp_path,
 
 @pytest.mark.parametrize("hold", ["write_lock", "reader_at_commit"])
 def test_claim_succeeds_once_the_blocker_releases_inside_the_deadline(tmp_path, monkeypatch, hold):
+    from app.services.claude_cloud_checkpoints import LOCK_WAIT_SECONDS
+
     store, state, path, _, _ = setup_store(tmp_path)
     handle = store.create(state)
     blocker = sqlite3.connect(path, isolation_level=None)
@@ -479,7 +488,9 @@ def test_claim_succeeds_once_the_blocker_releases_inside_the_deadline(tmp_path, 
         owner = store.claim(handle)
     finally:
         blocker.close()
-    assert fake.sleeps == 1
+    # It waited for the blocker and got the lock well inside the deadline.
+    assert fake.sleeps >= 1
+    assert fake.now <= LOCK_WAIT_SECONDS
     row = _raw_row(path)
     assert row[3] == owner.owner and row[1] == owner.revision == 0
     store.release(owner)
