@@ -7,16 +7,18 @@ from datetime import UTC, datetime
 from sqlmodel import Session, SQLModel, create_engine, select
 from sqlmodel.pool import StaticPool
 
-from app.models.db import UsageEvent, UsagePeriodRollup
+from app.models.db import UsageEvent, UsagePeriodRollup, UsageWindow
 from app.services.data_health.checks.duplicate_telemetry_events import (
     GROUP_KEY,
     DuplicateTelemetryEventsCheck,
 )
 from app.services.maintenance.duplicate_telemetry_events import (
+    TELEMETRY_PREFIX,
     apply_duplicate_telemetry_events,
     plan_duplicate_telemetry_events,
 )
 from app.services.period_rollups import rebuild_rollups_for_pairs
+from scripts.sidecar_pkg.otel_receiver import EVENT_ID_PREFIX
 
 ACCOUNT = "holder@example.com"
 
@@ -127,3 +129,39 @@ def test_check_reports_plans_and_fixes_the_duplicates() -> None:
     fixed, hooks = check.apply(session, GROUP_KEY, {})
     assert fixed.counts["events_deleted"] == 2 and hooks == []
     assert check.detect(session).total_count == 0
+
+
+def test_the_prefix_matches_the_sidecar_receivers_event_ids() -> None:
+    # A rename in the receiver would otherwise make this check a silent 0.
+    assert TELEMETRY_PREFIX == EVENT_ID_PREFIX
+
+
+def test_apply_deletes_in_batches_and_rebuilds_an_overlapping_closed_window() -> None:
+    session = _session()
+    _seed(session)
+    session.add(
+        UsageWindow(
+            provider_id="anthropic",
+            account_id=ACCOUNT,
+            window_type="weekly",
+            window_start=datetime(2026, 11, 24, tzinfo=UTC),
+            window_end=datetime(2026, 12, 1, tzinfo=UTC),
+            model_id="",
+            sidecar_id="",
+            msgs=10,
+            tokens_output=1000,
+            limit_value=100.0,
+            pct_used=42.0,
+        )
+    )
+    session.commit()
+
+    result = apply_duplicate_telemetry_events(session, batch_size=1)
+    assert result.events_deleted == 2
+    assert result.windows_rebuilt >= 1
+    window = session.exec(
+        select(UsageWindow).where(UsageWindow.model_id == "", UsageWindow.sidecar_id == "")
+    ).one()
+    assert window.msgs == 8  # the anthropic events left in that week
+    assert window.tokens_output == 800
+    assert window.pct_used == 42.0  # the scrape-time gauge survives the rebuild

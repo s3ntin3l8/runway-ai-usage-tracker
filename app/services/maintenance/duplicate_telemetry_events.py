@@ -22,10 +22,11 @@ from datetime import datetime
 
 from sqlalchemy import ColumnElement, exists, func
 from sqlalchemy.orm import aliased
-from sqlmodel import Session, col, delete, select
+from sqlmodel import Session, col, select
 
 from app.core.date_utils import parse_iso8601_utc
 from app.models.db import UsageEvent
+from app.services.maintenance.chunked_sql import chunked_delete
 from app.services.maintenance.rollups import rebuild_rollups_for_pairs
 from app.services.maintenance.windows import rebuild_windows_overlapping
 
@@ -120,27 +121,46 @@ def plan_duplicate_telemetry_events(session: Session, *, sample_size: int = 5) -
     return plan
 
 
-def apply_duplicate_telemetry_events(session: Session) -> DuplicateResult:
-    """Delete the duplicates in one transaction, then rebuild what derives from them."""
-    plan = plan_duplicate_telemetry_events(session)
-    result = DuplicateResult()
-    if not plan.events:
-        return result
-    ids = list(session.exec(select(UsageEvent.id).where(*duplicate_where())))
-    session.exec(delete(UsageEvent).where(col(UsageEvent.id).in_(ids)))  # type: ignore[call-overload]
-    session.commit()
-    result.events_deleted = len(ids)
+def apply_duplicate_telemetry_events(session: Session, *, batch_size: int = 500) -> DuplicateResult:
+    """Delete the duplicates, then rebuild what derives from them.
 
-    pairs = {(PROVIDER_ID, account) for account in plan.accounts}
-    rebuild_rollups_for_pairs(session, pairs)
+    The rows are read first and the read transaction ended before any write (the WAL
+    escalation ``chunked_sql`` documents); they are then deleted ``batch_size`` ids per
+    write transaction. The accounts and the time range rebuilt are those of the rows actually
+    removed, so a duplicate committed after the read is left for the next run, rollups and
+    windows included, instead of being deleted without its dependents rebuilt.
+    """
+    result = DuplicateResult()
+    rows = list(
+        session.exec(
+            select(UsageEvent.id, UsageEvent.account_id, UsageEvent.ts)
+            .where(*duplicate_where())
+            .order_by(col(UsageEvent.id))
+        )
+    )
+    session.commit()  # end the read transaction before writing
+    if not rows:
+        return result
+    ids = [int(row_id) for row_id, _, _ in rows if row_id is not None]
+    for start in range(0, len(ids), batch_size):
+        result.events_deleted += chunked_delete(
+            session,
+            UsageEvent,
+            [col(UsageEvent.id).in_(ids[start : start + batch_size])],
+            batch_size=batch_size,
+        )
+
+    accounts = sorted({str(account) for _, account, _ in rows})
+    stamps = [moment for _, _, ts in rows if (moment := _moment(ts)) is not None]
+    rebuild_rollups_for_pairs(session, {(PROVIDER_ID, account) for account in accounts})
     session.commit()
-    result.rollup_pairs_rebuilt = len(pairs)
-    if plan.ts_min is not None and plan.ts_max is not None:
+    result.rollup_pairs_rebuilt = len(accounts)
+    if stamps:
         result.windows_rebuilt = rebuild_windows_overlapping(
             session,
             provider_id=PROVIDER_ID,
-            account_ids=plan.accounts,
-            ts_min=plan.ts_min,
-            ts_max=plan.ts_max,
+            account_ids=accounts,
+            ts_min=min(stamps),
+            ts_max=max(stamps),
         )
     return result
