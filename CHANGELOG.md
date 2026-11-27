@@ -5,6 +5,52 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0-beta.19](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v3.0.0-beta.18...v3.0.0-beta.19) (2026-11-27)
+
+
+### Features
+
+* **claude:** collect remote Cowork (ccs) sessions discovered by the macOS sidecar ([#1398](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1398)) ([2b2ac0c](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/2b2ac0c11d276fb66b771478421e29796da2206d))
+* **claude:** find remote Cowork sessions started on the phone or web ([#1400](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1400)) ([540a22e](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/540a22eca2c85170913914d15f8d21265278c946))
+* **claude:** store the call type (query_source) on usage events ([fe5d54c](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/fe5d54c83ad0f48ba53831b790b603198b6cda76))
+* **credentials:** derive why a stale card is stale (no credential, credential failing) ([6775ebc](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/6775ebcb35619688572e1f168d3f380f6da73921))
+* **data-health:** snapshot database before maintenance scripts write ([16b31fc](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/16b31fc27ae125116b256463a40be5bcf2577abd))
+* **fleet:** show a sidecar's Safari Full Disk Access to-do in Fleet and in the remedy text ([f67b460](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/f67b4600eec8f1f967d4445f6dece980629e8a8a))
+* **pricing:** add Gemini 4 Hydrogen, Carbon, and Neon pricing ([#1380](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1380)) ([8af8aa7](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/8af8aa77cf51eec3fb724e0f19acc149d5373cf3))
+* **pricing:** add GPT-6.2 Astra and Sol rates ([#1378](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1378)) ([a33fa63](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/a33fa63b0332502136969785fc80694766769be5))
+* **sidecar:** capture Claude Code side calls from OpenTelemetry api_request events ([83cc131](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/83cc131eb3fd70381a5a8de0687f341049732bd9))
+* **sidecar:** opt-in setting that enables Claude Code telemetry for the sidecar receiver ([35e0454](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/35e04544682152b45d66f66d6789c4ab71015916))
+* **sidecar:** say when an update invalidated Keychain access and offer one-click re-authorization ([ba58de2](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/ba58de22e2c018db213a9f438f39b0349de77a18))
+* **webapp:** show "No credential, reconnect" on a stale card instead of a bare "Stale" ([7a847df](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/7a847df795fc829c20619e84ae3859651e4c023d))
+
+
+### Bug Fixes
+
+* **claude:** align origin classification and Fleet read-only handling ([#1411](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1411)) ([c01e20a](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/c01e20a1998ac0d0c29c9a712cedab8b706864d3))
+* **claude:** bound checkpoint lock waits when timer sleeps overshoot ([#1410](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1410)) ([25352c6](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/25352c62c715036f3529c4294bfc50be99522efe))
+* **claude:** detect a Cowork transcript rewrite in the middle of consumed history ([#1408](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1408)) ([e986756](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/e9867564d216bdfb9d65b9a65fb67a882b625bca))
+* **claude:** detect a mid-history rewrite of a growing CLI transcript ([#1412](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1412)) ([3f20ed5](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/3f20ed5e4752ac7eb9a21318454c9df358e0b2bf))
+* **claude:** extract advisor-tool usage from usage.iterations as separate events ([94d16c7](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/94d16c7a49954f246d9822eb38bafa00dfb3c60c))
+* **claude:** fetch remote Cowork hints however many requests the list took ([#1399](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1399)) ([10fc955](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/10fc95595de3f86aa221de65580a31252e0168f3))
+* **claude:** let a checkpoint archive wait out a concurrent write ([#1417](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1417)) ([0fb9f2b](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/0fb9f2b3af60020de36feb9b572c0d35ee260752))
+* **claude:** read cloud histories with large pages instead of failing the cycle ([#1401](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1401)) ([c8bea69](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/c8bea69e19e51a0bbe47150bdc5db9a3257c6726))
+* **claude:** read the request id from the transcript record, not from message ([9d82b8c](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/9d82b8cc101b66ecb6ebe71b5f867e295075c140))
+* **claude:** refresh streamed usage across collection cycles ([fe37b35](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/fe37b352e73524b53d77e85c0031462981e434ba))
+* **credentials:** find what retired the Console credential on 2026-11-14 ([789e9bf](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/789e9bfa639b87ed68d727366e334aa46f6bdb80))
+* **sidecar:** decide edge updates from the platform asset's build, not the edge tag ([#1374](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1374)) ([8ba3782](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/8ba3782ff364780dfd4856e239f35499d5dcbac6))
+* **sidecar:** don't reinstall the running edge build when its platform asset lags ([#1368](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1368)) ([b33b0bb](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/b33b0bb16b8de149a31b937e730afe0534243e3e))
+* **sidecar:** keep the "Authorized" state after a restart when the source is already delivering ([c973a61](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/c973a61e12463d90b2913337d14f5bdef075552a))
+* **sidecar:** log a failed update check at INFO and name the GitHub rate limit ([46e26bd](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/46e26bda425ae7a717c93cce02e61cbcf0105cc4))
+* **sidecar:** log and show why a Keychain source is blocked (denied, timed out, unavailable) ([d0c69c5](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/d0c69c5645684af692710d317f235c128b99b257))
+* **sidecar:** read the GitHub CLI's active-token Keychain item on macOS ([#1418](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1418)) ([17327f6](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/17327f6cb9d2b33b9ccbd23b86c8d71ec66a4fa0))
+* **sidecar:** say why a source sync was not accepted instead of blaming the server ([2c7d35a](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/2c7d35a77302f2de0325ad44fb30d5e06c5c2842))
+* **sidecar:** stop counting Claude Desktop Code calls twice from telemetry ([#1404](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1404)) ([df820f7](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/df820f74a855569176831fc411c6351885bfdcae))
+
+
+### Performance Improvements
+
+* **ingest:** upsert an event's rollups with one cached statement ([#1403](https://github.com/s3ntin3l8/runway-ai-usage-tracker/issues/1403)) ([55f6769](https://github.com/s3ntin3l8/runway-ai-usage-tracker/commit/55f676956620da066e09002aa473997bd0712b7e))
+
 ## [3.0.0-beta.18](https://github.com/s3ntin3l8/runway-ai-usage-tracker/compare/v3.0.0-beta.17...v3.0.0-beta.18) (2026-11-17)
 
 
