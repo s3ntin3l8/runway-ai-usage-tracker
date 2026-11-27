@@ -129,9 +129,8 @@ def transcript_fingerprint(path: Path, end: int) -> str:
     a larger one contributes only its head and its tail, which is where a
     rewrite lands: Claude Code rewrites a transcript in place, and the bytes
     that change sit at the end of the file. The middle of a larger region is
-    not covered here. The Cowork reader closes that gap with per-chunk
-    digests and a rolling audit (``cowork_events._audit``); the CLI
-    transcript reader still relies on this window alone (#1407).
+    not covered here. Both transcript readers close that gap with per-chunk
+    digests and a rolling audit (``transcript_audit``).
     """
     head = min(end, _HEAD_BYTES)
     tail_start = max(head, end - _TAIL_BYTES)

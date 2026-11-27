@@ -662,7 +662,7 @@ def test_state_without_chunks_is_backfilled_not_replayed(tmp_path):
 
 
 def test_idle_transcript_audit_advances_across_cycles_and_finds_a_rewrite(tmp_path):
-    from scripts.sidecar_pkg.cowork_events import _CHUNK_BYTES
+    from scripts.sidecar_pkg.transcript_audit import CHUNK_BYTES as _CHUNK_BYTES
 
     base = tmp_path / "desktop"
     path = _large_session(base)
@@ -707,7 +707,7 @@ def _cursors(state):
 
 
 def test_audit_budget_is_shared_fairly_across_transcripts(tmp_path, monkeypatch):
-    from scripts.sidecar_pkg import cowork_events
+    from scripts.sidecar_pkg import transcript_audit
 
     base = tmp_path / "desktop"
     paths = [str(_org_session(base, org, 100, f"m-{org}").resolve()) for org in ("o1", "o2", "o3")]
@@ -715,14 +715,14 @@ def test_audit_budget_is_shared_fairly_across_transcripts(tmp_path, monkeypatch)
     batch = collect(base, state)
     batch.mark_owned(batch.events)
     reads = []
-    real = cowork_events._chunk_digest
+    real = transcript_audit.chunk_digest
     monkeypatch.setattr(
-        cowork_events, "_chunk_digest", lambda f, i, end: reads.append(i) or real(f, i, end)
+        transcript_audit, "chunk_digest", lambda f, i, end: reads.append(i) or real(f, i, end)
     )
     for _ in range(3):
         before = {k: _cursors(state)[k].get("audit_next", 0) for k in paths}
         reads.clear()
-        assert collect(base, state, audit_bytes=3 * cowork_events._CHUNK_BYTES).events == []
+        assert collect(base, state, audit_bytes=3 * transcript_audit.CHUNK_BYTES).events == []
         assert len(reads) == 3
         after = _cursors(state)
         # Every transcript advanced by one chunk in the same scan.
@@ -730,7 +730,7 @@ def test_audit_budget_is_shared_fairly_across_transcripts(tmp_path, monkeypatch)
 
 
 def test_transcript_larger_than_the_budget_does_not_starve_the_others(tmp_path):
-    from scripts.sidecar_pkg.cowork_events import _CHUNK_BYTES
+    from scripts.sidecar_pkg.transcript_audit import CHUNK_BYTES as _CHUNK_BYTES
 
     base = tmp_path / "desktop"
     big = str(_org_session(base, "big", 400, "m-big").resolve())  # ~13 chunks
@@ -753,7 +753,7 @@ def test_transcript_larger_than_the_budget_does_not_starve_the_others(tmp_path):
 
 
 def test_audit_walk_survives_a_commit_on_a_growing_transcript(tmp_path):
-    from scripts.sidecar_pkg.cowork_events import _CHUNK_BYTES
+    from scripts.sidecar_pkg.transcript_audit import CHUNK_BYTES as _CHUNK_BYTES
 
     base = tmp_path / "desktop"
     path = _large_session(base)
@@ -772,7 +772,7 @@ def test_audit_walk_survives_a_commit_on_a_growing_transcript(tmp_path):
 
 
 def test_many_transcripts_on_a_small_budget_all_complete_a_pass(tmp_path):
-    from scripts.sidecar_pkg.cowork_events import _CHUNK_BYTES
+    from scripts.sidecar_pkg.transcript_audit import CHUNK_BYTES as _CHUNK_BYTES
 
     base = tmp_path / "desktop"
     paths = [str(_org_session(base, f"o{i}", 40, f"m{i}").resolve()) for i in range(6)]
