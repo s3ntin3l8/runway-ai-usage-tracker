@@ -23,6 +23,7 @@ from sqlmodel import Session, select
 from app.core.db import engine
 from app.core.encryption import DecryptionError, encryption_service
 from app.models.db import CredentialSource, ProviderConfig, SidecarDevice, SidecarSourceContribution
+from app.services.account_identity import split_keyed_origin
 from app.services.source_controls import allowed
 from scripts.claude_cloud_list_boundary import SESSION_ID
 from scripts.sidecar_pkg.source_catalog import source_for_origin
@@ -169,10 +170,10 @@ def _check_authority(
             if not isinstance(payload, dict) or payload.get("tokens") != tokens:
                 raise ProbeError("source_changed")
             authority += (device_id, scraper, generation)
-        # Classification reads the origin without a fingerprint suffix, as
-        # ``source_for_origin`` and ``describe_origin_full`` do; every authority
-        # comparison above keeps the full, unmodified origin.
-        file_origin = origin.split("#", 1)[0]
+        # Classification reads the origin without a well-formed fingerprint suffix;
+        # a "#" that belongs to the path itself is kept. Every authority comparison
+        # above keeps the full, unmodified origin.
+        file_origin = split_keyed_origin(origin)[0]
         code_origin = (
             scraper == "anthropic.claude-code"
             or origin == "env:CLAUDE_CODE_OAUTH_TOKEN"
