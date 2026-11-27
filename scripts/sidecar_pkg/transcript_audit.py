@@ -73,8 +73,11 @@ def audit(
 ) -> tuple[dict[str, dict[str, Any]], dict[str, int]]:
     """Re-read up to ``budget`` bytes of committed chunks; drop a cursor whose chunk changed.
 
-    Every eligible transcript gets an equal slice of the budget (at least one
-    chunk), so one large transcript cannot starve the others. A pass over a
+    Every eligible transcript gets an equal slice of the budget, at least one
+    chunk, and no chunk is read past the budget, so one large transcript
+    cannot starve the others. With more eligible transcripts than chunks in
+    the budget, only the first ones in sort order are served in a scan; a
+    transcript keeps its place until its pass completes and then moves back. A pass over a
     transcript's chunks may span many scans: ``audit_done`` counts the chunks
     checked in the current pass, and the pass completes, setting ``audited``
     and ``audit_mtime_ns``, once it reaches the chunk count. Transcripts
@@ -123,8 +126,10 @@ def audit(
         changed = False
         try:
             with Path(key).open("rb") as f:
-                while allowance > 0 and not complete:
+                while not complete:
                     _, size = chunk_span(index, offset)
+                    if size > allowance:
+                        break
                     digest = chunk_digest(f, index, offset)
                     allowance -= size
                     budget -= size

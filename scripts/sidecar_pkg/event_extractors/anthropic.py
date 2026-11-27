@@ -281,6 +281,10 @@ def _file_stamp(stat: os.stat_result) -> list[int]:
     return [stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns]
 
 
+# The audit walk of each (account, transcript) for the life of the process.
+_AUDIT_PROGRESS: dict[tuple[str, str], dict[str, Any]] = {}
+
+
 def _same_cli_file(cursor: dict[str, Any], stat: os.stat_result) -> bool:
     stamp = cursor.get("stamp")
     return isinstance(stamp, list) and stamp[:2] == [stat.st_dev, stat.st_ino]
@@ -305,8 +309,11 @@ def poll_anthropic_events(
     # The fingerprint below covers only the head and the tail of a consumed
     # region. A rolling chunk audit re-reads a bounded slice of every
     # transcript's consumed region per scan (#1407): a changed chunk forces a
-    # replay from the transcript's baseline, and the audit's own progress is
-    # staged even for idle transcripts.
+    # replay from the transcript's baseline. An idle transcript's walk lives in
+    # _AUDIT_PROGRESS, and its cursor is staged only when the audit filled in
+    # a missing digest, so an idle sidecar does not rewrite the watermark
+    # file every cycle. The walk reaches the file with the next cursor
+    # written for a transcript; a restart resumes from that point.
     resolved: list[Path] = []
     for path in paths:
         try:
@@ -323,15 +330,31 @@ def poll_anthropic_events(
             continue
         cursor = watermark.anthropic_transcript(path, account_id)
         if cursor:
+            walk = _AUDIT_PROGRESS.get((account_id, str(path)))
+            if walk and walk["offset"] == cursor.get("offset"):
+                cursor = {**cursor, **walk["fields"], "chunks": walk["chunks"]}
             audited[str(path)] = cursor
             tracked[str(path)] = stat
+    stored = {key: cursor.get("chunks") for key, cursor in audited.items()}
     updated, dropped = audit(audited, tracked, audit_bytes, _same_cli_file)
+    for key, cursor in updated.items():
+        _AUDIT_PROGRESS[(account_id, key)] = {
+            "offset": cursor["offset"],
+            "chunks": cursor["chunks"],
+            "fields": {k: cursor[k] for k in AUDIT_FIELDS if k in cursor},
+        }
+    for key in dropped:
+        _AUDIT_PROGRESS.pop((account_id, key), None)
     for path in resolved:
         try:
             if path in ranges:
                 continue
             stamp = _file_stamp(path.stat())
-            cursor = updated.get(str(path)) or watermark.anthropic_transcript(path, account_id)
+            cursor = (
+                updated.get(str(path))
+                or audited.get(str(path))
+                or watermark.anthropic_transcript(path, account_id)
+            )
             previous_stamp = cursor.get("stamp")
             offset = cursor.get("offset", 0)
             same_stamp = previous_stamp == stamp
@@ -351,7 +374,7 @@ def poll_anthropic_events(
             # Same-size in-place writes can share a filesystem timestamp tick.
             # An incomplete tail still needs to be read, even if its prefix matches.
             if same_stamp and resume and offset == stamp[2]:
-                if str(path) in updated:
+                if str(path) in updated and updated[str(path)]["chunks"] != stored[str(path)]:
                     idle[str(path)] = updated[str(path)]
                 continue
             baseline = since

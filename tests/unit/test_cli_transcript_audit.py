@@ -7,12 +7,24 @@ from datetime import UTC, datetime
 import pytest
 
 from scripts.sidecar_pkg import transcript_audit
+from scripts.sidecar_pkg.event_extractors import anthropic
 from scripts.sidecar_pkg.event_extractors.anthropic import poll_anthropic_events
 from scripts.sidecar_pkg.event_watermark import EventWatermark
 
 SINCE = datetime(2026, 1, 1, tzinfo=UTC)
 PAD = json.dumps({"type": "user", "padding": "x" * 4000}) + "\n"
 CHUNK = transcript_audit.CHUNK_BYTES
+
+
+@pytest.fixture(autouse=True)
+def _fresh_process():
+    anthropic._AUDIT_PROGRESS.clear()
+    yield
+    anthropic._AUDIT_PROGRESS.clear()
+
+
+def walk(path):
+    return anthropic._AUDIT_PROGRESS[("a@x.io", str(path.resolve()))]["fields"]
 
 
 def record(mid, ts="2026-07-01T12:00:00Z"):
@@ -117,8 +129,39 @@ def test_audit_reads_at_most_its_budget_per_scan(tmp_path, monkeypatch):
         transcript_audit, "chunk_digest", lambda f, i, end: reads.append(i) or real(f, i, end)
     )
     for _ in range(3):
-        before = {str(p): cursor(wm_path, p).get("audit_next", 0) for p in paths}
+        before = {str(p): walk(p)["audit_next"] if anthropic._AUDIT_PROGRESS else 0 for p in paths}
         reads.clear()
         assert poll(EventWatermark(wm_path), paths, audit_bytes=3 * CHUNK) == set()
         assert len(reads) == 3
-        assert all(cursor(wm_path, p)["audit_next"] != before[str(p)] for p in paths)
+        assert all(walk(p)["audit_next"] != before[str(p)] for p in paths)
+
+
+def test_an_idle_transcript_does_not_rewrite_the_watermark_file(tmp_path):
+    path = transcript(tmp_path)
+    wm_path = tmp_path / "wm.json"
+    poll(EventWatermark(wm_path), [path])
+    poll(EventWatermark(wm_path), [path])  # chunks already known: nothing to stage
+    written = wm_path.stat().st_mtime_ns, wm_path.read_bytes()
+    for _ in range(3):
+        assert poll(EventWatermark(wm_path), [path], audit_bytes=CHUNK) == set()
+    assert (wm_path.stat().st_mtime_ns, wm_path.read_bytes()) == written
+    assert walk(path)["audit_done"] == 3  # the walk still advanced, in memory
+
+
+def test_a_transcript_larger_than_the_budget_completes_its_pass(tmp_path):
+    path = transcript(tmp_path, pads=400)
+    small = transcript(tmp_path, "small.jsonl", pads=10)
+    wm_path = tmp_path / "wm.json"
+    poll(EventWatermark(wm_path), [path, small])
+    count = len(cursor(wm_path, path)["chunks"])
+    budget = 2 * CHUNK
+    assert count * CHUNK > 3 * budget
+    for _ in range(count):
+        assert poll(EventWatermark(wm_path), [path, small], audit_bytes=budget) == set()
+    assert "audited" in walk(path)
+    assert "audited" in walk(small)
+    # The walk reaches the file with the next cursor written for the transcript.
+    with path.open("a") as f:
+        f.write(record("tail"))
+    assert poll(EventWatermark(wm_path), [path, small], audit_bytes=budget) == {"tail"}
+    assert "audited" in cursor(wm_path, path)
