@@ -85,6 +85,8 @@ def test_only_side_calls_are_kept_and_nothing_identifying(
     body = _payload(
         _record("req_title", "generate_session_title"),
         _record("req_main", "repl_main_thread"),
+        # Claude Desktop's local Code sessions run the main loop through the SDK.
+        _record("req_sdk", "sdk"),
         _record("req_agent", "agent:builtin:Explore"),
         _record(None, "generate_session_title"),
         {"attributes": [_attr("event.name", "user_prompt"), _attr("request_id", "req_x")]},
@@ -115,7 +117,7 @@ def test_only_side_calls_are_kept_and_nothing_identifying(
     dumped = json.dumps(event) + caplog.text
     for secret in (EMAIL, "org-secret", "0.0123"):
         assert secret not in dumped
-    assert receiver.filtered == 2 and receiver.dropped_incomplete == 1
+    assert receiver.filtered == 3 and receiver.dropped_incomplete == 1
 
 
 def test_unknown_query_source_is_captured_and_bad_timestamp_dropped(

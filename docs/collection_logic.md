@@ -343,8 +343,9 @@ local totals are low by these shares.
 The sidecar closes the side-call gap with a receiver for Claude Code's OpenTelemetry
 log events (`scripts/sidecar_pkg/otel_receiver.py`). It listens on `127.0.0.1:4318`
 only, accepts OTLP HTTP/JSON at `POST /v1/logs`, and keeps `api_request` events whose
-`query_source` is not `repl_main_thread` or `agent:*`: the main loop and agent calls come
-from the transcripts, everything else (including a `query_source` not seen before) is
+`query_source` is not `repl_main_thread`, `sdk` or `agent:*`: the main loop (`sdk` is the
+main loop of a session driven through the SDK, which Claude Desktop's local Code sessions
+are) and agent calls come from the transcripts, everything else (including a `query_source` not seen before) is
 captured. Only an allow-list of attributes (model, token counts, `request_id`,
 `query_source`, `speed`, `effort`, session id, timestamp) is read; cost and all user,
 account and organisation fields are dropped while parsing, and the server prices the
