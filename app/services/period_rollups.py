@@ -1,9 +1,9 @@
 """Atomic upsert into usage_period_rollup per event."""
 
 from datetime import UTC, datetime
+from typing import Any
 
-from sqlalchemy import update as sa_update
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy import bindparam, text
 from sqlmodel import Session
 
 from app.models.db import UsageEvent, UsagePeriodRollup
@@ -47,6 +47,35 @@ _SUM_FIELDS = (
 )
 
 
+_KEY_COLUMNS = _INDEX_ELEMENTS
+_VALUE_COLUMNS = ("msgs", *_SUM_FIELDS)
+
+# One fixed statement per direction, built once: SQLAlchemy compiles and caches a
+# constant ``text()`` statement, and each event's rows go through it as a single
+# executemany. Building an ORM upsert per row (20 per event, each with a dozen
+# column expressions) spent ~25 ms of SQLAlchemy statement construction per event,
+# which made a 1000-event sidecar batch hold the event loop for tens of seconds.
+# ``excluded.<col>`` is the inserted row's value, so ON CONFLICT adds the same
+# deltas the per-row expressions did.
+_UPSERT_SQL = text(
+    f"INSERT INTO usage_period_rollup ({', '.join((*_KEY_COLUMNS, *_VALUE_COLUMNS, 'last_updated'))}) "  # noqa: S608
+    f"VALUES ({', '.join(':' + c for c in (*_KEY_COLUMNS, *_VALUE_COLUMNS, 'last_updated'))}) "
+    f"ON CONFLICT ({', '.join(_INDEX_ELEMENTS)}) DO UPDATE SET "
+    + ", ".join(f"{c} = {c} + excluded.{c}" for c in _VALUE_COLUMNS)
+    + ", last_updated = excluded.last_updated"
+).bindparams(bindparam("last_updated", type_=_ROLLUP_TABLE.c.last_updated.type))
+
+# Subtraction only ever adjusts an existing row: with no row there is nothing to
+# subtract from, and an upsert would insert negative totals (e.g. on a DB whose
+# events were imported without rollup replays).
+_SUBTRACT_SQL = text(
+    "UPDATE usage_period_rollup SET "  # noqa: S608
+    + ", ".join(f"{c} = {c} + :{c}" for c in _VALUE_COLUMNS)
+    + ", last_updated = :last_updated WHERE "
+    + " AND ".join(f"{c} = :{c}" for c in _KEY_COLUMNS)
+).bindparams(bindparam("last_updated", type_=_ROLLUP_TABLE.c.last_updated.type))
+
+
 def update_rollups_for_event(session: Session, ev: UsageEvent, *, sign: int = 1) -> None:
     """Atomically upsert the rollup rows touched by this event.
 
@@ -72,39 +101,23 @@ def update_rollups_for_event(session: Session, ev: UsageEvent, *, sign: int = 1)
     ]
     # Dedupe while preserving order.
     unique_grains = list(dict.fromkeys(grains))
-    now = datetime.now(UTC)
-    table = _ROLLUP_TABLE
-    deltas = {field: sign * (getattr(ev, field) or 0) for field in _SUM_FIELDS}
-
-    for period_type, period_key in _period_keys(ev.ts):
-        for model_id, sidecar_id in unique_grains:
-            key = {
-                "provider_id": ev.provider_id,
-                "account_id": ev.account_id,
-                "period_type": period_type,
-                "period_key": period_key,
-                "model_id": model_id,
-                "sidecar_id": sidecar_id,
-            }
-            increments = {field: table.c[field] + delta for field, delta in deltas.items()}
-            increments["msgs"] = table.c.msgs + sign
-            increments["last_updated"] = now
-            if sign < 0:
-                # Subtraction only ever adjusts an existing row: with no row
-                # there is nothing to subtract from, and an upsert would
-                # insert negative totals (e.g. on a DB whose events were
-                # imported without rollup replays).
-                session.execute(
-                    sa_update(UsagePeriodRollup)
-                    .where(*(table.c[k] == v for k, v in key.items()))
-                    .values(increments)
-                )
-                continue
-            stmt = sqlite_insert(UsagePeriodRollup).values(
-                **key, msgs=sign, **deltas, last_updated=now
-            )
-            stmt = stmt.on_conflict_do_update(index_elements=list(_INDEX_ELEMENTS), set_=increments)
-            session.execute(stmt)
+    values: dict[str, Any] = {field: sign * (getattr(ev, field) or 0) for field in _SUM_FIELDS}
+    values["msgs"] = sign
+    values["last_updated"] = datetime.now(UTC)
+    rows = [
+        {
+            "provider_id": ev.provider_id,
+            "account_id": ev.account_id,
+            "period_type": period_type,
+            "period_key": period_key,
+            "model_id": model_id,
+            "sidecar_id": sidecar_id,
+            **values,
+        }
+        for period_type, period_key in _period_keys(ev.ts)
+        for model_id, sidecar_id in unique_grains
+    ]
+    session.execute(_UPSERT_SQL if sign > 0 else _SUBTRACT_SQL, rows)
 
 
 # (period_type, SQLite strftime format-or-literal) — mirrors _period_keys
@@ -147,8 +160,6 @@ def rebuild_rollups_for_providers(session: Session, providers: list[str] | None)
     (e.g. `scripts/recost_events.py`'s Phase C, which recomputes cost for a
     whole provider at once). Returns the number of pairs rebuilt.
     """
-    from sqlalchemy import text
-
     stmt = "SELECT DISTINCT provider_id, account_id FROM usage_events WHERE kind = 'message'"
     params: dict[str, object] = {}
     if providers:
@@ -171,8 +182,6 @@ def rebuild_rollups_for_pairs(session: Session, pairs: set[tuple[str, str]]) -> 
     of round trips; this is a handful of aggregate queries. Caller owns the
     transaction.
     """
-    from sqlalchemy import bindparam, text
-
     # Bound explicitly through the column's own DateTime type rather than
     # left to the DBAPI driver's default adapter for a bare tz-aware
     # datetime — that adapter (used only when a raw text() bind carries no
