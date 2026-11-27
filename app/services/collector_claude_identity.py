@@ -39,22 +39,23 @@ class CollectorClaudeIdentity:
     ) -> str | None:
         if getattr(collector, "verified_source_generation", None) is not None:
             return "credential binding changed during collection"
-        # Preserve legacy generic collection when optional source metadata is absent,
-        # while never publishing against a contradictory explicit operator assignment.
+        # Only reached for a sidecar candidate with a credential origin: the failover
+        # loop skips promotion entirely when that optional metadata is absent, which is
+        # what keeps legacy collection publishing. The origin is a non-empty string there:
+        # ingest drops a non-string origin at the boundary (``fleet_ingest._credential_origin``)
+        # and durable sources store ``str | None``, so a contradictory explicit operator
+        # assignment always fails closed.
         from sqlmodel import Session
 
         from app.core.db import engine
         from app.services.account_identity import canonical_account_id
         from app.services.credential_tags import CredentialTagRepo
 
-        origin = candidate.get("credential_origin")
-        if not isinstance(origin, str):
-            return None
         with Session(engine) as session:
             tag = CredentialTagRepo.get(
                 session,
                 provider_id=provider_id,
-                credential_origin=origin,
+                credential_origin=candidate["credential_origin"],
                 sidecar_id=candidate.get("sidecar_id"),
             )
             if (
@@ -116,16 +117,19 @@ class CollectorClaudeIdentity:
             != proof.generation
         ):
             return False
-        return self._claude_publication_binding(
+        # Read-only: the poller commits this session with its card writes, so the
+        # check must neither create a config row nor touch an organization binding.
+        return self._claude_source_binding_valid(
             session,
             proof.provider_id,
             proof.account_id,
-            proof.organization_id,
             {
                 "source_id": proof.source_id,
                 "credential_origin": proof.credential_origin,
                 "sidecar_id": proof.sidecar_id,
             },
+        ) and self._claude_binding_valid(
+            session, proof.provider_id, proof.account_id, proof.organization_id
         )
 
     async def _preview_unresolved_source(
@@ -172,21 +176,24 @@ class CollectorClaudeIdentity:
         from app.core.db import engine
 
         with Session(engine) as session:
-            allowed = self._claude_publication_binding(
-                session, provider_id, account_id, organization_id, candidate
-            )
+            # Publishing a verified source into its account is authorized to bind the
+            # proved organization to an account that has none yet (an account tagged
+            # before verification never passes through promotion).
+            allowed = self._claude_source_binding_valid(
+                session, provider_id, account_id, candidate
+            ) and self._bind_claude_account(session, provider_id, account_id, organization_id)
             if allowed:
                 session.commit()
             return allowed
 
-    def _claude_publication_binding(
-        self,
+    @staticmethod
+    def _claude_source_binding_valid(
         session: Any,
         provider_id: str,
         account_id: str,
-        organization_id: str | None,
         candidate: dict[str, Any],
     ) -> bool:
+        """Whether the exact durable source still belongs to the account. Read-only."""
         from sqlmodel import select
 
         from app.models.db import CredentialSource
@@ -216,11 +223,39 @@ class CollectorClaudeIdentity:
             != account_id
         ):
             return False
-        allowed = self._claude_binding_allowed(session, provider_id, account_id, organization_id)
-        return allowed
+        return True
 
     @staticmethod
-    def _claude_binding_allowed(
+    def _claude_binding_conflicts(row: Any, organization_id: str | None) -> bool:
+        """A disabled or archived account, or one bound to another organization."""
+        return (not row.enabled or row.archived) or bool(
+            organization_id and row.claude_organization_id not in (None, organization_id)
+        )
+
+    @staticmethod
+    def _claude_binding_valid(
+        session: Any, provider_id: str, account_id: str, organization_id: str | None
+    ) -> bool:
+        """Pure check: may this account publish for this organization? Writes nothing.
+
+        A missing config row is allowed, as it would be created enabled and unbound,
+        but it is not created here: only promotion, selection or publication binds.
+        """
+        from sqlmodel import select
+
+        from app.models.db import ProviderConfig
+
+        row = session.exec(
+            select(ProviderConfig).where(
+                ProviderConfig.provider_id == provider_id, ProviderConfig.account_id == account_id
+            )
+        ).first()
+        return row is None or not CollectorClaudeIdentity._claude_binding_conflicts(
+            row, organization_id
+        )
+
+    @staticmethod
+    def _bind_claude_account(
         session: Any,
         provider_id: str,
         account_id: str,
@@ -230,6 +265,11 @@ class CollectorClaudeIdentity:
         account_label: str | None = None,
         billing_type: str | None = None,
     ) -> bool:
+        """Bind a proved organization (and name/price a new account). Mutates the session.
+
+        Only authorized promotion, explicit selection and verified publication call this;
+        ``allow_selection`` is the operator's explicit choice overriding a conflict.
+        """
         from sqlmodel import select
 
         from app.models.db import ProviderAccountLabel, ProviderConfig
@@ -242,12 +282,8 @@ class CollectorClaudeIdentity:
         created = row is None
         if row is None:
             row = ProviderConfig(provider_id=provider_id, account_id=account_id)
-        if (not row.enabled or row.archived) and not allow_selection:
-            return False
-        if (
-            organization_id
-            and row.claude_organization_id not in (None, organization_id)
-            and not allow_selection
+        if not allow_selection and CollectorClaudeIdentity._claude_binding_conflicts(
+            row, organization_id
         ):
             return False
         if organization_id:
@@ -569,7 +605,7 @@ class CollectorClaudeIdentity:
             # A proved model reaches the account even when no organization was
             # proved: an OAuth token has no Claude organization to read, so the
             # model its own cards describe is the only proof it can make.
-            if (organization_id or billing_type) and not self._claude_binding_allowed(
+            if (organization_id or billing_type) and not self._bind_claude_account(
                 session,
                 provider_id,
                 target,

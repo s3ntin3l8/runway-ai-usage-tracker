@@ -128,6 +128,16 @@ def _can_reconcile_row(
     return row_account_id in (phantom_account_ids or ())
 
 
+def _credential_origin(metadata: dict[str, Any] | None) -> str:
+    """The card's credential origin, or ``""``: ``LimitCard.metadata`` is untyped.
+
+    A non-string origin is treated as absent here, at the transport boundary, so
+    every later consumer (tags, durable sources, the token cache) sees ``str | None``.
+    """
+    origin = (metadata or {}).get("credential_origin")
+    return origin if isinstance(origin, str) else ""
+
+
 def _is_cookie_key(key: str) -> bool:
     return key.startswith("cookie_") or key in _COOKIE_BUNDLE_KEYS
 
@@ -305,7 +315,7 @@ def _normalize_ingest_context(
             if card.remaining == "Token" and card.unit in ("oauth", "api_key", "cookie"):
                 metadata = card.metadata or {}
                 provider = card.provider_id or metadata.get("provider_id", "")
-                origin = metadata.get("credential_origin", "")
+                origin = _credential_origin(metadata)
                 try:
                     source_proofs[(provider, origin)] = source_controls.contribution_proof(
                         session, enrolled_device, provider, origin, metadata.get("keychain_consent")
@@ -373,9 +383,7 @@ async def _classify_cards(ctx: _IngestContext) -> tuple[list[_TokenBundle], list
                 )
 
                 provider_tokens = {}
-                credential_origin = (
-                    card.metadata.get("credential_origin") if card.metadata else None
-                )
+                credential_origin = _credential_origin(card.metadata) or None
                 identity_pending = bool(
                     card.metadata and card.metadata.get("identity_pending") is True
                 ) or bool(credential_origin and payload.sidecar_id and not acc_id)

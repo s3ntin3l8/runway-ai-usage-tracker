@@ -105,7 +105,9 @@ class AnthropicWebMixin:
         from app.services.collectors.anthropic_console import ConsoleAPIError
 
         native_source = is_native_claude_source("anthropic")
-        if native_source or selected_organization("anthropic", self.account_id):
+        if native_source or await asyncio.to_thread(
+            selected_organization, "anthropic", self.account_id
+        ):
             self.current_input_source = "sidecar" if native_source else "config"
             try:
                 verified = await verify_collector_cookie(self, client, "anthropic", session_key)
