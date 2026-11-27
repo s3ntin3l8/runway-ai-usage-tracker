@@ -3695,13 +3695,18 @@ class GenericCollector:
                             and consent.service_ticket("gh:github.com") is not None
                         ):
                             try:
+                                from scripts.sidecar_pkg.keyring_value import decode_envelope
+
                                 raw = read_secret("gh:github.com", group="github-cli")
-                                if raw:
+                                # gh stores through go-keyring, which wraps the token
+                                # in a "go-keyring-base64:" envelope on macOS.
+                                token = decode_envelope(raw.decode()) if raw else None
+                                if token:
                                     target = mapping.get("value")
                                     if target:
                                         token_candidates.append(
                                             (
-                                                {target: raw.decode()},
+                                                {target: token},
                                                 "keychain:GitHub CLI",
                                                 "keychain",
                                             )

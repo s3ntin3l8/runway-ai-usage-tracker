@@ -441,10 +441,10 @@ def test_an_exception_while_finishing_a_group_ends_the_run_and_does_not_stop_the
     controller = SetupController(launch=Mock(return_value=True), verify=Mock(return_value=True))
     real_finish = controller._finish
 
-    def finish(source_id, ticket, success):
+    def finish(source_id, ticket, success, started=None):
         if source_id == "anthropic.chrome":
             raise RuntimeError("boom")
-        real_finish(source_id, ticket, success)
+        real_finish(source_id, ticket, success, started)
 
     controller._finish = finish  # type: ignore[method-assign]
     controller.start_all(["anthropic.chrome", "anthropic.edge"])
@@ -471,13 +471,77 @@ def test_a_failure_finishing_a_later_member_keeps_an_earlier_sibling_authorized(
     controller = SetupController(launch=Mock(return_value=True), verify=Mock(return_value=True))
     real_finish = controller._finish
 
-    def finish(source_id, ticket, success):
+    def finish(source_id, ticket, success, started=None):
         if source_id == second:
             raise RuntimeError("boom")
-        real_finish(source_id, ticket, success)
+        real_finish(source_id, ticket, success, started)
 
     controller._finish = finish  # type: ignore[method-assign]
     controller.start_all([first, second])
     controller.wait(5)
     assert controller.state(first) == "Limited"
     assert controller.state(second) == "Action required"
+
+
+@pytest.mark.parametrize(("matches", "reason"), [(0, "missing"), (2, "ambiguous")])
+def test_fresh_verification_records_why_no_item_was_selected(monkeypatch, matches, reason):
+    from scripts.sidecar_pkg import keychain_client, source_setup
+
+    config = consent.SourcePolicy.enable_all({})
+    monkeypatch.setattr(consent, "POLICY", consent.SourcePolicy(config))
+    item = {"persistent": b"ref", "service": "Chrome Safe Storage", "account": "user"}
+    client = Mock()
+    client._timeout = 30
+    client.call.return_value = [item] * matches
+    monkeypatch.setattr(keychain_client, "KeychainClient", lambda: client)
+    ticket = consent.POLICY.ticket("anthropic.chrome")
+    assert source_setup.verify_background("anthropic.chrome", ticket) is False
+    assert consent.POLICY.block_reason("anthropic.chrome") == reason
+
+
+def test_fresh_verification_of_github_cli_reads_the_active_token_item(monkeypatch):
+    from scripts.sidecar_pkg import keychain_client, source_setup
+
+    config = consent.SourcePolicy.enable_all({})
+    monkeypatch.setattr(consent, "POLICY", consent.SourcePolicy(config))
+    per_account = {"persistent": b"per-account", "service": "gh:github.com", "account": "someone"}
+    active = {"persistent": b"active", "service": "gh:github.com", "account": ""}
+    reads = []
+    client = Mock()
+    client._timeout = 30
+
+    def call(operation, query, values, **kwargs):
+        if "service" in query:
+            return [per_account, active]
+        reads.append(query["persistent"])
+        return {**active, "data": b"synthetic"}
+
+    client.call.side_effect = call
+    monkeypatch.setattr(keychain_client, "KeychainClient", lambda: client)
+    assert (
+        source_setup.verify_background("github.gh-cli", consent.POLICY.ticket("github.gh-cli"))
+        is True
+    )
+    assert reads == [b"active"]
+
+
+def test_a_failed_setup_keeps_the_reason_verification_recorded(monkeypatch):
+    _enabled(monkeypatch)
+
+    def verify(source_id, ticket):
+        consent.POLICY.record_block(ticket, "ambiguous")
+        return False
+
+    controller = SetupController(launch=Mock(return_value=True), verify=verify)
+    controller.start("anthropic.chrome")
+    controller.wait(5)
+    assert controller.state("anthropic.chrome") == "Action required"
+    assert consent.POLICY.block_reason("anthropic.chrome") == "ambiguous"
+
+
+def test_an_unexplained_setup_failure_is_recorded_as_unavailable(monkeypatch):
+    _enabled(monkeypatch)
+    controller = SetupController(launch=Mock(return_value=False), verify=Mock(return_value=True))
+    controller.start("anthropic.chrome")
+    controller.wait(5)
+    assert consent.POLICY.block_reason("anthropic.chrome") == "unavailable"

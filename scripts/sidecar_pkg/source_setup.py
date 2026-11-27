@@ -170,7 +170,7 @@ def launch_authorization(source_id: str) -> bool:
 
 def verify_background(source_id: str, ticket: consent.ConsentTicket) -> bool:
     from scripts.sidecar_pkg.keychain_client import KeychainClient
-    from scripts.sidecar_pkg.keychain_protocol import KeychainError
+    from scripts.sidecar_pkg.keychain_protocol import KeychainError, select_item
 
     services, account = resources(source_id)
     client = KeychainClient()
@@ -204,9 +204,8 @@ def verify_background(source_id: str, ticket: consent.ConsentTicket) -> bool:
                 and item.get("service") == service
                 and (account is None or item.get("account") == account)
             )
-        if len(selected) != 1:
-            return False
-        item = selected[0]
+        # Raises missing/ambiguous, recorded below so the panel can say which.
+        item = select_item(selected)
         value = bounded_call({"persistent": item["persistent"]})
         success = (
             isinstance(value, dict)
@@ -268,6 +267,7 @@ class SetupController:
 
     def _run(self, source_id: str, ticket: consent.ConsentTicket) -> None:
         success = False
+        started = time.time()
         try:
             success = (
                 consent.POLICY.current(ticket)
@@ -277,9 +277,15 @@ class SetupController:
             )
         except Exception:
             pass  # Never expose native/subprocess diagnostic text.
-        self._finish(source_id, ticket, success)
+        self._finish(source_id, ticket, success, started)
 
-    def _finish(self, source_id: str, ticket: consent.ConsentTicket, success: bool) -> None:
+    def _finish(
+        self,
+        source_id: str,
+        ticket: consent.ConsentTicket,
+        success: bool,
+        started: float | None = None,
+    ) -> None:
         with self._lock:
             if success and consent.POLICY.current(ticket):
                 from scripts.sidecar_pkg import macos_cookies
@@ -300,7 +306,9 @@ class SetupController:
                         else consent.current_code_identity()
                     )
                     consent.POLICY.record_authorization(ticket, identity)
-                else:
+                elif started is None or not consent.POLICY.blocked_since(source_id, started):
+                    # Only a failure nothing explained: a reason verification already
+                    # recorded (missing, ambiguous, denied) stays what the panel shows.
                     consent.POLICY.record_block(ticket, "unavailable")
                 self._states[source_id] = (ticket, "Limited" if success else "Action required")
 
@@ -387,6 +395,7 @@ class SetupController:
         if not live:
             return
         launched = False
+        started = time.time()
         try:
             launched = self._launch(live[0][0])
         except Exception:
@@ -399,7 +408,7 @@ class SetupController:
                 )
             except Exception:
                 pass  # Never expose native/subprocess diagnostic text.
-            self._finish(source_id, ticket, success)
+            self._finish(source_id, ticket, success, started)
 
     def cancel(self) -> None:
         """Stop after the Keychain item being authorized now; sources still queued stay as they were."""

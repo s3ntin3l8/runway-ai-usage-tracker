@@ -517,3 +517,34 @@ def test_foreign_scope_ownership_check_never_requests_data():
     assert len(calls) == 1 and calls[0][1]["kSecReturnRef"] is True
     assert "kSecReturnData" not in calls[0][1]
     assert len(released) == 3
+
+
+def test_find_picks_the_github_cli_active_token_item_over_its_per_account_sibling():
+    # gh keeps a per-account item plus an account-less copy of the active token
+    # (what `gh auth token` returns); the helper reports the missing account as "".
+    api = API()
+    api.matches = [
+        {"persistent": b"per-account", "service": "gh:github.com", "account": "someone"},
+        {"persistent": b"exact", "service": "gh:github.com", "account": ""},
+    ]
+    api.copy = lambda query: (
+        api.calls.append(("copy", query))
+        or (
+            {"data": b"t", "persistent": b"exact", "service": "gh:github.com", "account": ""}
+            if "persistent" in query
+            else api.matches
+        )
+    )
+    item = store.KeychainStore(api, allowed=lambda: True).find("gh:github.com", None)
+    assert item.reference == b"exact"
+    assert api.calls[-1] == ("copy", {"persistent": b"exact"})
+
+
+def test_find_keeps_other_services_with_an_empty_account_ambiguous():
+    api = API()
+    api.matches = [
+        {"persistent": b"one", "service": "service", "account": "someone"},
+        {"persistent": b"two", "service": "service", "account": ""},
+    ]
+    with pytest.raises(store.KeychainError, match="ambiguous"):
+        store.KeychainStore(api, allowed=lambda: True).find("service", None)

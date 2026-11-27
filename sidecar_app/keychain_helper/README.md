@@ -87,6 +87,12 @@ other services the catalog has no account selector: the helper enumerates that
 service, and the caller rejects ambiguity. Explicit account selectors for these
 services are refused. Returned native attributes are reduced to `service`,
 `account`, `persistent`, and, for a data read, `data`.
+An item must carry a string account, with one exception: the GitHub CLI keeps
+its active token under the empty account, which macOS stores as no account
+attribute at all, so a `gh:github.com` item without one is reported as account
+`""`. gh also keeps a per-account copy of each login under the same service;
+`keychain_protocol.select_item` picks the account-less active-token item, so
+the authorization, verification and background reads all use the same item.
 
 Searches return only item metadata. A persistent-reference read is permitted
 only for a reference issued by a successful allowlisted search in **the same

@@ -109,6 +109,10 @@ static CFDictionaryRef clean_item(CFDictionaryRef item, bool with_data) {
     if (!is_type(item, CFDictionaryGetTypeID())) return NULL;
     CFTypeRef service = get(item, kSecAttrService), account = get(item, kSecAttrAccount);
     CFTypeRef ref = get(item, kSecValuePersistentRef), data = get(item, kSecValueData);
+    /* gh keeps its active token under the empty account, which macOS stores as no
+     * account attribute at all. Report it as "" so the caller can choose that item.
+     */
+    if (!account && equals(service, "gh:github.com")) account = CFSTR("");
     if (!service_allowed(service) || !is_type(account, CFStringGetTypeID()) ||
         !is_type(ref, CFDataGetTypeID()) || CFDataGetLength(ref) == 0 ||
         (with_data && !is_type(data, CFDataGetTypeID()))) return NULL;

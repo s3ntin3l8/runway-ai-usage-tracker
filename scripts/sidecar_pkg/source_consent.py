@@ -397,6 +397,12 @@ class SourcePolicy:
             self.acknowledge_reauthorization_notice(current)
             return message
 
+    def blocked_since(self, source_id: str, since: float) -> bool:
+        """True when a block reason was recorded for the source at or after ``since``."""
+        with self._lock:
+            value = self._read_record(source_id).get("last_block_at")
+            return value is not None and float(value) >= since
+
     def last_read(self, source_id: str) -> float | None:
         with self._lock:
             if self.ticket(source_id) is None:
