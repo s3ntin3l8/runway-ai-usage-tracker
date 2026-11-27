@@ -28,10 +28,14 @@ LEASE_SECONDS = 45
 # low-priority process. The 250 ms budget became 1-2 s (#1358). Here one
 # overshoot past the deadline is the most a refusal can add.
 LOCK_WAIT_SECONDS = 0.25
-# Creating and archiving a job are rare operator actions whose transaction copies,
-# re-encrypts and reads back the whole checkpoint. A concurrent duplicate is meant
-# to wait for the first one and then see its result (archive is idempotent), so
-# these waits must outlast that transaction even on a loaded host. The short
+# Creating and archiving a job are rare operator actions. A concurrent duplicate is
+# meant to wait for the first one and then see its result (archive is idempotent).
+# Measured for the test fixture's ~1.5 KB encrypted checkpoint: the archive
+# transaction holds the lock 12-32 ms on an idle host, but past 250 ms on a CI
+# runner and on a host at load 20-30, where the FULL-synchronous COMMIT's fsync
+# dominates. The hold time also grows with checkpoint size (up to MAX_PLAINTEXT,
+# decoded twice), so 2 s is headroom, not a guarantee: a wait that runs out still
+# fails closed with checkpoint_unavailable and the caller retries. The short
 # bound above stays on the claim/commit/release path that #1358 is about.
 ADMIN_LOCK_WAIT_SECONDS = 2.0
 LOCK_RETRY_SECONDS = 0.01

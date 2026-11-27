@@ -355,7 +355,11 @@ def test_archive_waits_out_a_writer_longer_than_the_claim_bound(tmp_path):
     import threading
     import time
 
-    from app.services.claude_cloud_checkpoints import LOCK_WAIT_SECONDS
+    from app.services.claude_cloud_checkpoints import (
+        ADMIN_LOCK_WAIT_SECONDS,
+        LOCK_RETRY_SECONDS,
+        LOCK_WAIT_SECONDS,
+    )
 
     store, _, path, _, _, handle = terminal(tmp_path)
     locked, release = threading.Event(), threading.Event()
@@ -374,7 +378,8 @@ def test_archive_waits_out_a_writer_longer_than_the_claim_bound(tmp_path):
     threading.Timer(LOCK_WAIT_SECONDS * 2.4, release.set).start()
     started = time.monotonic()
     store.archive(handle, 0)
-    assert time.monotonic() - started >= LOCK_WAIT_SECONDS * 2
+    waited = time.monotonic() - started
+    assert LOCK_WAIT_SECONDS * 2 <= waited < ADMIN_LOCK_WAIT_SECONDS + LOCK_RETRY_SECONDS
     thread.join()
     with sqlite3.connect(path) as db:
         assert (
