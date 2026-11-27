@@ -1,8 +1,10 @@
 """Authorization follows secret-free read outcomes, including across restarts."""
 
+import contextlib
 import json
 import os
 import time
+from collections.abc import Iterator
 from dataclasses import replace
 from unittest.mock import Mock
 
@@ -321,6 +323,11 @@ def test_missing_optional_recovery_record_does_not_invalidate_read(local, monkey
     assert row(local)["state"] == "Authorized"
 
 
+@contextlib.contextmanager
+def _unlocked() -> Iterator[bool]:
+    yield True
+
+
 @pytest.mark.parametrize(
     "outcome",
     ["missing-first", "missing-last", "all-missing", "denied", "timed_out", "unavailable"],
@@ -342,7 +349,11 @@ def test_claude_candidate_scan_reports_source_outcome(local, tmp_path, monkeypat
     restarted.configure_state(path)
     monkeypatch.setattr(source_consent, "POLICY", restarted)
     monkeypatch.setattr(_WorkerAPI, "call", WORKER_CALL)
+    # ``sys`` is shared, so this makes the whole process look like macOS.
     monkeypatch.setattr(macos_keychain_store.sys, "platform", "darwin")
+    # The renewal lock would then take the macOS ``fcntl`` file lock, which does not exist
+    # on Windows; it is not under test here (see ``test_claude_renewal_lock.py``).
+    monkeypatch.setattr(claude_keychain_renewer, "claude_renewal_lock", _unlocked)
     monkeypatch.delenv("CLAUDE_SECURESTORAGE_CONFIG_DIR", raising=False)
     monkeypatch.setattr(claude_code_keychain, "account_name", lambda: "synthetic-user")
     monkeypatch.setattr(claude_keychain_renewer, "account_name", lambda: "synthetic-user")
