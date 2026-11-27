@@ -158,7 +158,7 @@ def test_apply_deletes_in_batches_and_rebuilds_an_overlapping_closed_window() ->
 
     result = apply_duplicate_telemetry_events(session, batch_size=1)
     assert result.events_deleted == 2
-    assert result.windows_rebuilt >= 1
+    assert result.windows_rebuilt == 1
     window = session.exec(
         select(UsageWindow).where(UsageWindow.model_id == "", UsageWindow.sidecar_id == "")
     ).one()

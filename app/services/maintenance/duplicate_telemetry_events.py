@@ -129,6 +129,12 @@ def apply_duplicate_telemetry_events(session: Session, *, batch_size: int = 500)
     write transaction. The accounts and the time range rebuilt are those of the rows actually
     removed, so a duplicate committed after the read is left for the next run, rollups and
     windows included, instead of being deleted without its dependents rebuilt.
+
+    Not resumable: a run that dies after its deletes but before the rebuilds leaves nothing for
+    a rerun to find. The rollups are then caught by the ``rollup_drift`` check; the closed
+    windows of the removed rows' accounts need ``rebuild_windows_overlapping`` over the removed
+    rows' time range (the duplicates are a handful of rows per Desktop Code session, so the
+    window is short).
     """
     result = DuplicateResult()
     rows = list(
