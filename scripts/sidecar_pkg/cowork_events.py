@@ -59,10 +59,15 @@ def _chunk_count(end: int) -> int:
     return -(-end // _CHUNK_BYTES)
 
 
+def _chunk_span(index: int, end: int) -> tuple[int, int]:
+    """Start and length of chunk ``index`` of the region ``[0, end)``."""
+    lo = index * _CHUNK_BYTES
+    return lo, min(lo + _CHUNK_BYTES, end) - lo
+
+
 def _chunk_digest(f: Any, index: int, end: int) -> str | None:
     """Digest chunk ``index`` of the region ``[0, end)``; None when the file is shorter."""
-    lo = index * _CHUNK_BYTES
-    size = min(lo + _CHUNK_BYTES, end) - lo
+    lo, size = _chunk_span(index, end)
     f.seek(lo)
     data = f.read(size)
     if len(data) != size:
@@ -147,7 +152,7 @@ def _audit(
         try:
             with Path(key).open("rb") as f:
                 while allowance > 0 and not complete:
-                    size = min(_CHUNK_BYTES, offset - index * _CHUNK_BYTES)
+                    _, size = _chunk_span(index, offset)
                     digest = _chunk_digest(f, index, offset)
                     allowance -= size
                     budget -= size

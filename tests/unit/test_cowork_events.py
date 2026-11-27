@@ -733,7 +733,7 @@ def test_transcript_larger_than_the_budget_does_not_starve_the_others(tmp_path):
     from scripts.sidecar_pkg.cowork_events import _CHUNK_BYTES
 
     base = tmp_path / "desktop"
-    big = str(_org_session(base, "big", 400, "m-big").resolve())  # ~25 chunks
+    big = str(_org_session(base, "big", 400, "m-big").resolve())  # ~13 chunks
     small = _org_session(base, "small", 60, "mid-a")  # ~4 chunks
     state = tmp_path / "state.json"
     batch = collect(base, state, max_bytes=10**9)
@@ -769,3 +769,19 @@ def test_audit_walk_survives_a_commit_on_a_growing_transcript(tmp_path):
     assert _ids(batch) == {"tail"}
     batch.mark_owned(batch.events)
     assert _cursors(state)[key]["audit_next"] == walked + 1
+
+
+def test_many_transcripts_on_a_small_budget_all_complete_a_pass(tmp_path):
+    from scripts.sidecar_pkg.cowork_events import _CHUNK_BYTES
+
+    base = tmp_path / "desktop"
+    paths = [str(_org_session(base, f"o{i}", 40, f"m{i}").resolve()) for i in range(6)]
+    state = tmp_path / "state.json"
+    batch = collect(base, state)
+    batch.mark_owned(batch.events)
+    # Fewer chunks per scan than transcripts: each scan serves a different
+    # subset, and every transcript still completes its pass.
+    for _ in range(25):
+        assert collect(base, state, audit_bytes=2 * _CHUNK_BYTES).events == []
+    cursors = _cursors(state)
+    assert all("audited" in cursors[k] for k in paths)
