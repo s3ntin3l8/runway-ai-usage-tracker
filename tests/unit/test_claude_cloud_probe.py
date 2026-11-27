@@ -112,9 +112,22 @@ async def run(body, upstream):
         ("file:/fixture/.claude/.credentials.json", True),
         ("path:/fixture/.claude/.credentials.json", True),
         ("path:/fixture/.claude/oauth_creds.json", True),
+        # A fingerprint suffix does not change the classified filename (#940).
+        ("file:/fixture/.claude/.credentials.json#fixture-fp", True),
+        ("path:/fixture/.claude/.credentials.json#fixture-fp", True),
+        ("path:/fixture/.claude/oauth_creds.json#fixture-fp", True),
         ("env:CLAUDE_CODE_OAUTH_TOKEN", True),
     ],
-    ids=["original", "sidecar-read-only", "sidecar-path", "sidecar-oauth-path", "env-read-only"],
+    ids=[
+        "original",
+        "sidecar-read-only",
+        "sidecar-path",
+        "sidecar-oauth-path",
+        "suffixed-file",
+        "suffixed-path",
+        "suffixed-oauth-path",
+        "env-read-only",
+    ],
 )
 async def test_verified_exact_source_gets_bounded_history_without_leaking_evidence(
     environment, origin, forwarded
@@ -233,6 +246,10 @@ async def test_failure_stops_after_one_request_without_refresh_or_fallback(
         ("unknown_read_only", "unsupported_source"),
         ("unproven_read_only", "unsupported_source"),
         ("unrecognized_path", "unsupported_source"),
+        ("unrecognized_suffixed_path", "unsupported_source"),
+        ("unrecognized_suffixed_file", "unsupported_source"),
+        ("filename_only_in_suffix", "unsupported_source"),
+        ("raw_suffix_mismatch", "source_ineligible"),
         ("legacy_keychain", "source_ineligible"),
         ("pending", "source_ineligible"),
         ("expired", "expired"),
@@ -252,14 +269,25 @@ async def test_ineligible_source_never_contacts_provider(environment, mutation, 
     else:
         tokens = {"oauth_token": "fixture-access"}
         metadata = {"credential_origin": "file:/fixture/.claude/.credentials.json"}
-        if mutation in ("desktop", "unproven_read_only", "unrecognized_path"):
+        origins = {
+            "desktop": "keychain:Claude Desktop/oauth/fixture",
+            "unrecognized_path": "path:/fixture/.claude/unrelated.json",
+            "unrecognized_suffixed_path": "path:/fixture/.claude/unrelated.json#fixture-fp",
+            "unrecognized_suffixed_file": "file:/fixture/.claude/unrelated.json#fixture-fp",
+            # Only the classification view drops the suffix: a recognized filename
+            # that appears after "#" is not a recognized file.
+            "filename_only_in_suffix": "path:/fixture/.claude/unrelated.json#/.credentials.json",
+            # Authority still compares the full origin: a suffixed cache origin
+            # never matches a persisted source recorded without that suffix.
+            "raw_suffix_mismatch": "path:/fixture/.claude/.credentials.json",
+            "unproven_read_only": "config:fixture",
+        }
+        if mutation in origins:
             tokens["oauth_read_only"] = "1"
-            origin = {
-                "desktop": "keychain:Claude Desktop/oauth/fixture",
-                "unrecognized_path": "path:/fixture/.claude/unrelated.json",
-                "unproven_read_only": "config:fixture",
-            }[mutation]
-            metadata["credential_origin"] = origin
+            origin = origins[mutation]
+            metadata["credential_origin"] = (
+                origin + "#fixture-fp" if mutation == "raw_suffix_mismatch" else origin
+            )
             with Session(engine) as s:
                 row = s.get(CredentialSource, 1)
                 row.credential_origin = origin

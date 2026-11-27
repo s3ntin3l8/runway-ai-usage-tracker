@@ -169,12 +169,16 @@ def _check_authority(
             if not isinstance(payload, dict) or payload.get("tokens") != tokens:
                 raise ProbeError("source_changed")
             authority += (device_id, scraper, generation)
+        # Classification reads the origin without a fingerprint suffix, as
+        # ``source_for_origin`` and ``describe_origin_full`` do; every authority
+        # comparison above keeps the full, unmodified origin.
+        file_origin = origin.split("#", 1)[0]
         code_origin = (
             scraper == "anthropic.claude-code"
             or origin == "env:CLAUDE_CODE_OAUTH_TOKEN"
             or (
-                origin.startswith(("file:", "path:"))
-                and origin.endswith(("/.credentials.json", "/oauth_creds.json"))
+                file_origin.startswith(("file:", "path:"))
+                and file_origin.endswith(("/.credentials.json", "/oauth_creds.json"))
             )
         )
         # Egress marks borrowed Code credentials read-only too: this forbids refresh,

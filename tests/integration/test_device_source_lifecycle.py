@@ -183,6 +183,46 @@ def test_mixed_upload_keeps_files_and_platform_eligible_cookies(setup, platform)
     )
 
 
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "path:/fixture/.claude/.credentials.json",
+        "file:/fixture/.claude/.credentials.json",
+    ],
+    ids=["path", "file"],
+)
+@pytest.mark.parametrize("refresh", [False, True], ids=["access-only", "with-refresh"])
+def test_enrolled_anthropic_file_origin_is_read_only_without_client_marker(setup, origin, refresh):
+    """An older client may omit ``oauth_read_only``: a ``path:`` origin is a file too (#940)."""
+    client, session, local = setup
+    metadata = {"credential_origin": origin, "oauth_token": "synthetic-access"}
+    if refresh:
+        metadata["refresh_token"] = "synthetic-local-refresh"
+    response = post(
+        client,
+        local,
+        "/api/v1/fleet/ingest",
+        "ingest",
+        {
+            "provider": "synthetic",
+            "metrics": [
+                {
+                    "provider_id": "anthropic",
+                    "service_name": "Claude Code",
+                    "remaining": "Token",
+                    "unit": "oauth",
+                    "metadata": metadata,
+                }
+            ],
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert session.exec(select(SidecarSourceContribution)).one().origin == origin
+    tokens = source_controls.snapshot(session)[1][0]["tokens"]
+    assert tokens["oauth_read_only"] == "1"
+    assert "refresh_token" not in tokens
+
+
 def test_manifest_skips_unknown_store_without_claiming_completed_absence(setup):
     client, session, local = setup
     payload = {
