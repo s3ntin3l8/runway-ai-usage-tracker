@@ -49,6 +49,10 @@ _SUM_FIELDS = (
 
 _KEY_COLUMNS = _INDEX_ELEMENTS
 _VALUE_COLUMNS = ("msgs", *_SUM_FIELDS)
+# The raw statements below name every column; a column added to the model (even a
+# nullable one, which the ORM would fill with its default) must be added here too.
+if {c.name for c in _ROLLUP_TABLE.c} - {"id"} != {*_KEY_COLUMNS, *_VALUE_COLUMNS, "last_updated"}:
+    raise RuntimeError("usage_period_rollup columns changed: update period_rollups' statements")
 
 # One fixed statement per direction, built once: SQLAlchemy compiles and caches a
 # constant ``text()`` statement, and each event's rows go through it as a single
@@ -93,6 +97,8 @@ def update_rollups_for_event(session: Session, ev: UsageEvent, *, sign: int = 1)
     Grain matrix: ('',''), (model_id,''), ('',sidecar_id), (model_id,sidecar_id).
     When model_id is empty/None the matrix deduplicates to 2 unique grains.
     """
+    if sign not in (1, -1):
+        raise ValueError(f"sign must be 1 or -1, not {sign!r}")
     grains: list[tuple[str, str]] = [
         ("", ""),
         (ev.model_id or "", ""),
@@ -117,7 +123,7 @@ def update_rollups_for_event(session: Session, ev: UsageEvent, *, sign: int = 1)
         for period_type, period_key in _period_keys(ev.ts)
         for model_id, sidecar_id in unique_grains
     ]
-    session.execute(_UPSERT_SQL if sign > 0 else _SUBTRACT_SQL, rows)
+    session.execute(_UPSERT_SQL if sign == 1 else _SUBTRACT_SQL, rows)
 
 
 # (period_type, SQLite strftime format-or-literal) — mirrors _period_keys

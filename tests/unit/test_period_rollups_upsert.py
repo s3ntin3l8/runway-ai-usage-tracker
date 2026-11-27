@@ -12,12 +12,24 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+import pytest
 from sqlalchemy import event, text
 from sqlmodel import Session, SQLModel, create_engine, select
 from sqlmodel.pool import StaticPool
 
 from app.models.db import UsageEvent, UsagePeriodRollup
 from app.services.period_rollups import update_rollups_for_event
+
+
+def _count_rollup_statements(session: Session) -> list[tuple[bool, int]]:
+    calls: list[tuple[bool, int]] = []
+
+    def record(conn, cursor, statement, parameters, context, executemany) -> None:  # noqa: ANN001
+        if "usage_period_rollup" in statement:
+            calls.append((executemany, len(parameters) if executemany else 1))
+
+    event.listen(session.get_bind(), "before_cursor_execute", record)
+    return calls
 
 
 def _session() -> Session:
@@ -54,13 +66,7 @@ def _event(**overrides) -> UsageEvent:
 
 def test_one_executemany_per_event_covering_every_grain() -> None:
     session = _session()
-    calls: list[tuple[bool, int]] = []
-
-    def record(conn, cursor, statement, parameters, context, executemany) -> None:  # noqa: ANN001
-        if "usage_period_rollup" in statement:
-            calls.append((executemany, len(parameters) if executemany else 1))
-
-    event.listen(session.get_bind(), "before_cursor_execute", record)
+    calls = _count_rollup_statements(session)
     update_rollups_for_event(session, _event())
     # 5 periods x 4 grains, in a single executemany round.
     assert calls == [(True, 20)]
@@ -95,7 +101,10 @@ def test_subtraction_adjusts_existing_rows_and_never_inserts() -> None:
     session = _session()
     ev = _event()
     update_rollups_for_event(session, ev)
+    calls = _count_rollup_statements(session)
     update_rollups_for_event(session, ev, sign=-1)
+    # The subtraction is one executemany too.
+    assert calls == [(True, 20)]
     # A subtraction for an account with no rows inserts nothing.
     update_rollups_for_event(session, _event(account_id="other"), sign=-1)
     session.commit()
@@ -104,3 +113,9 @@ def test_subtraction_adjusts_existing_rows_and_never_inserts() -> None:
     assert len(rows) == 20
     assert {r.account_id for r in rows} == {"acct"}
     assert all(r.msgs == 0 and r.tokens_input == 0 for r in rows)
+
+
+def test_sign_other_than_plus_or_minus_one_is_refused() -> None:
+    session = _session()
+    with pytest.raises(ValueError, match="sign"):
+        update_rollups_for_event(session, _event(), sign=0)
