@@ -350,23 +350,28 @@ def test_archive_byte_limit_leaves_original_and_prior_history_intact(tmp_path, m
     assert store.archived_snapshot(handle) == state
 
 
-def test_archive_waits_out_a_writer_longer_than_the_claim_bound(tmp_path):
-    """An archive outlasts a concurrent write longer than a claim's 250 ms bound."""
-    import threading
-    import time
+def test_a_write_waits_for_a_commit_in_progress_instead_of_failing_at_once(tmp_path):
+    """A new write connection's first statement waits out a concurrent COMMIT.
 
-    from app.services.claude_cloud_checkpoints import (
-        ADMIN_LOCK_WAIT_SECONDS,
-        LOCK_RETRY_SECONDS,
-        LOCK_WAIT_SECONDS,
-    )
+    In rollback-journal mode a writer's EXCLUSIVE lock blocks even the schema read of
+    a new connection. The write connection has no busy handler, so its setup step
+    must sit inside the bounded retry like BEGIN and COMMIT do; it used to fail with
+    checkpoint_unavailable at once (seen as the concurrent-archive test failing on
+    loaded CI runners). Production runs WAL (`app/core/db.py`), where the schema read
+    does not block, so this is defensive hardening rather than a production path.
+    """
+    import threading
+
+    from app.services.claude_cloud_checkpoints import LOCK_WAIT_SECONDS
 
     store, _, path, _, _, handle = terminal(tmp_path)
+    with sqlite3.connect(path) as db:
+        assert db.execute("PRAGMA journal_mode").fetchone()[0] == "delete"
     locked, release = threading.Event(), threading.Event()
 
     def blocker():
         db = sqlite3.connect(path, isolation_level=None)
-        db.execute("BEGIN IMMEDIATE")
+        db.execute("BEGIN EXCLUSIVE")
         locked.set()
         release.wait(5)
         db.execute("ROLLBACK")
@@ -375,13 +380,47 @@ def test_archive_waits_out_a_writer_longer_than_the_claim_bound(tmp_path):
     thread = threading.Thread(target=blocker)
     thread.start()
     locked.wait(5)
-    threading.Timer(LOCK_WAIT_SECONDS * 2.4, release.set).start()
-    started = time.monotonic()
+    threading.Timer(LOCK_WAIT_SECONDS / 3, release.set).start()
     store.archive(handle, 0)
-    waited = time.monotonic() - started
-    assert LOCK_WAIT_SECONDS * 2 <= waited < ADMIN_LOCK_WAIT_SECONDS + LOCK_RETRY_SECONDS
     thread.join()
     with sqlite3.connect(path) as db:
         assert (
             db.execute("SELECT count(*) FROM claude_cloud_verification_archives").fetchone()[0] == 1
+        )
+
+
+def test_a_write_still_fails_closed_when_a_commit_outlasts_the_bound(tmp_path):
+    """The setup retry is bounded: a lock held past LOCK_WAIT_SECONDS refuses the write."""
+    import threading
+    import time
+
+    from app.services.claude_cloud_checkpoints import LOCK_RETRY_SECONDS, LOCK_WAIT_SECONDS
+
+    store, state, path, _, _, handle = terminal(tmp_path)
+    locked, release = threading.Event(), threading.Event()
+
+    def blocker():
+        db = sqlite3.connect(path, isolation_level=None)
+        db.execute("BEGIN EXCLUSIVE")
+        locked.set()
+        release.wait(5)
+        db.execute("ROLLBACK")
+        db.close()
+
+    thread = threading.Thread(target=blocker)
+    thread.start()
+    locked.wait(5)
+    started = time.monotonic()
+    try:
+        with pytest.raises(CheckpointError, match="^checkpoint_unavailable$"):
+            store.archive(handle, 0)
+        waited = time.monotonic() - started
+    finally:
+        release.set()
+        thread.join()
+    assert LOCK_WAIT_SECONDS <= waited < LOCK_WAIT_SECONDS * 4 + LOCK_RETRY_SECONDS
+    assert store.snapshot(handle) == state
+    with sqlite3.connect(path) as db:
+        assert (
+            db.execute("SELECT count(*) FROM claude_cloud_verification_archives").fetchone()[0] == 0
         )
