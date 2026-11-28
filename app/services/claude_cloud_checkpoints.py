@@ -28,16 +28,6 @@ LEASE_SECONDS = 45
 # low-priority process. The 250 ms budget became 1-2 s (#1358). Here one
 # overshoot past the deadline is the most a refusal can add.
 LOCK_WAIT_SECONDS = 0.25
-# Creating and archiving a job are rare operator actions. A concurrent duplicate is
-# meant to wait for the first one and then see its result (archive is idempotent).
-# Measured for the test fixture's ~1.5 KB encrypted checkpoint: the archive
-# transaction holds the lock 12-32 ms on an idle host, but past 250 ms on a CI
-# runner and on a host at load 20-30, where the FULL-synchronous COMMIT's fsync
-# dominates. The hold time also grows with checkpoint size (up to MAX_PLAINTEXT,
-# decoded twice), so 2 s is headroom, not a guarantee: a wait that runs out still
-# fails closed with checkpoint_unavailable and the caller retries. The short
-# bound above stays on the claim/commit/release path that #1358 is about.
-ADMIN_LOCK_WAIT_SECONDS = 2.0
 LOCK_RETRY_SECONDS = 0.01
 _SQLITE_BUSY = 5
 
@@ -68,7 +58,7 @@ class CheckpointStore:
 
     @contextmanager
     def _connection(
-        self, *, busy_timeout: float = LOCK_WAIT_SECONDS
+        self, *, busy_timeout: float = LOCK_WAIT_SECONDS, deadline: float | None = None
     ) -> Iterator[sqlite3.Connection]:
         """A FULL-synchronous connection; reads use it directly, writes via `_write`.
 
@@ -85,7 +75,15 @@ class CheckpointStore:
                 isolation_level=None,
             )
             connection.row_factory = sqlite3.Row
-            connection.execute("PRAGMA synchronous=FULL")
+            # The first statement reads the schema, which in rollback-journal mode
+            # waits for a writer's COMMIT. A write connection has no busy handler
+            # (busy_timeout=0), so it retries this step within the write's deadline.
+            if deadline is None:
+                connection.execute("PRAGMA synchronous=FULL")
+            else:
+                self._until_unlocked(
+                    lambda: connection.execute("PRAGMA synchronous=FULL"), deadline
+                )
             connection.execute(f"PRAGMA busy_timeout={int(busy_timeout * 1000)}")
             yield connection
         except sqlite3.Error:
@@ -108,20 +106,21 @@ class CheckpointStore:
             time.sleep(min(LOCK_RETRY_SECONDS, remaining))
 
     @contextmanager
-    def _write(self, wait: float = LOCK_WAIT_SECONDS) -> Iterator[sqlite3.Connection]:
+    def _write(self) -> Iterator[sqlite3.Connection]:
         """One FULL-synchronous write transaction whose lock wait is bounded.
 
-        BEGIN IMMEDIATE and COMMIT (which in rollback-journal mode still waits for
-        readers) are retried until a monotonic deadline. Past it, the error leaves
+        The connection's first statement, BEGIN IMMEDIATE and COMMIT (which in
+        rollback-journal mode still waits for readers) are retried until a
+        monotonic deadline. Past it, the error leaves
         through `_connection` as checkpoint_unavailable and closing the connection
         rolls back, so a refused write never advances persisted state.
         """
         # BEGIN and COMMIT share one deadline on purpose: the bound is on the whole
-        # write, so a caller waits at most `wait` (plus one sleep
+        # write, so a caller waits at most LOCK_WAIT_SECONDS (plus one sleep
         # overshoot) however the wait splits. A COMMIT left with little budget fails
         # closed and rolls back; the caller retries the write as a whole.
-        deadline = time.monotonic() + wait
-        with self._connection(busy_timeout=0) as connection:
+        deadline = time.monotonic() + LOCK_WAIT_SECONDS
+        with self._connection(busy_timeout=0, deadline=deadline) as connection:
             self._until_unlocked(lambda: connection.execute("BEGIN IMMEDIATE"), deadline)
             yield connection
             self._until_unlocked(connection.commit, deadline)
@@ -191,7 +190,7 @@ class CheckpointStore:
     def create(self, state: VerificationState) -> str:
         handle = secrets.token_hex(16)
         encrypted = self._encode(handle, 0, state)
-        with self._write(ADMIN_LOCK_WAIT_SECONDS) as connection:
+        with self._write() as connection:
             if connection.execute("SELECT id FROM claude_cloud_verification WHERE id=1").fetchone():
                 raise CheckpointError("job_exists")
             if connection.execute(
@@ -253,7 +252,7 @@ class CheckpointStore:
         self._require_encryption()
         if type(revision) is not int or revision < 0:
             raise CheckpointError("invalid_revision")
-        with self._write(ADMIN_LOCK_WAIT_SECONDS) as connection:
+        with self._write() as connection:
             archived = connection.execute(
                 "SELECT * FROM claude_cloud_verification_archives WHERE job_handle=?", (handle,)
             ).fetchone()
