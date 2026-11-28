@@ -2,69 +2,100 @@
   "architectures": {
     "amd64": {
       "counts": {
-        "High": 61,
-        "Low": 12,
-        "Medium": 69,
-        "Negligible": 47
+        "High": 87,
+        "Low": 18,
+        "Medium": 93,
+        "Negligible": 51,
+        "Unknown": 7
       },
-      "image": "ghcr.io/s3ntin3l8/runway@sha256:d0468026d177a4b1db0ec0f3eb7e4c6b344b46530aa7b480582e157325f85bff",
+      "image": "ghcr.io/s3ntin3l8/runway@sha256:856692061951266db9c92d88e831c3be22d373edaa9c1818503694a83cfa0124",
       "matches": [
         {
           "artifact": {
-            "name": "perl-base",
+            "name": "libssl3t64",
             "type": "deb",
-            "version": "5.40.1-6+deb13u1"
+            "version": "3.5.7-1~deb13u3"
           },
           "vulnerability": {
             "fix": {
               "state": "wont-fix"
             },
-            "id": "CVE-2026-82560",
+            "id": "CVE-2026-107494",
             "namespace": "debian:distro:debian:13",
             "severity": "High"
           }
         },
         {
           "artifact": {
-            "name": "zlib1g",
+            "name": "openssl",
             "type": "deb",
-            "version": "1:1.3.dfsg+really1.3.1-1+b1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "not-fixed"
-            },
-            "id": "CVE-2026-76844",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "perl-base",
-            "type": "deb",
-            "version": "5.40.1-6+deb13u1"
+            "version": "3.5.7-1~deb13u3"
           },
           "vulnerability": {
             "fix": {
               "state": "wont-fix"
             },
-            "id": "CVE-2026-9538",
+            "id": "CVE-2026-107494",
             "namespace": "debian:distro:debian:13",
             "severity": "High"
           }
         },
         {
           "artifact": {
-            "name": "zlib1g",
+            "name": "openssl-provider-legacy",
             "type": "deb",
-            "version": "1:1.3.dfsg+really1.3.1-1+b1"
+            "version": "3.5.7-1~deb13u3"
           },
           "vulnerability": {
             "fix": {
-              "state": "not-fixed"
+              "state": "wont-fix"
             },
-            "id": "CVE-2026-85091",
+            "id": "CVE-2026-107494",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "libssl3t64",
+            "type": "deb",
+            "version": "3.5.7-1~deb13u3"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-124709",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "openssl",
+            "type": "deb",
+            "version": "3.5.7-1~deb13u3"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-124709",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "openssl-provider-legacy",
+            "type": "deb",
+            "version": "3.5.7-1~deb13u3"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-124709",
             "namespace": "debian:distro:debian:13",
             "severity": "High"
           }
@@ -131,6 +162,51 @@
         },
         {
           "artifact": {
+            "name": "perl-base",
+            "type": "deb",
+            "version": "5.40.1-6+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-82560",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "zlib1g",
+            "type": "deb",
+            "version": "1:1.3.dfsg+really1.3.1-1+b1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "fixed"
+            },
+            "id": "CVE-2026-85091",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "perl-base",
+            "type": "deb",
+            "version": "5.40.1-6+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-9538",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
             "name": "gcc-14-base",
             "type": "deb",
             "version": "14.2.0-19"
@@ -215,6 +291,141 @@
               "state": "wont-fix"
             },
             "id": "CVE-2026-102010",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "libssl3t64",
+            "type": "deb",
+            "version": "3.5.7-1~deb13u3"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-121482",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "libssl3t64",
+            "type": "deb",
+            "version": "3.5.7-1~deb13u3"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-84786",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "openssl",
+            "type": "deb",
+            "version": "3.5.7-1~deb13u3"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-121482",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "openssl",
+            "type": "deb",
+            "version": "3.5.7-1~deb13u3"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-84786",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "openssl-provider-legacy",
+            "type": "deb",
+            "version": "3.5.7-1~deb13u3"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-121482",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "openssl-provider-legacy",
+            "type": "deb",
+            "version": "3.5.7-1~deb13u3"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-84786",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "libssl3t64",
+            "type": "deb",
+            "version": "3.5.7-1~deb13u3"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-95692",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "openssl",
+            "type": "deb",
+            "version": "3.5.7-1~deb13u3"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-95692",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "openssl-provider-legacy",
+            "type": "deb",
+            "version": "3.5.7-1~deb13u3"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-95692",
             "namespace": "debian:distro:debian:13",
             "severity": "High"
           }
@@ -227,7 +438,82 @@
           },
           "vulnerability": {
             "fix": {
+              "state": "fixed"
+            },
+            "id": "CVE-2026-5435",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "libc6",
+            "type": "deb",
+            "version": "2.41-12+deb13u4"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "fixed"
+            },
+            "id": "CVE-2026-5435",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "libssl3t64",
+            "type": "deb",
+            "version": "3.5.7-1~deb13u3"
+          },
+          "vulnerability": {
+            "fix": {
               "state": "wont-fix"
+            },
+            "id": "CVE-2026-107496",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "openssl",
+            "type": "deb",
+            "version": "3.5.7-1~deb13u3"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-107496",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "openssl-provider-legacy",
+            "type": "deb",
+            "version": "3.5.7-1~deb13u3"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-107496",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "libc-bin",
+            "type": "deb",
+            "version": "2.41-12+deb13u4"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "fixed"
             },
             "id": "CVE-2026-19499",
             "namespace": "debian:distro:debian:13",
@@ -242,9 +528,39 @@
           },
           "vulnerability": {
             "fix": {
-              "state": "wont-fix"
+              "state": "fixed"
             },
             "id": "CVE-2026-19499",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "libc-bin",
+            "type": "deb",
+            "version": "2.41-12+deb13u4"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-84243",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "libc6",
+            "type": "deb",
+            "version": "2.41-12+deb13u4"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-84243",
             "namespace": "debian:distro:debian:13",
             "severity": "High"
           }
@@ -266,30 +582,90 @@
         },
         {
           "artifact": {
-            "name": "libc-bin",
+            "name": "libssl3t64",
             "type": "deb",
-            "version": "2.41-12+deb13u4"
+            "version": "3.5.7-1~deb13u3"
           },
           "vulnerability": {
             "fix": {
               "state": "wont-fix"
             },
-            "id": "CVE-2026-84243",
+            "id": "CVE-2026-95691",
             "namespace": "debian:distro:debian:13",
             "severity": "High"
           }
         },
         {
           "artifact": {
-            "name": "libc6",
+            "name": "openssl",
             "type": "deb",
-            "version": "2.41-12+deb13u4"
+            "version": "3.5.7-1~deb13u3"
           },
           "vulnerability": {
             "fix": {
               "state": "wont-fix"
             },
-            "id": "CVE-2026-84243",
+            "id": "CVE-2026-95691",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "openssl-provider-legacy",
+            "type": "deb",
+            "version": "3.5.7-1~deb13u3"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-95691",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "libssl3t64",
+            "type": "deb",
+            "version": "3.5.7-1~deb13u3"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-88823",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "openssl",
+            "type": "deb",
+            "version": "3.5.7-1~deb13u3"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-88823",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "openssl-provider-legacy",
+            "type": "deb",
+            "version": "3.5.7-1~deb13u3"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-88823",
             "namespace": "debian:distro:debian:13",
             "severity": "High"
           }
@@ -311,576 +687,6 @@
         },
         {
           "artifact": {
-            "name": "bsdutils",
-            "type": "deb",
-            "version": "1:2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-78408",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "libblkid1",
-            "type": "deb",
-            "version": "2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-78408",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "liblastlog2-2",
-            "type": "deb",
-            "version": "2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-78408",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "libmount1",
-            "type": "deb",
-            "version": "2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-78408",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "libsmartcols1",
-            "type": "deb",
-            "version": "2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-78408",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "libuuid1",
-            "type": "deb",
-            "version": "2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-78408",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "login",
-            "type": "deb",
-            "version": "1:4.16.0-2+really2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-78408",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "mount",
-            "type": "deb",
-            "version": "2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-78408",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "util-linux",
-            "type": "deb",
-            "version": "2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-78408",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "libc-bin",
-            "type": "deb",
-            "version": "2.41-12+deb13u4"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-5435",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "libc6",
-            "type": "deb",
-            "version": "2.41-12+deb13u4"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-5435",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "bsdutils",
-            "type": "deb",
-            "version": "1:2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-76642",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "libblkid1",
-            "type": "deb",
-            "version": "2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-76642",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "liblastlog2-2",
-            "type": "deb",
-            "version": "2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-76642",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "libmount1",
-            "type": "deb",
-            "version": "2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-76642",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "libsmartcols1",
-            "type": "deb",
-            "version": "2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-76642",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "libuuid1",
-            "type": "deb",
-            "version": "2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-76642",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "login",
-            "type": "deb",
-            "version": "1:4.16.0-2+really2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-76642",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "mount",
-            "type": "deb",
-            "version": "2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-76642",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "util-linux",
-            "type": "deb",
-            "version": "2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-76642",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "bsdutils",
-            "type": "deb",
-            "version": "1:2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-78410",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "libblkid1",
-            "type": "deb",
-            "version": "2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-78410",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "liblastlog2-2",
-            "type": "deb",
-            "version": "2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-78410",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "libmount1",
-            "type": "deb",
-            "version": "2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-78410",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "libsmartcols1",
-            "type": "deb",
-            "version": "2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-78410",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "libuuid1",
-            "type": "deb",
-            "version": "2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-78410",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "login",
-            "type": "deb",
-            "version": "1:4.16.0-2+really2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-78410",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "mount",
-            "type": "deb",
-            "version": "2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-78410",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "util-linux",
-            "type": "deb",
-            "version": "2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-78410",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "bsdutils",
-            "type": "deb",
-            "version": "1:2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-78409",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "libblkid1",
-            "type": "deb",
-            "version": "2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-78409",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "liblastlog2-2",
-            "type": "deb",
-            "version": "2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-78409",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "libmount1",
-            "type": "deb",
-            "version": "2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-78409",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "libsmartcols1",
-            "type": "deb",
-            "version": "2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-78409",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "libuuid1",
-            "type": "deb",
-            "version": "2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-78409",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "login",
-            "type": "deb",
-            "version": "1:4.16.0-2+really2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-78409",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "mount",
-            "type": "deb",
-            "version": "2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-78409",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "util-linux",
-            "type": "deb",
-            "version": "2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-78409",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
             "name": "libsqlite3-0",
             "type": "deb",
             "version": "3.46.1-7+deb13u2"
@@ -896,6 +702,141 @@
         },
         {
           "artifact": {
+            "name": "bsdutils",
+            "type": "deb",
+            "version": "1:2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-76642",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "libblkid1",
+            "type": "deb",
+            "version": "2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-76642",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "liblastlog2-2",
+            "type": "deb",
+            "version": "2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-76642",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "libmount1",
+            "type": "deb",
+            "version": "2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-76642",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "libsmartcols1",
+            "type": "deb",
+            "version": "2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-76642",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "libuuid1",
+            "type": "deb",
+            "version": "2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-76642",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "login",
+            "type": "deb",
+            "version": "1:4.16.0-2+really2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-76642",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "mount",
+            "type": "deb",
+            "version": "2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-76642",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "util-linux",
+            "type": "deb",
+            "version": "2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-76642",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
             "name": "libacl1",
             "type": "deb",
             "version": "2.3.2-2+b1"
@@ -905,6 +846,456 @@
               "state": "wont-fix"
             },
             "id": "CVE-2026-54369",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "bsdutils",
+            "type": "deb",
+            "version": "1:2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-78408",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "libblkid1",
+            "type": "deb",
+            "version": "2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-78408",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "liblastlog2-2",
+            "type": "deb",
+            "version": "2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-78408",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "libmount1",
+            "type": "deb",
+            "version": "2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-78408",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "libsmartcols1",
+            "type": "deb",
+            "version": "2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-78408",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "libuuid1",
+            "type": "deb",
+            "version": "2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-78408",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "login",
+            "type": "deb",
+            "version": "1:4.16.0-2+really2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-78408",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "mount",
+            "type": "deb",
+            "version": "2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-78408",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "util-linux",
+            "type": "deb",
+            "version": "2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-78408",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "libssl3t64",
+            "type": "deb",
+            "version": "3.5.7-1~deb13u3"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-107493",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "openssl",
+            "type": "deb",
+            "version": "3.5.7-1~deb13u3"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-107493",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "openssl-provider-legacy",
+            "type": "deb",
+            "version": "3.5.7-1~deb13u3"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-107493",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "bsdutils",
+            "type": "deb",
+            "version": "1:2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-78409",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "libblkid1",
+            "type": "deb",
+            "version": "2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-78409",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "liblastlog2-2",
+            "type": "deb",
+            "version": "2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-78409",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "libmount1",
+            "type": "deb",
+            "version": "2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-78409",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "libsmartcols1",
+            "type": "deb",
+            "version": "2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-78409",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "libuuid1",
+            "type": "deb",
+            "version": "2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-78409",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "login",
+            "type": "deb",
+            "version": "1:4.16.0-2+really2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-78409",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "mount",
+            "type": "deb",
+            "version": "2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-78409",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "util-linux",
+            "type": "deb",
+            "version": "2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-78409",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "bsdutils",
+            "type": "deb",
+            "version": "1:2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-78410",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "libblkid1",
+            "type": "deb",
+            "version": "2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-78410",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "liblastlog2-2",
+            "type": "deb",
+            "version": "2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-78410",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "libmount1",
+            "type": "deb",
+            "version": "2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-78410",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "libsmartcols1",
+            "type": "deb",
+            "version": "2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-78410",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "libuuid1",
+            "type": "deb",
+            "version": "2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-78410",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "login",
+            "type": "deb",
+            "version": "1:4.16.0-2+really2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-78410",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "mount",
+            "type": "deb",
+            "version": "2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-78410",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "util-linux",
+            "type": "deb",
+            "version": "2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-78410",
             "namespace": "debian:distro:debian:13",
             "severity": "High"
           }
@@ -928,69 +1319,100 @@
     },
     "arm64": {
       "counts": {
-        "High": 61,
-        "Low": 12,
-        "Medium": 69,
-        "Negligible": 47
+        "High": 87,
+        "Low": 18,
+        "Medium": 93,
+        "Negligible": 51,
+        "Unknown": 7
       },
-      "image": "ghcr.io/s3ntin3l8/runway@sha256:4e375b64126b62673355ed78e0328c632690e456a283c1f40ce6453cf584d7e5",
+      "image": "ghcr.io/s3ntin3l8/runway@sha256:d4db179e49db6713b7f7af2ce9ff1755d3e9d67b9c773af5999faeda6b798185",
       "matches": [
         {
           "artifact": {
-            "name": "perl-base",
+            "name": "libssl3t64",
             "type": "deb",
-            "version": "5.40.1-6+deb13u1"
+            "version": "3.5.7-1~deb13u3"
           },
           "vulnerability": {
             "fix": {
               "state": "wont-fix"
             },
-            "id": "CVE-2026-82560",
+            "id": "CVE-2026-107494",
             "namespace": "debian:distro:debian:13",
             "severity": "High"
           }
         },
         {
           "artifact": {
-            "name": "zlib1g",
+            "name": "openssl",
             "type": "deb",
-            "version": "1:1.3.dfsg+really1.3.1-1+b1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "not-fixed"
-            },
-            "id": "CVE-2026-76844",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "perl-base",
-            "type": "deb",
-            "version": "5.40.1-6+deb13u1"
+            "version": "3.5.7-1~deb13u3"
           },
           "vulnerability": {
             "fix": {
               "state": "wont-fix"
             },
-            "id": "CVE-2026-9538",
+            "id": "CVE-2026-107494",
             "namespace": "debian:distro:debian:13",
             "severity": "High"
           }
         },
         {
           "artifact": {
-            "name": "zlib1g",
+            "name": "openssl-provider-legacy",
             "type": "deb",
-            "version": "1:1.3.dfsg+really1.3.1-1+b1"
+            "version": "3.5.7-1~deb13u3"
           },
           "vulnerability": {
             "fix": {
-              "state": "not-fixed"
+              "state": "wont-fix"
             },
-            "id": "CVE-2026-85091",
+            "id": "CVE-2026-107494",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "libssl3t64",
+            "type": "deb",
+            "version": "3.5.7-1~deb13u3"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-124709",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "openssl",
+            "type": "deb",
+            "version": "3.5.7-1~deb13u3"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-124709",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "openssl-provider-legacy",
+            "type": "deb",
+            "version": "3.5.7-1~deb13u3"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-124709",
             "namespace": "debian:distro:debian:13",
             "severity": "High"
           }
@@ -1057,6 +1479,51 @@
         },
         {
           "artifact": {
+            "name": "perl-base",
+            "type": "deb",
+            "version": "5.40.1-6+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-82560",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "zlib1g",
+            "type": "deb",
+            "version": "1:1.3.dfsg+really1.3.1-1+b1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "fixed"
+            },
+            "id": "CVE-2026-85091",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "perl-base",
+            "type": "deb",
+            "version": "5.40.1-6+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-9538",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
             "name": "gcc-14-base",
             "type": "deb",
             "version": "14.2.0-19"
@@ -1141,6 +1608,141 @@
               "state": "wont-fix"
             },
             "id": "CVE-2026-102010",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "libssl3t64",
+            "type": "deb",
+            "version": "3.5.7-1~deb13u3"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-121482",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "libssl3t64",
+            "type": "deb",
+            "version": "3.5.7-1~deb13u3"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-84786",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "openssl",
+            "type": "deb",
+            "version": "3.5.7-1~deb13u3"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-121482",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "openssl",
+            "type": "deb",
+            "version": "3.5.7-1~deb13u3"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-84786",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "openssl-provider-legacy",
+            "type": "deb",
+            "version": "3.5.7-1~deb13u3"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-121482",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "openssl-provider-legacy",
+            "type": "deb",
+            "version": "3.5.7-1~deb13u3"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-84786",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "libssl3t64",
+            "type": "deb",
+            "version": "3.5.7-1~deb13u3"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-95692",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "openssl",
+            "type": "deb",
+            "version": "3.5.7-1~deb13u3"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-95692",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "openssl-provider-legacy",
+            "type": "deb",
+            "version": "3.5.7-1~deb13u3"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-95692",
             "namespace": "debian:distro:debian:13",
             "severity": "High"
           }
@@ -1153,7 +1755,82 @@
           },
           "vulnerability": {
             "fix": {
+              "state": "fixed"
+            },
+            "id": "CVE-2026-5435",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "libc6",
+            "type": "deb",
+            "version": "2.41-12+deb13u4"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "fixed"
+            },
+            "id": "CVE-2026-5435",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "libssl3t64",
+            "type": "deb",
+            "version": "3.5.7-1~deb13u3"
+          },
+          "vulnerability": {
+            "fix": {
               "state": "wont-fix"
+            },
+            "id": "CVE-2026-107496",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "openssl",
+            "type": "deb",
+            "version": "3.5.7-1~deb13u3"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-107496",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "openssl-provider-legacy",
+            "type": "deb",
+            "version": "3.5.7-1~deb13u3"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-107496",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "libc-bin",
+            "type": "deb",
+            "version": "2.41-12+deb13u4"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "fixed"
             },
             "id": "CVE-2026-19499",
             "namespace": "debian:distro:debian:13",
@@ -1168,9 +1845,39 @@
           },
           "vulnerability": {
             "fix": {
-              "state": "wont-fix"
+              "state": "fixed"
             },
             "id": "CVE-2026-19499",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "libc-bin",
+            "type": "deb",
+            "version": "2.41-12+deb13u4"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-84243",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "libc6",
+            "type": "deb",
+            "version": "2.41-12+deb13u4"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-84243",
             "namespace": "debian:distro:debian:13",
             "severity": "High"
           }
@@ -1192,30 +1899,90 @@
         },
         {
           "artifact": {
-            "name": "libc-bin",
+            "name": "libssl3t64",
             "type": "deb",
-            "version": "2.41-12+deb13u4"
+            "version": "3.5.7-1~deb13u3"
           },
           "vulnerability": {
             "fix": {
               "state": "wont-fix"
             },
-            "id": "CVE-2026-84243",
+            "id": "CVE-2026-95691",
             "namespace": "debian:distro:debian:13",
             "severity": "High"
           }
         },
         {
           "artifact": {
-            "name": "libc6",
+            "name": "openssl",
             "type": "deb",
-            "version": "2.41-12+deb13u4"
+            "version": "3.5.7-1~deb13u3"
           },
           "vulnerability": {
             "fix": {
               "state": "wont-fix"
             },
-            "id": "CVE-2026-84243",
+            "id": "CVE-2026-95691",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "openssl-provider-legacy",
+            "type": "deb",
+            "version": "3.5.7-1~deb13u3"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-95691",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "libssl3t64",
+            "type": "deb",
+            "version": "3.5.7-1~deb13u3"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-88823",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "openssl",
+            "type": "deb",
+            "version": "3.5.7-1~deb13u3"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-88823",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "openssl-provider-legacy",
+            "type": "deb",
+            "version": "3.5.7-1~deb13u3"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-88823",
             "namespace": "debian:distro:debian:13",
             "severity": "High"
           }
@@ -1237,576 +2004,6 @@
         },
         {
           "artifact": {
-            "name": "bsdutils",
-            "type": "deb",
-            "version": "1:2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-78408",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "libblkid1",
-            "type": "deb",
-            "version": "2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-78408",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "liblastlog2-2",
-            "type": "deb",
-            "version": "2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-78408",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "libmount1",
-            "type": "deb",
-            "version": "2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-78408",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "libsmartcols1",
-            "type": "deb",
-            "version": "2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-78408",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "libuuid1",
-            "type": "deb",
-            "version": "2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-78408",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "login",
-            "type": "deb",
-            "version": "1:4.16.0-2+really2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-78408",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "mount",
-            "type": "deb",
-            "version": "2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-78408",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "util-linux",
-            "type": "deb",
-            "version": "2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-78408",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "libc-bin",
-            "type": "deb",
-            "version": "2.41-12+deb13u4"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-5435",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "libc6",
-            "type": "deb",
-            "version": "2.41-12+deb13u4"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-5435",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "bsdutils",
-            "type": "deb",
-            "version": "1:2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-76642",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "libblkid1",
-            "type": "deb",
-            "version": "2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-76642",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "liblastlog2-2",
-            "type": "deb",
-            "version": "2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-76642",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "libmount1",
-            "type": "deb",
-            "version": "2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-76642",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "libsmartcols1",
-            "type": "deb",
-            "version": "2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-76642",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "libuuid1",
-            "type": "deb",
-            "version": "2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-76642",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "login",
-            "type": "deb",
-            "version": "1:4.16.0-2+really2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-76642",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "mount",
-            "type": "deb",
-            "version": "2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-76642",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "util-linux",
-            "type": "deb",
-            "version": "2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-76642",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "bsdutils",
-            "type": "deb",
-            "version": "1:2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-78410",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "libblkid1",
-            "type": "deb",
-            "version": "2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-78410",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "liblastlog2-2",
-            "type": "deb",
-            "version": "2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-78410",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "libmount1",
-            "type": "deb",
-            "version": "2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-78410",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "libsmartcols1",
-            "type": "deb",
-            "version": "2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-78410",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "libuuid1",
-            "type": "deb",
-            "version": "2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-78410",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "login",
-            "type": "deb",
-            "version": "1:4.16.0-2+really2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-78410",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "mount",
-            "type": "deb",
-            "version": "2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-78410",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "util-linux",
-            "type": "deb",
-            "version": "2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-78410",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "bsdutils",
-            "type": "deb",
-            "version": "1:2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-78409",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "libblkid1",
-            "type": "deb",
-            "version": "2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-78409",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "liblastlog2-2",
-            "type": "deb",
-            "version": "2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-78409",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "libmount1",
-            "type": "deb",
-            "version": "2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-78409",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "libsmartcols1",
-            "type": "deb",
-            "version": "2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-78409",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "libuuid1",
-            "type": "deb",
-            "version": "2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-78409",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "login",
-            "type": "deb",
-            "version": "1:4.16.0-2+really2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-78409",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "mount",
-            "type": "deb",
-            "version": "2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-78409",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
-            "name": "util-linux",
-            "type": "deb",
-            "version": "2.41.5-0+deb13u1"
-          },
-          "vulnerability": {
-            "fix": {
-              "state": "wont-fix"
-            },
-            "id": "CVE-2026-78409",
-            "namespace": "debian:distro:debian:13",
-            "severity": "High"
-          }
-        },
-        {
-          "artifact": {
             "name": "libsqlite3-0",
             "type": "deb",
             "version": "3.46.1-7+deb13u2"
@@ -1822,6 +2019,141 @@
         },
         {
           "artifact": {
+            "name": "bsdutils",
+            "type": "deb",
+            "version": "1:2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-76642",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "libblkid1",
+            "type": "deb",
+            "version": "2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-76642",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "liblastlog2-2",
+            "type": "deb",
+            "version": "2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-76642",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "libmount1",
+            "type": "deb",
+            "version": "2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-76642",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "libsmartcols1",
+            "type": "deb",
+            "version": "2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-76642",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "libuuid1",
+            "type": "deb",
+            "version": "2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-76642",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "login",
+            "type": "deb",
+            "version": "1:4.16.0-2+really2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-76642",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "mount",
+            "type": "deb",
+            "version": "2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-76642",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "util-linux",
+            "type": "deb",
+            "version": "2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-76642",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
             "name": "libacl1",
             "type": "deb",
             "version": "2.3.2-2+b1"
@@ -1831,6 +2163,456 @@
               "state": "wont-fix"
             },
             "id": "CVE-2026-54369",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "bsdutils",
+            "type": "deb",
+            "version": "1:2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-78408",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "libblkid1",
+            "type": "deb",
+            "version": "2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-78408",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "liblastlog2-2",
+            "type": "deb",
+            "version": "2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-78408",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "libmount1",
+            "type": "deb",
+            "version": "2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-78408",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "libsmartcols1",
+            "type": "deb",
+            "version": "2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-78408",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "libuuid1",
+            "type": "deb",
+            "version": "2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-78408",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "login",
+            "type": "deb",
+            "version": "1:4.16.0-2+really2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-78408",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "mount",
+            "type": "deb",
+            "version": "2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-78408",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "util-linux",
+            "type": "deb",
+            "version": "2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-78408",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "libssl3t64",
+            "type": "deb",
+            "version": "3.5.7-1~deb13u3"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-107493",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "openssl",
+            "type": "deb",
+            "version": "3.5.7-1~deb13u3"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-107493",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "openssl-provider-legacy",
+            "type": "deb",
+            "version": "3.5.7-1~deb13u3"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-107493",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "bsdutils",
+            "type": "deb",
+            "version": "1:2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-78409",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "libblkid1",
+            "type": "deb",
+            "version": "2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-78409",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "liblastlog2-2",
+            "type": "deb",
+            "version": "2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-78409",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "libmount1",
+            "type": "deb",
+            "version": "2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-78409",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "libsmartcols1",
+            "type": "deb",
+            "version": "2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-78409",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "libuuid1",
+            "type": "deb",
+            "version": "2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-78409",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "login",
+            "type": "deb",
+            "version": "1:4.16.0-2+really2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-78409",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "mount",
+            "type": "deb",
+            "version": "2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-78409",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "util-linux",
+            "type": "deb",
+            "version": "2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-78409",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "bsdutils",
+            "type": "deb",
+            "version": "1:2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-78410",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "libblkid1",
+            "type": "deb",
+            "version": "2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-78410",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "liblastlog2-2",
+            "type": "deb",
+            "version": "2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-78410",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "libmount1",
+            "type": "deb",
+            "version": "2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-78410",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "libsmartcols1",
+            "type": "deb",
+            "version": "2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-78410",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "libuuid1",
+            "type": "deb",
+            "version": "2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-78410",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "login",
+            "type": "deb",
+            "version": "1:4.16.0-2+really2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-78410",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "mount",
+            "type": "deb",
+            "version": "2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-78410",
+            "namespace": "debian:distro:debian:13",
+            "severity": "High"
+          }
+        },
+        {
+          "artifact": {
+            "name": "util-linux",
+            "type": "deb",
+            "version": "2.41.5-0+deb13u1"
+          },
+          "vulnerability": {
+            "fix": {
+              "state": "wont-fix"
+            },
+            "id": "CVE-2026-78410",
             "namespace": "debian:distro:debian:13",
             "severity": "High"
           }
@@ -1854,10 +2636,10 @@
     }
   },
   "database": {
-    "built": "2026-11-06T06:21:59Z",
-    "checksum": "sha256:fdc0c98e98e2c0599ae2909148a1d9002de603347726c09119a5c2458b178c23"
+    "built": "2026-11-28T06:20:09Z",
+    "checksum": "sha256:20e87eca6bc40cb81914053c71cda4bb2521174e9e8bbf9752cab98ea5cc99a7"
   },
-  "image": "ghcr.io/s3ntin3l8/runway@sha256:3a6ff61a7bdcaa67d267692ec1d0af2d370fd6b19e57edae0b78afde4f187b77",
-  "scanned_at": "2026-11-06T22:05:14.016138+00:00",
+  "image": "ghcr.io/s3ntin3l8/runway@sha256:fd221c23be7779bb4fc78bad85c2db26be373774f2c33a60fe5e501cee1c9dda",
+  "scanned_at": "2026-11-28T08:49:27.171812+00:00",
   "schema_version": 1
 }

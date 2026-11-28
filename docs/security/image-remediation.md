@@ -41,9 +41,9 @@ push, the digest does not.
 
 | Reference | Digest |
 | --- | --- |
-| Published index (`edge`) | `sha256:3a6ff61a7bdcaa67d267692ec1d0af2d370fd6b19e57edae0b78afde4f187b77` |
-| linux/amd64 manifest | `sha256:d0468026d177a4b1db0ec0f3eb7e4c6b344b46530aa7b480582e157325f85bff` |
-| linux/arm64 manifest | `sha256:4e375b64126b62673355ed78e0328c632690e456a283c1f40ce6453cf584d7e5` |
+| Published index (`edge`) | `sha256:fd221c23be7779bb4fc78bad85c2db26be373774f2c33a60fe5e501cee1c9dda` |
+| linux/amd64 manifest | `sha256:856692061951266db9c92d88e831c3be22d373edaa9c1818503694a83cfa0124` |
+| linux/arm64 manifest | `sha256:d4db179e49db6713b7f7af2ce9ff1755d3e9d67b9c773af5999faeda6b798185` |
 
 The platform rows are the manifests the index points at, which are the ones the
 audit scans; they are not the per-platform build outputs recorded in the
@@ -55,13 +55,13 @@ audit scans; they are not the per-platform build outputs recorded in the
 | blocked | 0 | 0 |
 | expired exceptions | 0 | 0 |
 | Critical | 0 | 0 |
-| High | 61 | 61 |
-| Medium | 69 | 69 |
-| Low | 12 | 12 |
-| Negligible | 47 | 47 |
+| High | 87 | 87 |
+| Medium | 93 | 93 |
+| Low | 18 | 18 |
+| Negligible | 51 | 51 |
 
-Scanned at `2026-11-06T22:05:14Z` against the database built
-`2026-11-06T06:21:59Z`. Every High match is covered by an exact, per-architecture
+Scanned at `2026-11-28T08:49:27Z` against the database built
+`2026-11-28T06:20:09Z`. Every High match is covered by an exact, per-architecture
 exception. Regenerate the fixture with `python -m scripts.record_image_scan` in
 the same change that re-reviews the exception document (see
 [`image-policy.md`](image-policy.md)); when it moves, record the new index and
@@ -86,7 +86,8 @@ Nothing here is claimed patched; each decision is time-limited.
 | CVE-2026-54369, CVE-2026-54370 | `libacl1` | Need a privileged caller using libacl on attacker-controlled paths; Runway runs as UID 1000 and invokes no ACL tools. |
 | CVE-2026-76642, CVE-2026-78408, CVE-2026-78409, CVE-2026-78410 | util-linux family: `bsdutils`, `libblkid1`, `liblastlog2-2`, `libmount1`, `libsmartcols1`, `libuuid1`, `login`, `mount`, `util-linux` | Need privileged `mount`/`nsenter` operations on attacker-controlled filesystem or namespace state; Runway has no such path, runs as UID 1000 without setuid binaries, and privileged containers or a Docker socket mount are outside the exception. |
 | CVE-2026-82560, CVE-2026-9538 | `perl-base` | Perl `Pod::Text` and `Archive::Tar`; the server executes no Perl. |
-| CVE-2026-85091, CVE-2026-76844 | `zlib1g` | Native `gzwrite`/`gz_write` paths; the server uses Python `zlib` and neither `gzip` nor `ctypes`. |
+| CVE-2026-85091 | `zlib1g` | Native `gzwrite`/`gz_write` paths; the server uses Python `zlib` and neither `gzip` nor `ctypes`. |
+| CVE-2026-107494, CVE-2026-124709, CVE-2026-95691, CVE-2026-84786, CVE-2026-88823, CVE-2026-95692, CVE-2026-107493, CVE-2026-107496, CVE-2026-121482 (Debian postponed; #1421) | `libssl3t64`, `openssl`, `openssl-provider-legacy` (`3.5.7-1~deb13u3` published, `3.5.9-1~deb13u1` candidate) | The system OpenSSL is reached only through Python `ssl` (HTTPS over TCP); `cryptography` bundles its own OpenSSL. The flaws need QUIC (107494, 124709, 95691), DANE (84786), the AES-GCM-SIV EVP API (88823, 95692), `PEM_X509_INFO_read_bio_ex` on a caller-supplied stack (107493) or CMS/PKCS#7 (107496, 121482); Python `ssl` exposes none of them and Runway uses none. |
 
 Debian 13 folded the separate `login` source package and the `lastlog` library
 into util-linux, so `login` and `liblastlog2-2` belong to that family.
