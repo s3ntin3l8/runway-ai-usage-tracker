@@ -59,6 +59,7 @@ audit scans; they are not the per-platform build outputs recorded in the
 | Medium | 93 | 93 |
 | Low | 18 | 18 |
 | Negligible | 51 | 51 |
+| Unknown | 7 | 7 |
 
 Scanned at `2026-11-28T08:49:27Z` against the database built
 `2026-11-28T06:20:09Z`. Every High match is covered by an exact, per-architecture
